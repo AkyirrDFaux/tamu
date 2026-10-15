@@ -46,5 +46,3 @@ PacketFrame TxFrame;        // single shared output buffer — no handler needs 
 
 // 3. Dispatcher must come last (it includes Storage and all handlers that need full definitions)
 #include "Core/Functions/Dispatcher.h"
-
-// 15.06.2025 Started over for distributed system

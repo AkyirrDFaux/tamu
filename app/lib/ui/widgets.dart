@@ -310,6 +310,27 @@ class DialogBody extends StatelessWidget {
   }
 }
 
+/// A padded scroll body holding a list of block cards, stretch-fitted to the width.
+/// Shared by the Register page's live and backup views.
+class BlockScrollBody extends StatelessWidget {
+  final List<Widget> children;
+
+  const BlockScrollBody({super.key, required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: children,
+        ),
+      ),
+    );
+  }
+}
+
 /// Shows a transient status message (shared by the memory/service pages).
 void showSnack(BuildContext context, String message) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));

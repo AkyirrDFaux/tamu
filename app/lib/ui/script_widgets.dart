@@ -76,6 +76,34 @@ class ScriptControlBar extends StatelessWidget {
   }
 }
 
+/// The "Function library" property switch, shared by the script create dialog and the
+/// editor's function card.
+class FunctionLibrarySwitch extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const FunctionLibrarySwitch({
+    super.key,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: const Text('Function library'),
+      subtitle: const Text(
+        'The file is a function library, not a script',
+        style: TextStyle(fontSize: 11, color: Colors.white54),
+      ),
+      value: value,
+      onChanged: onChanged,
+    );
+  }
+}
+
 /// One category (inputs or outputs) of a loaded script's Register entries. Inputs are
 /// editable, outputs are read-only.
 class ScriptIoSection extends StatefulWidget {

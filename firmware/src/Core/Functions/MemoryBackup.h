@@ -5,7 +5,6 @@
 // Part of Memory.h, split for readability; included from there.
 
 #include <cstdint>
-#include <cstddef>
 #include <cstring>
 #include "Core/Functions/MemoryTypes.h"
 #include "Core/Functions/Packet.h"

@@ -484,7 +484,6 @@ inline bool ScriptService::Load(uint16_t FileId, uint16_t Slot) {
 
     // UI info (version 1) starts with a length-prefixed function name; fall back to the
     // file name. The remaining names/specs are app-side editor metadata.
-    Script->UiLen = (uint16_t)UiLen;
     Script->Name[0] = '\0';
     // UI info v2 starts with the version byte then the function name; the later sections
     // (enum option labels) are app-side only and ignored here. v1 is no longer supported.

@@ -12,16 +12,6 @@ static uint8_t MeasRange[2] = {1, 1}; // currently selected range (matches Measu
 static uint8_t FiltRange[2] = {1, 1}; // range the filter history belongs to
 static bool ConvSeeded[2] = {false, false};
 
-// Clamps a raw ADC sample to the usable (1, 1022) window shared by every divider transform.
-// 0 and 1023 would make the (1023 - in) denominator zero (or a tiny fraction, an unbounded
-// ratio that overflows Q16.16), so both ends are pinned one step in.
-static inline Number MeasClampAdc(Number In)
-{
-    if (In < N(1)) return N(1);
-    if (In > N(1022)) return N(1022);
-    return In;
-}
-
 // Samples one measurement channel and updates the block outputs. `index` selects the
 // channel (0/1). Measured Value and Current Range are reported in kOhm so that the
 // 330 kOhm range still fits within the Q16.16 Number range. All arithmetic uses 32-bit

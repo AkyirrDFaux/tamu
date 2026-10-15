@@ -9,7 +9,6 @@
 class StorageService
 {
 public:
-    void Init();                           // resets the write-stream state
     bool Handle(const PacketFrame &Frame); // CID dispatch; true if consumed
 
 private:
@@ -23,14 +22,6 @@ private:
 
 // One instance per binary, in Core/Services/ (the FS global `Storage` is a different object).
 StorageService StorageSvc;
-
-inline void StorageService::Init()
-{
-    WriteActive = false;
-    WriteSeq = 0;
-    WriteOff = 0;
-    memset(WriteName, 0, sizeof(WriteName));
-}
 
 inline bool StorageService::Handle(const PacketFrame &Frame)
 {

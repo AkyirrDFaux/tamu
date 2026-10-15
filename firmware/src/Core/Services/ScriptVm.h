@@ -154,25 +154,16 @@ inline bool ScriptService::ResolveOperandInt(LoadedScript *Script, const uint8_t
     return true;
 }
 
-// Resolves a destination symbol (variable or output) into its storage.
+// Resolves a destination symbol (variable or output) into its storage. A destination is any
+// source symbol that is writable, and its space/offset arithmetic is exactly a source's, so
+// this reuses Resolve() (above) and only admits the variable/output symbol types.
 inline bool ScriptService::ResolveDest(LoadedScript *Script, const uint8_t *Sym, uint16_t &Dtype, uint8_t *&Data, uint8_t &Size) {
-    if (Sym[0] == SCRIPT_SYM_VARIABLE) {
-        uint16_t Idx = SymVal(Sym);
-        if (Idx >= Script->VarCount) return false;
-        Data = Script->VarSpace + Script->VarOffset((uint8_t)Idx);
-        Size = Script->VarMeta[Idx].Size;
-        Dtype = ValueInfoType(Script->VarMeta[Idx].Type);
-        return true;
-    }
-    if (Sym[0] == SCRIPT_SYM_OUTPUT) {
-        uint16_t Idx = SymVal(Sym);
-        if (Idx >= Script->OutCount || !Script->IoSpace) return false;
-        Data = Script->IoSpace + Script->OutputOffset((uint8_t)Idx);
-        Size = Script->OutMeta[Idx].Size;
-        Dtype = ValueInfoType(Script->OutMeta[Idx].Type);
-        return true;
-    }
-    return false;
+    if (Sym[0] != SCRIPT_SYM_VARIABLE && Sym[0] != SCRIPT_SYM_OUTPUT) return false;
+    uint8_t Scratch[4];
+    const uint8_t *Resolved = nullptr;
+    if (!Resolve(Script, Sym[0], Sym[1], SymVal(Sym), Scratch, &Resolved, &Size, &Dtype)) return false;
+    Data = const_cast<uint8_t *>(Resolved);
+    return true;
 }
 
 inline void ScriptService::StoreScalar(uint16_t Dtype, uint8_t *Data, uint8_t Size, bool Num, const ScriptScalar &Scalar) {

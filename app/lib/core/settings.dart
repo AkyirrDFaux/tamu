@@ -1,15 +1,14 @@
 /// Runtime settings store (Docs/App/Settings.md).
 ///
-/// Persisted as a simple JSON file under the user's config directory when the
-/// platform provides one; otherwise kept in RAM only (Android/Windows targets
-/// are not implemented yet).
+/// Persisted as a simple JSON file under the user's config directory on desktop
+/// and the app's private temp directory on mobile; kept in RAM only when neither
+/// is available (see [_settingsFile]).
 library;
 
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
 
 import 'app_version.g.dart';
 import 'platform_caps.dart';
@@ -49,7 +48,7 @@ class AppSettings extends ChangeNotifier {
   final Set<String> osEvents = {...notificationEvents};
 
   Future<void> load() async {
-    final file = await _settingsFile();
+    final file = _settingsFile();
     if (file == null || !file.existsSync()) return;
     try {
       final data = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
@@ -77,7 +76,7 @@ class AppSettings extends ChangeNotifier {
   }
 
   Future<void> save() async {
-    final file = await _settingsFile();
+    final file = _settingsFile();
     if (file == null) return;
     try {
       file.createSync(recursive: true);
@@ -101,14 +100,14 @@ class AppSettings extends ChangeNotifier {
     save();
   }
 
-  /// The persisted settings location. Android has no HOME: use the app's
-  /// private support directory (path_provider). Desktops keep the existing
-  /// `~/.config/tamuapp` path so already-saved settings are not orphaned.
-  static Future<File?> _settingsFile() async {
+  /// The persisted settings location. Android exposes no HOME, so it uses the
+  /// process's own temp/cache directory, which `dart:io` resolves from the
+  /// platform's TMPDIR (app-private, no path_provider plugin). Desktops keep the
+  /// existing `~/.config/tamuapp` path so already-saved settings are not orphaned.
+  static File? _settingsFile() {
     try {
       if (isMobile) {
-        final dir = await getApplicationSupportDirectory();
-        return File('${dir.path}/settings.json');
+        return File('${Directory.systemTemp.path}/settings.json');
       }
       final home =
           Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];

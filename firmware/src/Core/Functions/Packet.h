@@ -217,8 +217,3 @@ inline uint16_t PacketWireSize(const PacketFrame *Frame)
 {
     return (uint16_t)(12 + PayloadBytes(*Frame));
 }
-
-inline void PacketToWire(const PacketFrame *Frame, uint8_t *Out)
-{
-    memcpy(Out, Frame, PacketWireSize(Frame));
-}

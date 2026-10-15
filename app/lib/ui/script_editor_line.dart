@@ -5,6 +5,13 @@
 
 part of 'script_editor_page.dart';
 
+// Category colours for script symbols, shared by the chip colouring and the legend.
+const Color _symInputColor = Color(0xFFFFD54F); // amber - inputs
+const Color _symOutputColor = Color(0xFFF06292); // pink - outputs
+const Color _symVariableColor = Color(0xFF64B5F6); // blue - variables
+const Color _symConstantColor = Color(0xFFBA68C8); // purple - constants
+const Color _symPredefineColor = Color(0xFF81C784); // green - predefines
+
 extension on _ScriptEditorPageState {
   /// Adding destinations/operands is limited by the selected instruction. [depth] is the
   /// block nesting depth (the line is indented like formatted code).
@@ -184,11 +191,11 @@ extension on _ScriptEditorPageState {
 
   /// Category colour for a script symbol: I/O, variable, constant or predefine.
   Color _symbolColor(ScriptSymbol s) => switch (s.type) {
-    symInput => const Color(0xFFFFD54F), // amber - inputs
-    symOutput => const Color(0xFFF06292), // pink - outputs
-    symVariable => const Color(0xFF64B5F6), // blue - variables
-    symConstant => const Color(0xFFBA68C8), // purple - constants
-    symPredefine => const Color(0xFF81C784), // green - predefines
+    symInput => _symInputColor,
+    symOutput => _symOutputColor,
+    symVariable => _symVariableColor,
+    symConstant => _symConstantColor,
+    symPredefine => _symPredefineColor,
     _ => Colors.white70,
   };
 
@@ -264,11 +271,11 @@ extension on _ScriptEditorPageState {
     spacing: 10,
     runSpacing: 4,
     children: [
-      _legendDot('Input', const Color(0xFFFFD54F)),
-      _legendDot('Output', const Color(0xFFF06292)),
-      _legendDot('Variable', const Color(0xFF64B5F6)),
-      _legendDot('Constant', const Color(0xFFBA68C8)),
-      _legendDot('Predefine', const Color(0xFF81C784)),
+      _legendDot('Input', _symInputColor),
+      _legendDot('Output', _symOutputColor),
+      _legendDot('Variable', _symVariableColor),
+      _legendDot('Constant', _symConstantColor),
+      _legendDot('Predefine', _symPredefineColor),
       _legendDot('Instruction', kOrange),
     ],
   );

@@ -149,7 +149,7 @@ static inline uint8_t ShapeAlpha(const GeometryParams &Params, const Vector<2> &
 
     case Geometries::Ellipse:
     {
-        Number Radial = sqrt(sq(Point[0] * Params.InvHalfX) + sq(Point[1] * Params.InvHalfY));
+        Number Radial = Vector<2>{Point[0] * Params.InvHalfX, Point[1] * Params.InvHalfY}.Norm2();
         return FadeAlpha((N(1) - Radial) * Params.EllipseMinHalf, Params);
     }
 
@@ -181,8 +181,6 @@ static inline uint8_t ShapeAlpha(const GeometryParams &Params, const Vector<2> &
     {
         Number OuterR = Params.SizeX;
         if (OuterR.Value <= 0) return 0;
-        int Points = Params.PointNumber < 3 ? 3 : Params.PointNumber;
-        if (Points > 32) Points = 32;
         Number PointR = Point.Norm2();
         if (PointR.Value <= 0) return FadeAlpha(OuterR, Params);
         Number Theta = atan2(Point[1], Point[0]);

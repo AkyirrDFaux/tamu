@@ -6,6 +6,42 @@
 
 part of 'register_page.dart';
 
+/// Prompts for a numeric index. Returns the parsed value (null when dismissed or
+/// unparseable); callers range-check the result.
+Future<int?> _promptIntIndex(
+  BuildContext context, {
+  required String title,
+  required String initial,
+  String? helper,
+}) {
+  final controller = TextEditingController(text: initial);
+  return showDialog<int>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(title),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        decoration: helper == null ? null : InputDecoration(helperText: helper),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final v = int.tryParse(controller.text.trim());
+            Navigator.pop(context, v);
+          },
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
+}
+
 extension on _RegisterPageState {
   Future<void> _editBlock(
     int blockIndex,
@@ -346,33 +382,11 @@ extension on _RegisterPageState {
     int fieldIndex,
   ) async {
     if (block == null || !mounted) return;
-    final controller = TextEditingController(text: '$fieldIndex');
-    final newField = await showDialog<int>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Change field index'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            helperText: '0..255, must be unused',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final v = int.tryParse(controller.text.trim());
-              Navigator.pop(context, v);
-            },
-            child: const Text('OK'),
-          ),
-        ],
-      ),
+    final newField = await _promptIntIndex(
+      context,
+      title: 'Change field index',
+      initial: '$fieldIndex',
+      helper: '0..255, must be unused',
     );
     if (newField == null ||
         newField < 0 ||

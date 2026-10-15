@@ -23,9 +23,9 @@
 #ifdef USE_SCRIPTS
 
 // The class declaration needs the script structures (LoadedScript is held by value in the
-// registry) and the fixed-point Number type used across the VM signatures.
+// registry). The ScriptScalar/ExprValue value types are forward-declared below; Number.h
+// reaches the VM signatures through ScriptDefs.h.
 #include "Core/Services/ScriptDefs.h"
-#include "Core/Types/Number.h"
 
 // Defined in the split files below; only referenced by pointer/reference in the class body.
 struct ScriptScalar;

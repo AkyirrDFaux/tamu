@@ -41,6 +41,7 @@
 #include "tusb.h"
 
 #include "Core/Functions/Bootloader.h"
+#include "Core/Devices/BootloaderCommon.h"  // GpioCfg/GpioOutPP + the identify frame builder
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -74,19 +75,6 @@
 // own 48 MHz source via RCC_CFGR2.USBFSSRC and is not what this board is wired for.) The
 // project's previous working Valu v2 release used port 0 as well.
 #define USBD_RHPORT 0
-
-// ---------------------------------------------------------------------------
-// GPIO (direct register: CFGLR is 4 bits per pin; PA2 < 8)
-// ---------------------------------------------------------------------------
-
-static void GpioCfg(GPIO_TypeDef *Port, uint32_t Pin, uint32_t Cfg)
-{
-    uint32_t Shift = Pin * 4u;
-    Port->CFGLR = (Port->CFGLR & ~(0xFu << Shift)) | (Cfg << Shift);
-}
-
-static void GpioOutPP(GPIO_TypeDef *Port, uint32_t Pin) { GpioCfg(Port, Pin, 0x3u); } // out push-pull
-
 
 // ===========================================================================
 // USB CDC-ACM (TinyUSB) - identity, descriptors, hardware bring-up, ISR
@@ -418,30 +406,6 @@ static void SendReadResponse(uint32_t Offset)
     Bootloader::EncodeReadResponse(Offset, Data, Resp);
     tud_cdc_write(Resp, sizeof(Resp));
     tud_cdc_write_flush();
-}
-
-// The identify response is entirely build-time constant (app-space size + device name), so the
-// whole frame - control byte and parity included - is precomputed and lives in flash. Nothing
-// is assembled at runtime: the handler just sends the constant (mirrors the DAS MakeIdentify).
-struct IdentifyFrame { uint8_t Bytes[Bootloader::DATA_SIZE]; };
-
-constexpr IdentifyFrame MakeIdentify(uint32_t Space, const char *Name)
-{
-    IdentifyFrame Frame{};
-    Frame.Bytes[0] = Bootloader::START;
-    Frame.Bytes[1] = Bootloader::CMD_IDENTIFY_RESP;
-    Frame.Bytes[2] = (uint8_t)(Space & 0xFFu);
-    Frame.Bytes[3] = (uint8_t)((Space >> 8) & 0xFFu);
-    Frame.Bytes[4] = (uint8_t)((Space >> 16) & 0xFFu);
-    Frame.Bytes[5] = (uint8_t)((Space >> 24) & 0xFFu);
-    for (uint8_t i = 0; i < Bootloader::NAME_SIZE; i++)
-    {
-        if (Name[i] == '\0') break;
-        Frame.Bytes[6 + i] = (uint8_t)Name[i];
-    }
-    Frame.Bytes[Bootloader::DATA_SIZE - 1] = Bootloader::END;
-    Frame.Bytes[1] |= (uint8_t)(Bootloader::Parity(Frame.Bytes, Bootloader::DATA_SIZE) << 3);
-    return Frame;
 }
 
 constexpr IdentifyFrame Identify = MakeIdentify(APP_LIMIT - APP_BASE, "Valu v2.0");

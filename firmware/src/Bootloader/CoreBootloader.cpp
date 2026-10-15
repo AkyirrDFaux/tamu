@@ -200,7 +200,7 @@ extern "C" void app_main(void)
     usb_serial_jtag_driver_install(&Usb);
     App = MainApp;
     // Guard the sector bitmap against a `partitions.csv` size change: a larger `ota_0` would
-    // make the sector index run past `s_erased`. Refuse writes (reads return 0xFF) rather
+    // make the sector index run past `Erased`. Refuse writes (reads return 0xFF) rather
     // than corrupt memory.
     if (App != nullptr && App->size > OTA_APP_SIZE)
         App = nullptr;
@@ -220,6 +220,8 @@ extern "C" void app_main(void)
                 esp_partition_read(App, Off, Data, Bootloader::PAYLOAD_SIZE);
                 return true;
             };
+            // Kept as a closure (not the bare SendRaw pointer): BootloaderHost templates on the
+            // callback's type so the transport inlines instead of costing an indirect call.
             auto Send = [](const uint8_t *Data, size_t Length) { SendRaw(Data, Length); };
             BootloaderHost::HandleRead(Offset, ReadPayload, Send);
         },

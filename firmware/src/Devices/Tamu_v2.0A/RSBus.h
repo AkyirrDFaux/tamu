@@ -2,7 +2,6 @@
 #include "soc/uart_struct.h" // UART1 register struct (rxfifo_full_thrhd)
 #include <string.h>
 #include "Core/Functions/Bus.h"
-#include "Core/Functions/Bootloader.h"
 
 #define TXD_PIN (GPIO_NUM_21) // RS-485 transceiver TX (to DI)
 #define RXD_PIN (GPIO_NUM_20) // RS-485 transceiver RX (from RO)

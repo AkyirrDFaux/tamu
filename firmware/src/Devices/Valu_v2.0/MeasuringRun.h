@@ -17,16 +17,6 @@
 static Number MeasFiltered[MEAS_CHANNEL_COUNT];
 static bool ConvSeeded[MEAS_CHANNEL_COUNT] = {false, false, false};
 
-// Clamps a raw ADC sample to the usable (1, 1022) window shared by every divider transform.
-// 0 and 1023 would make the (1023 - in) denominator zero (or a tiny fraction, an unbounded
-// ratio that overflows Q16.16), so both ends are pinned one step in.
-static inline Number MeasClampAdc(Number In)
-{
-    if (In < N(1)) return N(1);
-    if (In > N(1022)) return N(1022);
-    return In;
-}
-
 // Converts a configured sampling rate (Hz) into the loop interval in ms (>= 1 ms), memoised
 // per channel so the 32-bit software divide runs only when the stored rate changes.
 static inline uint32_t SampleIntervalMs(uint8_t Channel)

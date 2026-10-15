@@ -193,8 +193,6 @@ int scriptPropertiesWithSlot(int properties, int slot) =>
     (properties & ~ScriptProperties.slotMask) |
     ((slot & 0xFF) << ScriptProperties.slotShift);
 
-int _align4(int size) => (size + 3) & ~3;
-
 /// The kind of a script function (Docs/Services/Script.md "Functions and Macros"). Local and
 /// macro are laid out by the app into the instruction stream; global is linked at load.
 enum ScriptFunctionKind {
@@ -323,7 +321,7 @@ int defaultSizeForType(DataType type) => switch (type) {
 Uint8List packScriptValues(List<ValueInfo> infos, List<List<int>> values) {
   var total = 0;
   for (final info in infos) {
-    total += _align4(info.size);
+    total += align4(info.size);
   }
   final out = Uint8List(total);
   var offset = 0;
@@ -332,7 +330,7 @@ Uint8List packScriptValues(List<ValueInfo> infos, List<List<int>> values) {
     final value = i < values.length ? values[i] : const <int>[];
     final n = value.length < info.size ? value.length : info.size;
     out.setRange(offset, offset + n, value);
-    offset += _align4(info.size);
+    offset += align4(info.size);
   }
   return out;
 }
@@ -348,7 +346,7 @@ Uint8List unpackScriptValue(List<ValueInfo> infos, List<int> blob, int index) {
       if (end > blob.length) return Uint8List(0);
       return Uint8List.fromList(blob.sublist(start, end));
     }
-    offset += _align4(infos[i].size);
+    offset += align4(infos[i].size);
   }
   return Uint8List(0);
 }

@@ -13,7 +13,6 @@
 #ifdef USE_APP_INTERFACE
 
 #include <cstdint>
-#include <cstring>
 #include <cstdlib>
 #ifdef APP_INTERFACE_SINGLE_THREADED
 // No-OS targets (the CH32 Valu app): there is no RTOS, no separate link task, and the USB

@@ -36,7 +36,7 @@ A file is handed to other functions to have data stored in it or read from it, a
 | Read File         | 5  | Name                                        | Fragmentation, Name, File contents (stream) | Maximum 64 byte stream fragment                       |
 | Write File        | 6  | Fragmentation, Name, File contents (stream) | Last sequential fragmentation index written | Respond only if requested, maximum 64 byte stream fragment |
 ### Implementation Functions
-#### Main Functions (implement per device, preferably not exposed)
+#### Main Functions (implement per device, ideally not exposed)
 - `bool Init()`
 	Finds and opens the storage partition. Returns true if successful.
 - `uint32_t Read(uint32_t Offset, void* Data, uint32_t Size)`

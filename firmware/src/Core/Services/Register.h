@@ -60,10 +60,7 @@ public:
 #endif
 
 private:
-    // Former function-local statics of the System getter (RegisterRead.h), same order.
-#ifdef TYPE_CORE
-    uint8_t NetId = 0;
-#endif
+    // The System getter's value buffer (RegisterRead.h: SystemFillValue).
     uint8_t SysValueBuf[24] = {0};
 
     // Response helpers (RegisterDefs.h).

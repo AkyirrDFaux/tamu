@@ -315,7 +315,6 @@ bool SNDB::AddDevice(const SerialNumber &Serial, uint16_t Address)
     NewEntry.ShortID = (uint16_t)(Address & 0x3FF);
     NewEntry.Net = (uint8_t)((Address >> 10) & 0x3F);
     NewEntry.Uid = Serial;
-    memset(NewEntry.Reserved, 0, sizeof(NewEntry.Reserved));
 
     if (WriteHead + sizeof(RegistryEntry) > RegistrySize)
         return false;

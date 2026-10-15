@@ -35,6 +35,9 @@ String decodePaddedString(List<int> bytes) {
   return String.fromCharCodes(bytes.sublist(0, end)).trimRight();
 }
 
+/// Rounds [v] up to the next 4-byte boundary (the wire/backup alignment).
+int align4(int v) => (v + 3) & ~3;
+
 /// Sign-extends a 32 bit little-endian value (Dart ints are 64 bit, so the
 /// sign bit must be expanded manually).
 int _signExtend32(int raw) => (raw & 0x80000000) != 0 ? raw - 0x100000000 : raw;

@@ -16,6 +16,7 @@ import '../core/system_schema.dart' show systemFieldKeys, systemKeyName;
 import '../core/types.dart';
 import 'theme.dart' show kSurfaceAlt;
 import 'value_editor.dart' show dataTypeLabel, formatValue;
+import 'widgets.dart' show BlockScrollBody;
 
 /// Which set of values the Register page shows (docs Register.md appbar).
 enum RegisterViewMode { current, backup }
@@ -82,15 +83,7 @@ class RegisterBackupView extends StatelessWidget {
     if (children.isEmpty) {
       return const Center(child: Text('No blocks found'));
     }
-    return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 10, 10, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: children,
-        ),
-      ),
-    );
+    return BlockScrollBody(children: children);
   }
 
   /// Static blocks persist their Persistent fields in the `.SV` space; the decoder already

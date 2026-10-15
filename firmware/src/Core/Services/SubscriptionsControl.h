@@ -234,12 +234,11 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
             Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
             Entry->LastRegisteredMs = 0;
             Entry->LastValueMs = 0;
-            // This set persists its own entry, but must not rewrite the file from the live table:
-            // an entry another subscription lost to a lease expiry is not a deliberate removal, so
-            // it has to survive in `.SUBREQ` for the next boot (and an empty table must not delete
-            // the file at all).
-            // Persist this set's own entry. The write result decides the reply below: a failed
-            // persistence must not read as a successful set.
+            // Persist this set's own entry, but must not rewrite the file from the live table: an
+            // entry another subscription lost to a lease expiry is not a deliberate removal, so it
+            // has to survive in `.SUBREQ` for the next boot (and an empty table must not delete the
+            // file at all). The write result decides the reply below: a failed persistence must not
+            // read as a successful set.
             bool Saved = SaveRequesterTable(true);
 
             // Respond first (the app waits on the transaction ID), then register the provider

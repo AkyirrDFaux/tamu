@@ -778,15 +778,7 @@ class _RegisterPageState extends State<RegisterPage>
       }
     }
 
-    return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 10, 10, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: children,
-        ),
-      ),
-    );
+    return BlockScrollBody(children: children);
   }
 
   /// Applies a drag-reorder of a block's fields.
@@ -836,30 +828,10 @@ class _RegisterPageState extends State<RegisterPage>
     ({int type, int inst, ValueInfo meta, String name})? block,
   ) async {
     if (block == null || !mounted) return;
-    final controller = TextEditingController(text: '${block.inst}');
-    final target = await showDialog<int>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Move block to index'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          keyboardType: TextInputType.number,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final v = int.tryParse(controller.text.trim());
-              Navigator.pop(context, v);
-            },
-            child: const Text('OK'),
-          ),
-        ],
-      ),
+    final target = await _promptIntIndex(
+      context,
+      title: 'Move block to index',
+      initial: '${block.inst}',
     );
     if (target == null || target < 0 || target == block.inst) return;
     final ok = await _client.moveDynamicBlockTo(block.inst, target);

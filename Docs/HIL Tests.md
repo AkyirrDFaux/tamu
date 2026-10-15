@@ -16,7 +16,7 @@ Every device the scan finds becomes one inventory entry. An entry answers the qu
 | Type | Register System block, DeviceType | |
 | Capabilities | Register System block, Capability bits | Drives the service prerequisites |
 | Services | Capability bits | Script and subscription services are capability-gated; storage is universal |
-| Modules | The blocks the device exposes | [[Modules and Blocks/LED Display\|LED display]], [[Modules and Blocks/Buttons & LEDs\|fan and buttons]], [[Modules and Blocks/Measurement\|measurement]] |
+| Modules | The blocks the device exposes | [[Modules and Blocks/LED Display\|LED display]], [[Modules and Blocks/Buttons & LEDs\|buttons and LEDs]], [[Modules and Blocks/Generic System Blocks\|fan]], [[Modules and Blocks/Measurement\|measurement]] |
 ### Test Categories
 A test belongs to one of five categories. The category fixes when the test runs and what it needs. A run leaves the bootloader category out; it is started on its own because it takes its device off the bus.
 

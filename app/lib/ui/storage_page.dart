@@ -66,9 +66,6 @@ class _StoragePageState extends State<StoragePage>
     return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
   }
 
-  Future<bool> _confirm(String title, String body) async =>
-      confirmDialog(context, title: title, body: body);
-
   Future<String?> _promptText(
     String title,
     String label,
@@ -147,9 +144,11 @@ class _StoragePageState extends State<StoragePage>
   }
 
   Future<void> _deleteFile(FileRecord file) async {
-    if (!await _confirm(
-      'Delete "${file.name}"?',
-      'The file record is invalidated; the space is reused on the next '
+    if (!await confirmDialog(
+      context,
+      title: 'Delete "${file.name}"?',
+      body:
+          'The file record is invalidated; the space is reused on the next '
           'matching allocation.',
     )) {
       return;

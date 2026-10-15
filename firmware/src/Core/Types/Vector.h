@@ -74,6 +74,4 @@ public:
     }
 };
 
-
-
 #endif // SCALAR_ONLY

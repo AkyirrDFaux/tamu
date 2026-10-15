@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../core/script_file.dart';
 import '../core/types.dart';
 import 'theme.dart';
+import 'script_widgets.dart';
 import 'widgets.dart';
 
 /// The result of the create-script dialog.
@@ -182,14 +183,7 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
               value: _runOnLoad,
               onChanged: (v) => setState(() => _runOnLoad = v),
             ),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Function library'),
-              subtitle: const Text(
-                'The file is a function library, not a script',
-                style: TextStyle(fontSize: 11, color: Colors.white54),
-              ),
+            FunctionLibrarySwitch(
               value: _functionLibrary,
               onChanged: (v) => setState(() => _functionLibrary = v),
             ),

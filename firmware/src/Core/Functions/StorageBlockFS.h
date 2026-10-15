@@ -287,7 +287,6 @@ public:
 
         // Entry 0: self-describing table (points to its own location and length)
         FileRecord Entry0;
-        memset(&Entry0, 0xFF, sizeof(Entry0));
         Entry0.Offset = NewOffset;
         Entry0.Size = NewSize;
         memcpy(Entry0.Name, ".TABLE  ", 8);
@@ -358,7 +357,6 @@ public:
             if (!ReadTableEntry(i, &Entry)) return 0; // unreadable table: no space is safe
             if (FileSlotIsFree(Entry.Offset)) continue;
             uint32_t Blocks = BlocksForSize(Entry.Size);
-            if (Blocks == 0) Blocks = 1;
             MarkUsed(Entry.Offset, Blocks);
         }
         if (PendingBlocks)
@@ -589,7 +587,6 @@ public:
         }
 
         FileRecord Entry0;
-        memset(&Entry0, 0xFF, sizeof(Entry0));
         Entry0.Offset = STORAGE_BLOCK_SIZE;              // Table starts at block 1
         Entry0.Size = STORAGE_TABLE_SIZE;       // Fixed per-device table capacity
         memcpy(Entry0.Name, ".TABLE  ", 8);
@@ -618,7 +615,6 @@ public:
             if (!ReadTableEntry(i, &Entry)) continue;
             if (FileSlotIsFree(Entry.Offset)) continue;
             uint32_t Blocks = BlocksForSize(Entry.Size);
-            if (Blocks == 0) Blocks = 1; // zero-size file still occupies one block
             Used += Blocks * STORAGE_BLOCK_SIZE;
         }
         return Used;
@@ -731,12 +727,11 @@ private:
             uint32_t Start = Entry.Offset;
             // A file always occupies at least one block, even when its size is 0:
             // CreateFile/ResizeFile reserve (and erase) one block for a zero-size file,
-            // so BlockUsed must report it as used. Without this clamp a size-0 file's
-            // block looks free and FindSpace hands it to another file -> two live records
-            // alias the same flash (observed on hardware: ZERO@512 + BETA@512, and after
-            // resizing ZERO up, ZERO shadowed BETA's data region).
+            // so BlockUsed must report it as used. Without that clamp (BlocksForSize) a
+            // size-0 file's block looks free and FindSpace hands it to another file -> two
+            // live records alias the same flash (observed on hardware: ZERO@512 + BETA@512,
+            // and after resizing ZERO up, ZERO shadowed BETA's data region).
             uint32_t Blocks = BlocksForSize(Entry.Size);
-            if (Blocks == 0) Blocks = 1;
             uint32_t End = Entry.Offset + Blocks * STORAGE_BLOCK_SIZE;
             if (Offset >= Start && Offset < End)
                 return true;

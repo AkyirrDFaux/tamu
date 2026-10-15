@@ -3,6 +3,10 @@
 set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
+# Refuse to build on a cache another user's HOME poisoned (see the guard header).
+. "$ROOT/scripts/build_cache_guard.sh"
+guard_cache "Flutter" "$ROOT/app/.dart_tool" "$ROOT/app/build"
+
 # Regenerate the app version stamp (scripts/gen_app_version.py hashes app/lib) before every
 # build so it cannot go stale, and pass the compile date so Settings shows a real value
 # instead of the 'unknown' default (Docs/App/Settings.md "App compile date").

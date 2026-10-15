@@ -18,7 +18,6 @@ static inline void SetBlockName(char *Dst, const char *Src, uint16_t Len) {
 // Combines a field index and a key into the 16-bit Field&Key sort key.
 constexpr uint16_t MakeFieldKey(uint8_t Field, uint8_t Key) { return (uint16_t)(((uint16_t)Field << 8) | Key); }
 constexpr uint8_t FieldOf(uint16_t FieldKey) { return (uint8_t)(FieldKey >> 8); }
-constexpr uint8_t KeyOf(uint16_t FieldKey) { return (uint8_t)FieldKey; }
 
 // The descriptor (Docs/Services/Register.md "Map entry"): Type(16) | Size(8) | Flags(8).
 // One type, internal and on the wire. The key is not part of it - it travels in the request's /

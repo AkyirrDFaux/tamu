@@ -239,7 +239,7 @@ inline uint8_t ScriptService::ExecFlow(LoadedScript *Script, const ScriptLineInf
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_FLOW_END: {
-            uint16_t Open = (Script->BlockMatch[Script->Ic] == 0xFFFF) ? 0xFFFF : Script->BlockMatch[Script->Ic];
+            uint16_t Open = Script->BlockMatch[Script->Ic];
             if (Open != 0xFFFF && Script->BlockKind[Open] == 2) { Script->Ic = Open; return SCRIPT_ERR_NONE; } // while -> re-check
             Script->Ic++;
             return SCRIPT_ERR_NONE;

@@ -5,6 +5,19 @@
 
 part of 'script_editor_page.dart';
 
+/// The standard editor section body: a card with uniform margin and 12px padding around a
+/// start-aligned column. Shared by the editor's section and validity cards.
+Widget _editorCard(List<Widget> children) => Card(
+  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+  child: Padding(
+    padding: const EdgeInsets.all(12),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
+    ),
+  ),
+);
+
 extension on _ScriptEditorPageState {
   Widget _controlsCard() {
     return Card(
@@ -120,74 +133,58 @@ extension on _ScriptEditorPageState {
   }
 
   Widget _functionCard(ScriptDraft draft) {
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Function',
-              style: TextStyle(color: kOrange, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              initialValue: draft.functionName,
-              maxLength: 23,
-              decoration: const InputDecoration(labelText: 'Function name'),
-              onChanged: (v) {
-                draft.functionName = v;
-                _touch();
-              },
-            ),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Load on boot'),
-              value: draft.properties & ScriptProperties.loadOnBoot != 0,
-              onChanged: (v) {
-                draft.properties = v
-                    ? draft.properties | ScriptProperties.loadOnBoot
-                    : draft.properties & ~ScriptProperties.loadOnBoot;
-                _touch();
-              },
-            ),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Run on load'),
-              value: draft.properties & ScriptProperties.runOnLoad != 0,
-              onChanged: (v) {
-                draft.properties = v
-                    ? draft.properties | ScriptProperties.runOnLoad
-                    : draft.properties & ~ScriptProperties.runOnLoad;
-                _touch();
-              },
-            ),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Function library'),
-              subtitle: const Text(
-                'The file is a function library, not a script',
-                style: TextStyle(fontSize: 11, color: Colors.white54),
-              ),
-              value: draft.properties & ScriptProperties.functionLibrary != 0,
-              onChanged: (v) {
-                draft.properties = v
-                    ? draft.properties | ScriptProperties.functionLibrary
-                    : draft.properties & ~ScriptProperties.functionLibrary;
-                _touch();
-              },
-            ),
-            // The slot a load-on-boot script loads into (Properties bits 8-15).
-            if (draft.properties & ScriptProperties.loadOnBoot != 0)
-              _bootSlotField(draft),
-          ],
-        ),
+    return _editorCard([
+      const Text(
+        'Function',
+        style: TextStyle(color: kOrange, fontWeight: FontWeight.w600),
       ),
-    );
+      const SizedBox(height: 8),
+      TextFormField(
+        initialValue: draft.functionName,
+        maxLength: 23,
+        decoration: const InputDecoration(labelText: 'Function name'),
+        onChanged: (v) {
+          draft.functionName = v;
+          _touch();
+        },
+      ),
+      SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Load on boot'),
+        value: draft.properties & ScriptProperties.loadOnBoot != 0,
+        onChanged: (v) {
+          draft.properties = v
+              ? draft.properties | ScriptProperties.loadOnBoot
+              : draft.properties & ~ScriptProperties.loadOnBoot;
+          _touch();
+        },
+      ),
+      SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Run on load'),
+        value: draft.properties & ScriptProperties.runOnLoad != 0,
+        onChanged: (v) {
+          draft.properties = v
+              ? draft.properties | ScriptProperties.runOnLoad
+              : draft.properties & ~ScriptProperties.runOnLoad;
+          _touch();
+        },
+      ),
+      FunctionLibrarySwitch(
+        value: draft.properties & ScriptProperties.functionLibrary != 0,
+        onChanged: (v) {
+          draft.properties = v
+              ? draft.properties | ScriptProperties.functionLibrary
+              : draft.properties & ~ScriptProperties.functionLibrary;
+          _touch();
+        },
+      ),
+      // The slot a load-on-boot script loads into (Properties bits 8-15).
+      if (draft.properties & ScriptProperties.loadOnBoot != 0)
+        _bootSlotField(draft),
+    ]);
   }
 
   Widget _bootSlotField(ScriptDraft draft) {
@@ -214,42 +211,33 @@ extension on _ScriptEditorPageState {
     final list = draft.listOf(category);
     final live = _statusText[category];
     final title = category.pluralLabel;
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: kOrange,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  '(${list.length})',
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
-                ),
-                const Spacer(),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  icon: const Icon(Icons.add, size: 20),
-                  tooltip: 'Add $title',
-                  onPressed: () => _addValue(category),
-                ),
-              ],
+    return _editorCard([
+      Row(
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: kOrange,
+              fontWeight: FontWeight.w600,
             ),
-            for (var i = 0; i < list.length; i++)
-              _valueRow(category, i, list[i], live),
-          ],
-        ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '(${list.length})',
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+          const Spacer(),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.add, size: 20),
+            tooltip: 'Add $title',
+            onPressed: () => _addValue(category),
+          ),
+        ],
       ),
-    );
+      for (var i = 0; i < list.length; i++)
+        _valueRow(category, i, list[i], live),
+    ]);
   }
 
   Widget _valueRow(
@@ -364,177 +352,159 @@ extension on _ScriptEditorPageState {
     final lines = _activeLines;
     final depths = _ScriptEditorPageState._blockDepths(lines);
     final scope = _activeFunction ?? -1;
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Text(
-                  'Instructions',
-                  style: TextStyle(color: kOrange, fontWeight: FontWeight.w600),
+    return _editorCard([
+      Row(
+        children: [
+          const Text(
+            'Instructions',
+            style: TextStyle(color: kOrange, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '(${lines.length} lines)',
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+          const Spacer(),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.add, size: 20),
+            tooltip: 'Add line',
+            onPressed: () => _rebuild(() {
+              lines.add(
+                ScriptLine(
+                  instruction: ScriptSymbol.instruction(catMath, 0),
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  '(${lines.length} lines)',
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
-                ),
-                const Spacer(),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  icon: const Icon(Icons.add, size: 20),
-                  tooltip: 'Add line',
-                  onPressed: () => _rebuild(() {
-                    lines.add(
-                      ScriptLine(
-                        instruction: ScriptSymbol.instruction(catMath, 0),
-                      ),
-                    );
-                    _dirty = true;
-                  }),
-                ),
-              ],
-            ),
-            // Scope: edit the main program or a function's body. The app lays a body out at
-            // assembly (Docs/Services/Script.md "Functions and Macros").
-            DropdownButton<int>(
-              isExpanded: true,
-              value: scope,
-              items: [
-                const DropdownMenuItem(value: -1, child: Text('Main program')),
-                for (var i = 0; i < draft.functions.length; i++)
-                  DropdownMenuItem(
-                    value: i,
-                    enabled: draft.functions[i].hasBody,
-                    child: Text(
-                      '${draft.functions[i].kind.label} · '
-                      '${draft.functions[i].name.isEmpty ? '#$i' : draft.functions[i].name}',
-                    ),
-                  ),
-              ],
-              onChanged: (v) =>
-                  _rebuild(() => _activeFunction = (v ?? -1) < 0 ? null : v),
-            ),
-            const SizedBox(height: 4),
-            _legend(),
-            if (lines.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: Text(
-                  'No instructions yet. Add a line to start the program.',
-                  style: TextStyle(color: Colors.white54),
-                ),
-              )
-            else
-              ReorderableListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                buildDefaultDragHandles: false,
-                itemCount: lines.length,
-                onReorderItem: (oldIndex, newIndex) => _rebuild(() {
-                  final line = lines.removeAt(oldIndex);
-                  lines.insert(newIndex, line);
-                  _dirty = true;
-                }),
-                itemBuilder: (context, i) => _lineEditor(draft, i, depths[i]),
-              ),
-          ],
-        ),
+              );
+              _dirty = true;
+            }),
+          ),
+        ],
       ),
-    );
+      // Scope: edit the main program or a function's body. The app lays a body out at
+      // assembly (Docs/Services/Script.md "Functions and Macros").
+      DropdownButton<int>(
+        isExpanded: true,
+        value: scope,
+        items: [
+          const DropdownMenuItem(value: -1, child: Text('Main program')),
+          for (var i = 0; i < draft.functions.length; i++)
+            DropdownMenuItem(
+              value: i,
+              enabled: draft.functions[i].hasBody,
+              child: Text(
+                '${draft.functions[i].kind.label} · '
+                '${draft.functions[i].name.isEmpty ? '#$i' : draft.functions[i].name}',
+              ),
+            ),
+        ],
+        onChanged: (v) =>
+            _rebuild(() => _activeFunction = (v ?? -1) < 0 ? null : v),
+      ),
+      const SizedBox(height: 4),
+      _legend(),
+      if (lines.isEmpty)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 8),
+          child: Text(
+            'No instructions yet. Add a line to start the program.',
+            style: TextStyle(color: Colors.white54),
+          ),
+        )
+      else
+        ReorderableListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          buildDefaultDragHandles: false,
+          itemCount: lines.length,
+          onReorderItem: (oldIndex, newIndex) => _rebuild(() {
+            final line = lines.removeAt(oldIndex);
+            lines.insert(newIndex, line);
+            _dirty = true;
+          }),
+          itemBuilder: (context, i) => _lineEditor(draft, i, depths[i]),
+        ),
+    ]);
   }
 
   /// The declared functions (local, macro and global). Local/macro bodies are edited through
   /// the Instructions card's scope selector; a global function is a link declaration with no
   /// body (it lives in a function-library file).
   Widget _functionsCard(ScriptDraft draft) {
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Text(
-                  'Functions & macros',
-                  style: TextStyle(color: kOrange, fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  '(${draft.functions.length})',
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
-                ),
-                const Spacer(),
+    return _editorCard([
+      Row(
+        children: [
+          const Text(
+            'Functions & macros',
+            style: TextStyle(color: kOrange, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '(${draft.functions.length})',
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+          const Spacer(),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.add, size: 20),
+            tooltip: 'Add function',
+            onPressed: _addFunction,
+          ),
+        ],
+      ),
+      if (draft.functions.isEmpty)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 8),
+          child: Text(
+            'No functions. A local function or macro is expanded into a Flow Call plus a '
+            'body; a global function is linked at load.',
+            style: TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+        ),
+      for (var i = 0; i < draft.functions.length; i++)
+        ListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+            draft.functions[i].name.isEmpty
+                ? '#$i'
+                : draft.functions[i].name,
+          ),
+          subtitle: Text(
+            draft.functions[i].isGlobal
+                ? 'Global · ${scriptFileName(draft.functions[i].globalFileId)} · '
+                      'mem ${draft.functions[i].globalMemOffset}, '
+                      'instr ${draft.functions[i].globalInstrOffset}'
+                : '${draft.functions[i].kind.label} · '
+                      '${draft.functions[i].body.length} lines',
+            style: const TextStyle(fontSize: 11, color: Colors.white54),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (draft.functions[i].hasBody)
                 IconButton(
                   visualDensity: VisualDensity.compact,
-                  icon: const Icon(Icons.add, size: 20),
-                  tooltip: 'Add function',
-                  onPressed: _addFunction,
+                  tooltip: 'Edit body',
+                  icon: const Icon(Icons.edit_note, size: 18),
+                  onPressed: () => _rebuild(() => _activeFunction = i),
                 ),
-              ],
-            ),
-            if (draft.functions.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: Text(
-                  'No functions. A local function or macro is expanded into a Flow Call plus a '
-                  'body; a global function is linked at load.',
-                  style: TextStyle(color: Colors.white54, fontSize: 12),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(
+                  Icons.remove_circle_outline,
+                  size: 18,
+                  color: Colors.redAccent,
                 ),
+                onPressed: () => _rebuild(() {
+                  draft.functions.removeAt(i);
+                  if (_activeFunction == i) _activeFunction = null;
+                  _dirty = true;
+                }),
               ),
-            for (var i = 0; i < draft.functions.length; i++)
-              ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: Text(
-                  draft.functions[i].name.isEmpty
-                      ? '#$i'
-                      : draft.functions[i].name,
-                ),
-                subtitle: Text(
-                  draft.functions[i].isGlobal
-                      ? 'Global · ${scriptFileName(draft.functions[i].globalFileId)} · '
-                            'mem ${draft.functions[i].globalMemOffset}, '
-                            'instr ${draft.functions[i].globalInstrOffset}'
-                      : '${draft.functions[i].kind.label} · '
-                            '${draft.functions[i].body.length} lines',
-                  style: const TextStyle(fontSize: 11, color: Colors.white54),
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (draft.functions[i].hasBody)
-                      IconButton(
-                        visualDensity: VisualDensity.compact,
-                        tooltip: 'Edit body',
-                        icon: const Icon(Icons.edit_note, size: 18),
-                        onPressed: () => _rebuild(() => _activeFunction = i),
-                      ),
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      icon: const Icon(
-                        Icons.remove_circle_outline,
-                        size: 18,
-                        color: Colors.redAccent,
-                      ),
-                      onPressed: () => _rebuild(() {
-                        draft.functions.removeAt(i);
-                        if (_activeFunction == i) _activeFunction = null;
-                        _dirty = true;
-                      }),
-                    ),
-                  ],
-                ),
-              ),
-          ],
+            ],
+          ),
         ),
-      ),
-    );
+    ]);
   }
 
   Future<void> _addFunction() async {

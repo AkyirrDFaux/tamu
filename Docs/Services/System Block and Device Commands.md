@@ -7,7 +7,7 @@ Basic device information and description. It shares memory internally with stati
 | Device Type                 | 0.0:0  | RO    | uint32             |      |
 | Capability                  | 0.0:1  | RO    | uint32             |      |
 | Software version            | 0.0:2  | RO    | 32bit (7+4+5+16)   | YY:MM:DD:II, year-month-day-iteration |
-| Serial Number               | 1      | RO    | Serial Number      |      |
+| Serial Number               | 1      | RO    | SN                 |      |
 | ID                          | 2      | RO    | uint16             |      |
 | Uptime                      | 3.0:0  | RO    | uint32             | ms   |
 | Current time                | 3.0:1  | RO    | uint32             | ms   |

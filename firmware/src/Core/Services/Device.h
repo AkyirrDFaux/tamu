@@ -53,7 +53,6 @@ private:
     static constexpr uint32_t KPtTimeoutMs = 1000; // reply deadline (ms)
     bool PtPending    = false;                    // a request is issued and not yet settled
     uint8_t PtCid     = 0;                        // passthrough CID (0x20/0x21/0x22)
-    uint8_t PtExpect  = 0;                        // expected Bootloader reply command
     uint16_t PtSrc    = 0;                        // reply routing: original request IdSrc
     uint16_t PtCmd    = 0;                        // reply routing: original request Cmd
     uint16_t PtTrid   = 0;                        // reply routing: original request Trid
@@ -162,17 +161,13 @@ void DeviceService::HandleSNDB(const PacketFrame &Frame)
                 uint16_t WireId = RegistryAddress(Entry);
                 memcpy(Payload, Entry.Uid.Bytes, 14);
                 memcpy(Payload + 14, &WireId, 2);
-                PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP, Payload, 16);
-                DispatchPacket(TxFrame);
+                SendDeviceReply(Frame, TxFrame, Payload, 16);
             }
             else
             {
                 // Send an empty response to indicate not found
                 DeviceLog("DEVICE", "SNDB lookup miss (id or sn)");
-                PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP, nullptr, 0);
-                DispatchPacket(TxFrame);
+                SendDeviceReply(Frame, TxFrame, nullptr, 0);
             }
             break;
         }
@@ -197,10 +192,8 @@ void DeviceService::HandleSNDB(const PacketFrame &Frame)
                     DeviceLog("DEVICE", "SNDB write id %u failed", (unsigned)WriteId);
                 }
                 // Always acknowledge (empty frame = failure, like the CID 13 not-found case).
-                PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                                 FLAG_TYPE | FLAG_START | FLAG_STOP,
-                                 Success ? Frame.Payload : nullptr, Success ? 16 : 0);
-                DispatchPacket(TxFrame);
+                SendDeviceReply(Frame, TxFrame, Success ? Frame.Payload : nullptr,
+                                (uint8_t)(Success ? 16 : 0));
             }
             break;
         }
@@ -232,12 +225,10 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
     uint8_t Raw[Bootloader::DATA_SIZE];
     size_t Len;
     uint32_t Offset = 0;
-    uint8_t Expect;
     if (Cid == 0x20)
     { // Identification: header-only request (no request payload).
         Bootloader::EncodeIdentifyRequest(Raw);
         Len = Bootloader::READ_REQ_SIZE;
-        Expect = Bootloader::CMD_IDENTIFY_RESP;
     }
     else if (Cid == 0x21)
     { // Send write packet: Offset (4) + Payload (32).
@@ -246,7 +237,6 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
         Offset = LoadUnaligned<uint32_t>(Frame.Payload);
         Bootloader::EncodeWrite(Offset, Frame.Payload + 4, Raw);
         Len = Bootloader::DATA_SIZE;
-        Expect = Bootloader::CMD_WRITE_RESP;
     }
     else
     { // Request read -> Offset (4).
@@ -255,7 +245,6 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
         Offset = LoadUnaligned<uint32_t>(Frame.Payload);
         Bootloader::EncodeReadRequest(Offset, Raw);
         Len = Bootloader::READ_REQ_SIZE;
-        Expect = Bootloader::CMD_READ_RESP;
     }
 
     // Issue and return. A send failure leaves nothing to await, so fail immediately; otherwise
@@ -267,7 +256,6 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
     RxInstance = this;
     BootloaderRxSink = [](uint8_t Byte) { return RxInstance->BootloaderRxFeed(Byte); };
     PtCid      = Cid;
-    PtExpect   = Expect;
     PtSrc      = Frame.IdSrc;
     PtCmd      = Frame.Cmd;
     PtTrid     = Frame.Trid;
@@ -594,9 +582,7 @@ bool DeviceService::Handle(const PacketFrame &Frame)
             uint8_t Rpl[14+4];
             memcpy(Rpl, &GetSerialNumber(), 14);
             memcpy(Rpl+14, &Uptime, 4);
-            PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                             FLAG_TYPE | FLAG_START | FLAG_STOP, Rpl, 18);
-            DispatchPacket(TxFrame);
+            SendDeviceReply(Frame, TxFrame, Rpl, 18);
 #endif
             break;
         }

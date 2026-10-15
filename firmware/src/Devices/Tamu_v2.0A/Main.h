@@ -5,7 +5,6 @@
 #include "esp_heap_caps.h"
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
-#include "nvs_flash.h"
 #include "esp_efuse.h"
 #include "esp_efuse_table.h"
 
@@ -144,12 +143,9 @@ if (!AppInterface.Connected) { ESP_LOGI("INIT","b3 appif"); }
 
     // BLE app link (Nordic UART service); advertised under the persisted System Name
     // (Docs: "If possible, the device name is shown in BLE advertising"). The Name field is
-    // fixed 16-char null-padded, so trim it into a C string.
+    // a fixed 16-char space-padded field with no terminator, trimmed into a C string here.
     char BleName[SYSTEM_NAME_LEN + 1];
-    uint8_t BleNameLen = SYSTEM_NAME_LEN;
-    while (BleNameLen > 0 && StaticPer.System.Name[BleNameLen - 1] == ' ') BleNameLen--;
-    memcpy(BleName, StaticPer.System.Name, BleNameLen);
-    BleName[BleNameLen] = '\0';
+    SystemNameCString(BleName);
 if (!AppInterface.Connected) { ESP_LOGI("INIT","b4 ble"); }
     AppBLEInit(BleName);
 

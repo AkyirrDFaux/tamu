@@ -396,7 +396,6 @@ struct LoadedScript {
     // total. Built once by BuildOffsets() at load; see Core/Functions/StrideOffsets.h for why.
     uint16_t *Offsets = nullptr;
 
-    uint16_t UiLen = 0;
     uint32_t InstrLen = 0;
     char Name[BLOCK_NAME_LEN] = {0};
 
@@ -449,7 +448,7 @@ struct LoadedScript {
         InCount = OutCount = VarCount = ConstCount = 0;
         FuncCount = 0;
         InTotal = OutTotal = VarTotal = ConstTotal = 0;
-        UiLen = 0; InstrLen = 0; InstrSymbols = 0; LineCount = 0;
+        InstrLen = 0; InstrSymbols = 0; LineCount = 0;
         Ic = 0; WaitingOnTime = false; WaitUntil = 0;
         CallDepth = 0; ErrorCode = SCRIPT_ERR_NONE;
         ReportDepth = 0; ReportLine = 0; FaultInstruction = 0;

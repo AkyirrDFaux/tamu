@@ -1,4 +1,4 @@
-Lists all loaded/avaliable (stored) scripts on that device (Loaded/Available switch at the top of the page).
+Lists all loaded/available (stored) scripts on that device (Loaded/Available switch at the top of the page).
 
 Each entry allows for showing the state of the script, and control of the script (start, pause/continue, stop, restart, etc...).
 - A loaded entry shows a state dot, the function name, the file name, the state label and
@@ -10,7 +10,7 @@ Each entry allows for showing the state of the script, and control of the script
   free slot) and Delete; a "New script" button creates a new stored file (not loaded).
 
 On tapping the entry's "Open editor" button opens the script editor page.
-# Script editor
+### Script Editor
 Shows everything in a organised human-readable format.
 - Controls and state
 - Inputs
@@ -41,7 +41,7 @@ script **Update** (reload live to apply the draft) and **Unload**, plus a refres
 The file id and the loaded slot are independent; the app tracks the mapping for the loads it
 starts (Issues.md, "Script CID 0 lists file IDs, not loaded slots").
 
-# Script UI info
+### Script UI Info
 The stored script's UI-info blob is decoded only by the app (the firmware treats it as opaque
 bytes; its length is the header's UI-info size field). Layout, version 2:
 

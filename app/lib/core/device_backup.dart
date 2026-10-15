@@ -40,9 +40,6 @@ int systemSegmentSize(bool hasNetId) =>
 /// The firmware's SUBREQ entry cap (Subscriptions.h).
 const int maxSubreqEntries = 16;
 
-/// Rounds `v` up to the next 4-byte boundary (the wire/backup alignment).
-int align4(int v) => (v + 3) & ~3;
-
 int _u16(List<int> b, int o) => o + 1 < b.length ? u16FromBytes(b, o) : 0;
 
 /// Aligns a static-space offset to a value of `size` bytes (Docs/Services/Register.md "Memory

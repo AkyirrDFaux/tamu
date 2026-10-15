@@ -38,7 +38,7 @@ Identify response packet:
 | Padding      | 4bit     | 0    |
 | Parity       | 1bit     | Even, covers command, size and name |
 | Command      | 3bit     | 0b001 |
-| App size     | uint32   | Size of the uploadable app region in bytes - the whole app region, storage included |
+| App size     | uint32   | Size of the uploadable app region in bytes. It is the app space alone on a device that partitions its flash, and also covers storage on a device without a partition table. |
 | Name         | char[32] | Device name, null-padded |
 | End Marker   | uint8    | 0xBC |
 

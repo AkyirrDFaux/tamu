@@ -16,7 +16,6 @@
 
 #include <cstdint>
 #include <cstring>
-#include <cstdio>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/usb_serial_jtag.h"
@@ -50,11 +49,6 @@ struct UsbFramer
     bool FrameOpen = false;
     uint16_t Len = 0;
     uint8_t Buf[2 + USB_FRAME_MAX_PAYLOAD + 1]; // crc + len + payload + stop
-
-    bool InFrame() const
-    {
-        return FrameOpen;
-    }
 
     void Reset()
     {

@@ -9,6 +9,8 @@
 #   ./upload.sh bin tamu [file] [off]      flash a raw .bin via esptool     (default: app @ 0x70000)
 #   ./upload.sh bin das  [file] [off]      flash a raw .bin via minichlink  (default: app @ 0x800)
 #   ./upload.sh bin valu [file] [off]      flash a raw .bin via wlink       (default: bootloader @ 0x0)
+#   ./upload.sh rsbus das [core-port]      build + upload the DAS app over the RSBus, relayed by the
+#                                          core (the node must be in bootloader mode)
 #   ./upload.sh ports                      list the serial ports the tools would use
 #   ./upload.sh help                       this text
 #
@@ -22,6 +24,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 FW="$ROOT/firmware"
 PIO="${PIO:-pio}"
+
+# Refuse to build on a cache another user's HOME poisoned (see the guard header).
+. "$ROOT/scripts/build_cache_guard.sh"
+_cache_guarded=0
+# Scanned lazily, once, on the first actual build - `help`/`ports` stay instant.
+guard_firmware_cache() {
+    [ "$_cache_guarded" = 1 ] && return 0
+    _cache_guarded=1
+    guard_cache "PlatformIO" "$FW/.pio/build"
+}
 
 # Optional port overrides. Empty = let the tool autodetect (PlatformIO for `app`/`boot`,
 # minichlink/esptool for `bin`).
@@ -69,6 +81,10 @@ Commands:
                               Flash a raw image. `file` defaults to the built image, `offset`
                               to the device's default (tamu app 0x70000, DAS app 0x800,
                               valu bootloader 0x0).
+  rsbus <das> [core-port]     Build the DAS app and upload it over the relay core's RSBus
+                              bootloader passthrough (Docs/Services/Bootloader.md, 002x). The
+                              node must already be in bootloader mode. The port defaults to
+                              TAMU_PORT, else the /dev/serial/by-id Espressif link.
   ports                       List /dev/ttyACM* and /dev/ttyUSB*.
   help                        Show this help.
 
@@ -107,6 +123,7 @@ EOF
 }
 
 pio_run() { # <env> [pio args...]
+    guard_firmware_cache   # clears a cache poisoned by another user's HOME, once
     local env="$1"; shift
     local port_args=()
     case "$env" in
@@ -210,6 +227,52 @@ do_bin() { # <tamu|das> [file] [offset]
     esac
 }
 
+# Upload a node's application over the relay core's RSBus bootloader passthrough
+# (Docs/Services/Bootloader.md, "Core Bootloader Passthrough Commands (002x)"). The
+# passthrough reaches whichever node is in bootloader mode without addressing it, so the
+# node must already be in bootloader mode. Only the application travels this way: the
+# bootloader is the thing doing the writing.
+do_rsbus() { # [das] [core port]
+    local dev="${1:-das}" port="${2:-}" env image lib candidate
+    case "$dev" in
+        das) ;;
+        tamu) die "$dev is the relay itself: flash it over USB with ./upload.sh app tamu" ;;
+        valu) die "$dev has no bus (see Docs/Devices.md): flash it over the WCH-Link with ./upload.sh app valu" ;;
+        *)    die "unknown device '$dev' (rsbus uploads the DAS application)" ;;
+    esac
+
+    env="$DAS_APP_ENV"
+    pio_run "$env"                       # build the image (clears a poisoned cache first)
+    image="$FW/.pio/build/$env/firmware.bin"
+    [ -f "$image" ] || die "no binary '$image' (the build produced nothing)"
+
+    port="${port:-${TAMU_PORT:-}}"
+    if [ -z "$port" ]; then
+        # The /dev/ttyACM<N> numbering moves between sessions, so prefer the by-id link.
+        for candidate in /dev/serial/by-id/*Espressif*; do
+            [ -e "$candidate" ] || continue
+            port="$(readlink -f "$candidate")"
+            break
+        done
+    fi
+    [ -n "$port" ] || die "name the relay core's port: ./upload.sh rsbus das /dev/ttyACM1 (or set TAMU_PORT)"
+
+    # libserialport ships beside the Flutter debug bundle; the HIL runner resolves it the
+    # same way, so the app has to have been built once (./app.sh).
+    lib=""
+    for candidate in "$ROOT"/app/build/linux/*/debug/bundle/lib; do
+        [ -d "$candidate" ] && lib="$candidate" && break
+    done
+    [ -n "$lib" ] || die "no Flutter bundle lib dir yet; build the app once first (./app.sh)"
+
+    echo "==> rsbus: $image -> the node in bootloader mode, relayed by the core on $port"
+    ( cd "$ROOT/app" && \
+      LD_LIBRARY_PATH="$lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+      TAMU_HIL="$port" TAMU_DAS_IMAGE="$image" \
+      flutter test --timeout none --concurrency=1 test/hil_bootloader_upload_test.dart ) \
+        || die "rsbus upload failed (see the output above)"
+}
+
 cmd="${1:-help}"
 case "$cmd" in
     help | -h | --help | "")
@@ -250,6 +313,9 @@ case "$cmd" in
         ;;
     bin | install)
         do_bin "${@:2}"
+        ;;
+    rsbus)
+        do_rsbus "${@:2}"
         ;;
     ports)
         shopt -s nullglob

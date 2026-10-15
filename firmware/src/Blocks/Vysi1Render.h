@@ -28,6 +28,26 @@ inline Matrix<3, 3> Vysi1Display::FieldTransform(const Matrix<2, 3> &Pos)
     return PromoteAffine(Pos) * BaseTransform();
 }
 
+// Reads a dictionary Size key that holds either a Number (uniform: both axes take it) or a
+// Vector<2> (width, height); any other or absent entry gives both axes `Def`. Both a geometry
+// and a texture accept either type, so re-typing an entry never leaves an invisible shape.
+static inline void ReadSize2(DynamicBlockDescriptor *Block, uint16_t Field, uint8_t Key, Number Def,
+                             Number &OutX, Number &OutY)
+{
+    OutX = OutY = Def;
+    KeyResult Kr = Block->GetKey(Field, Key);
+    if (ValueInfoType(Kr.Meta.Type) == (uint16_t)DataType::Vector && Kr.DataPtr)
+    {
+        Vector<2> Size = *reinterpret_cast<const Vector<2> *>(Kr.DataPtr);
+        OutX = Size[0];
+        OutY = Size[1];
+    }
+    else if (ValueInfoType(Kr.Meta.Type) == (uint16_t)DataType::Number && Kr.DataPtr)
+    {
+        OutX = OutY = *reinterpret_cast<const Number *>(Kr.DataPtr);
+    }
+}
+
 // Resolves geometry field `field` and fills GeoMask[field][led] with each LED's alpha.
 // Expensive per-LED shape math; only called when the block/offset/layout changed.
 inline void Vysi1Display::RenderGeometryField(DynamicBlockDescriptor *Block, uint16_t Field, uint16_t Slot)
@@ -52,28 +72,10 @@ inline void Vysi1Display::RenderGeometryField(DynamicBlockDescriptor *Block, uin
     Params.PointNumber = (uint8_t)ReadKeyInt(Block, Field, (uint8_t)GeometryKey::PointNumber, 0);
     Params.NoiseSeed = (uint32_t)ReadKeyInt(Block, Field, (uint8_t)GeometryKey::NoiseSeed, 0);
 
-    // Size: accept either a Number (side/diameter/radius/scale) or a Vector<2>
-    // (width, height) regardless of the shape, so switching shapes or re-typing an
-    // entry never silently leaves an invisible shape.
-    {
-        KeyResult Kr = Block->GetKey(Field, (uint8_t)GeometryKey::Size);
-        if (ValueInfoType(Kr.Meta.Type) == (uint16_t)DataType::Vector && Kr.DataPtr)
-        {
-            Vector<2> Size = *reinterpret_cast<const Vector<2> *>(Kr.DataPtr);
-            Params.SizeX = Size[0];
-            Params.SizeY = Size[1];
-        }
-        else if (ValueInfoType(Kr.Meta.Type) == (uint16_t)DataType::Number && Kr.DataPtr)
-        {
-            Number Size = *reinterpret_cast<const Number *>(Kr.DataPtr);
-            Params.SizeX = Size;
-            Params.SizeY = Size;
-        }
-        else
-        {
-            Params.SizeX = Params.SizeY = N(1);
-        }
-    }
+    // Size: accept either a Number (side/diameter/radius/scale) or a Vector<2> (width, height)
+    // regardless of the shape, so switching shapes or re-typing an entry never silently leaves
+    // an invisible shape.
+    ReadSize2(Block, Field, (uint8_t)GeometryKey::Size, N(1), Params.SizeX, Params.SizeY);
 
     PrepareGeometry(Params); // per-geometry invariants for the per-LED loop below
 
@@ -179,20 +181,8 @@ inline void Vysi1Display::RenderTextureField(DynamicBlockDescriptor *Block, uint
         ColourClass C2 = Block->GetKeyValue<ColourClass>(Field, (uint8_t)TextureKey::Colour2, DataType::Colour, ColourClass(255, 255, 255, 255));
         // Size accepts a Number (uniform: scales both axes) or a Vector<2> (width, height),
         // the same two types a geometry's Size takes; a non-positive extent falls back to 1.
-        Number ExtentX = N(1), ExtentY = N(1);
-        {
-            KeyResult Kr = Block->GetKey(Field, (uint8_t)TextureKey::Size);
-            if (ValueInfoType(Kr.Meta.Type) == (uint16_t)DataType::Vector && Kr.DataPtr)
-            {
-                Vector<2> Size = *reinterpret_cast<const Vector<2> *>(Kr.DataPtr);
-                ExtentX = Size[0];
-                ExtentY = Size[1];
-            }
-            else if (ValueInfoType(Kr.Meta.Type) == (uint16_t)DataType::Number && Kr.DataPtr)
-            {
-                ExtentX = ExtentY = *reinterpret_cast<const Number *>(Kr.DataPtr);
-            }
-        }
+        Number ExtentX, ExtentY;
+        ReadSize2(Block, Field, (uint8_t)TextureKey::Size, N(1), ExtentX, ExtentY);
         if (ExtentX.Value <= 0) ExtentX = N(1);
         if (ExtentY.Value <= 0) ExtentY = N(1);
         const Number InvExtentX = N(1) / ExtentX; // constant per field: hoisted out of the loop

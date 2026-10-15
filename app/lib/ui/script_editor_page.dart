@@ -341,16 +341,15 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       }
       setState(() => _dirty = false);
     }
-    final slot = widget.slot ?? widget.fileId;
-    await _client.unload(slot);
-    final ok = await _client.load(widget.fileId, slot);
+    await _client.unload(_slot);
+    final ok = await _client.load(widget.fileId, _slot);
     if (!mounted) return;
     showSnack(context, ok ? 'Reloaded' : 'Reload failed');
     await _refresh();
   }
 
   Future<void> _unloadScript() async {
-    final ok = await _client.unload(widget.slot ?? widget.fileId);
+    final ok = await _client.unload(_slot);
     if (!mounted) return;
     showSnack(context, ok ? 'Unloaded' : 'Unload failed');
     if (ok && mounted) {
@@ -598,31 +597,22 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   Widget _validityCard() {
     final errors = _errors;
     if (errors == null) return const SizedBox.shrink();
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              errors.isEmpty ? 'Valid' : '${errors.length} problem(s)',
-              style: TextStyle(
-                color: errors.isEmpty ? Colors.greenAccent : Colors.redAccent,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            for (final e in errors)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  '• $e',
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-              ),
-          ],
+    return _editorCard([
+      Text(
+        errors.isEmpty ? 'Valid' : '${errors.length} problem(s)',
+        style: TextStyle(
+          color: errors.isEmpty ? Colors.greenAccent : Colors.redAccent,
+          fontWeight: FontWeight.w600,
         ),
       ),
-    );
+      for (final e in errors)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            '• $e',
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+        ),
+    ]);
   }
 }

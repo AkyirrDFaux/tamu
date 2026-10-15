@@ -5,7 +5,7 @@ The data types used across the protocol, with their enum value and encoding. A t
 | `None`         | 0x00  | No value there. A placeholder or spacer in metadata, or a deleted entry. |
 | `Undefined`    | 0x01  | Not known yet; displayed in hex when there is anything to show.          |
 | `SN`           | 0x02  | A serial number, a 14 byte UUID.                                         |
-| `Id`           | 0x03  | A device ID, 16 bits: 6 of net and 10 of device. Described below.        |
+| `ID`           | 0x03  | A device ID, 16 bits: 6 of net and 10 of device. Described below.        |
 | `Bool`         | 0x04  | true or false.                                                           |
 | `Index`        | 0x05  | A 32bit signed integer.                                                  |
 | `Number`       | 0x06  | A signed 16.16 fixed point value.                                        |

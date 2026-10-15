@@ -44,7 +44,7 @@ document is corrected.
 - Lists use `-` and nest with a tab.
 ### Types, Sizes and Numbers
 - A defined custom type is written by its name in [[Data Formats]]: `Number`, `Index`, `Filename`,
-  `BlockInfo`, `Vector`, `Matrix`, `Colour`, `Bool`, `Serial Number`, `Name`.
+  `BlockInfo`, `Vector`, `Matrix`, `Colour`, `Bool`, `SN`, `Name`.
 - Everything else follows C convention: `uint8`, `uint16`, `uint32`, `int32`, `char[8]`.
 - Bit fields and flags use the `-bit` form: `10bit`, `6bit`, `8bit`.
 - Templated types carry their arguments in angle brackets: `Vector<N>`, `Matrix<N,M>`. Every other
@@ -84,9 +84,9 @@ document is corrected.
   struct-position layout, `BlockInfo` for the packed 32-bit index, and `NetID.Device`: `3F.1`,
   `0.8`: for a device address. `BlockInfo` may also be written `T.I.F.K`, that is
   Type.Instance.Field.Key.
-- Acronyms are defined once, globally, in [[General Architecture]], not per file.
-- Case follows how each acronym is constructed: `TrID` (Transaction ID), `SNDB`, `CID`, `CRC8`,
-  `NetID`, `RSBus`.
+- Acronyms are defined once, globally, here, not per file.
+- Case and expansion follow how each acronym is constructed: `TrID` (Transaction ID), `SNDB` (SN Database),
+  `CID` (Command ID), `CRC8` (Cyclic Redundancy Check), `NetID` (Network ID), `RSBus` (the RS485 bus).
 ### Implementation Functions
 - Every service documents its implementation functions, not only [[Services/Storage]].
 - Group them by the service's own visibility classes, stating the class in the heading: "Main Functions
@@ -104,7 +104,7 @@ document is corrected.
   is built from. `AGENTS.md` keeps only agent-operational rules: git, gate commands, budgets: and
   points there.
 ### Spellings to Fix
-- `recieved` to received, `avalible` to available, `prefferably` to preferably, `preffered` to
+- `recieved` to received, `avalible` and `avaliable` to available, `prefferably` to preferably, `preffered` to
   preferred, `persistance` to persistence, `neccesarily` to necessarily, `accesible` to accessible,
   `adresses` to addresses, `optimalization` to optimisation, `whereever` to wherever, `comparision` to
   comparison, `Reciever` to Receiver, `eculidian` to euclidean, `selfdescribing` to self-describing,

@@ -111,7 +111,6 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         BleParser.Reset();
         BleMtu = 23;
         AppInterface.TxFlushAll(); // pending responses belong to the dead session
-        extern void AppbleResetSessionBreadcrumbs();
         AppbleResetSessionBreadcrumbs();
     }
 
@@ -175,6 +174,17 @@ class BleTxCallbacks : public NimBLECharacteristicCallbacks
 } StaticBleTxCallbacks;
 
 
+// Trims the fixed 16-char space-padded System Name into a NUL-terminated C string (`Out` must
+// hold SYSTEM_NAME_LEN + 1 bytes). The field carries no terminator, so it is copied trimmed for
+// the places that need a C string (the NimBLE device name and the advertising name).
+static void SystemNameCString(char *Out)
+{
+    uint8_t Len = SYSTEM_NAME_LEN;
+    while (Len > 0 && StaticPer.System.Name[Len - 1] == ' ') Len--;
+    memcpy(Out, StaticPer.System.Name, Len);
+    Out[Len] = '\0';
+}
+
 // Rebuilds and starts the advertisement from scratch. Used for the initial
 // start AND every post-session restart: restarting the previous instance can
 // leave an active-but-invisible advertisement (observed on hardware).
@@ -189,13 +199,8 @@ static void StartAppAdvertising()
     Adv->removeServices();
     bool UuidOk = Adv->addServiceUUID(BLE_SERVICE_UUID);
     Adv->enableScanResponse(true); // must precede setName (see ordering note)
-    // The System Name is a fixed 16-char field (NUL-padded since B10, no terminator); BLE wants a
-    // NUL-terminated C string, so copy it trimmed.
     char AdvName[SYSTEM_NAME_LEN + 1];
-    uint8_t NameLen = SYSTEM_NAME_LEN;
-    while (NameLen > 0 && StaticPer.System.Name[NameLen - 1] == ' ') NameLen--;
-    memcpy(AdvName, StaticPer.System.Name, NameLen);
-    AdvName[NameLen] = '\0';
+    SystemNameCString(AdvName);
     bool NameOk = Adv->setName(AdvName);
     bool Started = Adv->start();
     DeviceLog("APPBLE", "adv restart: uuid=%d name=%d started=%d",

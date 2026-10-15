@@ -67,11 +67,8 @@ inline void SubscriptionsService::HandleProviderConfirmation(const PacketFrame &
     ProviderEntry* Entry = ProviderFindByTrid(Frame.Trid);
     if (!Entry) return;
     Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs); // a confirmation renews the lease
-    if (PayloadBytes(Frame) >= 4) {
-        uint32_t Hash;
-        Hash = *reinterpret_cast<const uint32_t *>(Frame.Payload); // 4-byte aligned
-        Entry->Hash = Hash;
-    }
+    if (PayloadBytes(Frame) >= 4)
+        Entry->Hash = *reinterpret_cast<const uint32_t *>(Frame.Payload); // 4-byte aligned
 }
 
 // Per-value hashlike for the delta trigger: scalar -> the raw Number bits; vector ->

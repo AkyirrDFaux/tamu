@@ -1,7 +1,7 @@
-List the avaliable devices via the supported interface.
+List the available devices via the supported interface.
 ### Appbar buttons
 - (left) Source selector (BLE devices / USB devices / All devices). USB entries are only
-  offered where USB links exist (Linux desktop); Android offers BLE only.
+  offered where USB links exist; Android offers BLE only.
 - Refresh (hold for autorefresh menu, with a 1s period **on by default**, green dot while
   autorefresh is active, red if the last refresh errored)
 - Sorting type (Signal strength / Alphabetical)
@@ -14,7 +14,7 @@ List the avaliable devices via the supported interface.
   - Reported device name (from the Register System block) as the title, link name as subtext
   - Autoconnect toggle (highlighted green when this device is the autoconnect target)
   - Disconnect button (right side)
-- Remaining avaliable devices
+- Remaining available devices
   - Device name
   - Connection type (USB/BLE) icon
   - Signal strength, colorcoded (BLE only)

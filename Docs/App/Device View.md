@@ -14,7 +14,7 @@ same data the Device commands expose.
 - Capabilities (the text labels the app renders: Core, Router, DynMem, Scripts, App, SubReq,
   SubProv, Node)
 ### Second section - Services
-Per services avaliable, hide unavaliable (based on capabilities device field), list of links to specialized viewer
+Per services available, hide unavailable (based on capabilities device field), list of links to specialized viewer
 - [[App/Service Views/Register|Register]]
 - [[App/Service Views/Storage|Storage]]
 - [[App/Service Views/Subscriptions|Subscriptions]] (only when the device has a subscription

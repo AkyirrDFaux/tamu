@@ -44,7 +44,7 @@ List<KeyedEntry>? parseKeyedDict(List<int> fieldValue) {
         value: fieldValue.sublist(offset + 6, offset + 6 + meta.size),
       ),
     );
-    final aligned = (6 + meta.size + 3) & ~3;
+    final aligned = align4(6 + meta.size);
     offset += aligned;
   }
   return entries;
@@ -61,7 +61,7 @@ List<int> buildKeyedDict(List<KeyedEntry> entries) {
     ]); // Field&Key (the field is the dict field, implicit here)
     out.add(e.meta.toBytes());
     out.add(e.value);
-    final aligned = (6 + e.value.length + 3) & ~3;
+    final aligned = align4(6 + e.value.length);
     final pad = aligned - 6 - e.value.length;
     if (pad > 0) out.add(List<int>.filled(pad, 0));
   }

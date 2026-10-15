@@ -26,6 +26,7 @@
 
 #include "ch32v00x.h"
 #include "Core/Functions/Bootloader.h"
+#include "Core/Devices/BootloaderCommon.h"  // GpioCfg/GpioOutPP + the identify frame builder
 
 // The app is linked here; the storage region starts at 0x3E00 (512 B flush against the end
 // of the chip flash) and is never written. Must match `board_upload.offset_address` in
@@ -63,13 +64,6 @@
 // GPIO (direct register: CFGLR is 4 bits per pin; all DAS pins are < 8)
 // ---------------------------------------------------------------------------
 
-static void GpioCfg(GPIO_TypeDef *Port, uint32_t Pin, uint32_t Cfg)
-{
-    uint32_t Shift = Pin * 4u;
-    Port->CFGLR = (Port->CFGLR & ~(0xFu << Shift)) | (Cfg << Shift);
-}
-
-static void GpioOutPP(GPIO_TypeDef *Port, uint32_t Pin) { GpioCfg(Port, Pin, 0x3u); }  // out push-pull 50 MHz
 static void GpioAfPP(GPIO_TypeDef *Port, uint32_t Pin) { GpioCfg(Port, Pin, 0xBu); }   // AF push-pull 50 MHz
 static void GpioInPU(GPIO_TypeDef *Port, uint32_t Pin)
 {
@@ -310,29 +304,6 @@ static void HandleRead(uint32_t Offset)
 
     Bootloader::EncodeReadResponse(Offset, Data, Resp);
     SendRaw(Resp, sizeof(Resp));
-}
-
-// The identify response is entirely build-time constant (app size + name), so the whole frame
-// - control/parity included - is precomputed and lives in flash. Nothing is built at runtime.
-struct IdentifyFrame { uint8_t Bytes[Bootloader::DATA_SIZE]; };
-
-constexpr IdentifyFrame MakeIdentify(uint32_t Space, const char *Name)
-{
-    IdentifyFrame Frame{};
-    Frame.Bytes[0] = Bootloader::START;
-    Frame.Bytes[1] = Bootloader::CMD_IDENTIFY_RESP;
-    Frame.Bytes[2] = (uint8_t)(Space & 0xFFu);
-    Frame.Bytes[3] = (uint8_t)((Space >> 8) & 0xFFu);
-    Frame.Bytes[4] = (uint8_t)((Space >> 16) & 0xFFu);
-    Frame.Bytes[5] = (uint8_t)((Space >> 24) & 0xFFu);
-    for (uint8_t i = 0; i < Bootloader::NAME_SIZE; i++)
-    {
-        if (Name[i] == '\0') break;
-        Frame.Bytes[6 + i] = (uint8_t)Name[i];
-    }
-    Frame.Bytes[Bootloader::DATA_SIZE - 1] = Bootloader::END;
-    Frame.Bytes[1] |= (uint8_t)(Bootloader::Parity(Frame.Bytes, Bootloader::DATA_SIZE) << 3);
-    return Frame;
 }
 
 constexpr IdentifyFrame Identify = MakeIdentify(APP_LIMIT - APP_BASE, "DAS v0.1");

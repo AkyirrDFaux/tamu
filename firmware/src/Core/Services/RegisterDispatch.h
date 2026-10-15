@@ -108,7 +108,7 @@ inline bool RegisterService::Handle(const PacketFrame &Frame) {
 #ifdef USE_DYNAMIC_BLOCKS
     if (Cid >= (uint8_t)DynamicCid::Create && Cid <= (uint8_t)DynamicCid::SetName) {
         if (PayloadBytes(Frame) < 2) { RespondStatus(Frame, false); return true; }
-        uint16_t Gi = (uint16_t)(Frame.Payload[0] | (Frame.Payload[1] << 8));
+        uint16_t Gi = LoadUnaligned<uint16_t>(Frame.Payload);
         switch ((DynamicCid)Cid) {
             case DynamicCid::Create:  HandleCreateDynamic(Frame, Gi); return true;
             case DynamicCid::Delete:  HandleDeleteDynamic(Frame, Gi); return true;

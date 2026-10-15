@@ -146,7 +146,7 @@ inline bool RegisterService::DynamicRecallAll() {
 }
 
 inline void RegisterService::HandleCreateDynamic(const PacketFrame &Frame, uint16_t Index) {
-    if (PayloadBytes(Frame) < 2) { RespondStatus(Frame,false); return; }
+    // PayloadBytes(Frame) >= 2 is guaranteed by the dispatcher's dynamic-CID guard.
     // The global index is one byte on the wire's dynamic address space, bounded by the
     // registry/cleanup/save loops (all MAX_DYNAMIC_BLOCKS). A larger index would make
     // AddBlockAt pad tombstones past `block_count` so the block is enumerated (8 bits,
@@ -175,7 +175,7 @@ inline void RegisterService::HandleGetName(const PacketFrame &Frame, uint16_t Bl
 
 inline void RegisterService::HandleSetName(const PacketFrame &Frame, uint16_t BlockIdx) {
     if (BlockIdx >= DynamicBlockRegistry.BlockCount) { RespondStatus(Frame,false); return; }
-    if (PayloadBytes(Frame) < 2) { RespondStatus(Frame,false); return; }
+    // PayloadBytes(Frame) >= 2 is guaranteed by the dispatcher's dynamic-CID guard.
     DynamicBlockDescriptor *Block = DynamicBlockRegistry.GetBlock(BlockIdx);
     if (!Block || !Block->Present) { RespondStatus(Frame,false); return; }
     SetBlockName(Block->Name, (const char *)(Frame.Payload + 2), (uint16_t)(PayloadBytes(Frame) - 2));

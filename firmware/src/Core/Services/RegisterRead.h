@@ -96,8 +96,8 @@ inline void* RegisterService::SystemGet(uint16_t Field, uint8_t Key)
     if (Field == SYSTEM_FIELD_NETID)
     {
         // The live net (the stored value applies on reboot); the write stores it via a trigger.
-        Register.NetId = DeviceStatus.NetId;
-        return &Register.NetId;
+        // Read back DeviceStatus.NetId in place - the getter's value is only ever copied out.
+        return &DeviceStatus.NetId;
     }
 #endif
     if (!SystemFillValue((uint8_t)Field, Register.SysValueBuf)) return nullptr;
@@ -163,10 +163,7 @@ inline void RegisterService::HandleScriptBlockRead(const PacketFrame &Frame, uin
     uint8_t Vbuf[FIELD_RESPONSE_BUF_SIZE];
     uint8_t Vsz = 0;
     if (!Script.GetEntry(Inst, Field, Key, Meta, Vbuf, Vsz)) { RespondStatus(Frame,false); return; }
-    FieldResult Fr;
-    Fr.Descriptor = Meta;
-    Fr.Data = Vbuf;
-    SendFieldResponse(Frame, Bi, Fr);
+    SendValueResponse(Frame, Bi, Meta, Vbuf, Vsz);
 }
 #endif
 

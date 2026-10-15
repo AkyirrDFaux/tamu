@@ -70,7 +70,7 @@ inline uint16_t RegisterService::EnumScriptWord(uint16_t Inst, uint16_t i) {
     for (uint16_t Field = 0; Field <= SCRIPT_FIELD_OUTPUT; Field++) {
         uint8_t Keys = Script.KeyCount(Inst, (uint8_t)Field);
         for (uint8_t k = 0; k < Keys; k++)
-            if (Seen++ == i) return (uint16_t)((Field << 8) | k);
+            if (Seen++ == i) return MakeFieldKey((uint8_t)Field, k);
     }
     return 0;
 }
@@ -175,7 +175,7 @@ inline void RegisterService::HandleEnumerateBlocks(const PacketFrame &Frame) {
 // failure.
 inline void RegisterService::HandleEnumerateFields(const PacketFrame &Frame) {
     if (PayloadBytes(Frame) != 4) { RespondStatus(Frame, false); return; }
-    uint16_t packed = (uint16_t)(Frame.Payload[0] | (Frame.Payload[1] << 8));
+    uint16_t packed = LoadUnaligned<uint16_t>(Frame.Payload);
     uint16_t Type = (packed >> 6) & 0x3FF;
     uint8_t Inst = (uint8_t)(packed & 0x3F);
     uint16_t Gi = 0; // the global index of a banked (script/dynamic) block; ctx points at it

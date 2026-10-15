@@ -1,4 +1,4 @@
-Access to all avaliable system blocks
+Access to all available system blocks
 Automatically refreshes the visible view (0.5s by default).
 ### Appbar
 - (right) Current/Backup view toggle
