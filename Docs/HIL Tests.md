@@ -48,7 +48,7 @@ A bootloader test takes its device off the bus and runs alone; the device stays 
 ### Skips and Reporting
 A skipped test names the prerequisite that failed to hold. The run summary counts pass, fail and skip per test, not per file.
 ### Logs
-Every run writes a timestamped log into `test/hil/logs/`, a folder kept out of version control. The log carries the rig inventory, each test's result and the reason behind every skip.
+Every run writes a timestamped log into `test/hil/logs/`, a folder kept out of version control. The log carries the rig inventory, each test's result and the reason behind every skip. Only the 20 most recent runs are kept — older logs are deleted in the same pass that writes the new one.
 ### Adding a Test
 A test is one file under its category, exporting a value that carries a name, a prerequisite and the test body. The category list registers it and the runner schedules it. A test keeps its state on its own device and clears the temporaries it creates.
 ### Selecting What Runs
