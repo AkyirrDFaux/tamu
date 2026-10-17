@@ -36,18 +36,38 @@ are hardware-only.
 - **E26** **`valu_upload.py` drives `wlink` over SWD, which this board cannot do.** The ISP recipe that
   actually works (USB port reset, then a single `wchisp-nightly` invocation) needs folding into it
   as an `--isp` mode so `./upload.sh boot valu` matches reality.
-- **E30** **DAS_v0_1 is 308 B over the beta-window flash gate, and the documented headroom is stale.**
-  Clean rebuilds (2026-10-17, `3e6f505`): `RAM 100.0% (2048/2048)` / `Flash 95.9% (13748/14336)`; at
-  `fc964e5` (2026-10-13) `RAM 99.0% (2028)` / `Flash 93.9% (13464)`. So `.text` grew 13160 -> 13444
-  (+284 B) and statics +20 B across the 2026-10-13..2026-10-15 storage/discovery/subscription work.
-  The beta gate `TODO.md:165` ("DAS <= 2028 B RAM, <= 13440 B flash", written 2026-10-11) is breached
-  on both counts, and the "~94 % flash / ~99 % RAM" figures in `TODO.md:176` and `AGENTS.md` no longer
-  match the code. The 100 % RAM figure is by design - statics (1048 B) + stack (1000 B) fill the 2 KB
-  exactly, the state `firmware/platformio.ini` documents and the linker guards - so the 2028 B gate
-  cannot be met without cutting a static. **Decision needed (owner):** move the gate to the measured
-  reality, or keep 13440 B and trim >= 308 B of DAS flash. Tracked as kanban `t_2143e21b`. Size lines
-  are only trustworthy after `pio run -e DAS_v0_1 -t clean` - a stale `.pio/build/DAS_v0_1` can still
-  report "up to date".
+- **E30** **The DAS_v0_1 size gate was a measurement, not a budget — and the documented headroom is
+  stale.** Settled 2026-10-17 (owner decision, Akyirr, via kanban `t_2143e21b`, audit `t_e1d8c148`):
+  the ceiling is the physical code space, **13824 B at `0x800`-`0x3E00`**, plus **2048 B RAM** — not
+  the `<= 13440 B flash / <= 2028 B RAM` pair the criterion carried from 2026-10-11 until
+  2026-10-17 (`TODO.md:165` as of `e0b5df3`).
+  `13440 = 16384 - 2048 - 512 - 384` subtracts the storage's 384 B data payload a second time (it is
+  already inside the 512 B), and its arithmetic merely coincides with the 2026-10-08 Phase-0 build
+  (`6c3d210:TODO.md:34`, `13440/14336 = 93.75 %`) that the criterion was copied from. **The image is
+  not over budget and nothing needs to be trimmed.** Clean rebuilds (2026-10-17, `3e6f505`):
+  `RAM 100.0% (2048/2048)` / `Flash 95.9% (13748/14336)`; the image spans 13752 B and ends at
+  `0x3DB8`, leaving **72 B of headroom** with no overlap of the storage at `0x3E00`. Platformio's
+  14336 B denominator is the storage-inclusive App size, so 95.9 % is not a fullness figure — the
+  image is **~99.5 % of code space** (13752 of 13824 B, 99.48 %; platformio's 13748 B is 99.45 %).
+  The 100 % RAM figure is by design: statics (1048 B) + stack (1000 B) fill the 2 KB exactly, the
+  state `firmware/platformio.ini` documents, and the linker errors if statics grow into the stack.
+  The 2028 B RAM gate could never have been met.
+  **Still a real warning:** `.text` grew 13160 -> 13444 (+284 B) and statics +20 B between `fc964e5`
+  (2026-10-13) and `3e6f505` across the storage/discovery/subscription work. With 72 B left, further
+  code growth fails the link rather than warning — measure before adding a DAS feature. Size lines
+  are only trustworthy after `pio run -e DAS_v0_1 -t clean`; a stale `.pio/build/DAS_v0_1` can still
+  report "up to date". Figures corrected in `TODO.md` (acceptance criteria and Phase 5) and
+  `firmware/platformio.ini`; `AGENTS.md:54` still needs the owner (protected file, see E31).
+- **E31** **The DAS flash layout is not fully documented.** `Docs/Devices.md:43-70` gives the DAS
+  storage (512 B) and bootloader (2 kB) sizes but never states the 16 KB chip total or the
+  `0x800`/`0x3E00` bases, so the code space cannot be derived from the docs alone — it has to be
+  reconstructed from `firmware/platformio.ini` and the built ELF.
+  `Docs/Services/Bootloader.md:41` defines "App size" as the uploadable region and does say it covers
+  storage "on a device without a partition table", but it does not say that a linker-pinned storage
+  region (`--section-start=.fixed_data=0x3E00`) *shrinks the code space* — the DAS reports the full
+  storage-inclusive 14336 B there. Proposed change for the owner (Docs are Akyirr's to edit): add the
+  chip total and the app/storage bases to `Devices.md`'s DAS section, and one sentence to
+  `Bootloader.md`'s App size note that storage reserved by the linker is not code space.
 
 ## Valu v2.0 app (2026-10-06) - parked (owner: not now)
 
