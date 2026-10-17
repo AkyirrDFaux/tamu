@@ -53,6 +53,12 @@ String formatNumber3(double v) =>
 String formatHexBytes(List<int> bytes) =>
     bytes.map((int b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
 
+/// The printable ASCII gutter of a byte dump: a printable byte as its own
+/// character, anything else as `.` (the hex/ASCII viewer's right-hand column).
+String formatAsciiBytes(List<int> bytes) => bytes
+    .map((int b) => (b >= 0x20 && b < 0x7F) ? String.fromCharCode(b) : '.')
+    .join();
+
 /// `0x` + eight uppercase hex digits: a storage offset or record address.
 String hex32(int value) =>
     '0x${value.toRadixString(16).padLeft(8, '0').toUpperCase()}';
