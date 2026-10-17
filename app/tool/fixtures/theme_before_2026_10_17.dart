@@ -28,7 +28,12 @@
 /// Two rows of the audit have *no* pre-fix counterpart and still print a number
 /// here, because they name `kOnAccent`, which this palette does define: the busy
 /// spinner and the ringed autorefresh mark. The old spinner drew `kOrange` on the
-/// old bar (1.17:1, `--pair kOrange kOrangeDark`) and no ring was drawn at all, so
+/// old bar - 1.17:1, which needs this palette, not the current one:
+///
+///     dart run tool/contrast.dart --theme tool/fixtures/theme_before_2026_10_17.dart --pair kOrange kOrangeDark
+///
+/// (the bare `--pair kOrange kOrangeDark` measures the current palette's `kOrange`
+/// on its `kOrangeDark` instead and prints 1.19:1). No ring was drawn at all, so
 /// read those two rows as "post-fix rendering", never as "this pair existed and
 /// passed" - their labels and `where` text say so.
 ///
