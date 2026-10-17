@@ -7,9 +7,9 @@ import 'package:flutter/material.dart';
 
 import '../core/script_file.dart';
 import '../core/types.dart';
+import 'dialogs.dart';
 import 'theme.dart';
 import 'script_widgets.dart';
-import 'widgets.dart';
 
 /// The result of the create-script dialog.
 class NewScriptResult {
@@ -36,9 +36,9 @@ Future<NewScriptResult?> showNewScriptDialog(
   BuildContext context, {
   required List<int> freeSlots,
 }) {
-  return showDialog<NewScriptResult>(
-    context: context,
-    builder: (_) => _NewScriptDialog(freeSlots: freeSlots),
+  return showTamuPicker<NewScriptResult>(
+    context,
+    _NewScriptDialog(freeSlots: freeSlots),
   );
 }
 
@@ -140,12 +140,13 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      scrollable: true,
-      title: const Text('New script'),
-      content: DialogBody(
-        maxWidth: 420,
+    final theme = Theme.of(context);
+    return TamuDialog(
+      title: 'New script',
+      maxWidth: 420,
+      body: SingleChildScrollView(
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             TextField(
@@ -157,7 +158,7 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
                 helperText: 'Shown in the app and on the script block',
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: Spacing.md),
             TextField(
               controller: _idController,
               decoration: InputDecoration(
@@ -168,7 +169,7 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
               ),
               onChanged: (_) => setState(() {}),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: Spacing.xs),
             SwitchListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
@@ -201,24 +202,19 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
             _section('Outputs', _outputs),
             _section('Variables', _variables),
             _section('Constants', _constants),
-            const SizedBox(height: 8),
-            const Text(
+            const SizedBox(height: Spacing.md),
+            Text(
               'The script is written to storage only and is not loaded.',
-              style: TextStyle(color: Colors.white54, fontSize: 12),
+              style: theme.textTheme.bodySmall,
             ),
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _fileId == null ? null : _submit,
-          child: const Text('Create'),
-        ),
-      ],
+      actions: tamuDialogActions(
+        onCancel: () => Navigator.pop(context),
+        onConfirm: _fileId == null ? null : _submit,
+        confirmLabel: 'Create',
+      ),
     );
   }
 
@@ -227,24 +223,15 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: Row(
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  color: kOrange,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const Spacer(),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.add, size: 18),
-                tooltip: 'Add $title',
-                onPressed: () => _addEntry(list, list.length),
-              ),
-            ],
+          padding: const EdgeInsets.only(top: Spacing.md),
+          child: ScriptCardHeading(
+            title,
+            action: IconButton(
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.add, size: IconSize.md),
+              tooltip: 'Add $title',
+              onPressed: () => _addEntry(list, list.length),
+            ),
           ),
         ),
         for (var i = 0; i < list.length; i++) _entryRow(i, list),
@@ -254,16 +241,16 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
 
   Widget _entryRow(int index, List<_EntryDraft> list) {
     final e = list[index];
+    final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.symmetric(vertical: Spacing.hairline),
       child: Row(
         children: [
-          const SizedBox(
-            width: 24,
-            child: Text('#', style: TextStyle(color: Colors.white38)),
+          Text(
+            '#$index',
+            style: theme.textTheme.labelSmall?.copyWith(color: kTextMuted),
           ),
-          Text('$index', style: const TextStyle(color: Colors.white54)),
-          const SizedBox(width: 8),
+          const SizedBox(width: Spacing.md),
           Expanded(
             child: DropdownButtonFormField<DataType>(
               initialValue: e.type,
@@ -276,17 +263,17 @@ class _NewScriptDialogState extends State<_NewScriptDialog> {
               onChanged: (t) => _changeType(e, t),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: Spacing.md),
           Text(
             '${defaultSizeForType(e.type)}B',
-            style: const TextStyle(color: Colors.white38, fontSize: 12),
+            style: theme.textTheme.labelSmall?.copyWith(color: kTextDisabled),
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
             icon: const Icon(
               Icons.remove_circle_outline,
-              size: 18,
-              color: Colors.redAccent,
+              size: IconSize.md,
+              color: kError,
             ),
             onPressed: () => _removeEntry(list, index),
           ),

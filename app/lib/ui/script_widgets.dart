@@ -1,6 +1,10 @@
 /// Shared script UI pieces (Docs/App/Service views/Script.md): state chips and the I/O
 /// tables of a loaded script. Inputs are rendered using their UI specification (sliders,
 /// toggles, buttons - docs: "formatted with the UI specifications").
+///
+/// Everything here reads the theme tokens and the shared widgets (phase 1c, batch
+/// 2): a status dot, a section heading, a chunk of monospace text and the control
+/// row are each defined once, for the Scripts page, the editor and the dialogs.
 library;
 
 import 'package:flutter/material.dart';
@@ -11,16 +15,74 @@ import '../core/types.dart';
 import 'formatters.dart';
 import 'theme.dart';
 import 'value_editor.dart';
+import 'viewer_kit.dart';
 import 'widgets.dart';
 
+/// The status colour of a script state, in tokens.
 Color scriptStateColor(int state) => switch (state) {
-  ScriptState.running => Colors.greenAccent,
-  ScriptState.paused => Colors.amberAccent,
-  ScriptState.waiting => Colors.lightBlueAccent,
-  ScriptState.finished => Colors.white54,
-  ScriptState.error => Colors.redAccent,
-  _ => Colors.white38,
+  ScriptState.running => kSuccess,
+  ScriptState.paused => kWarning,
+  ScriptState.waiting => kInfo,
+  ScriptState.finished => kTextMuted,
+  ScriptState.error => kError,
+  _ => kTextDisabled,
 };
+
+/// The status dot of a script state: the System-live indicator the Scripts list
+/// and the editor's control card both show.
+class ScriptStateDot extends StatelessWidget {
+  const ScriptStateDot(this.state, {super.key});
+
+  final int state;
+
+  @override
+  Widget build(BuildContext context) {
+    return Icon(Icons.circle, size: Spacing.lg, color: scriptStateColor(state));
+  }
+}
+
+/// A script card's section heading: the accent [SectionLabel] with an optional
+/// leading icon, an optional count and an optional trailing action (the "add"
+/// button). The one heading shape the cluster's cards, dialogs and pickers use.
+class ScriptCardHeading extends StatelessWidget {
+  const ScriptCardHeading(
+    this.title, {
+    super.key,
+    this.icon,
+    this.count,
+    this.action,
+  });
+
+  final String title;
+
+  /// An icon before the label (the I/O sections carry the input/output mark).
+  final IconData? icon;
+
+  /// The item count shown after the label, e.g. `3` or `12 lines`.
+  final String? count;
+
+  /// Trailing content, normally the section's add button.
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        if (icon != null) ...[
+          Icon(icon, size: IconSize.sm, color: kOrange),
+          const SizedBox(width: Spacing.sm),
+        ],
+        Expanded(child: SectionLabel(title)),
+        if (count != null) ...[
+          const SizedBox(width: Spacing.sm),
+          Text(count!, style: theme.textTheme.labelSmall),
+        ],
+        ?action,
+      ],
+    );
+  }
+}
 
 /// The Start/Pause/Stop/Restart control row shared by the Scripts list and the script editor.
 class ScriptControlBar extends StatelessWidget {
@@ -45,32 +107,23 @@ class ScriptControlBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    Widget control(IconData icon, String label, VoidCallback onPressed) =>
+        OutlinedButton.icon(
+          onPressed: onPressed,
+          icon: Icon(icon, size: IconSize.md),
+          label: Text(label),
+        );
     return Wrap(
-      spacing: 8,
+      spacing: Spacing.md,
       children: [
-        OutlinedButton.icon(
-          onPressed: onStart,
-          icon: const Icon(Icons.play_arrow, size: 18),
-          label: const Text('Start'),
+        control(Icons.play_arrow, 'Start', onStart),
+        control(
+          state == ScriptState.paused ? Icons.play_arrow : Icons.pause,
+          state == ScriptState.paused ? 'Continue' : 'Pause',
+          onPauseToggle,
         ),
-        OutlinedButton.icon(
-          onPressed: onPauseToggle,
-          icon: Icon(
-            state == ScriptState.paused ? Icons.play_arrow : Icons.pause,
-            size: 18,
-          ),
-          label: Text(state == ScriptState.paused ? 'Continue' : 'Pause'),
-        ),
-        OutlinedButton.icon(
-          onPressed: onStop,
-          icon: const Icon(Icons.stop, size: 18),
-          label: const Text('Stop'),
-        ),
-        OutlinedButton.icon(
-          onPressed: onRestart,
-          icon: const Icon(Icons.restart_alt, size: 18),
-          label: const Text('Restart'),
-        ),
+        control(Icons.stop, 'Stop', onStop),
+        control(Icons.restart_alt, 'Restart', onRestart),
         ...extra,
       ],
     );
@@ -95,9 +148,9 @@ class FunctionLibrarySwitch extends StatelessWidget {
       dense: true,
       contentPadding: EdgeInsets.zero,
       title: const Text('Function library'),
-      subtitle: const Text(
+      subtitle: Text(
         'The file is a function library, not a script',
-        style: TextStyle(fontSize: 11, color: Colors.white54),
+        style: Theme.of(context).textTheme.labelSmall,
       ),
       value: value,
       onChanged: onChanged,
@@ -211,24 +264,16 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-          child: Row(
-            children: [
-              Icon(widget.icon, size: 16, color: kOrange),
-              const SizedBox(width: 6),
-              Text(
-                widget.title,
-                style: const TextStyle(
-                  color: kOrange,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                '(${_entries.length})',
-                style: const TextStyle(color: Colors.white54, fontSize: 12),
-              ),
-            ],
+          padding: const EdgeInsets.fromLTRB(
+            Spacing.xl,
+            Spacing.lg,
+            Spacing.xl,
+            Spacing.xs,
+          ),
+          child: ScriptCardHeading(
+            widget.title,
+            icon: widget.icon,
+            count: '${_entries.length}',
           ),
         ),
         for (var i = 0; i < _entries.length; i++)
@@ -284,18 +329,16 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
       }
     }
     final label = formatValue(entry.meta.dataType, entry.value);
+    final theme = Theme.of(context);
     return ListTile(
       dense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+      contentPadding: const EdgeInsets.symmetric(horizontal: Spacing.xxl),
       title: Text(_nameFor(index)),
       subtitle: Text(
         dataTypeLabel(entry.meta.dataType),
-        style: const TextStyle(fontSize: 10, color: Colors.white54),
+        style: theme.textTheme.labelSmall,
       ),
-      trailing: Text(
-        label,
-        style: const TextStyle(fontFamily: 'monospace', color: Colors.white70),
-      ),
+      trailing: MonoText(label, muted: true),
       onTap: widget.editable ? () => _edit(index, entry) : null,
     );
   }
@@ -368,6 +411,7 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     switch (widget.spec.uiType) {
       case ScriptUiType.slider:
         final min = widget.spec.min;
@@ -377,7 +421,7 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
             : (max - min) / 100;
         final divisions = ((max - min) / step).round().clamp(1, 1000);
         return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
+          padding: const EdgeInsets.symmetric(horizontal: Spacing.xxl),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -386,16 +430,10 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
                   Expanded(
                     child: Text(
                       widget.title,
-                      style: const TextStyle(fontSize: 13),
+                      style: theme.textTheme.bodyMedium,
                     ),
                   ),
-                  Text(
-                    _value.toStringAsFixed(2),
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      color: Colors.white70,
-                    ),
-                  ),
+                  MonoText(_value.toStringAsFixed(2), muted: true),
                 ],
               ),
               Slider(
@@ -416,16 +454,16 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
       case ScriptUiType.toggle:
         return SwitchListTile(
           dense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 24),
-          title: Text(widget.title, style: const TextStyle(fontSize: 13)),
+          contentPadding: const EdgeInsets.symmetric(horizontal: Spacing.xxl),
+          title: Text(widget.title),
           value: _bool,
           onChanged: (v) => _write([v ? 1 : 0]),
         );
       case ScriptUiType.button:
         return ListTile(
           dense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 24),
-          title: Text(widget.title, style: const TextStyle(fontSize: 13)),
+          contentPadding: const EdgeInsets.symmetric(horizontal: Spacing.xxl),
+          title: Text(widget.title),
           trailing: FilledButton(
             onPressed: () => _write([1]),
             child: const Text('Press'),
@@ -441,11 +479,13 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
           if (widget.spec.uiType == ScriptUiType.auto) {
             return ListTile(
               dense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 24),
-              title: Text(widget.title, style: const TextStyle(fontSize: 13)),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: Spacing.xxl,
+              ),
+              title: Text(widget.title),
               trailing: Text(
                 _value.toStringAsFixed(0),
-                style: const TextStyle(color: Colors.white70),
+                style: theme.textTheme.labelMedium,
               ),
             );
           }
@@ -454,8 +494,8 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
         final index = _value.round().clamp(0, options.length - 1);
         return ListTile(
           dense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 24),
-          title: Text(widget.title, style: const TextStyle(fontSize: 13)),
+          contentPadding: const EdgeInsets.symmetric(horizontal: Spacing.xxl),
+          title: Text(widget.title),
           trailing: DropdownButton<int>(
             value: index,
             items: [

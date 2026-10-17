@@ -72,18 +72,18 @@ extension on _ScriptEditorPageState {
     Widget addButton(String tooltip, VoidCallback onPressed) => IconButton(
       visualDensity: VisualDensity.compact,
       tooltip: tooltip,
-      icon: const Icon(Icons.add_circle_outline, size: 18),
+      icon: const Icon(Icons.add_circle_outline, size: IconSize.md),
       onPressed: onPressed,
     );
 
     return Container(
       key: ObjectKey(line),
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      margin: const EdgeInsets.symmetric(vertical: Spacing.xs),
+      padding: const EdgeInsets.symmetric(vertical: Spacing.xs),
       decoration: BoxDecoration(
-        color: active ? kOrange.withAlpha(28) : Colors.white.withAlpha(8),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: active ? kOrange : Colors.white24),
+        color: active ? kAccentTint : kSubtleTint,
+        borderRadius: Radii.control,
+        border: Border.all(color: active ? kOrange : kLine),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -91,36 +91,38 @@ extension on _ScriptEditorPageState {
           ReorderableDragStartListener(
             index: index,
             child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 4),
+              padding: EdgeInsets.symmetric(horizontal: Spacing.xs),
               child: Icon(
                 Icons.drag_indicator,
-                size: 18,
-                color: Colors.white38,
+                size: IconSize.md,
+                color: kTextDisabled,
               ),
             ),
           ),
           // Indent block contents (like formatted code).
           if (depth > 0) ...[
             Container(
-              width: 2,
-              height: 22,
-              margin: const EdgeInsets.only(right: 6),
-              color: Colors.white24,
+              width: Spacing.hairline,
+              height: Spacing.xxl,
+              margin: const EdgeInsets.only(right: Spacing.sm),
+              color: kLine,
             ),
-            SizedBox(width: depth * 12.0),
+            SizedBox(width: depth * Spacing.lg),
           ],
           Expanded(
             // Wrap: a long line folds onto the next row instead of scrolling off-screen.
             child: Wrap(
-              spacing: 4,
-              runSpacing: 4,
+              spacing: Spacing.xs,
+              runSpacing: Spacing.xs,
               crossAxisAlignment: WrapCrossAlignment.end,
               children: [
                 Text(
                   '${index + 1}',
-                  style: const TextStyle(color: Colors.white38, fontSize: 11),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelSmall?.copyWith(color: kTextDisabled),
                 ),
-                const SizedBox(width: 2),
+                const SizedBox(width: Spacing.hairline),
                 // Destinations, then the instruction, then the operands (with role hints).
                 for (var i = 0; i < line.destinations.length; i++)
                   _symbolChip(
@@ -134,18 +136,23 @@ extension on _ScriptEditorPageState {
                 if (canAddDestination)
                   addButton('Add destination', addDestination),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: Spacing.hairline,
+                  ),
                   child: ActionChip(
-                    avatar: const Icon(Icons.tune, size: 16, color: kOrange),
+                    avatar: const Icon(
+                      Icons.tune,
+                      size: IconSize.sm,
+                      color: kOrange,
+                    ),
                     label: Text(
                       _instructionLabel(line.instruction),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: kOrange,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                    backgroundColor: kOrange.withAlpha(30),
+                    backgroundColor: kAccentTint,
                     side: BorderSide(color: kOrange.withAlpha(120)),
                     visualDensity: VisualDensity.compact,
                     onPressed: () => _changeInstruction(line),
@@ -166,15 +173,15 @@ extension on _ScriptEditorPageState {
           ),
           if (active)
             const Padding(
-              padding: EdgeInsets.only(right: 4),
-              child: ChipLabel('ACTIVE'),
+              padding: EdgeInsets.only(right: Spacing.xs),
+              child: TamuChip('ACTIVE', tone: ChipTone.accent),
             ),
           IconButton(
             visualDensity: VisualDensity.compact,
             icon: const Icon(
               Icons.delete_outline,
-              size: 18,
-              color: Colors.redAccent,
+              size: IconSize.md,
+              color: kError,
             ),
             onPressed: () => _rebuild(() {
               lines.removeAt(index);
@@ -193,7 +200,7 @@ extension on _ScriptEditorPageState {
     symVariable => kSymVariable,
     symConstant => kSymConstant,
     symPredefine => kSymPredefine,
-    _ => Colors.white70,
+    _ => kTextSecondary,
   };
 
   /// A colour-coded symbol chip. Drag it onto another chip to reorder it within its list;
@@ -212,7 +219,7 @@ extension on _ScriptEditorPageState {
     Widget chip({bool dragging = false}) => InputChip(
       label: Text(
         _symbolLabel(draft, s, full: false),
-        style: TextStyle(fontSize: 12, color: color),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color),
       ),
       backgroundColor: color.withAlpha(dragging ? 70 : 28),
       side: BorderSide(color: color.withAlpha(dragging ? 255 : 110)),
@@ -242,7 +249,7 @@ extension on _ScriptEditorPageState {
       builder: (context, candidate, rejected) => Draggable<int>(
         data: i,
         feedback: Material(
-          color: Colors.transparent,
+          type: MaterialType.transparency,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 260),
             child: chip(dragging: true),
@@ -257,7 +264,12 @@ extension on _ScriptEditorPageState {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(role, style: const TextStyle(fontSize: 8, color: Colors.white38)),
+        Text(
+          role,
+          style: Theme.of(
+            context,
+          ).textTheme.labelSmall?.copyWith(color: kTextDisabled),
+        ),
         body,
       ],
     );
@@ -265,8 +277,8 @@ extension on _ScriptEditorPageState {
 
   /// Colour legend for the instruction card.
   Widget _legend() => Wrap(
-    spacing: 10,
-    runSpacing: 4,
+    spacing: Spacing.lg,
+    runSpacing: Spacing.xs,
     children: [
       _legendDot('Input', kSymInput),
       _legendDot('Output', kSymOutput),
@@ -281,12 +293,17 @@ extension on _ScriptEditorPageState {
     mainAxisSize: MainAxisSize.min,
     children: [
       Container(
-        width: 8,
-        height: 8,
+        width: Spacing.md,
+        height: Spacing.md,
         decoration: BoxDecoration(color: color, shape: BoxShape.circle),
       ),
-      const SizedBox(width: 4),
-      Text(label, style: const TextStyle(fontSize: 10, color: Colors.white54)),
+      const SizedBox(width: Spacing.xs),
+      Text(
+        label,
+        style: Theme.of(
+          context,
+        ).textTheme.labelSmall?.copyWith(color: kTextMuted),
+      ),
     ],
   );
 
@@ -297,9 +314,9 @@ extension on _ScriptEditorPageState {
   }
 
   Future<void> _changeInstruction(ScriptLine line) async {
-    final def = await showDialog<ScriptInstructionDef>(
-      context: context,
-      builder: (_) => ScriptInstructionPicker(
+    final def = await showTamuPicker<ScriptInstructionDef>(
+      context,
+      ScriptInstructionPicker(
         current: line.def,
         hasDestination: line.destinations.isNotEmpty,
       ),

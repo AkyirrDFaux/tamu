@@ -5,12 +5,13 @@
 
 part of 'script_editor_page.dart';
 
-/// The standard editor section body: a card with uniform margin and 12px padding around a
-/// start-aligned column. Shared by the editor's section and validity cards.
+/// The standard editor section body: a card with the stacked-card gap and the
+/// card body inset around a start-aligned column. Shared by the editor's section
+/// and validity cards.
 Widget _editorCard(List<Widget> children) => Card(
-  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+  margin: Insets.cardGap,
   child: Padding(
-    padding: const EdgeInsets.all(12),
+    padding: Insets.cardBody,
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: children,
@@ -20,39 +21,40 @@ Widget _editorCard(List<Widget> children) => Card(
 
 extension on _ScriptEditorPageState {
   Widget _controlsCard() {
+    final theme = Theme.of(context);
     return Card(
-      margin: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+      margin: Insets.cardGap,
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: Insets.cardBody,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.circle, size: 12, color: scriptStateColor(_state)),
-                const SizedBox(width: 8),
+                ScriptStateDot(_state),
+                const SizedBox(width: Spacing.md),
                 Text(
                   ScriptState.label(_state),
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+                  style: theme.textTheme.titleSmall,
                 ),
                 const Spacer(),
                 Text(
                   _callDepth > 0
                       ? 'IC $_instructionCounter · depth $_callDepth'
                       : 'IC $_instructionCounter',
-                  style: const TextStyle(color: Colors.white54),
+                  style: theme.textTheme.bodySmall,
                 ),
               ],
             ),
             if (_errorCode != 0 || _errorInstruction != 0)
               Padding(
-                padding: const EdgeInsets.only(top: 6),
+                padding: const EdgeInsets.only(top: Spacing.sm),
                 child: Text(
                   'Error $_errorCode ${_errorLocation()}',
-                  style: const TextStyle(color: Colors.redAccent),
+                  style: theme.textTheme.bodyMedium?.copyWith(color: kError),
                 ),
               ),
-            const SizedBox(height: 10),
+            const SizedBox(height: Spacing.lg),
             ScriptControlBar(
               state: _state,
               onStart: () => _control(ScriptAction.start),
@@ -66,7 +68,7 @@ extension on _ScriptEditorPageState {
               extra: [
                 OutlinedButton.icon(
                   onPressed: _moveToLine,
-                  icon: const Icon(Icons.alt_route, size: 18),
+                  icon: const Icon(Icons.alt_route, size: IconSize.md),
                   label: const Text('Move to line'),
                 ),
               ],
@@ -89,27 +91,19 @@ extension on _ScriptEditorPageState {
 
   Future<void> _moveToLine() async {
     final controller = TextEditingController(text: '$_instructionCounter');
-    final line = await showDialog<int>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Move to line'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: 'Line index'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(context, int.tryParse(controller.text.trim())),
-            child: const Text('OK'),
-          ),
-        ],
+    final line = await showTamuDialog<int>(
+      context,
+      title: 'Move to line',
+      body: TextField(
+        controller: controller,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        decoration: const InputDecoration(labelText: 'Line index'),
+      ),
+      actions: tamuDialogActions(
+        onCancel: () => Navigator.pop(context),
+        onConfirm: () =>
+            Navigator.pop(context, int.tryParse(controller.text.trim())),
       ),
     );
     if (line == null || !mounted) return;
@@ -121,7 +115,7 @@ extension on _ScriptEditorPageState {
 
   Widget _storedNotice() {
     return Card(
-      margin: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+      margin: Insets.cardGap,
       child: const ListTile(
         leading: Icon(Icons.info_outline, color: kOrange),
         title: Text('Stored script'),
@@ -134,11 +128,8 @@ extension on _ScriptEditorPageState {
 
   Widget _functionCard(ScriptDraft draft) {
     return _editorCard([
-      const Text(
-        'Function',
-        style: TextStyle(color: kOrange, fontWeight: FontWeight.w600),
-      ),
-      const SizedBox(height: 8),
+      const ScriptCardHeading('Function'),
+      const SizedBox(height: Spacing.md),
       TextFormField(
         initialValue: draft.functionName,
         maxLength: 23,
@@ -189,7 +180,7 @@ extension on _ScriptEditorPageState {
 
   Widget _bootSlotField(ScriptDraft draft) {
     return Padding(
-      padding: const EdgeInsets.only(top: 4),
+      padding: const EdgeInsets.only(top: Spacing.xs),
       child: TextFormField(
         initialValue: '${scriptPropertiesSlot(draft.properties)}',
         keyboardType: TextInputType.number,
@@ -212,25 +203,15 @@ extension on _ScriptEditorPageState {
     final live = _statusText[category];
     final title = category.pluralLabel;
     return _editorCard([
-      Row(
-        children: [
-          Text(
-            title,
-            style: const TextStyle(color: kOrange, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            '(${list.length})',
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
-          ),
-          const Spacer(),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.add, size: 20),
-            tooltip: 'Add $title',
-            onPressed: () => _addValue(category),
-          ),
-        ],
+      ScriptCardHeading(
+        title,
+        count: '${list.length}',
+        action: IconButton(
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.add, size: IconSize.lg),
+          tooltip: 'Add $title',
+          onPressed: () => _addValue(category),
+        ),
       ),
       for (var i = 0; i < list.length; i++)
         _valueRow(category, i, list[i], live),
@@ -243,6 +224,7 @@ extension on _ScriptEditorPageState {
     ScriptDraftValue v,
     List<String>? live,
   ) {
+    final theme = Theme.of(context);
     final liveText = live != null && index < live.length ? live[index] : null;
     return ListTile(
       dense: true,
@@ -251,30 +233,23 @@ extension on _ScriptEditorPageState {
       subtitle: Text(
         '${dataTypeLabel(v.type)} · ${v.size}B'
         '${category == ScriptValueCategory.input ? ' · ${ScriptUiType.label(v.spec.uiType)}' : ''}',
-        style: const TextStyle(fontSize: 11, color: Colors.white54),
+        style: theme.textTheme.bodySmall,
       ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (liveText != null)
-            Text(
-              liveText,
-              style: const TextStyle(
-                fontFamily: 'monospace',
-                color: Colors.white70,
-              ),
-            ),
+          if (liveText != null) MonoText(liveText, muted: true),
           IconButton(
             visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.edit, size: 18),
+            icon: const Icon(Icons.edit, size: IconSize.md),
             onPressed: () => _editValue(category, index),
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
             icon: const Icon(
               Icons.remove_circle_outline,
-              size: 18,
-              color: Colors.redAccent,
+              size: IconSize.md,
+              color: kError,
             ),
             onPressed: () => _removeValue(category, index),
           ),
@@ -350,30 +325,20 @@ extension on _ScriptEditorPageState {
     final depths = _ScriptEditorPageState._blockDepths(lines);
     final scope = _activeFunction ?? -1;
     return _editorCard([
-      Row(
-        children: [
-          const Text(
-            'Instructions',
-            style: TextStyle(color: kOrange, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            '(${lines.length} lines)',
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
-          ),
-          const Spacer(),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.add, size: 20),
-            tooltip: 'Add line',
-            onPressed: () => _rebuild(() {
-              lines.add(
-                ScriptLine(instruction: ScriptSymbol.instruction(catMath, 0)),
-              );
-              _dirty = true;
-            }),
-          ),
-        ],
+      ScriptCardHeading(
+        'Instructions',
+        count: '${lines.length} lines',
+        action: IconButton(
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.add, size: IconSize.lg),
+          tooltip: 'Add line',
+          onPressed: () => _rebuild(() {
+            lines.add(
+              ScriptLine(instruction: ScriptSymbol.instruction(catMath, 0)),
+            );
+            _dirty = true;
+          }),
+        ),
       ),
       // Scope: edit the main program or a function's body. The app lays a body out at
       // assembly (Docs/Services/Script.md "Functions and Macros").
@@ -395,14 +360,14 @@ extension on _ScriptEditorPageState {
         onChanged: (v) =>
             _rebuild(() => _activeFunction = (v ?? -1) < 0 ? null : v),
       ),
-      const SizedBox(height: 4),
+      const SizedBox(height: Spacing.xs),
       _legend(),
       if (lines.isEmpty)
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 8),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: Spacing.md),
           child: Text(
             'No instructions yet. Add a line to start the program.',
-            style: TextStyle(color: Colors.white54),
+            style: Theme.of(context).textTheme.bodySmall,
           ),
         )
       else
@@ -425,34 +390,25 @@ extension on _ScriptEditorPageState {
   /// the Instructions card's scope selector; a global function is a link declaration with no
   /// body (it lives in a function-library file).
   Widget _functionsCard(ScriptDraft draft) {
+    final theme = Theme.of(context);
     return _editorCard([
-      Row(
-        children: [
-          const Text(
-            'Functions & macros',
-            style: TextStyle(color: kOrange, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            '(${draft.functions.length})',
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
-          ),
-          const Spacer(),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.add, size: 20),
-            tooltip: 'Add function',
-            onPressed: _addFunction,
-          ),
-        ],
+      ScriptCardHeading(
+        'Functions & macros',
+        count: '${draft.functions.length}',
+        action: IconButton(
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.add, size: IconSize.lg),
+          tooltip: 'Add function',
+          onPressed: _addFunction,
+        ),
       ),
       if (draft.functions.isEmpty)
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 8),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: Spacing.md),
           child: Text(
             'No functions. A local function or macro is expanded into a Flow Call plus a '
             'body; a global function is linked at load.',
-            style: TextStyle(color: Colors.white54, fontSize: 12),
+            style: theme.textTheme.bodySmall,
           ),
         ),
       for (var i = 0; i < draft.functions.length; i++)
@@ -469,7 +425,7 @@ extension on _ScriptEditorPageState {
                       'instr ${draft.functions[i].globalInstrOffset}'
                 : '${draft.functions[i].kind.label} · '
                       '${draft.functions[i].body.length} lines',
-            style: const TextStyle(fontSize: 11, color: Colors.white54),
+            style: theme.textTheme.bodySmall,
           ),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
@@ -478,15 +434,15 @@ extension on _ScriptEditorPageState {
                 IconButton(
                   visualDensity: VisualDensity.compact,
                   tooltip: 'Edit body',
-                  icon: const Icon(Icons.edit_note, size: 18),
+                  icon: const Icon(Icons.edit_note, size: IconSize.md),
                   onPressed: () => _rebuild(() => _activeFunction = i),
                 ),
               IconButton(
                 visualDensity: VisualDensity.compact,
                 icon: const Icon(
                   Icons.remove_circle_outline,
-                  size: 18,
-                  color: Colors.redAccent,
+                  size: IconSize.md,
+                  color: kError,
                 ),
                 onPressed: () => _rebuild(() {
                   draft.functions.removeAt(i);
@@ -507,69 +463,62 @@ extension on _ScriptEditorPageState {
     final memController = TextEditingController(text: '0');
     final instrController = TextEditingController(text: '0');
     var kind = ScriptFunctionKind.local;
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setLocal) => AlertDialog(
-          title: const Text('Add function'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameController,
-                  autofocus: true,
-                  decoration: const InputDecoration(labelText: 'Name'),
-                ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<ScriptFunctionKind>(
-                  initialValue: kind,
-                  decoration: const InputDecoration(labelText: 'Kind'),
-                  items: [
-                    for (final k in ScriptFunctionKind.values)
-                      DropdownMenuItem(value: k, child: Text(k.label)),
-                  ],
-                  onChanged: (v) =>
-                      setLocal(() => kind = v ?? ScriptFunctionKind.local),
-                ),
-                if (kind == ScriptFunctionKind.global) ...[
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: fileController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Library file id (SCR_XXX, decimal)',
-                    ),
-                  ),
-                  TextField(
-                    controller: memController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Memory-space offset',
-                    ),
-                  ),
-                  TextField(
-                    controller: instrController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Instruction-space offset',
-                    ),
-                  ),
+    final result = await showTamuDialog<bool>(
+      context,
+      title: 'Add function',
+      body: StatefulBuilder(
+        builder: (context, setLocal) => SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Name'),
+              ),
+              const SizedBox(height: Spacing.md),
+              DropdownButtonFormField<ScriptFunctionKind>(
+                initialValue: kind,
+                decoration: const InputDecoration(labelText: 'Kind'),
+                items: [
+                  for (final k in ScriptFunctionKind.values)
+                    DropdownMenuItem(value: k, child: Text(k.label)),
                 ],
+                onChanged: (v) =>
+                    setLocal(() => kind = v ?? ScriptFunctionKind.local),
+              ),
+              if (kind == ScriptFunctionKind.global) ...[
+                const SizedBox(height: Spacing.md),
+                TextField(
+                  controller: fileController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Library file id (SCR_XXX, decimal)',
+                  ),
+                ),
+                TextField(
+                  controller: memController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Memory-space offset',
+                  ),
+                ),
+                TextField(
+                  controller: instrController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Instruction-space offset',
+                  ),
+                ),
               ],
-            ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Add'),
-            ),
-          ],
         ),
+      ),
+      actions: tamuDialogActions(
+        onCancel: () => Navigator.pop(context, false),
+        onConfirm: () => Navigator.pop(context, true),
+        confirmLabel: 'Add',
       ),
     );
     if (result != true || !mounted) return;
@@ -594,39 +543,32 @@ extension on _ScriptEditorPageState {
   /// dialog is dismissed. Assembly turns the choice into the resolved address (a body line
   /// index for a local/macro, a reservation reference for a global).
   Future<int?> _pickCallTarget(ScriptDraft draft) {
-    return showDialog<int>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Call target'),
-        content: DialogBody(
-          maxWidth: 360,
-          height: 380,
-          child: ListView(
-            children: [
-              for (var i = 0; i < draft.functions.length; i++)
-                ListTile(
-                  dense: true,
-                  leading: const Icon(Icons.call_made, size: 18),
-                  title: Text(
-                    draft.functions[i].name.isEmpty
-                        ? '#$i'
-                        : draft.functions[i].name,
-                  ),
-                  subtitle: Text(
-                    draft.functions[i].kind.label,
-                    style: const TextStyle(fontSize: 11, color: Colors.white54),
-                  ),
-                  onTap: () => Navigator.pop(context, i),
+    final theme = Theme.of(context);
+    return showTamuPicker<int>(
+      context,
+      PickerShell(
+        title: 'Call target',
+        maxWidth: 360,
+        height: 380,
+        body: ListView(
+          children: [
+            for (var i = 0; i < draft.functions.length; i++)
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.call_made, size: IconSize.md),
+                title: Text(
+                  draft.functions[i].name.isEmpty
+                      ? '#$i'
+                      : draft.functions[i].name,
                 ),
-            ],
-          ),
+                subtitle: Text(
+                  draft.functions[i].kind.label,
+                  style: theme.textTheme.bodySmall,
+                ),
+                onTap: () => Navigator.pop(context, i),
+              ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-        ],
       ),
     );
   }

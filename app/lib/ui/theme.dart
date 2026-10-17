@@ -125,6 +125,18 @@ abstract final class Insets {
     left: Spacing.indent + Spacing.xl,
     right: Spacing.lg,
   );
+
+  /// The outside of a card stacked in a list of cards (the Script editor's
+  /// section cards): the list carries no padding of its own, so the gap lives
+  /// here.
+  static const EdgeInsets cardGap = EdgeInsets.symmetric(
+    horizontal: Spacing.md,
+    vertical: Spacing.xs,
+  );
+
+  /// The inside of a card that holds a form or a section (as opposed to a card
+  /// that is itself a list, where the rows own their insets).
+  static const EdgeInsets cardBody = EdgeInsets.all(Spacing.lg);
 }
 
 /// Corner radii: three steps only - a tag, a control or input, a card/dialog.

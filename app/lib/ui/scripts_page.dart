@@ -11,6 +11,7 @@ import '../core/storage_client.dart';
 import 'script_editor_page.dart';
 import 'script_create_dialog.dart';
 import 'script_widgets.dart';
+import 'theme.dart';
 import 'widgets.dart';
 
 class _LoadedScript {
@@ -272,24 +273,25 @@ class _ScriptsPageState extends State<ScriptsPage>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Scripts - ${widget.deviceName}'),
-        actions: [
-          RefreshButton(
-            onRefresh: _refresh,
-            autoActive: autoRefreshActive,
-            refreshing: _refreshing,
-            error: _error != null,
-            selectedInterval: selectedInterval,
-            onSelectAuto: applyAuto,
-          ),
-        ],
+    return TamuPage(
+      title: 'Scripts - ${widget.deviceName}',
+      actions: [
+        PageActions.autoRefresh(
+          control: this,
+          onRefresh: _refresh,
+          refreshing: _refreshing,
+          error: _error != null,
+        ),
+      ],
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _createScript,
+        icon: const Icon(Icons.add),
+        label: const Text('New script'),
       ),
-      body: Column(
+      child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: Insets.page,
             child: SegmentedButton<bool>(
               segments: const [
                 ButtonSegment(
@@ -310,45 +312,37 @@ class _ScriptsPageState extends State<ScriptsPage>
           Expanded(child: _showLoaded ? _buildLoaded() : _buildAvailable()),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _createScript,
-        icon: const Icon(Icons.add),
-        label: const Text('New script'),
-      ),
     );
   }
 
   Widget _buildLoaded() {
     if (_loaded.isEmpty) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text(
-            'No scripts loaded.\nSwitch to "Available" and load a stored SCR_XXX file.',
-            style: TextStyle(color: Colors.white54),
-            textAlign: TextAlign.center,
-          ),
-        ),
+      return const StateMessage.empty(
+        message: 'No scripts loaded',
+        details: 'Switch to "Available" and load a stored SCR_XXX file.',
       );
     }
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    return ListView.separated(
+      padding: Insets.row,
       itemCount: _loaded.length,
+      separatorBuilder: (context, index) => const SizedBox(height: Spacing.md),
       itemBuilder: (context, i) => _buildLoadedCard(_loaded[i]),
     );
   }
 
   Widget _buildLoadedCard(_LoadedScript s) {
+    final theme = Theme.of(context);
     return Card(
-      margin: const EdgeInsets.symmetric(vertical: 4),
+      clipBehavior: Clip.antiAlias,
       child: ExpansionTile(
-        leading: Icon(Icons.circle, size: 12, color: scriptStateColor(s.state)),
-        title: Text(s.name),
+        leading: ScriptStateDot(s.state),
+        title: Text(s.name, style: theme.textTheme.titleSmall),
         subtitle: Text(
           '${s.fileName} · ${ScriptState.label(s.state)}'
           '${s.instructionCounter > 0 ? ' · IC ${s.instructionCounter}' : ''}',
+          style: theme.textTheme.bodySmall,
         ),
-        childrenPadding: const EdgeInsets.only(bottom: 8),
+        childrenPadding: const EdgeInsets.only(bottom: Spacing.md),
         children: [
           ScriptControlBar(
             state: s.state,
@@ -364,13 +358,13 @@ class _ScriptsPageState extends State<ScriptsPage>
             extra: [
               OutlinedButton.icon(
                 onPressed: () => _unload(s),
-                icon: const Icon(Icons.eject, size: 18),
+                icon: const Icon(Icons.eject, size: IconSize.md),
                 label: const Text('Unload'),
               ),
               TextButton.icon(
                 onPressed: () =>
                     _openEditor(s.fileId, s.name, true, slot: s.slot),
-                icon: const Icon(Icons.edit_note, size: 18),
+                icon: const Icon(Icons.edit_note, size: IconSize.md),
                 label: const Text('Open editor'),
               ),
             ],
@@ -403,25 +397,19 @@ class _ScriptsPageState extends State<ScriptsPage>
 
   Widget _buildAvailable() {
     if (_available.isEmpty) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text(
-            'No stored scripts.\nUse "New script" to create one, or upload a SCR_XXX file.',
-            style: TextStyle(color: Colors.white54),
-            textAlign: TextAlign.center,
-          ),
-        ),
+      return const StateMessage.empty(
+        message: 'No stored scripts',
+        details: 'Use "New script" to create one, or upload a SCR_XXX file.',
       );
     }
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    return ListView.separated(
+      padding: Insets.row,
       itemCount: _available.length,
+      separatorBuilder: (context, index) => const SizedBox(height: Spacing.md),
       itemBuilder: (context, i) {
         final file = _available[i];
         final name = normalizeFileName(file.name);
         return Card(
-          margin: const EdgeInsets.symmetric(vertical: 4),
           child: ListTile(
             leading: const Icon(Icons.description_outlined),
             title: Text(name),
@@ -439,14 +427,11 @@ class _ScriptsPageState extends State<ScriptsPage>
                 ),
                 TextButton.icon(
                   onPressed: () => _loadFile(file),
-                  icon: const Icon(Icons.play_arrow, size: 18),
+                  icon: const Icon(Icons.play_arrow, size: IconSize.md),
                   label: const Text('Load'),
                 ),
                 IconButton(
-                  icon: const Icon(
-                    Icons.delete_outline,
-                    color: Colors.redAccent,
-                  ),
+                  icon: const Icon(Icons.delete_outline, color: kError),
                   onPressed: () => _deleteFile(file),
                 ),
               ],

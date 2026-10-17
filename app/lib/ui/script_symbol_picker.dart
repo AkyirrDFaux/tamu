@@ -352,6 +352,7 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
 
   Widget _menu(ScriptDraft draft, List<(String, List<ScriptSymbol>)> groups) {
     final recs = _recommendations(draft);
+    final theme = Theme.of(context);
     return ListView(
       children: [
         if (recs.isNotEmpty) ...[
@@ -362,11 +363,11 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
         for (var i = 0; i < groups.length; i++)
           ListTile(
             dense: true,
-            leading: const Icon(Icons.folder_outlined, size: 18),
+            leading: const Icon(Icons.folder_outlined, size: IconSize.md),
             title: Text(groups[i].$1),
             trailing: Text(
               '${groups[i].$2.length}',
-              style: const TextStyle(color: Colors.white38, fontSize: 12),
+              style: theme.textTheme.labelSmall?.copyWith(color: kTextDisabled),
             ),
             onTap: () => setState(() => _group = i),
           ),
@@ -380,9 +381,9 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
     return ListView(
       children: [
         if (symbols.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(12),
-            child: Text('None', style: TextStyle(color: Colors.white38)),
+          Padding(
+            padding: Insets.page,
+            child: Text('None', style: Theme.of(context).textTheme.bodySmall),
           ),
         for (final s in symbols) _symbolTile(draft, s),
         const Divider(),
@@ -399,11 +400,11 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
           ListTile(
             dense: true,
             title: Text(name),
-            trailing: const Icon(Icons.chevron_right, size: 18),
+            trailing: const Icon(Icons.chevron_right, size: IconSize.md),
             onTap: () async {
-              final s = await showDialog<ScriptSymbol>(
-                context: context,
-                builder: (_) => ScriptPredefineValueDialog(subtype: subtype),
+              final s = await showTamuPicker<ScriptSymbol>(
+                context,
+                ScriptPredefineValueDialog(subtype: subtype),
               );
               if (s == null || !mounted) return;
               Navigator.pop(context, s);
@@ -417,7 +418,7 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
     if (!_constantOnly)
       ListTile(
         dense: true,
-        leading: const Icon(Icons.add, size: 18),
+        leading: const Icon(Icons.add, size: IconSize.md),
         title: const Text('New variable'),
         onTap: () {
           draft.variables.add(ScriptDraftValue(type: DataType.number));
@@ -430,11 +431,11 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
     if (_constantOnly)
       ListTile(
         dense: true,
-        leading: const Icon(Icons.add, size: 18),
+        leading: const Icon(Icons.add, size: IconSize.md),
         title: const Text('New BlockInfo'),
-        subtitle: const Text(
+        subtitle: Text(
           'Register target (block/field/key)',
-          style: TextStyle(fontSize: 11, color: Colors.white54),
+          style: Theme.of(context).textTheme.bodySmall,
         ),
         onTap: () async {
           final bytes = await pickBlockInfo(context, widget.deviceId);
@@ -455,7 +456,7 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
     else if (!widget.destination)
       ListTile(
         dense: true,
-        leading: const Icon(Icons.add, size: 18),
+        leading: const Icon(Icons.add, size: IconSize.md),
         title: const Text('New constant'),
         onTap: () {
           draft.constants.add(ScriptDraftValue(type: DataType.number));
@@ -468,16 +469,16 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
     if (_numericOperand)
       ListTile(
         dense: true,
-        leading: const Icon(Icons.numbers, size: 18),
+        leading: const Icon(Icons.numbers, size: IconSize.md),
         title: const Text('Literal…'),
-        subtitle: const Text(
+        subtitle: Text(
           'Inline number (no constant needed)',
-          style: TextStyle(fontSize: 11, color: Colors.white54),
+          style: Theme.of(context).textTheme.bodySmall,
         ),
         onTap: () async {
-          final s = await showDialog<ScriptSymbol>(
-            context: context,
-            builder: (_) => const ScriptLiteralDialog(),
+          final s = await showTamuPicker<ScriptSymbol>(
+            context,
+            const ScriptLiteralDialog(),
           );
           if (s == null || !mounted) return;
           Navigator.pop(context, s);
@@ -486,11 +487,8 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
   ];
 
   Widget _header(String text) => Padding(
-    padding: const EdgeInsets.only(top: 8, bottom: 2),
-    child: Text(
-      text,
-      style: const TextStyle(color: kOrange, fontWeight: FontWeight.w600),
-    ),
+    padding: const EdgeInsets.only(top: Spacing.md, bottom: Spacing.hairline),
+    child: SectionLabel(text),
   );
 
   Widget _symbolTile(ScriptDraft draft, ScriptSymbol s) => ListTile(
@@ -542,15 +540,11 @@ class _ScriptPredefineValueDialogState
       preNumber => _numberLiteralEntry(),
       _ => const SizedBox.shrink(),
     };
-    return AlertDialog(
-      title: Text('Predefine: ${ScriptSymbol.predefineName(subtype)}'),
-      content: DialogBody(maxWidth: 320, height: 360, child: body),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-      ],
+    return PickerShell(
+      title: 'Predefine: ${ScriptSymbol.predefineName(subtype)}',
+      maxWidth: 320,
+      height: 360,
+      body: body,
     );
   }
 
@@ -575,7 +569,7 @@ class _ScriptPredefineValueDialogState
           keyboardType: TextInputType.number,
           decoration: InputDecoration(labelText: 'Value', helperText: hint),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: Spacing.lg),
         FilledButton(
           onPressed: () {
             final v = int.tryParse(_text.text.trim());
@@ -598,7 +592,7 @@ class _ScriptPredefineValueDialogState
           maxLength: 1,
           decoration: const InputDecoration(labelText: 'Character'),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: Spacing.lg),
         FilledButton(
           onPressed: () {
             if (_text.text.isEmpty) return;
@@ -627,7 +621,7 @@ class _ScriptPredefineValueDialogState
             helperText: '-128..127.99 (e.g. 0.5, 2.25)',
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: Spacing.lg),
         FilledButton(
           onPressed: () {
             final v = double.tryParse(_text.text.trim().replaceAll(',', '.'));
@@ -675,36 +669,31 @@ class _ScriptLiteralDialogState extends State<ScriptLiteralDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Literal'),
-      content: DialogBody(
-        maxWidth: 320,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _text,
-              autofocus: true,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-                signed: true,
-              ),
-              decoration: const InputDecoration(
-                labelText: 'Value',
-                helperText: 'Integer 0..65535, or a fraction like 0.5',
-              ),
-              onSubmitted: (_) => _submit(),
+    return TamuDialog(
+      title: 'Literal',
+      maxWidth: 320,
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _text,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(
+              decimal: true,
+              signed: true,
             ),
-          ],
-        ),
+            decoration: const InputDecoration(
+              labelText: 'Value',
+              helperText: 'Integer 0..65535, or a fraction like 0.5',
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(onPressed: _submit, child: const Text('OK')),
-      ],
+      actions: tamuDialogActions(
+        onCancel: () => Navigator.pop(context),
+        onConfirm: _submit,
+      ),
     );
   }
 }

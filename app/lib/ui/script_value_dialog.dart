@@ -19,6 +19,7 @@ import 'dialogs.dart';
 import 'formatters.dart';
 import 'theme.dart';
 import 'value_editor.dart';
+import 'viewer_kit.dart';
 
 class ScriptValueDialog extends StatefulWidget {
   final ScriptValueCategory category;
@@ -289,10 +290,7 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
             const SizedBox(height: Spacing.lg),
             Row(
               children: [
-                Text(
-                  'Value: ${formatValue(_draft.type, _draft.value)}',
-                  style: const TextStyle(fontFamily: 'monospace'),
-                ),
+                MonoText('Value: ${formatValue(_draft.type, _draft.value)}'),
                 const Spacer(),
                 TextButton(
                   onPressed: _editValue,

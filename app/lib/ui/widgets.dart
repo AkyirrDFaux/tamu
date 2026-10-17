@@ -199,6 +199,25 @@ class ShellDrawerButton extends StatelessWidget {
   }
 }
 
+/// The bare small orange section label: no padding of its own, so it suits a
+/// card body, a dialog section or a picker list. [SectionHeader] is the same
+/// label with the page-level inset baked in.
+class SectionLabel extends StatelessWidget {
+  final String text;
+
+  const SectionLabel(this.text, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text.toUpperCase(),
+      style: Theme.of(
+        context,
+      ).textTheme.labelSmall?.copyWith(color: kOrange, letterSpacing: 1),
+    );
+  }
+}
+
 /// A small orange section label used by the Settings and info pages. The one
 /// section heading once phase 1c lands; its size and spacing come from the
 /// theme, not from a literal.
@@ -216,12 +235,7 @@ class SectionHeader extends StatelessWidget {
         Spacing.xl,
         Spacing.xs,
       ),
-      child: Text(
-        text.toUpperCase(),
-        style: Theme.of(
-          context,
-        ).textTheme.labelSmall?.copyWith(color: kOrange, letterSpacing: 1),
-      ),
+      child: SectionLabel(text),
     );
   }
 }
@@ -662,6 +676,7 @@ class TamuPage extends StatelessWidget {
     this.stateDetails,
     this.stateAction,
     this.bottomNavigationBar,
+    this.floatingActionButton,
   });
 
   final String? title;
@@ -704,6 +719,9 @@ class TamuPage extends StatelessWidget {
 
   final Widget? bottomNavigationBar;
 
+  /// A page-level action button (the Scripts page's "New script").
+  final Widget? floatingActionButton;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -728,6 +746,7 @@ class TamuPage extends StatelessWidget {
             )
           : child,
       bottomNavigationBar: bottomNavigationBar,
+      floatingActionButton: floatingActionButton,
     );
   }
 }

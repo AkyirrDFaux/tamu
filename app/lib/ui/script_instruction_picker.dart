@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../core/script_instructions.dart';
 import 'dialogs.dart';
 import 'theme.dart';
+import 'widgets.dart';
 
 class ScriptInstructionPicker extends StatefulWidget {
   final ScriptInstructionDef? current;
@@ -85,38 +86,22 @@ class _ScriptInstructionPickerState extends State<ScriptInstructionPicker> {
       body: category == null
           ? ListView(
               children: [
-                const Padding(
-                  padding: EdgeInsets.only(top: 8, bottom: 2),
-                  child: Text(
-                    'Recommended',
-                    style: TextStyle(
-                      color: kOrange,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
+                _header('Recommended'),
                 for (final def in _recommendations()) _tile(def),
-                const Padding(
-                  padding: EdgeInsets.only(top: 8, bottom: 2),
-                  child: Text(
-                    'Groups',
-                    style: TextStyle(
-                      color: kOrange,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
+                _header('Groups'),
                 for (var i = 0; i < groups.length; i++)
                   ListTile(
                     dense: true,
-                    leading: const Icon(Icons.folder_outlined, size: 18),
+                    leading: const Icon(
+                      Icons.folder_outlined,
+                      size: IconSize.md,
+                    ),
                     title: Text(groups[i].$1),
                     trailing: Text(
                       '${groups[i].$3.length}',
-                      style: const TextStyle(
-                        color: Colors.white38,
-                        fontSize: 12,
-                      ),
+                      style: Theme.of(
+                        context,
+                      ).textTheme.labelSmall?.copyWith(color: kTextDisabled),
                     ),
                     onTap: () => setState(() => _category = groups[i].$2),
                   ),
@@ -132,6 +117,11 @@ class _ScriptInstructionPickerState extends State<ScriptInstructionPicker> {
     );
   }
 
+  Widget _header(String text) => Padding(
+    padding: const EdgeInsets.only(top: Spacing.md, bottom: Spacing.hairline),
+    child: SectionLabel(text),
+  );
+
   Widget _tile(ScriptInstructionDef def) => ListTile(
     dense: true,
     title: Text(def.label),
@@ -139,7 +129,7 @@ class _ScriptInstructionPickerState extends State<ScriptInstructionPicker> {
       '${ScriptInstructionDef.categoryName(def.category)}'
       '${def.destination ? ' · destination' : ''}'
       ' · ${def.minOperands}..${def.maxOperands} operands',
-      style: const TextStyle(fontSize: 11, color: Colors.white54),
+      style: Theme.of(context).textTheme.bodySmall,
     ),
     onTap: () => Navigator.pop(context, def),
   );

@@ -17,12 +17,14 @@ import '../core/script_functions.dart';
 import '../core/script_instructions.dart';
 import '../core/storage_client.dart';
 import '../core/types.dart';
+import 'dialogs.dart';
 import 'formatters.dart';
 import 'script_instruction_picker.dart';
 import 'script_symbol_picker.dart';
 import 'script_value_dialog.dart';
 import 'script_widgets.dart';
 import 'theme.dart';
+import 'viewer_kit.dart';
 import 'widgets.dart';
 
 part 'script_editor_view.dart';
@@ -161,35 +163,6 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     }
   }
 
-  Widget _loadErrorBody() => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.error_outline, color: Colors.redAccent, size: 36),
-          const SizedBox(height: 8),
-          Text(
-            'Could not load $_fileName',
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _loadError ?? '',
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 12),
-          FilledButton.icon(
-            onPressed: _load,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Retry'),
-          ),
-        ],
-      ),
-    ),
-  );
-
   Future<void> _refresh() async {
     final draft = _draft;
     if (widget.loaded) {
@@ -306,21 +279,19 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     setState(() => _errors = errors);
     if (errors.isEmpty) return true;
     if (!mounted) return false;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Cannot upload'),
-        content: Text(
-          '${errors.length} problem(s):\n\n'
-          '${errors.map((e) => '• $e').join('\n')}',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
+    await showTamuDialog<void>(
+      context,
+      title: 'Cannot upload',
+      body: Text(
+        '${errors.length} problem(s):\n\n'
+        '${errors.map((e) => '• $e').join('\n')}',
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('OK'),
+        ),
+      ],
     );
     return false;
   }
@@ -405,65 +376,50 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
           if (context.mounted) Navigator.of(context).pop();
         }
       },
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(
+      child: TamuPage(
+        title:
             'Edit ${draft?.functionName.isNotEmpty == true ? draft!.functionName : widget.name}',
+        actions: [
+          IconButton(
+            tooltip: 'Check validity',
+            icon: const Icon(Icons.rule),
+            onPressed: draft == null ? null : _check,
           ),
-          actions: [
+          IconButton(
+            tooltip: 'Upload (write the file)',
+            icon: const Icon(Icons.upload_file),
+            onPressed: draft == null || _busy ? null : _save,
+          ),
+          if (widget.loaded)
             IconButton(
-              tooltip: 'Check validity',
-              icon: const Icon(Icons.rule),
-              onPressed: draft == null ? null : _check,
+              tooltip: 'Update (reload live)',
+              icon: const Icon(Icons.sync),
+              onPressed: _busy ? null : () => _reloadLive(applyDraft: true),
             ),
+          if (widget.loaded)
             IconButton(
-              tooltip: 'Upload (write the file)',
-              icon: const Icon(Icons.upload_file),
-              onPressed: draft == null || _busy ? null : _save,
+              tooltip: 'Unload',
+              icon: const Icon(Icons.eject),
+              onPressed: _busy ? null : _unloadScript,
             ),
-            if (widget.loaded)
-              IconButton(
-                tooltip: 'Update (reload live)',
-                icon: const Icon(Icons.sync),
-                onPressed: _busy ? null : () => _reloadLive(applyDraft: true),
-              ),
-            if (widget.loaded)
-              IconButton(
-                tooltip: 'Unload',
-                icon: const Icon(Icons.eject),
-                onPressed: _busy ? null : _unloadScript,
-              ),
-            RefreshButton(
-              onRefresh: _refresh,
-              autoActive: autoRefreshActive,
-              refreshing: false,
-              error: _loadError != null || _refreshFailed,
-              selectedInterval: selectedInterval,
-              onSelectAuto: applyAuto,
-            ),
-          ],
+          PageActions.autoRefresh(
+            control: this,
+            onRefresh: _refresh,
+            error: _loadError != null || _refreshFailed,
+          ),
+        ],
+        // Loading covers both the initial read and the moment between the file
+        // arriving and the draft being built; a failed read gets the retry state.
+        state: _loadError != null
+            ? StateKind.error
+            : (_loading || draft == null ? StateKind.loading : null),
+        stateMessage: 'Could not load $_fileName',
+        stateDetails: _loadError,
+        stateAction: FilledButton.icon(
+          onPressed: _load,
+          icon: const Icon(Icons.refresh),
+          label: const Text('Retry'),
         ),
-        body: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _loadError != null
-            ? _loadErrorBody()
-            : draft == null
-            ? const Center(child: CircularProgressIndicator())
-            : ListView(
-                padding: const EdgeInsets.only(bottom: 24),
-                children: [
-                  if (widget.loaded) _controlsCard(),
-                  if (!widget.loaded) _storedNotice(),
-                  _functionCard(draft),
-                  _valueSection(draft, ScriptValueCategory.input),
-                  _valueSection(draft, ScriptValueCategory.output),
-                  _valueSection(draft, ScriptValueCategory.variable),
-                  _valueSection(draft, ScriptValueCategory.constant),
-                  _functionsCard(draft),
-                  _instructionsCard(draft),
-                  _validityCard(),
-                ],
-              ),
         floatingActionButton: _dirty
             ? FloatingActionButton.extended(
                 onPressed: _busy ? null : _save,
@@ -471,7 +427,28 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
                 label: const Text('Upload'),
               )
             : null,
+        child: draft == null ? null : _editorBody(draft),
       ),
+    );
+  }
+
+  /// The editor's scrolling body: the section cards. Only reached once the draft
+  /// is loaded (the page shows the loading/error state until then).
+  Widget _editorBody(ScriptDraft draft) {
+    return ListView(
+      padding: const EdgeInsets.only(bottom: Spacing.xxl),
+      children: [
+        if (widget.loaded) _controlsCard(),
+        if (!widget.loaded) _storedNotice(),
+        _functionCard(draft),
+        _valueSection(draft, ScriptValueCategory.input),
+        _valueSection(draft, ScriptValueCategory.output),
+        _valueSection(draft, ScriptValueCategory.variable),
+        _valueSection(draft, ScriptValueCategory.constant),
+        _functionsCard(draft),
+        _instructionsCard(draft),
+        _validityCard(),
+      ],
     );
   }
 
@@ -577,9 +554,9 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     ScriptInstructionDef? def,
     int? operandIndex,
   }) {
-    return showDialog<ScriptSymbol>(
-      context: context,
-      builder: (_) => ScriptSymbolPicker(
+    return showTamuPicker<ScriptSymbol>(
+      context,
+      ScriptSymbolPicker(
         draft: draft,
         destination: destination,
         def: def,
@@ -597,21 +574,18 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   Widget _validityCard() {
     final errors = _errors;
     if (errors == null) return const SizedBox.shrink();
+    final theme = Theme.of(context);
     return _editorCard([
       Text(
         errors.isEmpty ? 'Valid' : '${errors.length} problem(s)',
-        style: TextStyle(
-          color: errors.isEmpty ? Colors.greenAccent : Colors.redAccent,
-          fontWeight: FontWeight.w600,
+        style: theme.textTheme.titleSmall?.copyWith(
+          color: errors.isEmpty ? kSuccess : kError,
         ),
       ),
       for (final e in errors)
         Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(
-            '• $e',
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
-          ),
+          padding: const EdgeInsets.only(top: Spacing.xs),
+          child: Text('• $e', style: theme.textTheme.bodySmall),
         ),
     ]);
   }
