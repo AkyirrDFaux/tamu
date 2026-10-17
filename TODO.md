@@ -161,6 +161,11 @@ Open:
 
 ## Open work
 
+- **Autorefresh on Devices and Device View** - `Docs/App/Devices.md` specifies it on both pages, but it
+  exists only in `connection_page.dart` and `widgets.dart` today. The 1b library now provides it
+  (`PageActions.autoRefresh`), so adding it is a page adoption for 1c, not new plumbing. Raised during the
+  UX pass (doc-conformance gap, not a plan change).
+
 - Router capability bit: reserve one for the router service so the documented capability can be set.
 - App Active enum: add `WiFi` (`Enums.h:34-38`) when that work starts. E10 dropped `LegacyBt` from
   the documents, so it is no longer listed as a planned state.
