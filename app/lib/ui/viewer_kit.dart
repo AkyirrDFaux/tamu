@@ -59,11 +59,11 @@ class TamuChip extends StatelessWidget {
       Color foreground,
       FontWeight weight,
     ) = switch (tone) {
-      ChipTone.accent => (kAccentTint, kOrange, FontWeight.w600),
-      ChipTone.subtle => (kSubtleTint, kTextMuted, FontWeight.w400),
-      ChipTone.success => (kSuccess.withAlpha(46), kSuccess, FontWeight.w600),
-      ChipTone.warning => (kWarning.withAlpha(46), kWarning, FontWeight.w600),
-      ChipTone.error => (kError.withAlpha(46), kError, FontWeight.w600),
+      ChipTone.accent => (kAccentTint, kTextPrimary, FontWeight.w600),
+      ChipTone.subtle => (kSubtleTint, kTextSecondary, FontWeight.w400),
+      ChipTone.success => (kSubtleTint, kSuccess, FontWeight.w600),
+      ChipTone.warning => (kSubtleTint, kWarning, FontWeight.w600),
+      ChipTone.error => (kSubtleTint, kError, FontWeight.w600),
     };
     return Container(
       padding: const EdgeInsets.symmetric(

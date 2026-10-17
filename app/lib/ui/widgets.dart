@@ -413,7 +413,8 @@ IconData deviceTypeIcon(DeviceType type) => switch (type) {
   DeviceType.unknown => Icons.devices_other,
 };
 
-/// Small rounded label chip used across the memory pages.
+/// Small rounded label chip used across the memory pages. Styled from the tokens
+/// ([kSubtleTint]/[kAccentTint] and the text roles) so it cannot invent a colour.
 class ChipLabel extends StatelessWidget {
   const ChipLabel(this.text, {super.key, this.subtle = false});
 
@@ -425,14 +426,14 @@ class ChipLabel extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(
-        color: subtle ? Colors.white.withAlpha(14) : kOrange.withAlpha(46),
+        color: subtle ? kSubtleTint : kAccentTint,
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
         text,
         style: TextStyle(
           fontSize: 10,
-          color: subtle ? Colors.white54 : kOrange,
+          color: subtle ? kTextSecondary : kTextPrimary,
           fontWeight: subtle ? FontWeight.w400 : FontWeight.w600,
         ),
       ),
@@ -497,11 +498,7 @@ class RefreshButton extends StatelessWidget {
                       (selectedInterval ?? Duration.zero))
                     const Padding(
                       padding: EdgeInsets.only(left: 8),
-                      child: Icon(
-                        Icons.check,
-                        size: 16,
-                        color: Colors.greenAccent,
-                      ),
+                      child: Icon(Icons.check, size: 16, color: kSuccess),
                     ),
                 ],
               ),
@@ -517,11 +514,15 @@ class RefreshButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The button lives in the app bar, which is the accent surface: only a dark
+    // ink reaches 3:1 there, so the busy spinner takes kOnAccent (was the
+    // theme's kOrange, 1.17:1 on the bar) and the autorefresh state mark is a
+    // ringed dot - the ring is the mark's boundary, the fill carries the state.
     final dotColor = error
-        ? Colors.redAccent
+        ? kError
         : autoActive
-        ? Colors.greenAccent
-        : Colors.transparent;
+        ? kSuccess
+        : null;
     return IconButton(
       tooltip: 'Refresh (hold for autorefresh)',
       onPressed: refreshing ? null : onRefresh,
@@ -533,14 +534,26 @@ class RefreshButton extends StatelessWidget {
               ? const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: kOnAccent,
+                  ),
                 )
               : const Icon(Icons.refresh),
-          Positioned(
-            right: -2,
-            bottom: -2,
-            child: Icon(Icons.circle, size: 8, color: dotColor),
-          ),
+          if (dotColor != null)
+            Positioned(
+              right: -2,
+              bottom: -2,
+              child: Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: dotColor,
+                  border: Border.all(color: kOnAccent, width: 1.5),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -755,6 +768,12 @@ class TamuPage extends StatelessWidget {
 /// when [auto] and [onRefresh] are both given a refresh / autorefresh action is
 /// placed first (the Connection page order). A page that needs the refresh
 /// action elsewhere passes its own [PageActions.autoRefresh] in [actions].
+///
+/// The actions are wrapped in an [IconButtonTheme] carrying the app bar's own
+/// ink: the AppBar hands the actions `actionsIconTheme` (which follows
+/// `appBarTheme.iconTheme`, [kOnAccent]), but it does not touch the *disabled*
+/// ink, and `kTextDisabled` is 1.59:1 on the accent bar. A disabled action here
+/// draws in [kOnAccentDim] (3.35:1) instead.
 class PageAppBar extends StatelessWidget implements PreferredSizeWidget {
   const PageAppBar({
     super.key,
@@ -785,19 +804,32 @@ class PageAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
+    final actions = <Widget>[
+      if (auto != null && onRefresh != null)
+        PageActions.autoRefresh(
+          control: auto!,
+          onRefresh: onRefresh!,
+          refreshing: refreshing,
+          error: refreshError,
+        ),
+      ...this.actions,
+    ];
     return AppBar(
       title: titleWidget ?? (title != null ? Text(title!) : null),
       leading: leading,
-      actions: [
-        if (auto != null && onRefresh != null)
-          PageActions.autoRefresh(
-            control: auto!,
-            onRefresh: onRefresh!,
-            refreshing: refreshing,
-            error: refreshError,
-          ),
-        ...actions,
-      ],
+      actions: actions.isEmpty
+          ? actions
+          : [
+              IconButtonTheme(
+                data: IconButtonThemeData(
+                  style: IconButton.styleFrom(
+                    foregroundColor: kOnAccent,
+                    disabledForegroundColor: kOnAccentDim,
+                  ),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: actions),
+              ),
+            ],
       bottom: bottom,
     );
   }
