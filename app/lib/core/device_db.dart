@@ -8,13 +8,18 @@ library;
 import 'package:flutter/foundation.dart';
 
 import 'connection.dart';
+import 'device_identity.dart';
 import 'notifications.dart';
 import 'protocol.dart';
 import 'register_client.dart';
 import 'service_request.dart';
+import 'sndb.dart' as sndb;
 import 'types.dart';
 
-const int coreId = 1;
+// `coreId` (the core's address on the local net) is a wire constant and lives in protocol.dart
+// with the rest of them; re-exported here because the pages that reach the core import it from
+// the device database.
+export 'protocol.dart' show coreId;
 
 /// Everything known about one network device.
 class DeviceEntry {
@@ -112,44 +117,21 @@ class DeviceDatabase extends ChangeNotifier {
 
     final entry = _devices.putIfAbsent(id, () => DeviceEntry(id: id));
 
-    // Check reachable via Ping 00.01
-    final ping = await _request(
-      id,
-      ServiceType.device,
-      1,
-      timeout: const Duration(milliseconds: 800),
-    );
-    if (ping == null) {
+    // One reader for those fields (`readDeviceIdentity`), shared with the restore's live
+    // snapshot: ping first, then the System block.
+    final identity = await readDeviceIdentity(id);
+    if (identity == null) {
       entry.stale = true;
       notifyListeners();
       return null;
     }
     entry.stale = false;
     entry.lastSeen = DateTime.now();
-
-    // System fields are exposed as one entry per field at key 0 (the struct position is not
-    // on the wire; Docs/Services/System Block and Device Commands.md).
-    final snReply = await _registerRead(id, 1, 0);
-    if (snReply != null && snReply.length >= 14) {
-      entry.serialNumber = serialNumberToHex(snReply.sublist(0, 14));
-    }
-    final typeReply = await _registerRead(id, 0, 0);
-    if (typeReply != null && typeReply.length >= 2) {
-      entry.type = DeviceType.fromValue(typeReply[0] | (typeReply[1] << 8));
-    }
-    final versionReply = await _registerRead(id, 0, 2);
-    if (versionReply != null && versionReply.length >= 4) {
-      entry.softwareVersion = formatSoftwareVersion(versionReply);
-    }
-    final capReply = await _registerRead(id, 0, 1);
-    if (capReply != null && capReply.length >= 4) {
-      entry.capabilities = uint32FromBytes(capReply);
-    }
-    final nameReply = await _registerRead(id, 6, 0);
-    if (nameReply != null && nameReply.isNotEmpty) {
-      entry.name = decodePaddedString(nameReply);
-    }
-    if (entry.name.isEmpty) entry.name = 'Device ${idToString(id)}';
+    entry.serialNumber = identity.serial;
+    entry.type = identity.type;
+    entry.softwareVersion = identity.softwareVersion;
+    entry.capabilities = identity.capabilities;
+    entry.name = identity.name;
 
     notifyListeners();
     return entry;
@@ -297,7 +279,7 @@ class DeviceDatabase extends ChangeNotifier {
       if (sndbReply == null) {
         throw Exception('SNDB read failed');
       }
-      final parsed = _parseSndb(sndbReply);
+      final parsed = sndb.parseSndb(sndbReply);
       // ID 0 marks an unassigned entry; skip it so no phantom "device" is created
       // and no requests are fired at an invalid target.
       final ids = <int>{
@@ -350,52 +332,16 @@ class DeviceDatabase extends ChangeNotifier {
   }
 
   /// SNDB Write per docs 00.12
-  Future<bool> sndbWrite(List<int> sn, int id) async {
-    final reply = await _request(
-      coreId,
-      ServiceType.device,
-      0x12,
-      payload: [...sn, id & 0xFF, (id >> 8) & 0xFF],
-      timeout: const Duration(seconds: 3),
-    );
-    return reply != null && reply.length >= 16;
-  }
+  Future<bool> sndbWrite(List<int> sn, int id) => sndb.sndbWrite(sn, id);
 
   /// SNDB Delete per docs 00.12 with ID 0
-  Future<bool> sndbDelete(List<int> sn) async {
-    if (sn.length < 14) return false;
-    final reply = await _request(
-      coreId,
-      ServiceType.device,
-      0x12,
-      payload: [...sn.take(14), 0, 0],
-      timeout: const Duration(seconds: 3),
-    );
-    return reply != null && reply.length >= 16;
-  }
+  Future<bool> sndbDelete(List<int> sn) => sndb.sndbDelete(sn);
 
   /// Full SNDB dump for the SNDB viewer: [id, serial hex] pairs.
   Future<List<(int, String)>> sndbEntries() async {
-    final reply = await _request(
-      coreId,
-      ServiceType.device,
-      0x13,
-      timeout: const Duration(seconds: 5),
-    );
-    if (reply == null) return const [];
-    return [for (final e in _parseSndb(reply)) (e.id, e.serial)];
+    final entries = await sndb.sndbEntries();
+    return [for (final e in entries) (e.id, e.serial)];
   }
-
-  /// The single SNDB record parser: the 16-byte entries are `serial (14) | id (u16)`
-  /// little-endian. Every record is emitted (including id 0, the unassigned marker);
-  /// callers filter as needed.
-  static List<({int id, String serial})> _parseSndb(List<int> reply) => [
-    for (var offset = 0; offset + 16 <= reply.length; offset += 16)
-      (
-        id: reply[offset + 14] | (reply[offset + 15] << 8),
-        serial: serialNumberToHex(reply.sublist(offset, offset + 14)),
-      ),
-  ];
 }
 
 extension _SortExt<T> on Iterable<T> {

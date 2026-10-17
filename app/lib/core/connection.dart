@@ -8,7 +8,6 @@ library;
 
 import 'dart:async';
 
-import 'settings.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart'
     show SerialPort;
@@ -17,8 +16,11 @@ import 'package:universal_ble/universal_ble.dart';
 import 'ble_permissions.dart';
 import 'diagnostics.dart';
 import 'device_db.dart';
+import 'fragment_reassembler.dart';
 import 'platform_caps.dart';
 import 'protocol.dart';
+import 'request_channel.dart';
+import 'settings.dart';
 import 'transport.dart';
 
 enum LinkSource { all, ble, usb }
@@ -42,133 +44,15 @@ class DiscoveredLink {
   });
 }
 
-/// A completed service reply: its reassembled payload plus the packet-level
-/// SUCCESS/FAIL flags. Most callers only need the payload ([ConnectionManager.request]);
-/// the subscription client checks the flags to tell an accepted write from a refusal.
-class PacketResponse {
-  final List<int> payload;
-  final bool success;
-  final bool fail;
-
-  const PacketResponse({
-    required this.payload,
-    required this.success,
-    required this.fail,
-  });
-
-  /// A reply is accepted only when it is explicitly successful. A FAIL response (or a
-  /// response with neither flag) is not a success.
-  bool get ok => success && !fail;
-}
-
-/// The result of feeding one response frame into a [FragmentReassembler].
-sealed class FragmentEvent {
-  const FragmentEvent();
-}
-
-/// More fragments are still expected before the reply completes.
-class FragmentPending extends FragmentEvent {
-  const FragmentPending();
-}
-
-/// The reply completed: [payload] is the reassembled service data (its per-fragment
-/// info stripped), carrying the packet-level SUCCESS/FAIL flags of the STOP frame.
-class FragmentComplete extends FragmentEvent {
-  final List<int> payload;
-  final bool success;
-  final bool fail;
-
-  const FragmentComplete({
-    required this.payload,
-    required this.success,
-    required this.fail,
-  });
-}
-
-/// A reply whose fragment sequence is inconsistent (a lost, duplicated,
-/// out-of-order or short fragment) - dropped rather than allowed to silently
-/// truncate or corrupt the reassembled stream. [reason] is logged by the caller.
-class FragmentAbort extends FragmentEvent {
-  final String reason;
-
-  const FragmentAbort(this.reason);
-}
-
-/// Reassembles a fragmented service reply into one payload
-/// (Docs/Services/App Interface.md "fragmentation"; Docs/RSBus and Packets.md "FRAG").
-///
-/// A reply streams as FRAG-flagged frames. Each FRAG payload begins with four bytes
-/// of fragmentation info - a little-endian `u16 current` fragment index and a `u16
-/// total` fragment count - which is stripped as the fragments accumulate. The frame
-/// with STOP set ends the reply. A non-FRAG frame is the payload verbatim (a single
-/// frame carries START|STOP). Fragment index/count consistency is checked, so a stream
-/// that starts at a non-zero index, jumps, or changes its declared total is aborted.
-///
-/// This is the pure state machine behind [ConnectionManager]'s reply path, split out
-/// so the framing can be exercised without a live transport.
-class FragmentReassembler {
-  final Map<int, List<int>> _buffers = {};
-  // Expected next fragment index + declared total for each in-flight reply.
-  final Map<int, ({int next, int total})> _frag = {};
-
-  /// Opens (or restarts) a reply buffer for transaction [txId]; called when a request
-  /// goes out, so an empty reply is distinguishable from no reply.
-  void begin(int txId) {
-    _buffers[txId] = <int>[];
-    _frag.remove(txId);
+class ConnectionManager extends ChangeNotifier implements RequestChannel {
+  ConnectionManager._() {
+    // The service clients send through the installed channel (`request_channel.dart`), and the
+    // app's channel is this connection. Installing it here arms the clients for anything that
+    // reaches the app's connection - the coupling they had when they called
+    // `ConnectionManager.instance` directly. A tool installs its own channel instead and never
+    // touches this class.
+    installRequestChannel(this);
   }
-
-  /// Forgets any reassembly state for [txId] (reply completed, timed out or cancelled).
-  void discard(int txId) {
-    _buffers.remove(txId);
-    _frag.remove(txId);
-  }
-
-  /// Drops every in-flight reply (the link went down).
-  void clear() {
-    _buffers.clear();
-    _frag.clear();
-  }
-
-  /// Feeds one response [frame] for transaction [txId].
-  FragmentEvent feed(int txId, PacketFrame frame) {
-    final buffer = _buffers.putIfAbsent(txId, () => <int>[]);
-    if (frame.isFrag) {
-      if (frame.payload.length < 4) {
-        discard(txId);
-        return const FragmentAbort('FRAG packet without fragment info');
-      }
-      final info = fragInfoOf(frame.payload);
-      final state = _frag[txId];
-      if (state == null) {
-        if (info.current != 0) {
-          discard(txId);
-          return FragmentAbort('stream starts at fragment ${info.current}');
-        }
-      } else if (info.current != state.next || info.total != state.total) {
-        discard(txId);
-        return FragmentAbort(
-          'fragment ${info.current}/${info.total} out of order '
-          '(expected ${state.next}/${state.total})',
-        );
-      }
-      _frag[txId] = (next: info.current + 1, total: info.total);
-      buffer.addAll(frame.payload.sublist(4));
-    } else {
-      buffer.addAll(frame.payload);
-    }
-    if (!frame.isStop) return const FragmentPending();
-    discard(txId);
-    return FragmentComplete(
-      payload: buffer,
-      success: frame.isSuccess,
-      fail: frame.isFail,
-    );
-  }
-}
-
-class ConnectionManager extends ChangeNotifier {
-  ConnectionManager._();
 
   static final ConnectionManager instance = ConnectionManager._();
 
@@ -280,6 +164,7 @@ class ConnectionManager extends ChangeNotifier {
   bool _connecting = false;
 
   String? get connectedName => _transport?.displayName;
+  @override
   bool get isConnected => _transport != null;
   Transport? get transport => _transport;
 
@@ -301,6 +186,7 @@ class ConnectionManager extends ChangeNotifier {
   // valueUpdates stream.
   Function(List<int>)? _subscriptionListener;
 
+  @override
   void setSubscriptionListener(Function(List<int>)? listener) {
     _subscriptionListener = listener;
   }
@@ -722,10 +608,12 @@ class ConnectionManager extends ChangeNotifier {
 
   /// Allocates a free transaction ID for manual use (e.g. sharing one TRID across a
   /// paired pair of requests). The caller owns the slot until it is used by [request].
+  @override
   int takeTxId() => _takeTxId();
 
   /// Sends a single-packet request and waits for its response payload (REQACK is
   /// always set). Throws [TransportException] on timeout.
+  @override
   Future<List<int>> request(
     int targetId,
     ServiceType service,
@@ -746,6 +634,7 @@ class ConnectionManager extends ChangeNotifier {
 
   /// Like [request], but returns the packet-level SUCCESS/FAIL flags alongside the
   /// payload so callers can tell an accepted write from a FAIL reply.
+  @override
   Future<PacketResponse> requestWithFlags(
     int targetId,
     ServiceType service,

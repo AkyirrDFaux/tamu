@@ -29,7 +29,9 @@ Future<BackupDevice?> captureDevice(
   bool includeFiles = true,
   int maxFileBytes = defaultMaxFileBytes,
 }) async {
-  final entry = DeviceDatabase.instance.byId(deviceId);
+  // The identity is read off the device, so a capture describes the device itself rather than
+  // whatever the app's device database last saw.
+  final identity = await readDeviceIdentity(deviceId);
   final reg = RegisterClient(deviceId: deviceId);
   final captured = <BackupBlock>[];
 
@@ -119,9 +121,14 @@ Future<BackupDevice?> captureDevice(
 
   // SNDB lives on cores.
   final sndb = <BackupSndbEntry>[];
-  if (entry?.isCore ?? false) {
-    for (final (id, serial) in await DeviceDatabase.instance.sndbEntries()) {
-      sndb.add(BackupSndbEntry(serial: serial, address: idToString(id)));
+  final isCore =
+      deviceId == coreId ||
+      (identity?.capabilities ?? 0) & Capability.core != 0;
+  if (isCore) {
+    for (final entry in await sndbEntries()) {
+      sndb.add(
+        BackupSndbEntry(serial: entry.serial, address: idToString(entry.id)),
+      );
     }
   }
 
@@ -136,11 +143,11 @@ Future<BackupDevice?> captureDevice(
 
   return BackupDevice(
     created: DateTime.now().toIso8601String(),
-    type: (entry?.type ?? DeviceType.unknown).label,
-    typeId: (entry?.type ?? DeviceType.unknown).value,
+    type: (identity?.type ?? DeviceType.unknown).label,
+    typeId: (identity?.type ?? DeviceType.unknown).value,
     id: deviceId,
-    name: entry?.displayName ?? 'Device ${idToString(deviceId)}',
-    serial: entry?.serialNumber,
+    name: identity?.name ?? 'Device ${idToString(deviceId)}',
+    serial: identity?.serial,
     blocks: captured,
     scripts: scripts,
     requesterSubscriptions: requesters,

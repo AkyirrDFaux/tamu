@@ -5,8 +5,8 @@ library;
 
 import 'dart:typed_data';
 
-import 'connection.dart';
 import 'protocol.dart';
+import 'request_channel.dart';
 import 'service_request.dart';
 import 'system_schema.dart';
 import 'types.dart';

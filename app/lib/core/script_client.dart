@@ -4,9 +4,9 @@ library;
 
 import 'dart:typed_data';
 
-import 'connection.dart';
 import 'protocol.dart';
 import 'register_client.dart';
+import 'request_channel.dart';
 import 'script_file.dart';
 import 'script_functions.dart';
 import 'service_request.dart';

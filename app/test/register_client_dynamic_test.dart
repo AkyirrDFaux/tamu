@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/register_client.dart';
+import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/types.dart';
 
 /// Pins the dynamic-memory command request shape: the create/delete/set-name commands carry

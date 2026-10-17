@@ -11,63 +11,12 @@ import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'diagnostics.dart';
-import 'protocol.dart';
+import 'usb_frame.dart';
 
-/// USB link frame (Docs/Services/App Interface.md):
-/// 0xFA | CRC8 | Length | Payload (max 60 bytes) | 0xBF
-const int usbFrameStart = 0xFA;
-const int usbFrameStop = 0xBF;
-const int usbMaxPayload = 60;
-
-Uint8List buildUsbFrame(List<int> payloadStream) {
-  assert(payloadStream.length <= usbMaxPayload);
-  final frame = Uint8List(payloadStream.length + 4);
-  frame[0] = usbFrameStart;
-  // CRC covers length + payload.
-  frame[1] = crc8([payloadStream.length, ...payloadStream]);
-  frame[2] = payloadStream.length;
-  frame.setAll(3, payloadStream);
-  frame[frame.length - 1] = usbFrameStop;
-  return frame;
-}
-
-/// Incremental parser recovering the packet stream from USB link frames.
-/// Wire order per the docs: START, CRC8 (over length + payload), Length,
-/// Payload, STOP.
-class UsbFrameParser {
-  final _out = BytesBuilder(copy: false);
-  final List<int> _current = [];
-  bool _inFrame = false;
-
-  /// Returns the accumulated packet-stream bytes carried by complete frames.
-  Uint8List feed(List<int> chunk) {
-    for (final byte in chunk) {
-      if (!_inFrame) {
-        if (byte == usbFrameStart) {
-          _inFrame = true;
-          _current.clear();
-        }
-        continue;
-      }
-      _current.add(byte);
-      if (_current.length < 2) continue; // CRC + length not complete yet
-      final length = _current[1];
-      if (length > usbMaxPayload) {
-        _inFrame = false; // corrupt, resync
-        continue;
-      }
-      if (_current.length < 2 + length + 1) continue; // payload + stop pending
-      final expectedCrc = crc8([length, ..._current.sublist(2, 2 + length)]);
-      final stop = _current.last;
-      if (stop == usbFrameStop && _current[0] == expectedCrc) {
-        _out.add(Uint8List.fromList(_current.sublist(2, 2 + length)));
-      }
-      _inFrame = false;
-      _current.clear();
-    }
-    return _out.takeBytes();
-  }
-}
+// The USB link framing is pure Dart and lives in `usb_frame.dart`, so a `dart run` tool can put
+// the same frames on the wire without this file's platform plugins; re-exported because the
+// transports and the framing are one subject.
+export 'usb_frame.dart';
 
 /// BLE link framing (Docs/Services/App Interface.md):
 /// uint16 LE length prefix followed by that many stream bytes.

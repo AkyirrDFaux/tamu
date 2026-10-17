@@ -1,6 +1,6 @@
-import 'connection.dart';
 import 'diagnostics.dart';
 import 'protocol.dart';
+import 'request_channel.dart';
 import 'types.dart';
 
 /// Sends one service request, turning a transport failure into `null` and logging it under [tag].
@@ -9,6 +9,9 @@ import 'types.dart';
 /// only things that ever differed between them. Centralising it keeps the failure handling
 /// (swallow to null, log with the address and the service/CID) identical everywhere instead of
 /// four slightly different copies.
+///
+/// The request goes through the installed [requestChannel]: the app installs its connection, a
+/// CLI tool installs its own serial channel.
 Future<List<int>?> serviceRequest(
   int targetId,
   ServiceType service,
@@ -19,8 +22,16 @@ Future<List<int>?> serviceRequest(
   bool requestFrag = false,
   required String tag,
 }) async {
+  final channel = requestChannel;
+  if (channel == null) {
+    AppDiagnostics.log(
+      tag,
+      'dev ${idToString(targetId)} $service/$cid: no link',
+    );
+    return null;
+  }
   try {
-    return await ConnectionManager.instance.request(
+    return await channel.request(
       targetId,
       service,
       cid,
@@ -49,8 +60,16 @@ Future<PacketResponse?> serviceRequestWithFlags(
   bool requestFrag = false,
   required String tag,
 }) async {
+  final channel = requestChannel;
+  if (channel == null) {
+    AppDiagnostics.log(
+      tag,
+      'dev ${idToString(targetId)} $service/$cid: no link',
+    );
+    return null;
+  }
   try {
-    return await ConnectionManager.instance.requestWithFlags(
+    return await channel.requestWithFlags(
       targetId,
       service,
       cid,

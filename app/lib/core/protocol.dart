@@ -27,6 +27,12 @@ const int flagFail =
 /// Default priority byte (docs: Reserved(4) | Priority(4), 0 = highest, default 8).
 const int defaultPriority = 8;
 
+/// The directly connected device answers at address 1 on the local net (Docs/App/General
+/// info.md): the app reaches the core there and learns the rest of the network from it (the
+/// SNDB roster, the passthrough to devices in update mode). Declared here, next to the rest of
+/// the wire constants, because everything that addresses the bus needs it.
+const int coreId = 1;
+
 /// Reserved TRID ranges (Docs/RSBus and Packets.md "Transaction IDs"). The App owns
 /// 0xF000-0xFFFF: every app request draws its transaction ID from that range and a reply
 /// echoes the same TRID, so the app routes on the full 16-bit value. (The System/Logs and

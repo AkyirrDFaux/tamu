@@ -4,9 +4,9 @@ library;
 
 import 'dart:typed_data';
 
-import 'connection.dart';
 import 'diagnostics.dart';
 import 'protocol.dart';
+import 'request_channel.dart';
 import 'service_request.dart';
 import 'types.dart';
 
@@ -48,8 +48,6 @@ class StorageClient {
 
   StorageClient({required this.deviceId});
 
-  ConnectionManager get _link => ConnectionManager.instance;
-
   Future<List<int>?> _request(
     int cid, {
     List<int> payload = const [],
@@ -76,8 +74,13 @@ class StorageClient {
     Duration? timeout,
     bool requestFrag = false,
   }) async {
+    final link = requestChannel;
+    if (link == null) {
+      AppDiagnostics.log('storage', 'no link');
+      return false;
+    }
     try {
-      final response = await _link.requestWithFlags(
+      final response = await link.requestWithFlags(
         deviceId,
         ServiceType.storage,
         cid,

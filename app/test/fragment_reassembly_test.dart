@@ -3,7 +3,7 @@
 ///
 /// CID 0 (slot map) and CID 5 (internal state) of the Script service both exceed one
 /// frame and stream through the app interface's fragmentation. The framing state
-/// machine is [FragmentReassembler] in `core/connection.dart`; these tests drive it
+/// machine is [FragmentReassembler] in `core/fragment_reassembler.dart`; these tests drive it
 /// with synthesized frames - no hardware - and pin:
 ///   * a multi-fragment reply reassembles to the concatenation of its fragments,
 ///     with a payload larger than one frame;
@@ -17,7 +17,7 @@ library;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tamuapp/core/connection.dart';
+import 'package:tamuapp/core/fragment_reassembler.dart';
 import 'package:tamuapp/core/protocol.dart';
 
 /// One response frame for transaction [txId] carrying fragment [current] of [total].

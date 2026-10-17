@@ -3,9 +3,9 @@ library;
 
 import 'dart:async';
 
-import 'connection.dart';
 import 'diagnostics.dart';
 import 'protocol.dart';
+import 'request_channel.dart';
 import 'types.dart';
 
 class SubscriptionClient {
@@ -45,16 +45,16 @@ class SubscriptionClient {
   /// NOTE: no UI consumer subscribes to [valueUpdates] yet, so pushed values are
   /// currently dropped. Wiring it into the Subscriptions page is a UI follow-up.
   void startListening() {
-    ConnectionManager.instance.setSubscriptionListener((payload) {
+    requestChannel?.setSubscriptionListener((payload) {
       _valueUpdateController.add(payload);
     });
   }
 
   void stopListening() {
-    ConnectionManager.instance.setSubscriptionListener(null);
+    requestChannel?.setSubscriptionListener(null);
   }
 
-  // Use normal request with ConnectionManager's transaction ID. The reply carries the
+  // Use a normal request with the channel's transaction ID. The reply carries the
   // packet SUCCESS/FAIL flags, so callers check [PacketResponse.ok] rather than just
   // "a payload came back".
   Future<PacketResponse?> _request(
@@ -64,8 +64,13 @@ class SubscriptionClient {
     int? toDevice,
     int? transactionId,
   }) async {
+    final channel = requestChannel;
+    if (channel == null) {
+      AppDiagnostics.log('subscriptions', 'no link');
+      return null;
+    }
     try {
-      return await ConnectionManager.instance.requestWithFlags(
+      return await channel.requestWithFlags(
         toDevice ?? deviceId,
         service,
         cid,

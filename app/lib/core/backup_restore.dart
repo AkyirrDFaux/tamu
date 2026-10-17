@@ -178,18 +178,22 @@ int? resolveArchiveAddress(RestorePlan plan, String address) {
   return (idNet(local.id) << 10) | node;
 }
 
-/// Reads a live device's block/entry layout (metadata only, no values).
+/// Reads a live device's identity and block/entry layout (metadata only, no values).
+///
+/// The identity comes from the device itself, so a snapshot does not depend on the app's device
+/// database having been refreshed first - and a `dart run` tool with no database at all reads
+/// the same snapshot.
 Future<LiveDevice?> readLiveDevice(int deviceId) async {
-  final entry = DeviceDatabase.instance.byId(deviceId);
+  final identity = await readDeviceIdentity(deviceId);
   final reg = RegisterClient(deviceId: deviceId);
   final walked = await walkDeviceBlocks(reg);
   if (walked == null) return null;
   final live = [for (final b in walked) liveBlockFromVisited(b)];
   return LiveDevice(
     id: deviceId,
-    name: entry?.displayName ?? 'Device ${idToString(deviceId)}',
-    serial: entry?.serialNumber,
-    capabilities: entry?.capabilities ?? 0,
+    name: identity?.name ?? 'Device ${idToString(deviceId)}',
+    serial: identity?.serial,
+    capabilities: identity?.capabilities ?? 0,
     blocks: live,
   );
 }
@@ -410,15 +414,26 @@ LiveDevice? matchLiveDevice(BackupDevice source, List<LiveDevice> live) {
       live.firstOrNull;
 }
 
-/// Walks every non-stale device into a live snapshot, in device order.
+/// The ids of every device on the bus: the directly connected core, plus every node its SNDB
+/// roster names (id 0 is the unassigned marker, never a device).
+Future<List<int>> _networkNodeIds() async {
+  final ids = <int>{coreId};
+  for (final entry in await sndbEntries()) {
+    if (entry.id != 0) ids.add(entry.id);
+  }
+  return ids.toList()..sort();
+}
+
+/// Walks every device on the bus into a live snapshot, in address order.
 ///
-/// Sequential on purpose: the RS bus is half-duplex and the connection layer serialises
-/// requests, so concurrent reads would not overlap.
+/// Read off the wire rather than from the app's device database, so a plan describes the rig as
+/// it is now (and a `dart run` tool can build one). Sequential on purpose: the RS bus is
+/// half-duplex and the connection layer serialises requests, so concurrent reads would not
+/// overlap.
 Future<List<LiveDevice>> _readLiveDevices() async {
   final live = <LiveDevice>[];
-  for (final device in DeviceDatabase.instance.all) {
-    if (device.stale) continue;
-    final snapshot = await readLiveDevice(device.id);
+  for (final id in await _networkNodeIds()) {
+    final snapshot = await readLiveDevice(id);
     if (snapshot != null) live.add(snapshot);
   }
   return live;
@@ -946,11 +961,7 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         // A device is not an entry in its own SNDB (the firmware refuses it), so skip the
         // target's own row rather than counting it as a failure.
         if (id == null || id == target.id) break;
-        done(
-          await DeviceDatabase.instance.sndbWrite(unhexBytes(e.serial), id),
-          item,
-          describe(item),
-        );
+        done(await sndbWrite(unhexBytes(e.serial), id), item, describe(item));
       case RestoreKind.file:
         final store = storage.putIfAbsent(
           target.id,
