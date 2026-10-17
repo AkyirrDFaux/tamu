@@ -12,6 +12,7 @@ import '../core/script_instructions.dart';
 import '../core/types.dart';
 import 'formatters.dart';
 import 'block_info_picker.dart';
+import 'dialogs.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -332,54 +333,20 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
     final draft = widget.draft;
     final groups = _groups(draft);
     final group = _group;
-    return AlertDialog(
-      title: Row(
-        children: [
-          if (group != null)
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.arrow_back, size: 18),
-              tooltip: 'Back to groups',
-              onPressed: () => setState(() => _group = null),
-            ),
-          Expanded(
-            child: Text(
-              group == null
-                  ? (widget.destination ? 'Pick destination' : 'Pick operand')
-                  : groups[group].$1,
-            ),
-          ),
-        ],
-      ),
-      content: DialogBody(
-        maxWidth: 360,
-        height: 380,
-        child: Column(
-          children: [
-            if (_hint != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  _hint!,
-                  style: const TextStyle(color: kOrange, fontSize: 12),
-                ),
-              ),
-            Expanded(
-              child: group == null
-                  ? _menu(draft, groups)
-                  : groups[group].$1 == 'Predefines'
-                  ? _predefineList()
-                  : _groupList(draft, groups[group].$2),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-      ],
+    return PickerShell(
+      title: group == null
+          ? (widget.destination ? 'Pick destination' : 'Pick operand')
+          : groups[group].$1,
+      onBack: group == null ? null : () => setState(() => _group = null),
+      backTooltip: 'Back to groups',
+      maxWidth: 360,
+      height: 380,
+      hint: _hint,
+      body: group == null
+          ? _menu(draft, groups)
+          : groups[group].$1 == 'Predefines'
+          ? _predefineList()
+          : _groupList(draft, groups[group].$2),
     );
   }
 

@@ -5,8 +5,8 @@ library;
 import 'package:flutter/material.dart';
 
 import '../core/script_instructions.dart';
+import 'dialogs.dart';
 import 'theme.dart';
-import 'widgets.dart';
 
 class ScriptInstructionPicker extends StatefulWidget {
   final ScriptInstructionDef? current;
@@ -74,82 +74,61 @@ class _ScriptInstructionPickerState extends State<ScriptInstructionPicker> {
   Widget build(BuildContext context) {
     final groups = _groups();
     final category = _category;
-    return AlertDialog(
-      title: Row(
-        children: [
-          if (category != null)
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.arrow_back, size: 18),
-              tooltip: 'Back to categories',
-              onPressed: () => setState(() => _category = null),
-            ),
-          Expanded(
-            child: Text(
-              category == null
-                  ? 'Pick instruction'
-                  : ScriptInstructionDef.categoryName(category),
-            ),
-          ),
-        ],
-      ),
-      content: DialogBody(
-        maxWidth: 380,
-        height: 400,
-        child: category == null
-            ? ListView(
-                children: [
-                  const Padding(
-                    padding: EdgeInsets.only(top: 8, bottom: 2),
-                    child: Text(
-                      'Recommended',
-                      style: TextStyle(
-                        color: kOrange,
-                        fontWeight: FontWeight.w600,
-                      ),
+    return PickerShell(
+      title: category == null
+          ? 'Pick instruction'
+          : ScriptInstructionDef.categoryName(category),
+      onBack: category == null ? null : () => setState(() => _category = null),
+      backTooltip: 'Back to categories',
+      maxWidth: 380,
+      height: 400,
+      body: category == null
+          ? ListView(
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(top: 8, bottom: 2),
+                  child: Text(
+                    'Recommended',
+                    style: TextStyle(
+                      color: kOrange,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                  for (final def in _recommendations()) _tile(def),
-                  const Padding(
-                    padding: EdgeInsets.only(top: 8, bottom: 2),
-                    child: Text(
-                      'Groups',
-                      style: TextStyle(
-                        color: kOrange,
-                        fontWeight: FontWeight.w600,
-                      ),
+                ),
+                for (final def in _recommendations()) _tile(def),
+                const Padding(
+                  padding: EdgeInsets.only(top: 8, bottom: 2),
+                  child: Text(
+                    'Groups',
+                    style: TextStyle(
+                      color: kOrange,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                  for (var i = 0; i < groups.length; i++)
-                    ListTile(
-                      dense: true,
-                      leading: const Icon(Icons.folder_outlined, size: 18),
-                      title: Text(groups[i].$1),
-                      trailing: Text(
-                        '${groups[i].$3.length}',
-                        style: const TextStyle(
-                          color: Colors.white38,
-                          fontSize: 12,
-                        ),
+                ),
+                for (var i = 0; i < groups.length; i++)
+                  ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.folder_outlined, size: 18),
+                    title: Text(groups[i].$1),
+                    trailing: Text(
+                      '${groups[i].$3.length}',
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 12,
                       ),
-                      onTap: () => setState(() => _category = groups[i].$2),
                     ),
-                ],
-              )
-            : ListView(
-                children: [
-                  for (final group in groups)
-                    if (group.$2 == category)
-                      for (final def in group.$3) _tile(def),
-                ],
-              ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-      ],
+                    onTap: () => setState(() => _category = groups[i].$2),
+                  ),
+              ],
+            )
+          : ListView(
+              children: [
+                for (final group in groups)
+                  if (group.$2 == category)
+                    for (final def in group.$3) _tile(def),
+              ],
+            ),
     );
   }
 

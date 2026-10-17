@@ -18,7 +18,8 @@ import '../core/types.dart'
         RequesterSubscription,
         TriggerType,
         makeBlockInfo;
-import 'widgets.dart' show showSnack, DialogBody;
+import 'dialogs.dart';
+import 'widgets.dart' show showSnack;
 
 part 'subscriptions_pickers.dart';
 
@@ -362,176 +363,168 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
     final theme = Theme.of(context);
     final isEdit = widget.existing != null;
 
-    return AlertDialog(
-      title: Text(isEdit ? 'Edit Subscription' : 'Add Subscription'),
-      content: DialogBody(
-        maxWidth: 500,
-        child: _loadingBlocks
-            ? const Center(child: CircularProgressIndicator())
-            : _blockError != null
-            ? Text(
-                'Error loading blocks: $_blockError',
-                style: TextStyle(color: theme.colorScheme.error),
-              )
-            : SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Target Block -> Field -> Key (local)
-                    BlockPicker(
-                      label: 'Target Block',
-                      hint: 'Where to write received values',
-                      blocks: _targetBlocks,
-                      value: _selectedTargetBlock,
-                      onChanged: (v) {
-                        if (v != null) {
-                          _loadFieldsForTarget(v);
-                        }
-                      },
-                    ),
-                    if (_selectedTargetBlock != null) ...[
-                      const SizedBox(height: 12),
-                      FieldPicker(
-                        label: 'Target Field',
-                        fields: _targetFields,
-                        value: _selectedTargetField,
-                        onChanged: (v) =>
-                            setState(() => _selectedTargetField = v),
-                      ),
-                      if (_selectedTargetField != null &&
-                          _selectedTargetField!.keyed) ...[
-                        const SizedBox(height: 12),
-                        KeyPicker(
-                          label: 'Target Key',
-                          value: _targetKey,
-                          keys: _selectedTargetField!.keys,
-                          onChanged: (v) => setState(() => _targetKey = v),
-                        ),
-                      ],
-                    ],
+    return PickerShell(
+      title: isEdit ? 'Edit Subscription' : 'Add Subscription',
+      maxWidth: 500,
+      body: _loadingBlocks
+          ? const Center(child: CircularProgressIndicator())
+          : _blockError != null
+          ? Text(
+              'Error loading blocks: $_blockError',
+              style: TextStyle(color: theme.colorScheme.error),
+            )
+          : SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Target Block -> Field -> Key (local)
+                  BlockPicker(
+                    label: 'Target Block',
+                    hint: 'Where to write received values',
+                    blocks: _targetBlocks,
+                    value: _selectedTargetBlock,
+                    onChanged: (v) {
+                      if (v != null) {
+                        _loadFieldsForTarget(v);
+                      }
+                    },
+                  ),
+                  if (_selectedTargetBlock != null) ...[
                     const SizedBox(height: 12),
-
-                    // Provider Device
-                    ProviderPicker(
-                      label: 'Provider Device',
-                      hint: 'Device providing the data',
-                      devices: _devices,
-                      value: _selectedProviderAddr,
-                      onChanged: (v) async {
-                        setState(() {
-                          _selectedProviderAddr = v;
-                          _selectedSourceBlock = null;
-                          _selectedSourceField = null;
-                          _sourceFields = [];
-                        });
-                        if (v != null) {
-                          final blocks = await _fetchBlocks(v);
-                          if (!mounted) return;
-                          setState(() => _sourceBlocks = blocks);
-                        }
-                      },
+                    FieldPicker(
+                      label: 'Target Field',
+                      fields: _targetFields,
+                      value: _selectedTargetField,
+                      onChanged: (v) =>
+                          setState(() => _selectedTargetField = v),
                     ),
-                    const SizedBox(height: 12),
-
-                    // Source Block -> Field -> Key (remote)
-                    BlockPicker(
-                      label: 'Source Block',
-                      hint: 'Which value to subscribe to',
-                      blocks: _sourceBlocks,
-                      value: _selectedSourceBlock,
-                      onChanged: (v) {
-                        if (v != null) {
-                          _loadFieldsForSource(v);
-                        }
-                      },
-                    ),
-                    if (_selectedSourceBlock != null) ...[
+                    if (_selectedTargetField != null &&
+                        _selectedTargetField!.keyed) ...[
                       const SizedBox(height: 12),
-                      FieldPicker(
-                        label: 'Source Field',
-                        fields: _sourceFields,
-                        value: _selectedSourceField,
-                        onChanged: (v) =>
-                            setState(() => _selectedSourceField = v),
+                      KeyPicker(
+                        label: 'Target Key',
+                        value: _targetKey,
+                        keys: _selectedTargetField!.keys,
+                        onChanged: (v) => setState(() => _targetKey = v),
                       ),
-                      if (_selectedSourceField != null &&
-                          _selectedSourceField!.keyed) ...[
-                        const SizedBox(height: 12),
-                        KeyPicker(
-                          label: 'Source Key',
-                          value: _sourceKey,
-                          keys: _selectedSourceField!.keys,
-                          onChanged: (v) => setState(() => _sourceKey = v),
-                        ),
-                      ],
-                    ],
-                    const SizedBox(height: 12),
-
-                    // Trigger Type
-                    DropdownButtonFormField<TriggerType>(
-                      initialValue: _trigger,
-                      decoration: const InputDecoration(
-                        labelText: 'Trigger Type',
-                      ),
-                      items: TriggerType.values
-                          .where((t) => t != TriggerType.none)
-                          .map(
-                            (t) => DropdownMenuItem(
-                              value: t,
-                              child: Text(t.label),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (v) => setState(() => _trigger = v!),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // Period (ms) - shown for periodic triggers
-                    if (_needsPeriod())
-                      NumberField(
-                        label: 'Period (ms)',
-                        controller: _periodController,
-                        onChanged: (v) => _periodMs = v,
-                        min: 1,
-                      ),
-                    if (_needsPeriod()) const SizedBox(height: 12),
-
-                    // Min interval (periodic) / retry interval (confirm).
-                    // Docs/Services/Subscriptions.md: plain Periodic only needs a Period.
-                    if (_needsInterval()) ...[
-                      NumberField(
-                        label: _intervalLabel(),
-                        controller: _minTimeController,
-                        onChanged: (v) => _minTimeMs = v,
-                        min: 0,
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-
-                    // Deadzone (docs: "for number/vector") - Delta triggers.
-                    if (_needsDeadzone()) ...[
-                      TextFormField(
-                        controller: _deadzoneController,
-                        decoration: const InputDecoration(
-                          labelText: 'Deadzone',
-                          border: OutlineInputBorder(),
-                        ),
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        onChanged: (v) => _deadzone = double.tryParse(v) ?? 0,
-                      ),
-                      const SizedBox(height: 12),
                     ],
                   ],
-                ),
+                  const SizedBox(height: 12),
+
+                  // Provider Device
+                  ProviderPicker(
+                    label: 'Provider Device',
+                    hint: 'Device providing the data',
+                    devices: _devices,
+                    value: _selectedProviderAddr,
+                    onChanged: (v) async {
+                      setState(() {
+                        _selectedProviderAddr = v;
+                        _selectedSourceBlock = null;
+                        _selectedSourceField = null;
+                        _sourceFields = [];
+                      });
+                      if (v != null) {
+                        final blocks = await _fetchBlocks(v);
+                        if (!mounted) return;
+                        setState(() => _sourceBlocks = blocks);
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Source Block -> Field -> Key (remote)
+                  BlockPicker(
+                    label: 'Source Block',
+                    hint: 'Which value to subscribe to',
+                    blocks: _sourceBlocks,
+                    value: _selectedSourceBlock,
+                    onChanged: (v) {
+                      if (v != null) {
+                        _loadFieldsForSource(v);
+                      }
+                    },
+                  ),
+                  if (_selectedSourceBlock != null) ...[
+                    const SizedBox(height: 12),
+                    FieldPicker(
+                      label: 'Source Field',
+                      fields: _sourceFields,
+                      value: _selectedSourceField,
+                      onChanged: (v) =>
+                          setState(() => _selectedSourceField = v),
+                    ),
+                    if (_selectedSourceField != null &&
+                        _selectedSourceField!.keyed) ...[
+                      const SizedBox(height: 12),
+                      KeyPicker(
+                        label: 'Source Key',
+                        value: _sourceKey,
+                        keys: _selectedSourceField!.keys,
+                        onChanged: (v) => setState(() => _sourceKey = v),
+                      ),
+                    ],
+                  ],
+                  const SizedBox(height: 12),
+
+                  // Trigger Type
+                  DropdownButtonFormField<TriggerType>(
+                    initialValue: _trigger,
+                    decoration: const InputDecoration(
+                      labelText: 'Trigger Type',
+                    ),
+                    items: TriggerType.values
+                        .where((t) => t != TriggerType.none)
+                        .map(
+                          (t) =>
+                              DropdownMenuItem(value: t, child: Text(t.label)),
+                        )
+                        .toList(),
+                    onChanged: (v) => setState(() => _trigger = v!),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Period (ms) - shown for periodic triggers
+                  if (_needsPeriod())
+                    NumberField(
+                      label: 'Period (ms)',
+                      controller: _periodController,
+                      onChanged: (v) => _periodMs = v,
+                      min: 1,
+                    ),
+                  if (_needsPeriod()) const SizedBox(height: 12),
+
+                  // Min interval (periodic) / retry interval (confirm).
+                  // Docs/Services/Subscriptions.md: plain Periodic only needs a Period.
+                  if (_needsInterval()) ...[
+                    NumberField(
+                      label: _intervalLabel(),
+                      controller: _minTimeController,
+                      onChanged: (v) => _minTimeMs = v,
+                      min: 0,
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                  // Deadzone (docs: "for number/vector") - Delta triggers.
+                  if (_needsDeadzone()) ...[
+                    TextFormField(
+                      controller: _deadzoneController,
+                      decoration: const InputDecoration(
+                        labelText: 'Deadzone',
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      onChanged: (v) => _deadzone = double.tryParse(v) ?? 0,
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                ],
               ),
-      ),
+            ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
         FilledButton(
           onPressed: _canSave() ? _save : null,
           child: Text(isEdit ? 'Save' : 'Add'),

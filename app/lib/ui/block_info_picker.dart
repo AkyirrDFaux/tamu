@@ -15,7 +15,7 @@ import 'subscriptions_dialog.dart'
         KeyPicker,
         fetchBlockSelections,
         fetchFieldSelections;
-import 'widgets.dart' show DialogBody;
+import 'dialogs.dart';
 
 /// Shows the tiered BlockInfo picker and returns the 4-byte value, or null when cancelled.
 Future<List<int>?> pickBlockInfo(
@@ -142,14 +142,10 @@ class _BlockInfoDialogState extends State<_BlockInfoDialog> {
               ),
             ],
           );
-    return AlertDialog(
-      title: const Text('BlockInfo'),
-      content: DialogBody(maxWidth: 360, child: body),
+    return PickerShell(
+      title: 'BlockInfo',
+      body: body,
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
         FilledButton(
           onPressed: _block == null || _field == null
               ? null
