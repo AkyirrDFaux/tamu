@@ -5,6 +5,13 @@
 ///
 /// `info` carries optional display metadata (name, unit, range, enum labels)
 /// resolved from the block registry; editors degrade gracefully without it.
+///
+/// This is the one value-editing entry point (TODO.md, "App UX pass", phase 1b):
+/// every other editing path - the register/dynamic callers, the script-entry
+/// callers and `script_value_dialog.dart` - routes through [showValueEditor],
+/// and every editor it dispatches to renders through the shared dialog shell
+/// (`showTamuDialog` / `PickerShell`) with the theme tokens, so no editor carries
+/// its own chrome or styling.
 
 library;
 
@@ -15,19 +22,27 @@ import '../core/transform_23.dart';
 
 export '../core/block_registry.dart' show FieldInfo;
 import '../core/types.dart';
+import 'block_info_picker.dart';
+import 'dialogs.dart';
 import 'formatters.dart';
-import 'widgets.dart';
+import 'theme.dart';
 
 part 'value_editor_scalars.dart'; // Number/Bool/Enum/DevType/Serial editors
 part 'value_editor_containers.dart'; // Vector/Matrix/BlockInfo editors
 part 'value_editor_visual.dart'; // Colour and transform-matrix editors
 
 /// Returns the new encoded bytes, or null when cancelled/unchanged-invalid.
+///
+/// A [deviceId] routes the device-aware types to their picker (a script
+/// BlockInfo operand, which is addressed by block/field/key, needs the tiered
+/// register picker); without one, an editor that works off the local registry is
+/// used instead, so the register and script callers share this one entry point.
 Future<List<int>?> showValueEditor(
   BuildContext context,
   DataType type,
   List<int> current, {
   FieldInfo? info,
+  int? deviceId,
 }) async {
   switch (type) {
     case DataType.number:
@@ -55,7 +70,9 @@ Future<List<int>?> showValueEditor(
     case DataType.colour:
       return _editColour(context, current);
     case DataType.blockInfo:
-      return _editBlockInfo(context, current);
+      return deviceId != null
+          ? pickBlockInfo(context, deviceId, current: current)
+          : _editBlockInfo(context, current);
     case DataType.uint32:
       return _editInt(
         context,

@@ -8,7 +8,9 @@ Future<List<int>?> _editVector(
   List<int> current,
 ) {
   var n = current.length >= 4 ? (current.length ~/ 4) : 3;
-  if (n < 1) n = 1;
+  if (n < 1) {
+    n = 1;
+  }
   final hasValue = current.length >= n * 4;
   final controllers = List.generate(
     n,
@@ -20,8 +22,12 @@ Future<List<int>?> _editVector(
   final unit = info?.unit;
 
   void resize(int newN) {
-    if (newN < 1) newN = 1;
-    if (newN > 32) newN = 32;
+    if (newN < 1) {
+      newN = 1;
+    }
+    if (newN > 32) {
+      newN = 32;
+    }
     n = newN;
     while (controllers.length < n) {
       controllers.add(TextEditingController(text: '0.0'));
@@ -32,75 +38,65 @@ Future<List<int>?> _editVector(
     sizeCtrl.text = '$n';
   }
 
-  return showDialog<List<int>>(
-    context: context,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: Text(
-          unit == null ? (info?.name ?? 'Vector') : '${info!.name} [$unit]',
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                const Text('Size: ', style: TextStyle(fontSize: 12)),
-                IconButton(
-                  icon: const Icon(Icons.remove_circle_outline, size: 20),
-                  onPressed: () => setState(() => resize(n - 1)),
+  return showTamuDialog<List<int>>(
+    context,
+    title: unit == null ? (info?.name ?? 'Vector') : '${info!.name} [$unit]',
+    body: StatefulBuilder(
+      builder: (context, setState) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Text('Size: ', style: Theme.of(context).textTheme.labelSmall),
+              IconButton(
+                icon: const Icon(
+                  Icons.remove_circle_outline,
+                  size: IconSize.lg,
                 ),
-                SizedBox(
-                  width: 44,
-                  child: TextField(
-                    controller: sizeCtrl,
-                    keyboardType: TextInputType.number,
-                    textAlign: TextAlign.center,
-                    decoration: const InputDecoration(isDense: true),
-                    onChanged: (_) => setState(
-                      () => resize(int.tryParse(sizeCtrl.text) ?? n),
-                    ),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.add_circle_outline, size: 20),
-                  onPressed: () => setState(() => resize(n + 1)),
-                ),
-              ],
-            ),
-            for (var i = 0; i < n; i++)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
+                onPressed: () => setState(() => resize(n - 1)),
+              ),
+              SizedBox(
+                width: 44,
                 child: TextField(
-                  controller: controllers[i],
+                  controller: sizeCtrl,
                   keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    labelText: i < 3 ? 'XYZ'[i] : '$i',
-                  ),
+                  textAlign: TextAlign.center,
+                  decoration: const InputDecoration(),
+                  onChanged: (_) =>
+                      setState(() => resize(int.tryParse(sizeCtrl.text) ?? n)),
                 ),
               ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+              IconButton(
+                icon: const Icon(Icons.add_circle_outline, size: IconSize.lg),
+                onPressed: () => setState(() => resize(n + 1)),
+              ),
+            ],
           ),
-          FilledButton(
-            onPressed: () {
-              final values = controllers
-                  .map((c) => double.tryParse(c.text))
-                  .toList();
-              if (values.any((v) => v == null)) return;
-              final out = BytesBuilder();
-              for (final v in values) {
-                out.add(numberToBytes(v!));
-              }
-              Navigator.pop(context, out.toBytes());
-            },
-            child: const Text('OK'),
-          ),
+          for (var i = 0; i < n; i++)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: Spacing.xs),
+              child: TextField(
+                controller: controllers[i],
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(labelText: i < 3 ? 'XYZ'[i] : '$i'),
+              ),
+            ),
         ],
       ),
+    ),
+    actions: tamuDialogActions(
+      onCancel: () => Navigator.pop(context),
+      onConfirm: () {
+        final values = controllers.map((c) => double.tryParse(c.text)).toList();
+        if (values.any((v) => v == null)) {
+          return;
+        }
+        final out = BytesBuilder();
+        for (final v in values) {
+          out.add(numberToBytes(v!));
+        }
+        Navigator.pop(context, out.toBytes());
+      },
     ),
   );
 }
@@ -129,8 +125,12 @@ Future<List<int>?> _editMatrix(
       return _editHex(context, 'Matrix ${h}x$w', current);
     }
   }
-  if (h < 1) h = 1;
-  if (w < 1) w = 1;
+  if (h < 1) {
+    h = 1;
+  }
+  if (w < 1) {
+    w = 1;
+  }
   final rowsCtrl = TextEditingController(text: '$h');
   final colsCtrl = TextEditingController(text: '$w');
   final controllers = List.generate(
@@ -141,10 +141,18 @@ Future<List<int>?> _editMatrix(
   );
 
   void resize(int newH, int newW) {
-    if (newH < 1) newH = 1;
-    if (newW < 1) newW = 1;
-    if (newH > 6) newH = 6;
-    if (newW > 6) newW = 6;
+    if (newH < 1) {
+      newH = 1;
+    }
+    if (newW < 1) {
+      newW = 1;
+    }
+    if (newH > 6) {
+      newH = 6;
+    }
+    if (newW > 6) {
+      newW = 6;
+    }
     h = newH;
     w = newW;
     while (controllers.length < h * w) {
@@ -157,10 +165,13 @@ Future<List<int>?> _editMatrix(
     colsCtrl.text = '$w';
   }
 
-  return showDialog<List<int>>(
-    context: context,
-    builder: (context) => StatefulBuilder(
+  return showTamuDialog<List<int>>(
+    context,
+    title: info?.name ?? 'Matrix ${h}x$w',
+    maxWidth: 320,
+    body: StatefulBuilder(
       builder: (context, setState) {
+        final styles = Theme.of(context).textTheme;
         Widget sizeRow(
           String label,
           TextEditingController ctrl,
@@ -168,9 +179,12 @@ Future<List<int>?> _editMatrix(
         ) {
           return Row(
             children: [
-              Text('$label: ', style: const TextStyle(fontSize: 12)),
+              Text('$label: ', style: styles.labelSmall),
               IconButton(
-                icon: const Icon(Icons.remove_circle_outline, size: 20),
+                icon: const Icon(
+                  Icons.remove_circle_outline,
+                  size: IconSize.lg,
+                ),
                 onPressed: () => setState(() => bump(-1)),
               ),
               SizedBox(
@@ -179,7 +193,7 @@ Future<List<int>?> _editMatrix(
                   controller: ctrl,
                   keyboardType: TextInputType.number,
                   textAlign: TextAlign.center,
-                  decoration: const InputDecoration(isDense: true),
+                  decoration: const InputDecoration(),
                   onChanged: (_) => setState(() {
                     final v = int.tryParse(ctrl.text) ?? 0;
                     if (label == 'Rows') {
@@ -191,64 +205,51 @@ Future<List<int>?> _editMatrix(
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.add_circle_outline, size: 20),
+                icon: const Icon(Icons.add_circle_outline, size: IconSize.lg),
                 onPressed: () => setState(() => bump(1)),
               ),
             ],
           );
         }
 
-        return AlertDialog(
-          title: Text(info?.name ?? 'Matrix ${h}x$w'),
-          content: DialogBody(
-            maxWidth: 300,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                sizeRow('Rows', rowsCtrl, (d) => resize(h + d, w)),
-                sizeRow('Cols', colsCtrl, (d) => resize(h, w + d)),
-                const SizedBox(height: 6),
-                for (var r = 0; r < h; r++)
-                  Row(
-                    children: [
-                      for (var c = 0; c < w; c++)
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.all(3),
-                            child: TextField(
-                              controller: controllers[r * w + c],
-                              keyboardType: TextInputType.number,
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            sizeRow('Rows', rowsCtrl, (d) => resize(h + d, w)),
+            sizeRow('Cols', colsCtrl, (d) => resize(h, w + d)),
+            const SizedBox(height: Spacing.sm),
+            for (var r = 0; r < h; r++)
+              Row(
+                children: [
+                  for (var c = 0; c < w; c++)
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.all(Spacing.xs),
+                        child: TextField(
+                          controller: controllers[r * w + c],
+                          keyboardType: TextInputType.number,
+                          textAlign: TextAlign.center,
                         ),
-                    ],
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final values = controllers
-                    .map((c) => double.tryParse(c.text))
-                    .toList();
-                if (values.any((v) => v == null)) return;
-                final out = BytesBuilder()
-                  ..add([h & 0xFF, h >> 8, w & 0xFF, w >> 8]);
-                for (final v in values) {
-                  out.add(numberToBytes(v!));
-                }
-                Navigator.pop(context, out.toBytes());
-              },
-              child: const Text('OK'),
-            ),
+                      ),
+                    ),
+                ],
+              ),
           ],
         );
+      },
+    ),
+    actions: tamuDialogActions(
+      onCancel: () => Navigator.pop(context),
+      onConfirm: () {
+        final values = controllers.map((c) => double.tryParse(c.text)).toList();
+        if (values.any((v) => v == null)) {
+          return;
+        }
+        final out = BytesBuilder()..add([h & 0xFF, h >> 8, w & 0xFF, w >> 8]);
+        for (final v in values) {
+          out.add(numberToBytes(v!));
+        }
+        Navigator.pop(context, out.toBytes());
       },
     ),
   );
@@ -260,9 +261,9 @@ Future<List<int>?> _editMatrix(
 Future<List<int>?> _editBlockInfo(BuildContext context, List<int> current) {
   var bi = current.length >= 4 ? uint32FromBytes(current) : 0;
   var type = (bi >> 22) & 0x3FF;
-  var inst = (bi >> 16) & 0x3F;
-  var field = (bi >> 8) & 0xFF;
-  var key = bi & 0xFF;
+  final inst = (bi >> 16) & 0x3F;
+  final field = (bi >> 8) & 0xFF;
+  final key = bi & 0xFF;
   final instC = TextEditingController(text: '$inst');
   final fieldC = TextEditingController(text: '$field');
   final keyC = TextEditingController(text: '$key');
@@ -278,99 +279,87 @@ Future<List<int>?> _editBlockInfo(BuildContext context, List<int> current) {
           t != BlockType.dynamic)
         (t.value, t.label),
   ];
-  if (!types.any((e) => e.$1 == type)) types.add((type, blockTypeLabel(type)));
+  if (!types.any((e) => e.$1 == type)) {
+    types.add((type, blockTypeLabel(type)));
+  }
 
-  return showDialog<List<int>>(
-    context: context,
-    builder: (context) => StatefulBuilder(
+  return showTamuDialog<List<int>>(
+    context,
+    title: 'BlockInfo',
+    maxWidth: 360,
+    body: StatefulBuilder(
       builder: (context, setState) {
         final name = blockInfoFor(
           BlockType.fromValue(type),
         )?.field(field)?.name;
-        return AlertDialog(
-          title: const Text('BlockInfo'),
-          content: DialogBody(
-            maxWidth: 360,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<int>(
+              initialValue: type,
+              decoration: const InputDecoration(labelText: 'Block'),
+              items: [
+                for (final (v, l) in types)
+                  DropdownMenuItem(value: v, child: Text(l)),
+              ],
+              onChanged: (v) => setState(() {
+                if (v != null) {
+                  type = v;
+                }
+              }),
+            ),
+            const SizedBox(height: Spacing.md),
+            Row(
               children: [
-                DropdownButtonFormField<int>(
-                  initialValue: type,
-                  decoration: const InputDecoration(labelText: 'Block'),
-                  items: [
-                    for (final (v, l) in types)
-                      DropdownMenuItem(value: v, child: Text(l)),
-                  ],
-                  onChanged: (v) => setState(() {
-                    if (v != null) type = v;
-                  }),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: instC,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'Instance',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextField(
-                        controller: fieldC,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'Field'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextField(
-                        controller: keyC,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'Key'),
-                      ),
-                    ),
-                  ],
-                ),
-                if (name != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 10),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Field: $name',
-                        style: const TextStyle(
-                          color: Colors.white54,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
+                Expanded(
+                  child: TextField(
+                    controller: instC,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Instance'),
                   ),
+                ),
+                const SizedBox(width: Spacing.md),
+                Expanded(
+                  child: TextField(
+                    controller: fieldC,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Field'),
+                  ),
+                ),
+                const SizedBox(width: Spacing.md),
+                Expanded(
+                  child: TextField(
+                    controller: keyC,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Key'),
+                  ),
+                ),
               ],
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final i = int.tryParse(instC.text) ?? 0;
-                final f = int.tryParse(fieldC.text) ?? 0;
-                final k = int.tryParse(keyC.text) ?? 0;
-                Navigator.pop(
-                  context,
-                  uint32ToBytes(makeBlockInfo(type, i, f, k)),
-                );
-              },
-              child: const Text('OK'),
-            ),
+            if (name != null)
+              Padding(
+                padding: const EdgeInsets.only(top: Spacing.md),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Field: $name',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelSmall?.copyWith(color: kTextMuted),
+                  ),
+                ),
+              ),
           ],
         );
+      },
+    ),
+    actions: tamuDialogActions(
+      onCancel: () => Navigator.pop(context),
+      onConfirm: () {
+        final i = int.tryParse(instC.text) ?? 0;
+        final f = int.tryParse(fieldC.text) ?? 0;
+        final k = int.tryParse(keyC.text) ?? 0;
+        Navigator.pop(context, uint32ToBytes(makeBlockInfo(type, i, f, k)));
       },
     ),
   );

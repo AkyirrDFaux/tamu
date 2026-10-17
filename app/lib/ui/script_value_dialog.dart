@@ -1,5 +1,11 @@
 /// Script value editor (Docs/App/Service views/Script.md): name/type/UI-style/limits and,
 /// for inputs and constants, the value bytes.
+///
+/// A caller of the one value-editing entry point: the value bytes are edited
+/// through [showValueEditor] (the same [showTamuDialog]/[PickerShell] shell and
+/// the same editors the register and script-entry callers use), and the dialog's
+/// own chrome is the shared [TamuDialog]. Nothing here hand-rolls a dialog or a
+/// field style.
 library;
 
 import 'dart:typed_data';
@@ -9,10 +15,10 @@ import 'package:flutter/material.dart';
 import '../core/script_draft.dart';
 import '../core/script_file.dart';
 import '../core/types.dart';
+import 'dialogs.dart';
 import 'formatters.dart';
-import 'block_info_picker.dart';
+import 'theme.dart';
 import 'value_editor.dart';
-import 'widgets.dart';
 
 class ScriptValueDialog extends StatefulWidget {
   final ScriptValueCategory category;
@@ -133,187 +139,174 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
     );
   }
 
+  /// Opens the one value-editing entry point for the current bytes. The device
+  /// id lets a BlockInfo operand use the device-aware register picker, exactly as
+  /// the register and script-entry callers do through the same entry point.
+  Future<void> _editValue() async {
+    final next = await showValueEditor(
+      context,
+      _draft.type,
+      _draft.value,
+      deviceId: widget.deviceId,
+    );
+    if (next == null || !mounted) return;
+    setState(() => _draft.setValue(Uint8List.fromList(next)));
+  }
+
   @override
   Widget build(BuildContext context) {
-    final styles = uiStylesForType(_draft.type);
+    final styles = Theme.of(context).textTheme;
+    final uiStyles = uiStylesForType(_draft.type);
     final showLimits = _isInput && uiStyleSupportsLimits(_draft.spec.uiType);
-    return AlertDialog(
-      scrollable: true,
-      title: Text('${widget.category.label} ${widget.index}'),
-      content: DialogBody(
-        maxWidth: 380,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: _name,
-              decoration: const InputDecoration(labelText: 'Name'),
+    return TamuDialog(
+      title: '${widget.category.label} ${widget.index}',
+      maxWidth: 380,
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _name,
+            decoration: const InputDecoration(labelText: 'Name'),
+          ),
+          const SizedBox(height: Spacing.md),
+          DropdownButtonFormField<DataType>(
+            key: ValueKey('type-${_draft.type.name}'),
+            initialValue: _draft.type,
+            decoration: InputDecoration(
+              labelText: 'Type',
+              helperText: 'Size: ${defaultSizeForType(_draft.type)} bytes',
             ),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<DataType>(
-              key: ValueKey('type-${_draft.type.name}'),
-              initialValue: _draft.type,
-              decoration: InputDecoration(
-                labelText: 'Type',
-                helperText: 'Size: ${defaultSizeForType(_draft.type)} bytes',
-              ),
+            items: [
+              // Guard against a value type the picker no longer offers (a handler reading an
+              // unknown type would otherwise assert inside DropdownButtonFormField).
+              if (!scriptValueTypes.contains(_draft.type))
+                DropdownMenuItem(
+                  value: _draft.type,
+                  child: Text(dataTypeLabel(_draft.type)),
+                ),
+              for (final t in scriptValueTypes)
+                DropdownMenuItem(value: t, child: Text(dataTypeLabel(t))),
+            ],
+            onChanged: _changeType,
+          ),
+          if (_isInput) ...[
+            const SizedBox(height: Spacing.md),
+            DropdownButtonFormField<int>(
+              initialValue: _draft.spec.uiType,
+              decoration: const InputDecoration(labelText: 'UI style'),
               items: [
-                // Guard against a value type the picker no longer offers (a handler reading an
-                // unknown type would otherwise assert inside DropdownButtonFormField).
-                if (!scriptValueTypes.contains(_draft.type))
+                if (!uiStyles.contains(_draft.spec.uiType))
                   DropdownMenuItem(
-                    value: _draft.type,
-                    child: Text(dataTypeLabel(_draft.type)),
+                    value: _draft.spec.uiType,
+                    child: Text(ScriptUiType.label(_draft.spec.uiType)),
                   ),
-                for (final t in scriptValueTypes)
-                  DropdownMenuItem(value: t, child: Text(dataTypeLabel(t))),
+                for (final t in uiStyles)
+                  DropdownMenuItem(
+                    value: t,
+                    child: Text(ScriptUiType.label(t)),
+                  ),
               ],
-              onChanged: _changeType,
+              onChanged: (t) => setState(
+                () => _draft.spec = _draft.spec.copyWith(
+                  uiType: t ?? ScriptUiType.auto,
+                ),
+              ),
             ),
-            if (_isInput) ...[
-              const SizedBox(height: 8),
-              DropdownButtonFormField<int>(
-                initialValue: _draft.spec.uiType,
-                decoration: const InputDecoration(labelText: 'UI style'),
-                items: [
-                  if (!styles.contains(_draft.spec.uiType))
-                    DropdownMenuItem(
-                      value: _draft.spec.uiType,
-                      child: Text(ScriptUiType.label(_draft.spec.uiType)),
-                    ),
-                  for (final t in styles)
-                    DropdownMenuItem(
-                      value: t,
-                      child: Text(ScriptUiType.label(t)),
-                    ),
-                ],
-                onChanged: (t) => setState(
-                  () => _draft.spec = _draft.spec.copyWith(
-                    uiType: t ?? ScriptUiType.auto,
-                  ),
-                ),
-              ),
-              // Custom enum: name the values (the stored value stays the 0..N-1 index).
-              if (_draft.type == DataType.enum_) ...[
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    const Text(
-                      'Enum values',
-                      style: TextStyle(fontSize: 12, color: Colors.white70),
-                    ),
-                    const Spacer(),
-                    TextButton(
-                      onPressed: () =>
-                          setState(() => _options.add(TextEditingController())),
-                      child: const Text('Add value'),
-                    ),
-                  ],
-                ),
-                for (var i = 0; i < _options.length; i++)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 26,
-                          child: Text(
-                            '$i',
-                            style: const TextStyle(
-                              color: Colors.white54,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: TextField(
-                            controller: _options[i],
-                            decoration: InputDecoration(
-                              labelText: 'Value $i name',
-                              isDense: true,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close, size: 18),
-                          tooltip: 'Remove',
-                          onPressed: () =>
-                              setState(() => _options.removeAt(i).dispose()),
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            ],
-            if (showLimits) ...[
-              const SizedBox(height: 8),
+            // Custom enum: name the values (the stored value stays the 0..N-1 index).
+            if (_draft.type == DataType.enum_) ...[
+              const SizedBox(height: Spacing.md),
               Row(
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _min,
-                      decoration: const InputDecoration(labelText: 'Min'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextField(
-                      controller: _max,
-                      decoration: const InputDecoration(labelText: 'Max'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextField(
-                      controller: _step,
-                      decoration: const InputDecoration(labelText: 'Step'),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-            if (_editableValue) ...[
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Text(
-                    'Value: ${formatValue(_draft.type, _draft.value)}',
-                    style: const TextStyle(fontFamily: 'monospace'),
-                  ),
+                  Text('Enum values', style: styles.labelSmall),
                   const Spacer(),
                   TextButton(
-                    onPressed: () async {
-                      // BlockInfo uses the tiered block/field/key picker (device-aware).
-                      final next = _draft.type == DataType.blockInfo
-                          ? await pickBlockInfo(
-                              context,
-                              widget.deviceId,
-                              current: _draft.value,
-                            )
-                          : await showValueEditor(
-                              context,
-                              _draft.type,
-                              _draft.value,
-                            );
-                      if (next == null || !mounted) return;
-                      setState(() => _draft.setValue(Uint8List.fromList(next)));
-                    },
-                    child: const Text('Edit value'),
+                    onPressed: () =>
+                        setState(() => _options.add(TextEditingController())),
+                    child: const Text('Add value'),
                   ),
                 ],
               ),
+              for (var i = 0; i < _options.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: Spacing.sm),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 26,
+                        child: Text(
+                          '$i',
+                          style: styles.labelSmall?.copyWith(color: kTextMuted),
+                        ),
+                      ),
+                      Expanded(
+                        child: TextField(
+                          controller: _options[i],
+                          decoration: InputDecoration(
+                            labelText: 'Value $i name',
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: IconSize.md),
+                        tooltip: 'Remove',
+                        onPressed: () =>
+                            setState(() => _options.removeAt(i).dispose()),
+                      ),
+                    ],
+                  ),
+                ),
             ],
           ],
-        ),
+          if (showLimits) ...[
+            const SizedBox(height: Spacing.md),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _min,
+                    decoration: const InputDecoration(labelText: 'Min'),
+                  ),
+                ),
+                const SizedBox(width: Spacing.md),
+                Expanded(
+                  child: TextField(
+                    controller: _max,
+                    decoration: const InputDecoration(labelText: 'Max'),
+                  ),
+                ),
+                const SizedBox(width: Spacing.md),
+                Expanded(
+                  child: TextField(
+                    controller: _step,
+                    decoration: const InputDecoration(labelText: 'Step'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (_editableValue) ...[
+            const SizedBox(height: Spacing.lg),
+            Row(
+              children: [
+                Text(
+                  'Value: ${formatValue(_draft.type, _draft.value)}',
+                  style: const TextStyle(fontFamily: 'monospace'),
+                ),
+                const Spacer(),
+                TextButton(
+                  onPressed: _editValue,
+                  child: const Text('Edit value'),
+                ),
+              ],
+            ),
+          ],
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(onPressed: _submit, child: const Text('OK')),
-      ],
+      actions: tamuDialogActions(
+        onCancel: () => Navigator.pop(context),
+        onConfirm: _submit,
+      ),
     );
   }
 }
