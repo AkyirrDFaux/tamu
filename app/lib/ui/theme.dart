@@ -35,7 +35,7 @@ const Color kSurfaceAlt = Color(0xFF333B3E);
 /// The accent: section headings, selected states, quiet/primary text actions.
 /// Lightened from `#F57600` in the contrast audit: as text (12-15 px) it needs
 /// 4.5:1 on both surfaces, and the old value reached 4.00 on the page and 2.62
-/// on a card (it now measures 6.14 / 4.85).
+/// on a card (it now measures 6.00 / 4.85).
 const Color kOrange = Color(0xFFFF8A1F);
 
 /// The accent one notch darker, for the app bar and the rail's selection pill.
@@ -74,7 +74,7 @@ const Color kTextDisabled = Colors.white38;
 /// Hairline borders and outlines on a dark surface: input borders, checkbox and
 /// radio sides, switch outlines, tab dividers, table rules. Raised from
 /// `white24` in the contrast audit - a control boundary needs 3:1 and `white24`
-/// only reached 2.07 on the page and 1.82 on a card (it now measures 3.43 /
+/// only reached 2.07 on the page and 1.82 on a card (it now measures 3.41 /
 /// 3.12).
 const Color kLine = Colors.white38;
 
@@ -89,7 +89,7 @@ const Color kWarning = Colors.amberAccent;
 
 /// Failure. Raised from `redAccent` (`#FF5252`) in the contrast audit: as text
 /// it needs 4.5:1, and the old value reached 3.52 on the page and 2.31 on a
-/// card (it now measures 6.35 / 5.01). `#FF8A80` is Material's redAccent 100.
+/// card (it now measures 6.20 / 5.01). `#FF8A80` is Material's redAccent 100.
 const Color kError = Color(0xFFFF8A80);
 
 /// Neutral notice, where a status has no success/failure meaning.
@@ -100,9 +100,22 @@ const Color kInfo = Colors.lightBlueAccent;
 /// [kAccentTint] is the warm one that marks the notable row/badge, [kSubtleTint]
 /// is the plain one (a tag, a selected row, a progress track).
 /// Re-measured 2026-10-17: [kSubtleTint] is a shade *below* the surface it sits
-/// on, so [kOrange] (5.03 on a card) and [kTextSecondary] (6.94) both pass on it.
+/// on, so [kOrange] (5.19 on a card) and [kTextSecondary] (6.93) both pass on it.
 const Color kAccentTint = Color(0x2EFF8A1F);
 const Color kSubtleTint = Color(0x14000000);
+
+/// The fill of the line the instruction counter points at (the Script editor's
+/// active line): the plain wash one step stronger, so it darkens the surface it
+/// is drawn on, exactly like [kSubtleTint].
+///
+/// It used to be [kAccentTint], which is *lighter* than the card under it, so
+/// every syntax ink on the active line lost contrast instead of gaining it:
+/// measured on a card, `kSymOutput` 3.88, `kSymVariable` 3.91, `kSymConstant`
+/// 3.62 and `kSymPredefine` 4.30 against the 4.5:1 a 13 px symbol label needs
+/// ([kSymInput] was 6.14 and passed). On this fill they are 5.98 / 6.03 / 5.59
+/// / 6.63 (9.46 for the input colour). The row keeps the warm marker in its
+/// [kOrange] border and its `ACTIVE` chip, so the accent itself is untouched.
+const Color kActiveLineTint = Color(0x2E000000);
 
 /// Script symbol colours: the editor's syntax colouring, by symbol kind. They
 /// live here rather than inside `script_editor_line.dart` (where they were
@@ -110,7 +123,7 @@ const Color kSubtleTint = Color(0x14000000);
 ///
 /// [kSymOutput] and [kSymConstant] moved a Material step lighter in the contrast
 /// audit: as 13 px mono text they need 4.5:1 on a card, where the old pink
-/// (`#F06292`) measured 3.74 and the old purple (`#BA68C8`) 3.22.
+/// (`#F06292`) measured 3.74 and the old purple (`#BA68C8`) 3.21.
 const Color kSymInput = Color(0xFFFFD54F); // amber
 const Color kSymOutput = Color(0xFFF48FB1); // pink
 const Color kSymVariable = Color(0xFF64B5F6); // blue
@@ -266,7 +279,7 @@ ColorScheme get _scheme => const ColorScheme(
 /// IconButton theme from it - `app_bar.dart:964-1139`). Measured: the title
 /// (titleLarge 22 w600) and the icons are 7.47:1 on the bar; a *disabled*
 /// action cannot use the dark-surface ink there (kTextDisabled on the bar is
-/// 1.59:1), so `PageAppBar` hands the actions [kOnAccentDim] instead (3.35:1).
+/// 1.59:1), so `PageAppBar` hands the actions [kOnAccentDim] instead (3.36:1).
 AppBarThemeData get _appBar => AppBarThemeData(
   backgroundColor: kOrangeDark,
   foregroundColor: kOnAccent,
@@ -285,7 +298,7 @@ AppBarThemeData get _appBar => AppBarThemeData(
 /// 1.23:1 - a state indicator needs 3:1 - so the dot takes the bar's ink
 /// ([kBadgeFill], 7.47:1 as a filled dot, the same logic as the ringed autorefresh
 /// mark). A badge placed on a *dark* surface would need its own fill: black on
-/// `kSurfaceAlt` is 1.75:1, so the theme default here is the app-bar ink, not a
+/// `kSurfaceAlt` is 1.84:1, so the theme default here is the app-bar ink, not a
 /// universal one. The label ink is for the labelled variant (none renders today).
 BadgeThemeData get _badge =>
     const BadgeThemeData(backgroundColor: kBadgeFill, textColor: kTextPrimary);
@@ -448,7 +461,7 @@ CheckboxThemeData get _checkbox => CheckboxThemeData(
 
 /// Switch: the unselected track is a well in the page colour with the [kLine]
 /// outline (the outline is the control boundary, so it carries the 3:1), the
-/// unselected thumb [kTextDisabled] stands out of that well (3.43:1), and the
+/// unselected thumb [kTextDisabled] stands out of that well (3.41:1), and the
 /// selected state is the accent with the [kOnAccent] thumb on it (8.91:1).
 SwitchThemeData get _switch => SwitchThemeData(
   thumbColor: WidgetStateProperty.resolveWith(

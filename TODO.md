@@ -137,14 +137,20 @@ Akyirr: "some UI elements are hard to see because foreground and background colo
 together", and (added mid-run) the offending group is multiple **app-bar** elements. Measured, not
 guessed: `dart run tool/contrast.dart` from `app/` reads the tokens out of `lib/ui/theme.dart`,
 composites the translucent ones over the surface they are drawn on and prints the WCAG ratio of all
-68 pairs the theme and the shared widgets render (4.5:1 body text, 3:1 large text and non-text UI;
+73 pairs the theme and the shared widgets render (4.5:1 body text, 3:1 large text and non-text UI;
 exit 1 on any failure). Ad-hoc pair: `dart run tool/contrast.dart --pair <fg> <bg>`.
 The "before" column is reproducible - the pre-fix palette is committed as a fixture:
 
     dart run tool/contrast.dart --theme tool/fixtures/theme_before_2026_10_17.dart
 
-**Before (fixture): 29 pairs below threshold + 6 close (exit 1). After: 0 below, 7 close** (all >=
-threshold, exit 0). The 7 close calls are 4.88 app-bar TabBar label, 4.61 `bodySmall` on a card,
+Two of its app-bar rows have no pre-fix counterpart (the busy spinner and the ringed autorefresh
+mark's ring) and one later fill (`kActiveLineTint`) is not in that palette at all: those rows carry
+their own label or `n/a` marker instead of a pre-fix ratio, so the number next to a row that did not
+exist cannot be read as "it passed before". The pre-fix spinner's own pair is
+`--pair kOrange kOrangeDark` = 1.17:1.
+
+**Before (fixture): 29 pairs below threshold + 6 close + 5 n/a (exit 1). After: 0 below, 7 close**
+(all >= threshold, exit 0). The 7 close calls are 4.88 app-bar TabBar label, 4.61 `bodySmall` on a card,
 4.85 accent on a card, 3.12 x3 control boundary/checkbox/switch outline on a card, 4.79
 `kSymConstant` on a card. (An earlier handoff quoted "23 below + 6 close" from an uncommitted
 pre-fix copy; the fixture run above supersedes it - the numbers differ because the fixture is the
@@ -165,11 +171,16 @@ Theme-level changes (all in `ui/theme.dart`; commits `d982495` + this one, app v
   badge (a label-less `Badge`, `log_page.dart:205`) was painting `colorScheme.error` at 1.03:1 on
   the pre-fix bar (1.23 on the new one) - a `badgeTheme` now fills it with `kBadgeFill`
   (`kOnAccent`), 7.47:1;
-- `kError` `redAccent` -> redAccent 100 `#FF8A80` (3.52 page / 2.31 card -> 6.35 / 5.01), `kLine`
+- `kError` `redAccent` -> redAccent 100 `#FF8A80` (3.52 page / 2.31 card -> 6.20 / 5.01), `kLine`
   `white24` -> `white38` (borders: 2.07/1.82 -> 3.41/3.12), input hints `kTextDisabled` ->
   `kTextMuted`, unselected switch track a `kSurface` well with the `kLine` outline, `kSubtleTint`
   now a fill *below* its surface (`#14000000`) so ink on it improves, chips carry their tone in the
   text on that fill, `kSymOutput`/`kSymConstant` a Material step lighter.
+  The `kError` page figure was corrected 2026-10-17 (the leftovers card): an earlier draft of this
+  bullet said 6.35, `dart run tool/contrast.dart --pair kError kSurface` prints 6.20:1 - the number
+  is `theme.dart`'s too, and its comment was corrected with this one. `kOrange` on the page is 6.00
+  and `kLine` on the page 3.41 for the same reason (drafts said 6.14 / 3.43);
+  `kOnAccentDim` on the bar is 3.36 and black on `kSurfaceAlt` 1.84.
 
 Leftovers for the batches that own the files (do **not** fix out of batch; ratios are against the
 new tokens, measured with `tool/contrast.dart --pair`):
@@ -191,14 +202,42 @@ new tokens, measured with `tool/contrast.dart --pair`):
   `value_editor_visual.dart:16`, `:170`) - deliberate, not a design colour.
 - **Batch 6 (Update / Backup / Settings).** `update_page.dart:358-359` (`redAccent` 3.58 on a card);
   `backup_page.dart:438` (`Colors.orangeAccent` 6.07, passes - styling debt).
-- **No batch owns it (needs its own card):** the Script editor's active line draws the syntax
-  colours on the `kAccentTint` wash, which is *lighter* than the surface under it, so on a card
-  `kSymOutput` 3.88 / `kSymVariable` 3.91 / `kSymConstant` 3.62 / `kSymPredefine` 4.30 sit below
-  4.5 (`script_editor_line.dart:84`). Either the active-line fill goes dark or the syntax palette
-  moves another step up.
+- **No batch owns it (recorded 2026-10-17, not fixed):** `app/lib/main.dart:103`/`:110` - the shell's
+  link badge - draw their inactive state in `Colors.white38` (the value `kTextDisabled` carries), so
+  the rail's `OFF` label (10 px text) measures
+  `dart run tool/contrast.dart --pair '#62FFFFFF' kSurfaceAlt` = 3.12:1 against the 4.5:1 it needs.
+  The fix token is `kTextMuted` (4.61 on the rail); the 24/30 px icon is non-text (3:1) and 3.12
+  passes. This is *not* the checker's exempt "disabled control / icon ink (`kTextDisabled`)" row -
+  that row is a disabled control's ink (`theme.dart:357`) - and it is not an accepted exemption
+  either: WCAG 1.4.3 exempts an *inactive user interface component*, and the `OFF` badge is a status
+  label rather than a component that can be inoperative, so it stays an offender. Like the
+  batch-owned entries above it is listed here and left out of the checker, which keeps its exit 0.
+- **Found while re-measuring the numbers above (2026-10-17, recorded, not fixed):**
+  `script_editor_line.dart:123` (the line index) and `:271` (a symbol chip's role hint) draw 12 px
+  informative text in `kTextDisabled` - 3.12 on a card (`--pair kTextDisabled kSurfaceAlt`) and 3.22
+  on the `kSubtleTint` wash an inactive line draws (`--pair kTextDisabled '#2F3639'`), 2.72 on the
+  active line's old `kAccentTint` wash (`--pair kTextDisabled '#584938'`; both literals are that wash
+  composited over the card) - where the token means "unavailable", not "de-emphasised"; and
+  `:155` labels the instruction chip in `kOrange` on its `kAccentTint` fill = 3.67
+  (`--pair kOrange '#584938'`). The tokens they would take are `kTextMuted` (5.26 page / 4.61 card)
+  and `kTextPrimary` (8.66 on that wash).
 - **Not rendered, so not fixed:** table row striping (the viewers have no zebra rows) and a disabled
   action in a page's own `AppBar` (`subscriptions_page.dart:99` is never disabled) - see the
   `tool/contrast.dart` exempt section for the pairs that WCAG does not hold to a threshold.
+
+**Closed 2026-10-17 (the leftovers card, app version 26.10.17.8).** The Script editor's active line
+no longer draws the syntax colours on the `kAccentTint` wash (which is *lighter* than the surface
+under it, so the four symbol colours on it sat below 4.5): `script_editor_line.dart:84` fills the
+active line with `kActiveLineTint` - `#2E000000`, one step stronger than `kSubtleTint`'s wash, i.e. a
+fill *below* its surface. On a card: `kSymOutput` 3.88 -> 5.98, `kSymVariable` 3.91 -> 6.03,
+`kSymConstant` 3.62 -> 5.59, `kSymPredefine` 4.30 -> 6.63 (`kSymInput` 6.14 -> 9.46). The row keeps
+its `kOrange` border and its `ACTIVE` chip, so the accent marker is unchanged, and the "before"
+numbers (current tokens on the old wash) stay re-runnable:
+`dart run tool/contrast.dart --pair kSymOutput '#584938'` = 3.88:1, where `#584938` is that wash
+composited over the card; with `--theme tool/fixtures/theme_before_2026_10_17.dart` the same literal
+measures the pre-fix pink instead. The five pairs are in `tool/contrast.dart` now - with the pre-fix
+palette they print `n/a`, since that fill did not exist - so a later change cannot quietly
+re-lighten the active line.
 
 ### Phase 2 - vocabulary, now including localization
 

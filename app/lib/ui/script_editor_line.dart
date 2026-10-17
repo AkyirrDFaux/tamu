@@ -81,7 +81,7 @@ extension on _ScriptEditorPageState {
       margin: const EdgeInsets.symmetric(vertical: Spacing.xs),
       padding: const EdgeInsets.symmetric(vertical: Spacing.xs),
       decoration: BoxDecoration(
-        color: active ? kAccentTint : kSubtleTint,
+        color: active ? kActiveLineTint : kSubtleTint,
         borderRadius: Radii.control,
         border: Border.all(color: active ? kOrange : kLine),
       ),

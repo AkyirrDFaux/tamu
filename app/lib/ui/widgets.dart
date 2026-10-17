@@ -773,7 +773,7 @@ class TamuPage extends StatelessWidget {
 /// ink: the AppBar hands the actions `actionsIconTheme` (which follows
 /// `appBarTheme.iconTheme`, [kOnAccent]), but it does not touch the *disabled*
 /// ink, and `kTextDisabled` is 1.59:1 on the accent bar. A disabled action here
-/// draws in [kOnAccentDim] (3.35:1) instead.
+/// draws in [kOnAccentDim] (3.36:1) instead.
 class PageAppBar extends StatelessWidget implements PreferredSizeWidget {
   const PageAppBar({
     super.key,

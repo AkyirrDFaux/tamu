@@ -22,9 +22,19 @@
 ///                                --theme tool/fixtures/theme_before_2026_10_17.dart
 ///
 ///                        A token the palette does not define prints `n/a` and is
-///                        counted as such instead of aborting the run (the
-///                        pre-fix palette has no `kOnAccent`; pairs that name it
-///                        did not exist yet).
+///                        counted as such instead of aborting the run: the
+///                        fixture is the pre-fix palette, so a pair that names a
+///                        token the audit's own fix added (e.g. `kActiveLineTint`,
+///                        the active line's fill) reports that the pair did not
+///                        exist yet rather than borrowing this revision's maths.
+///                        The fixture *does* define `kOnAccent`/`kOnAccentDim`/
+///                        `kBadgeFill`, because those name what the old app bar
+///                        actually rendered, which is what the pre-fix app-bar
+///                        pairs are about. Two of those rows - the busy spinner and
+///                        the autorefresh mark's ring - have no pre-fix
+///                        counterpart at all; their labels and `where` text say so,
+///                        so their number here is not read as "this pair existed
+///                        and passed".
 ///     `--pair <fg> <bg>` print one ad-hoc pair (a token name, or a `#RRGGBB` /
 ///                        `#AARRGGBB` literal) and stop; honours `--theme`
 ///     `--quiet`          print only the failures, the close calls and the summary
@@ -361,19 +371,26 @@ const List<Group> auditGroups = [
         'widgets.dart:188 ShellDrawerButton, AppBar leading',
       ),
       Pair(
-        'app-bar refresh spinner',
+        'app-bar refresh spinner - post-fix ink only (pre-fix it drew kOrange, '
+            '1.17:1)',
         'kOnAccent',
         'kOrangeDark',
         3.0,
-        'widgets.dart RefreshButton refreshing state (was kOrange: 1.17)',
+        'widgets.dart RefreshButton refreshing state takes kOnAccent now: there '
+            'is no pre-fix pair for this row - the old spinner drew the theme '
+            'kOrange on the old bar, 1.17:1 (`--theme '
+            'tool/fixtures/theme_before_2026_10_17.dart --pair kOrange '
+            'kOrangeDark`)',
       ),
       Pair(
-        'autorefresh dot ring (kOnAccent, the mark boundary)',
+        'autorefresh dot ring - post-fix only (pre-fix there was no ring)',
         'kOnAccent',
         'kOrangeDark',
         3.0,
         'widgets.dart RefreshButton dot: on the bar only a dark ink reaches '
-            '3:1, so the mark is ringed rather than drawn as a bare dot',
+            '3:1, so the mark is ringed rather than drawn as a bare dot; no '
+            'pre-fix pair either - the bare dot is the exempt pair below, 2.30 '
+            'green / 1.03 red on the old bar',
       ),
       Pair(
         'autorefresh dot fill (active) against its ring',
@@ -791,6 +808,47 @@ const List<Group> auditGroups = [
       'kSurfaceAlt',
       4.5,
       'script_editor_line.dart, token theme.dart',
+    ),
+    Pair(
+      'symbol colour on the active line (kSymInput)',
+      'kSymInput',
+      Wash('kActiveLineTint', 'kSurfaceAlt'),
+      4.5,
+      'script_editor_line.dart:84 the active-line fill over a card; it replaced '
+          'the kAccentTint wash, which is lighter than the surface under it '
+          '(6.14 on it)',
+    ),
+    Pair(
+      'symbol colour on the active line (kSymOutput)',
+      'kSymOutput',
+      Wash('kActiveLineTint', 'kSurfaceAlt'),
+      4.5,
+      'script_editor_line.dart:84 the active-line fill over a card; with the '
+          'kAccentTint fill it replaced, this pair measured 3.88',
+    ),
+    Pair(
+      'symbol colour on the active line (kSymVariable)',
+      'kSymVariable',
+      Wash('kActiveLineTint', 'kSurfaceAlt'),
+      4.5,
+      'script_editor_line.dart:84 the active-line fill over a card; with the '
+          'kAccentTint fill it replaced, this pair measured 3.91',
+    ),
+    Pair(
+      'symbol colour on the active line (kSymConstant)',
+      'kSymConstant',
+      Wash('kActiveLineTint', 'kSurfaceAlt'),
+      4.5,
+      'script_editor_line.dart:84 the active-line fill over a card; with the '
+          'kAccentTint fill it replaced, this pair measured 3.62',
+    ),
+    Pair(
+      'symbol colour on the active line (kSymPredefine)',
+      'kSymPredefine',
+      Wash('kActiveLineTint', 'kSurfaceAlt'),
+      4.5,
+      'script_editor_line.dart:84 the active-line fill over a card; with the '
+          'kAccentTint fill it replaced, this pair measured 4.30',
     ),
     Pair(
       'symbol colour on the page (kSymConstant)',

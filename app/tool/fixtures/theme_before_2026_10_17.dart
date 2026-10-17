@@ -4,7 +4,7 @@
 /// can re-run is not evidence. This is the palette `lib/ui/theme.dart` carried
 /// at `d982495^` (the commit before the theme fix), so
 ///
-///     dart run tool/contrast.dart --theme tool/fixtures/theme_before_2026-10-17.dart
+///     dart run tool/contrast.dart --theme tool/fixtures/theme_before_2026_10_17.dart
 ///
 /// reproduces the before column of the audit in TODO.md ("Contrast audit
 /// (2026-10-17)"). The checker only reads `const Color k*` declarations, so the
@@ -24,6 +24,18 @@
 ///
 /// The checker reports a token this palette does not define as `n/a` rather than
 /// aborting, so an older copy can be compared without editing it first.
+///
+/// Two rows of the audit have *no* pre-fix counterpart and still print a number
+/// here, because they name `kOnAccent`, which this palette does define: the busy
+/// spinner and the ringed autorefresh mark. The old spinner drew `kOrange` on the
+/// old bar (1.17:1, `--pair kOrange kOrangeDark`) and no ring was drawn at all, so
+/// read those two rows as "post-fix rendering", never as "this pair existed and
+/// passed" - their labels and `where` text say so.
+///
+/// The active line's fill is a later addition (`kActiveLineTint`): the five pairs
+/// that name it print `n/a` here. Pre-fix - and up to the fix that added the token
+/// - that line drew the `kAccentTint` wash, which is lighter than the surface
+/// under it, which is exactly what those pairs measure.
 ///
 /// The Flutter import is only so `flutter analyze` accepts the declarations; the
 /// fixture is never run, it is read as text by `tool/contrast.dart`.
