@@ -330,16 +330,28 @@ class DialogBody extends StatelessWidget {
 class BlockScrollBody extends StatelessWidget {
   final List<Widget> children;
 
-  const BlockScrollBody({super.key, required this.children});
+  /// A gap inserted between two consecutive children (0 for none).
+  final double spacing;
+
+  const BlockScrollBody({
+    super.key,
+    required this.children,
+    this.spacing = Spacing.md,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final spaced = <Widget>[];
+    for (final (i, child) in children.indexed) {
+      if (i > 0 && spacing > 0) spaced.add(SizedBox(height: spacing));
+      spaced.add(child);
+    }
     return SingleChildScrollView(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 10, 10, 24),
+        padding: Insets.page,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: children,
+          children: spaced,
         ),
       ),
     );

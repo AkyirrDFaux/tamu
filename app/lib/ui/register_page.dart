@@ -19,15 +19,23 @@ import '../core/storage_client.dart'
     show FileRecord, StorageClient, normalizeFileName;
 import '../core/types.dart';
 import '../core/script_client.dart';
+import 'dialogs.dart';
 import 'formatters.dart';
 import 'register_backup_view.dart';
 import 'theme.dart';
 import 'value_editor.dart' show showValueEditor;
 import 'system_block_view.dart';
+import 'viewer_kit.dart';
 import 'widgets.dart';
 
 part 'register_page_tiles.dart';
 part 'register_page_edit.dart';
+
+/// The Register tree's label column widths: a field row and its nested key/member
+/// rows align their labels on one column.
+const double _labelColumnWidth = 120;
+const double _memberLabelWidth = 100;
+const double _keyLabelWidth = 90;
 
 /// Register service view (Docs/App/Service views/Register.md):
 /// System block, static blocks, and dynamic memory.
@@ -603,87 +611,84 @@ class _RegisterPageState extends State<RegisterPage>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Register - ${idToString(widget.deviceId)}'),
-        actions: [
-          // Current/Backup view (docs Register.md appbar, right).
-          TextButton.icon(
-            onPressed: _busy
-                ? null
-                : () => _setViewMode(
-                    _backupMode
-                        ? RegisterViewMode.current
-                        : RegisterViewMode.backup,
-                  ),
-            icon: Icon(_backupMode ? Icons.history : Icons.sensors, size: 18),
-            label: Text(
-              _backupMode ? 'Backup' : 'Current',
-              style: const TextStyle(fontSize: 12),
-            ),
-            style: TextButton.styleFrom(
-              foregroundColor: _backupMode ? kOrange : null,
-              visualDensity: VisualDensity.compact,
-            ),
+    return TamuPage(
+      title: 'Register - ${idToString(widget.deviceId)}',
+      actions: [
+        // Current/Backup view (docs Register.md appbar, right).
+        TextButton.icon(
+          onPressed: _busy
+              ? null
+              : () => _setViewMode(
+                  _backupMode
+                      ? RegisterViewMode.current
+                      : RegisterViewMode.backup,
+                ),
+          icon: Icon(
+            _backupMode ? Icons.history : Icons.sensors,
+            size: IconSize.md,
           ),
-          if (!_backupMode)
-            IconButton(
-              tooltip: 'Save all to backup',
-              icon: const Icon(Icons.save),
-              onPressed: () async {
-                final ok = await _withBusy(_saveAll);
-                _snack(ok ? 'Saved' : 'Save failed');
-              },
-            )
-          else
-            IconButton(
-              tooltip: 'Recall all from backup',
-              icon: const Icon(Icons.restore),
-              onPressed: () async {
-                final ok = await _withBusy(_recallAll);
-                _snack(ok ? 'Recalled' : 'Recall failed');
-                if (ok) await _loadBackup();
-              },
+          label: Text(_backupMode ? 'Backup' : 'Current'),
+          style: TextButton.styleFrom(
+            foregroundColor: _backupMode ? kOrange : null,
+            visualDensity: VisualDensity.compact,
+          ),
+        ),
+        if (!_backupMode)
+          IconButton(
+            tooltip: 'Save all to backup',
+            icon: const Icon(Icons.save),
+            onPressed: () async {
+              final ok = await _withBusy(_saveAll);
+              _snack(ok ? 'Saved' : 'Save failed');
+            },
+          )
+        else
+          IconButton(
+            tooltip: 'Recall all from backup',
+            icon: const Icon(Icons.restore),
+            onPressed: () async {
+              final ok = await _withBusy(_recallAll);
+              _snack(ok ? 'Recalled' : 'Recall failed');
+              if (ok) await _loadBackup();
+            },
+          ),
+        if (widget.hasDynamicMemory && !_backupMode)
+          IconButton(
+            tooltip: _editMode ? 'Exit edit mode' : 'Edit dynamic blocks',
+            icon: Icon(
+              _editMode ? Icons.check : Icons.edit_outlined,
+              color: _editMode ? kOrange : null,
             ),
-          if (widget.hasDynamicMemory && !_backupMode)
-            IconButton(
-              tooltip: _editMode ? 'Exit edit mode' : 'Edit dynamic blocks',
-              icon: Icon(
-                _editMode ? Icons.check : Icons.edit_outlined,
-                color: _editMode ? kOrange : null,
-              ),
-              onPressed: () => setState(() => _editMode = !_editMode),
-            ),
-          if (_busy || _backupBusy)
-            const Padding(
-              padding: EdgeInsets.only(right: 12),
-              child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-          RefreshButton(
-            onRefresh: _refreshAll,
-            autoActive: autoRefreshActive,
-            refreshing: _refreshing,
-            error: _error != null,
-            selectedInterval: selectedInterval,
-            onSelectAuto: applyAuto,
+            onPressed: () => setState(() => _editMode = !_editMode),
+          ),
+        if (_busy || _backupBusy) ...[
+          const SizedBox(width: Spacing.lg),
+          const SizedBox(
+            width: IconSize.md,
+            height: IconSize.md,
+            child: CircularProgressIndicator(),
           ),
         ],
-      ),
-      body: _buildBody(),
+        PageActions.autoRefresh(
+          control: this,
+          onRefresh: _refreshAll,
+          refreshing: _refreshing,
+          error: _error != null,
+        ),
+      ],
+      child: _buildBody(),
     );
   }
 
   Widget _buildBody() {
     final blocks = _blockMetas;
     if (blocks == null) {
-      return Center(child: Text(_error ?? 'Loading...'));
+      return _error == null
+          ? const StateMessage.loading()
+          : StateMessage.error(message: _error);
     }
     if (blocks.isEmpty) {
-      return const Center(child: Text('No blocks found'));
+      return const StateMessage.empty(message: 'No blocks found');
     }
     if (_backupMode) return _backupBody(blocks);
     return _liveBody(blocks);
@@ -694,10 +699,13 @@ class _RegisterPageState extends State<RegisterPage>
     List<({int type, int inst, ValueInfo meta, String name})?> blocks,
   ) {
     if (_backup == null && _backupBusy) {
-      return const Center(child: CircularProgressIndicator());
+      return const StateMessage.loading();
     }
     if (_backupError != null) {
-      return Center(child: Text('Could not read the backup: $_backupError'));
+      return StateMessage.error(
+        message: 'Could not read the backup',
+        details: _backupError,
+      );
     }
     return RegisterBackupView(
       backup: _backup ?? DeviceBackup.empty,
@@ -741,28 +749,17 @@ class _RegisterPageState extends State<RegisterPage>
               dragIndex: si,
             ),
         ];
-        children.add(
-          Padding(
-            padding: const EdgeInsets.only(top: 8, bottom: 8),
-            child: Divider(height: 1),
-          ),
-        );
+        children.add(const Divider());
         children.add(
           ReorderableListView(
-            header: const Padding(
-              padding: EdgeInsets.only(top: 6, bottom: 6),
-              child: Text(
-                'Dynamic blocks',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
+            header: const SectionHeader('Dynamic blocks'),
             footer: ListTile(
               leading: const Icon(Icons.add_box_outlined),
               title: const Text('Add dynamic block'),
               onTap: _createBlock,
             ),
             shrinkWrap: true,
-            padding: const EdgeInsets.fromLTRB(10, 4, 10, 12),
+            padding: Insets.row,
             buildDefaultDragHandles: false,
             children: dynCards,
             onReorderItem: (oldIndex, newIndex) =>
@@ -839,13 +836,6 @@ class _RegisterPageState extends State<RegisterPage>
     _snack(ok ? 'Block moved' : 'Move failed');
     await _refreshAll();
   }
-
-  String _scriptFieldName(int field) => switch (field) {
-    ScriptField.header => 'Header',
-    ScriptField.input => 'Input',
-    ScriptField.output => 'Output',
-    _ => 'Field $field',
-  };
 
   Future<void> _editScriptEntry(
     int blockType,

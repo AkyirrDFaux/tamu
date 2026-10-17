@@ -15,29 +15,19 @@ Future<int?> _promptIntIndex(
   String? helper,
 }) {
   final controller = TextEditingController(text: initial);
-  return showDialog<int>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: Text(title),
-      content: TextField(
-        controller: controller,
-        autofocus: true,
-        keyboardType: TextInputType.number,
-        decoration: helper == null ? null : InputDecoration(helperText: helper),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () {
-            final v = int.tryParse(controller.text.trim());
-            Navigator.pop(context, v);
-          },
-          child: const Text('OK'),
-        ),
-      ],
+  return showTamuDialog<int>(
+    context,
+    title: title,
+    body: TextField(
+      controller: controller,
+      autofocus: true,
+      keyboardType: TextInputType.number,
+      decoration: helper == null ? null : InputDecoration(helperText: helper),
+    ),
+    actions: tamuDialogActions(
+      onCancel: () => Navigator.pop(context),
+      onConfirm: () =>
+          Navigator.pop(context, int.tryParse(controller.text.trim())),
     ),
   );
 }
@@ -107,52 +97,45 @@ extension on _RegisterPageState {
     }
     final indexController = TextEditingController(text: '$firstFree');
     var selectedType = DataType.number;
-    final result = await showDialog<(int, DataType)>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('Add field'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: indexController,
-                autofocus: true,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Field index',
-                  helperText: '0..255, must be unused',
-                ),
+    final result = await showTamuDialog<(int, DataType)>(
+      context,
+      title: 'Add field',
+      body: StatefulBuilder(
+        builder: (context, setLocalState) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: indexController,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Field index',
+                helperText: '0..255, must be unused',
               ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<DataType>(
-                initialValue: selectedType,
-                decoration: const InputDecoration(labelText: 'Type'),
-                items: [
-                  for (final t in DataType.values)
-                    if (t != DataType.none && t != DataType.undefined)
-                      DropdownMenuItem(value: t, child: Text(dataTypeLabel(t))),
-                ],
-                onChanged: (t) =>
-                    setState(() => selectedType = t ?? DataType.number),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
             ),
-            FilledButton(
-              onPressed: () {
-                final idx = int.tryParse(indexController.text.trim());
-                if (idx == null) return;
-                Navigator.pop(context, (idx, selectedType));
-              },
-              child: const Text('Next'),
+            const SizedBox(height: Spacing.md),
+            DropdownButtonFormField<DataType>(
+              initialValue: selectedType,
+              decoration: const InputDecoration(labelText: 'Type'),
+              items: [
+                for (final t in DataType.values)
+                  if (t != DataType.none && t != DataType.undefined)
+                    DropdownMenuItem(value: t, child: Text(dataTypeLabel(t))),
+              ],
+              onChanged: (t) =>
+                  setLocalState(() => selectedType = t ?? DataType.number),
             ),
           ],
         ),
+      ),
+      actions: tamuDialogActions(
+        onCancel: () => Navigator.pop(context),
+        onConfirm: () {
+          final idx = int.tryParse(indexController.text.trim());
+          if (idx == null) return;
+          Navigator.pop(context, (idx, selectedType));
+        },
+        confirmLabel: 'Next',
       ),
     );
     if (result == null || !mounted) return;
@@ -202,23 +185,20 @@ extension on _RegisterPageState {
   }
 
   Future<DataType?> _pickDataType({DataType? selected}) {
-    return showDialog<DataType>(
-      context: context,
-      builder: (context) => SimpleDialog(
-        title: const Text('Entry data type'),
+    return showTamuDialog<DataType>(
+      context,
+      title: 'Entry data type',
+      maxWidth: 300,
+      body: ListView(
+        shrinkWrap: true,
         children: [
           for (final t in DataType.values)
             if (t != DataType.none && t != DataType.undefined)
-              SimpleDialogOption(
-                onPressed: () => Navigator.pop(context, t),
-                child: Row(
-                  children: [
-                    if (t == selected)
-                      const Icon(Icons.check, size: 16, color: Colors.white38),
-                    if (t != selected) const SizedBox(width: 20),
-                    Expanded(child: Text(dataTypeLabel(t))),
-                  ],
-                ),
+              ListTile(
+                title: Text(dataTypeLabel(t)),
+                selected: t == selected,
+                trailing: t == selected ? const Icon(Icons.check) : null,
+                onTap: () => Navigator.pop(context, t),
               ),
         ],
       ),
@@ -418,41 +398,33 @@ extension on _RegisterPageState {
     if (entry == null) return;
     var ro = entry.meta.readOnly;
     var per = entry.meta.persistent;
-    final result = await showDialog<List<bool>>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Text('Entry flags (field $fieldIndex)'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SwitchListTile(
-                title: const Text('Read-only'),
-                subtitle: const Text('Blocks value edits from the app'),
-                value: ro,
-                onChanged: (v) => setState(() => ro = v),
-              ),
-              SwitchListTile(
-                title: const Text('Persistent'),
-                subtitle: const Text(
-                  'Saved to the block DV file on Save; survives reboot',
-                ),
-                value: per,
-                onChanged: (v) => setState(() => per = v),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
+    final result = await showTamuDialog<List<bool>>(
+      context,
+      title: 'Entry flags (field $fieldIndex)',
+      body: StatefulBuilder(
+        builder: (context, setLocalState) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SwitchListTile(
+              title: const Text('Read-only'),
+              subtitle: const Text('Blocks value edits from the app'),
+              value: ro,
+              onChanged: (v) => setLocalState(() => ro = v),
             ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, [ro, per]),
-              child: const Text('OK'),
+            SwitchListTile(
+              title: const Text('Persistent'),
+              subtitle: const Text(
+                'Saved to the block DV file on Save; survives reboot',
+              ),
+              value: per,
+              onChanged: (v) => setLocalState(() => per = v),
             ),
           ],
         ),
+      ),
+      actions: tamuDialogActions(
+        onCancel: () => Navigator.pop(context),
+        onConfirm: () => Navigator.pop(context, [ro, per]),
       ),
     );
     if (result == null || !mounted) return;
@@ -466,14 +438,6 @@ extension on _RegisterPageState {
     );
     _snack(ok != null ? 'Flags updated' : 'Update failed');
     await _refreshAll();
-  }
-
-  /// RO/P flag suffix for a dynamic entry's subtitle.
-  String _flagsSuffix(ValueInfo meta) {
-    final f = <String>[];
-    if (meta.readOnly) f.add('RO');
-    if (meta.persistent) f.add('P');
-    return f.isEmpty ? '' : ' · ${f.join(' · ')}';
   }
 
   /// Prompts for a key number to add/change in a field. For dictionaries the meaningful
@@ -497,67 +461,57 @@ extension on _RegisterPageState {
       meaningful = <int>[];
     }
     int? chosenDropdown;
-    return showDialog<int>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Text(title),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (meaningful.isNotEmpty) ...[
-                DropdownButtonFormField<int?>(
-                  initialValue: chosenDropdown,
-                  decoration: const InputDecoration(
-                    labelText: 'Dictionary keys',
-                  ),
-                  hint: Text(
-                    controller.text == '$startKey'
-                        ? 'Pick (or type below)'
-                        : 'Type below',
-                  ),
-                  items: [
-                    for (final k in meaningful)
-                      DropdownMenuItem(
-                        value: k,
-                        child: Text('$k · ${renderDictKeyName(dictType, k)}'),
-                      ),
-                  ],
-                  onChanged: (v) => setState(() {
-                    if (v != null) {
-                      chosenDropdown = v;
-                      controller.text = '$v';
-                    }
-                  }),
+    return showTamuDialog<int>(
+      context,
+      title: title,
+      body: StatefulBuilder(
+        builder: (context, setLocalState) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (meaningful.isNotEmpty) ...[
+              DropdownButtonFormField<int?>(
+                initialValue: chosenDropdown,
+                decoration: const InputDecoration(labelText: 'Dictionary keys'),
+                hint: Text(
+                  controller.text == '$startKey'
+                      ? 'Pick (or type below)'
+                      : 'Type below',
                 ),
-                const SizedBox(height: 8),
-              ],
-              TextField(
-                controller: controller,
-                autofocus: true,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Key number',
-                  helperText: '0..255 - any value allowed',
-                ),
+                items: [
+                  for (final k in meaningful)
+                    DropdownMenuItem(
+                      value: k,
+                      child: Text('$k · ${renderDictKeyName(dictType, k)}'),
+                    ),
+                ],
+                onChanged: (v) => setLocalState(() {
+                  if (v != null) {
+                    chosenDropdown = v;
+                    controller.text = '$v';
+                  }
+                }),
               ),
+              const SizedBox(height: Spacing.md),
             ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final v = int.tryParse(controller.text.trim());
-                if (v == null || v < 0 || v > 255) return;
-                Navigator.pop(context, v);
-              },
-              child: const Text('OK'),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Key number',
+                helperText: '0..255 - any value allowed',
+              ),
             ),
           ],
         ),
+      ),
+      actions: tamuDialogActions(
+        onCancel: () => Navigator.pop(context),
+        onConfirm: () {
+          final v = int.tryParse(controller.text.trim());
+          if (v == null || v < 0 || v > 255) return;
+          Navigator.pop(context, v);
+        },
       ),
     );
   }
@@ -713,22 +667,5 @@ extension on _RegisterPageState {
     }
     _snack(ok ? 'Key changed' : 'Change failed');
     await _refreshAll();
-  }
-
-  /// Formats a dynamic (field, key) entry with enum labels where known.
-  String _formatDynamicValue(
-    ({ValueInfo meta, List<int> value}) e,
-    bool isDict,
-    int dictType,
-    int key,
-  ) {
-    if (e.meta.dataType == DataType.enum_ && e.value.isNotEmpty) {
-      final enums = isDict
-          ? renderKeyFieldInfo(dictType, key).enumValues
-          : null;
-      final label = enums?[e.value[0]];
-      if (label != null) return label;
-    }
-    return formatValue(e.meta.dataType, e.value);
   }
 }

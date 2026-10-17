@@ -2,6 +2,10 @@
 //
 // Part of register_page.dart: an extension on its State so the tiles keep private
 // access to the page's caches while staying out of the main file.
+//
+// Presentation comes from `theme.dart` (tokens), `widgets.dart` and `viewer_kit.dart`
+// (shared widgets) only: no colour, text size, gap or radius of its own, and every
+// display string comes through `formatters.dart`.
 
 part of 'register_page.dart';
 
@@ -11,6 +15,7 @@ extension on _RegisterPageState {
   /// variables and constants are read-only (variables are edited through the script file,
   /// not the Register view).
   Widget _scriptFieldTile(
+    BuildContext context,
     int blockType,
     int inst,
     int cacheKey,
@@ -21,20 +26,21 @@ extension on _RegisterPageState {
     // The Header category is script metadata and is intentionally not part of the
     // Register view.
     if (fieldIndex == ScriptField.header) return const SizedBox.shrink();
+    final theme = Theme.of(context);
     final cache = _fieldCache[cacheKey];
     final keys = _scriptKeys[cacheKey]?[fieldIndex] ?? <int>[];
-    final name = _scriptFieldName(fieldIndex);
+    final name = scriptFieldLabel(fieldIndex);
     if (keys.isEmpty) {
       return ListTile(
         key: cardKey,
         dense: true,
         title: Text(
           name,
-          style: const TextStyle(fontSize: 13, color: Colors.white54),
+          style: theme.textTheme.labelSmall?.copyWith(color: kTextMuted),
         ),
-        subtitle: const Text(
+        subtitle: Text(
           'None',
-          style: TextStyle(fontSize: 10, color: Colors.white38),
+          style: theme.textTheme.labelSmall?.copyWith(color: kTextDisabled),
         ),
       );
     }
@@ -42,73 +48,82 @@ extension on _RegisterPageState {
     return Column(
       children: [
         for (final key in keys)
-          Builder(
-            builder: (context) {
-              final e = cache?[fieldIndex * 256 + key];
-              if (e == null) {
-                return ListTile(
-                  key: key == keys.first ? cardKey : null,
-                  dense: true,
-                  leading: const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  title: Text(
-                    '$name $key',
-                    style: const TextStyle(fontSize: 13, color: Colors.white38),
-                  ),
-                );
-              }
-              final editable = editableField && !e.meta.readOnly;
-              return ListTile(
-                key: key == keys.first ? cardKey : null,
-                dense: true,
-                title: Row(
-                  children: [
-                    SizedBox(
-                      width: 120,
-                      child: Text(
-                        '$name $key',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.white54,
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: Text(
-                        formatValue(e.meta.dataType, e.value),
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                subtitle: Text(
-                  dataTypeLabel(e.meta.dataType) +
-                      (e.meta.readOnly ? ' · RO' : ''),
-                  style: const TextStyle(fontSize: 10),
-                ),
-                trailing: editable
-                    ? const Icon(Icons.edit, size: 16, color: Colors.white38)
-                    : null,
-                onTap: editable
-                    ? () => _editScriptEntry(
-                        blockType,
-                        inst,
-                        fieldIndex,
-                        key,
-                        e,
-                        block,
-                      )
-                    : null,
-              );
-            },
+          _scriptEntryTile(
+            context,
+            blockType,
+            inst,
+            fieldIndex,
+            key,
+            cache?[fieldIndex * 256 + key],
+            name,
+            editableField,
+            block,
+            key == keys.first ? cardKey : null,
           ),
       ],
+    );
+  }
+
+  /// One loaded script entry: the field's keyed value, editable when the category is
+  /// Input and the entry is not read-only.
+  Widget _scriptEntryTile(
+    BuildContext context,
+    int blockType,
+    int inst,
+    int fieldIndex,
+    int key,
+    ({ValueInfo meta, List<int> value})? entry,
+    String name,
+    bool editableField,
+    ({int type, int inst, ValueInfo meta, String name})? block,
+    Key? cardKey,
+  ) {
+    final theme = Theme.of(context);
+    if (entry == null) {
+      return ListTile(
+        key: cardKey,
+        dense: true,
+        leading: const SizedBox(
+          width: IconSize.sm,
+          height: IconSize.sm,
+          child: CircularProgressIndicator(),
+        ),
+        title: Text(
+          '$name $key',
+          style: theme.textTheme.labelSmall?.copyWith(color: kTextDisabled),
+        ),
+      );
+    }
+    final editable = editableField && !entry.meta.readOnly;
+    return ListTile(
+      key: cardKey,
+      dense: true,
+      title: Row(
+        children: [
+          SizedBox(
+            width: _labelColumnWidth,
+            child: Text(
+              '$name $key',
+              style: theme.textTheme.labelSmall?.copyWith(color: kTextMuted),
+            ),
+          ),
+          Expanded(
+            child: MonoText(formatValue(entry.meta.dataType, entry.value)),
+          ),
+        ],
+      ),
+      subtitle: Text(
+        dataTypeLabel(entry.meta.dataType) +
+            (entry.meta.readOnly ? ' · RO' : ''),
+        style: theme.textTheme.labelSmall,
+      ),
+      trailing: editable
+          ? const Icon(Icons.edit, size: IconSize.sm, color: kTextDisabled)
+          : null,
+      onTap: editable
+          ? () =>
+                _editScriptEntry(blockType, inst, fieldIndex, key, entry, block)
+          : null,
     );
   }
 
@@ -119,15 +134,12 @@ extension on _RegisterPageState {
     Key? cardKey,
     int? dragIndex,
   }) {
+    final theme = Theme.of(context);
     if (block == null) {
       return Card(
-        color: kSurfaceAlt,
         child: ListTile(
           leading: const Icon(Icons.memory, color: kOrange),
-          title: const Text(
-            'System Block',
-            style: TextStyle(fontWeight: FontWeight.w600),
-          ),
+          title: Text('System Block', style: theme.textTheme.titleSmall),
           subtitle: const Text('Loading...'),
         ),
       );
@@ -142,35 +154,32 @@ extension on _RegisterPageState {
       return const SizedBox.shrink();
     }
 
+    final folderIcon = Icon(
+      isExpanded ? Icons.folder_open : Icons.folder,
+      color: kOrange,
+    );
+    final dragHandle = dragIndex == null
+        ? null
+        : ReorderableDragStartListener(
+            index: dragIndex,
+            child: const Icon(Icons.drag_handle, color: kTextDisabled),
+          );
+
     return Card(
       key: cardKey,
-      color: kSurfaceAlt,
-      margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
           ListTile(
-            leading: _editMode && isDynamic && dragIndex != null
-                ? Row(
+            leading: dragHandle == null
+                ? folderIcon
+                : Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      ReorderableDragStartListener(
-                        index: dragIndex,
-                        child: const Icon(
-                          Icons.drag_handle,
-                          color: Colors.white38,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Icon(
-                        isExpanded ? Icons.folder_open : Icons.folder,
-                        color: kOrange,
-                      ),
+                      dragHandle,
+                      const SizedBox(width: Spacing.md),
+                      folderIcon,
                     ],
-                  )
-                : Icon(
-                    isExpanded ? Icons.folder_open : Icons.folder,
-                    color: kOrange,
                   ),
             title: Row(
               children: [
@@ -183,40 +192,29 @@ extension on _RegisterPageState {
                               : (isDynamic
                                     ? 'Dynamic #${block.inst}'
                                     : 'Block #${block.inst}')),
-                    style: const TextStyle(fontWeight: FontWeight.w600),
+                    style: theme.textTheme.titleSmall,
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 1,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withAlpha(20),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    isSystem ? 'System' : '#${block.inst}',
-                    style: const TextStyle(fontSize: 10, color: Colors.white54),
-                  ),
+                TamuChip(
+                  isSystem ? 'System' : '#${block.inst}',
+                  tone: ChipTone.subtle,
                 ),
               ],
             ),
-            subtitle: Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 2,
-                children: [
-                  ChipLabel(
-                    isSystem ? 'System' : blockTypeLabel(block.meta.type),
+            subtitle: TamuChipRow(
+              chips: [
+                TamuChip(
+                  isSystem ? 'System' : blockTypeLabel(block.meta.type),
+                  tone: ChipTone.accent,
+                ),
+                for (final flag in ValueFlags.describe(block.meta.flags))
+                  TamuChip(
+                    flag,
+                    tone: flag == 'RO' ? ChipTone.accent : ChipTone.subtle,
                   ),
-                  for (final flag in ValueFlags.describe(block.meta.flags))
-                    ChipLabel(flag, subtle: flag != 'RO'),
-                  if (!isScriptType(block.meta.type))
-                    ChipLabel('${block.meta.size} fields', subtle: true),
-                ],
-              ),
+                if (!isScriptType(block.meta.type))
+                  TamuChip('${block.meta.size} fields', tone: ChipTone.subtle),
+              ],
             ),
             trailing: isDynamicType(block.meta.type)
                 ? PopupMenuButton<String>(
@@ -272,10 +270,10 @@ extension on _RegisterPageState {
           ),
           if (isExpanded)
             Material(
-              color: Colors.black26,
+              color: kSurface,
               child: Column(
                 children: [
-                  const Divider(height: 1),
+                  const Divider(),
                   if (block.meta.size > 0) ...[
                     if (_editMode && isDynamic)
                       ReorderableListView(
@@ -286,6 +284,7 @@ extension on _RegisterPageState {
                               in (_dynamicFields[block.inst] ?? <int>[])
                                   .indexed)
                             _fieldTile(
+                              context,
                               block.type,
                               block.inst,
                               block,
@@ -303,10 +302,10 @@ extension on _RegisterPageState {
                       )
                     else if (isDynamic)
                       for (final f in (_dynamicFields[block.inst] ?? <int>[]))
-                        _fieldTile(block.type, block.inst, block, f)
+                        _fieldTile(context, block.type, block.inst, block, f)
                     else
                       for (var f = 0; f < block.meta.size; f++)
-                        _fieldTile(block.type, block.inst, block, f),
+                        _fieldTile(context, block.type, block.inst, block, f),
                   ],
                 ],
               ),
@@ -317,6 +316,7 @@ extension on _RegisterPageState {
   }
 
   Widget _fieldTile(
+    BuildContext context,
     int blockType,
     int inst,
     ({int type, int inst, ValueInfo meta, String name})? block,
@@ -324,6 +324,7 @@ extension on _RegisterPageState {
     Key? cardKey,
     int? dragIndex,
   }) {
+    final theme = Theme.of(context);
     final cacheKey = (blockType << 8) | inst;
     final cache = _fieldCache[cacheKey];
     final field = cache?[fieldIndex];
@@ -332,6 +333,7 @@ extension on _RegisterPageState {
     // Loaded scripts (0x3F4-0x3F7): keyed entries per category field.
     if (isScriptType(blockType)) {
       return _scriptFieldTile(
+        context,
         blockType,
         inst,
         cacheKey,
@@ -354,13 +356,13 @@ extension on _RegisterPageState {
           key: cardKey,
           dense: true,
           leading: const SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(strokeWidth: 2),
+            width: IconSize.sm,
+            height: IconSize.sm,
+            child: CircularProgressIndicator(),
           ),
-          title: const Text(
+          title: Text(
             '...',
-            style: TextStyle(fontSize: 13, color: Colors.white38),
+            style: theme.textTheme.labelSmall?.copyWith(color: kTextDisabled),
           ),
         );
       }
@@ -377,55 +379,36 @@ extension on _RegisterPageState {
         return ListTile(
           key: cardKey,
           dense: true,
-          leading: dragIndex != null
-              ? ReorderableDragStartListener(
+          leading: dragIndex == null
+              ? null
+              : ReorderableDragStartListener(
                   index: dragIndex,
-                  child: const Icon(Icons.drag_handle, color: Colors.white38),
-                )
-              : null,
+                  child: const Icon(Icons.drag_handle, color: kTextDisabled),
+                ),
           title: Row(
             children: [
               SizedBox(
-                width: 120,
+                width: _labelColumnWidth,
                 child: Text(
                   'Field $fieldIndex',
-                  style: const TextStyle(fontSize: 12, color: Colors.white54),
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: kTextMuted,
+                  ),
                 ),
               ),
               if (head.meta.dataType == DataType.colour &&
                   head.value.length >= 4)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: Container(
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Color.fromARGB(
-                        head.value[3],
-                        head.value[0],
-                        head.value[1],
-                        head.value[2],
-                      ),
-                      border: Border.all(color: Colors.white38),
-                    ),
-                  ),
-                ),
-              Expanded(
-                child: Text(
-                  _formatDynamicValue(head, false, 0, 0),
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-                ),
-              ),
+                ColourSwatch(head.value),
+              Expanded(child: MonoText(formatDynamicValue(head, false, 0, 0))),
             ],
           ),
           subtitle: Text(
-            dataTypeLabel(head.meta.dataType) + _flagsSuffix(head.meta),
-            style: const TextStyle(fontSize: 10),
+            dataTypeLabel(head.meta.dataType) + flagsSuffix(head.meta),
+            style: theme.textTheme.labelSmall,
           ),
           trailing: _editMode
               ? PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert, size: 16),
+                  icon: const Icon(Icons.more_vert, size: IconSize.sm),
                   onSelected: (action) {
                     if (action == 'edit' && !head.meta.readOnly) {
                       _editDynamicEntry(blockType, inst, block, fieldIndex, 0);
@@ -482,39 +465,34 @@ extension on _RegisterPageState {
       return ExpansionTile(
         key: cardKey,
         dense: true,
-        leading: dragIndex != null
-            ? ReorderableDragStartListener(
+        leading: dragIndex == null
+            ? null
+            : ReorderableDragStartListener(
                 index: dragIndex,
-                child: const Icon(Icons.drag_handle, color: Colors.white38),
-              )
-            : null,
+                child: const Icon(Icons.drag_handle, color: kTextDisabled),
+              ),
         title: Row(
           children: [
             SizedBox(
-              width: 120,
+              width: _labelColumnWidth,
               child: Text(
                 isDict
                     ? (dictType == geometryDictType ? 'Geometry' : 'Texture')
                     : 'Field $fieldIndex',
-                style: const TextStyle(fontSize: 12, color: Colors.white54),
+                style: theme.textTheme.labelSmall?.copyWith(color: kTextMuted),
               ),
             ),
-            Expanded(
-              child: Text(
-                '[${extraKeys.length} keys]',
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-              ),
-            ),
+            Expanded(child: MonoText('[${extraKeys.length} keys]')),
             if (_editMode) ...[
               IconButton(
                 tooltip: 'Add key to field $fieldIndex',
-                icon: const Icon(Icons.add, size: 18),
+                icon: const Icon(Icons.add, size: IconSize.md),
                 onPressed: () =>
                     _addDynamicEntry(blockType, inst, block, fieldIndex),
               ),
               PopupMenuButton<String>(
                 tooltip: 'Field actions',
-                icon: const Icon(Icons.more_vert, size: 16),
+                icon: const Icon(Icons.more_vert, size: IconSize.sm),
                 onSelected: (action) {
                   if (action == 'type' && head != null && !head.meta.readOnly) {
                     _changeDynamicType(blockType, inst, block, fieldIndex, 0);
@@ -547,57 +525,36 @@ extension on _RegisterPageState {
           for (final ek in extraKeys)
             ListTile(
               dense: true,
-              contentPadding: const EdgeInsets.only(left: 56, right: 12),
+              contentPadding: Insets.memberRow,
               title: Row(
                 children: [
                   SizedBox(
-                    width: 90,
+                    width: _keyLabelWidth,
                     child: Text(
                       isDict
                           ? '${ek.key} · ${renderDictKeyName(dictType, ek.key)}'
                           : 'key ${ek.key}',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: Colors.white54,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: kTextMuted,
                       ),
                     ),
                   ),
                   if (ek.e.meta.dataType == DataType.colour &&
                       ek.e.value.length >= 4)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: Container(
-                        width: 14,
-                        height: 14,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Color.fromARGB(
-                            ek.e.value[3],
-                            ek.e.value[0],
-                            ek.e.value[1],
-                            ek.e.value[2],
-                          ),
-                          border: Border.all(color: Colors.white38),
-                        ),
-                      ),
-                    ),
+                    ColourSwatch(ek.e.value),
                   Expanded(
-                    child: Text(
-                      _formatDynamicValue(ek.e, isDict, dictType, ek.key),
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 12,
-                      ),
+                    child: MonoText(
+                      formatDynamicValue(ek.e, isDict, dictType, ek.key),
                     ),
                   ),
                 ],
               ),
               subtitle: Text(
-                dataTypeLabel(ek.e.meta.dataType) + _flagsSuffix(ek.e.meta),
-                style: const TextStyle(fontSize: 10),
+                dataTypeLabel(ek.e.meta.dataType) + flagsSuffix(ek.e.meta),
+                style: theme.textTheme.labelSmall,
               ),
               trailing: PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert, size: 16),
+                icon: const Icon(Icons.more_vert, size: IconSize.sm),
                 onSelected: (action) {
                   if (action == 'edit' && !ek.e.meta.readOnly) {
                     _editDynamicEntry(
@@ -679,16 +636,16 @@ extension on _RegisterPageState {
     }
 
     if (field == null) {
-      return const ListTile(
+      return ListTile(
         dense: true,
-        leading: SizedBox(
-          width: 14,
-          height: 14,
-          child: CircularProgressIndicator(strokeWidth: 2),
+        leading: const SizedBox(
+          width: IconSize.sm,
+          height: IconSize.sm,
+          child: CircularProgressIndicator(),
         ),
         title: Text(
           '...',
-          style: TextStyle(fontSize: 13, color: Colors.white38),
+          style: theme.textTheme.labelSmall?.copyWith(color: kTextDisabled),
         ),
       );
     }
@@ -764,18 +721,13 @@ extension on _RegisterPageState {
         title: Row(
           children: [
             SizedBox(
-              width: 120,
+              width: _labelColumnWidth,
               child: Text(
                 systemFieldName(fieldIndex),
-                style: const TextStyle(fontSize: 12, color: Colors.white54),
+                style: theme.textTheme.labelSmall?.copyWith(color: kTextMuted),
               ),
             ),
-            Expanded(
-              child: Text(
-                '[${keyedEntries.length} fields]',
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-              ),
-            ),
+            Expanded(child: MonoText('[${keyedEntries.length} fields]')),
           ],
         ),
         children: keyedEntries.map((entry) {
@@ -784,52 +736,49 @@ extension on _RegisterPageState {
           if (f == null) return const SizedBox.shrink();
           return ListTile(
             dense: true,
-            contentPadding: const EdgeInsets.only(left: 56, right: 12),
+            contentPadding: Insets.memberRow,
             title: Row(
               children: [
                 SizedBox(
-                  width: 100,
+                  width: _memberLabelWidth,
                   child: Text(
                     systemStructMemberName(fieldIndex, key),
-                    style: const TextStyle(fontSize: 11, color: Colors.white54),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: kTextMuted,
+                    ),
                   ),
                 ),
                 Expanded(
-                  child: Text(
+                  child: MonoText(
                     formatSystemValue(
                       f.meta.dataType,
                       f.value,
                       fieldIndex,
                       key,
                     ),
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                    ),
                   ),
                 ),
-                for (final flag in primaryFlags)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 4),
-                    child: Text(
-                      flag,
-                      style: TextStyle(
-                        fontSize: 8,
-                        fontWeight: FontWeight.w700,
-                        color: flag == 'RO' ? kOrange : Colors.white38,
+                TamuChipRow(
+                  spacing: Spacing.xs,
+                  chips: [
+                    for (final flag in primaryFlags)
+                      TamuChip(
+                        flag,
+                        tone: flag == 'RO' ? ChipTone.accent : ChipTone.subtle,
                       ),
-                    ),
-                  ),
+                  ],
+                ),
               ],
             ),
             subtitle: Text(
-              '${dataTypeLabel(f.meta.dataType)} [member=${systemStructMemberName(fieldIndex, key)}]',
-              style: const TextStyle(fontSize: 10),
+              '${dataTypeLabel(f.meta.dataType)} '
+              '[member=${systemStructMemberName(fieldIndex, key)}]',
+              style: theme.textTheme.labelSmall,
             ),
             trailing: f.meta.readOnly
                 ? null
                 : PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert, size: 16),
+                    icon: const Icon(Icons.more_vert, size: IconSize.sm),
                     onSelected: (action) {
                       if (action == 'edit') {
                         _editValue(
@@ -875,20 +824,20 @@ extension on _RegisterPageState {
 
     return ListTile(
       dense: true,
-      contentPadding: const EdgeInsets.only(left: 40, right: 12),
+      contentPadding: Insets.nestedRow,
       title: Row(
         children: [
           SizedBox(
-            width: 120,
+            width: _labelColumnWidth,
             child: Text(
               isSystemField
                   ? systemFieldName(fieldIndex)
                   : (fieldInfo?.name ?? 'Field $fieldIndex'),
-              style: const TextStyle(fontSize: 12, color: Colors.white54),
+              style: theme.textTheme.labelSmall?.copyWith(color: kTextMuted),
             ),
           ),
           Expanded(
-            child: Text(
+            child: MonoText(
               isSystemField
                   ? formatSystemValue(
                       field.meta.dataType,
@@ -897,31 +846,29 @@ extension on _RegisterPageState {
                       systemKeysForField(fieldIndex).first,
                     )
                   : displayValue(),
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
             ),
           ),
-          for (final flag in ValueFlags.describe(field.meta.flags))
-            Padding(
-              padding: const EdgeInsets.only(left: 4),
-              child: Text(
-                flag,
-                style: TextStyle(
-                  fontSize: 9,
-                  fontWeight: FontWeight.w700,
-                  color: flag == 'RO' ? kOrange : Colors.white38,
+          TamuChipRow(
+            spacing: Spacing.xs,
+            chips: [
+              for (final flag in ValueFlags.describe(field.meta.flags))
+                TamuChip(
+                  flag,
+                  tone: flag == 'RO' ? ChipTone.accent : ChipTone.subtle,
                 ),
-              ),
-            ),
+            ],
+          ),
         ],
       ),
       subtitle: Text(
-        '${dataTypeLabel(field.meta.dataType)}${!isSystemField && fieldInfo?.unit != null ? ' [${fieldInfo!.unit}]' : ''}',
-        style: const TextStyle(fontSize: 11),
+        '${dataTypeLabel(field.meta.dataType)}'
+        '${!isSystemField && fieldInfo?.unit != null ? ' [${fieldInfo!.unit}]' : ''}',
+        style: theme.textTheme.labelSmall,
       ),
       trailing: field.meta.readOnly
           ? null
           : PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert, size: 18),
+              icon: const Icon(Icons.more_vert, size: IconSize.md),
               tooltip: 'Field actions',
               onSelected: (action) {
                 if (action == 'edit') {

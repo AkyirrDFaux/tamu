@@ -6,6 +6,10 @@
 /// static/System fields from `.SV` and dynamic entries from `.DT_`/`.DV_`. Fields with no
 /// stored entry are shown explicitly as "not backed up" rather than hidden, so a missing
 /// save is visible instead of looking like a normal empty field.
+///
+/// One card per block, and the rows render through the viewer toolkit ([TamuTable]) so the
+/// table shell, the row chips and the monospace columns come from one place; this file
+/// carries no colour, size or gap of its own.
 library;
 
 import 'package:flutter/material.dart';
@@ -15,8 +19,9 @@ import '../core/device_backup.dart';
 import '../core/system_schema.dart' show systemFieldKeys, systemKeyName;
 import '../core/types.dart';
 import 'formatters.dart';
-import 'theme.dart' show kSurfaceAlt;
-import 'widgets.dart' show BlockScrollBody;
+import 'theme.dart';
+import 'viewer_kit.dart';
+import 'widgets.dart' show BlockScrollBody, StateMessage;
 
 /// Which set of values the Register page shows (docs Register.md appbar).
 enum RegisterViewMode { current, backup }
@@ -71,17 +76,17 @@ class RegisterBackupView extends StatelessWidget {
       // Dynamic tombstone slots carry no block and are hidden, like the live view.
       if (isHiddenRegisterSlot(b.type, b.meta)) continue;
       if (b.type == 0) {
-        children.add(_card(b, _systemRows()));
+        children.add(_card(context, b, _systemRows()));
       } else if (isScriptType(b.type)) {
-        children.add(_card(b, const []));
+        children.add(_card(context, b, const []));
       } else if (isDynamicType(b.type)) {
-        children.add(_card(b, _dynamicRows(b.inst)));
+        children.add(_card(context, b, _dynamicRows(b.inst)));
       } else {
-        children.add(_card(b, _staticRows(b)));
+        children.add(_card(context, b, _staticRows(b)));
       }
     }
     if (children.isEmpty) {
-      return const Center(child: Text('No blocks found'));
+      return const StateMessage.empty(message: 'No blocks found');
     }
     return BlockScrollBody(children: children);
   }
@@ -201,76 +206,74 @@ class RegisterBackupView extends StatelessWidget {
   }
 
   Widget _card(
+    BuildContext context,
     ({int type, int inst, ValueInfo meta, String name}) b,
     List<_BackupRow> rows,
   ) {
+    final theme = Theme.of(context);
     final typeLabel = b.type == 0
         ? 'System'
         : BlockType.fromValue(b.type).label;
+    final allStored = rows.isNotEmpty && rows.every((r) => r.stored);
+    final summary = isScriptType(b.type)
+        ? 'scripts are not backed up'
+        : (rows.isEmpty
+              ? 'not backed up'
+              : '${rows.where((r) => r.stored).length}'
+                    ' of ${rows.length} stored');
     return Card(
-      color: kSurfaceAlt,
-      margin: const EdgeInsets.only(bottom: 8),
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
           ListTile(
-            dense: true,
             title: Text(
               '${b.name.isEmpty ? typeLabel : b.name}  ·  $typeLabel'
               '${b.inst == 0 ? '' : ' [${b.inst}]'}',
-              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+              style: theme.textTheme.titleSmall,
             ),
-            subtitle: Text(
-              isScriptType(b.type)
-                  ? 'scripts are not backed up'
-                  : (rows.isEmpty
-                        ? 'not backed up'
-                        : '${rows.where((r) => r.stored).length}'
-                              ' of ${rows.length} stored'),
-              style: const TextStyle(fontSize: 10),
+            subtitle: TamuChipRow(
+              chips: [
+                TamuChip(
+                  summary,
+                  tone: allStored ? ChipTone.success : ChipTone.warning,
+                ),
+              ],
             ),
           ),
           if (rows.isNotEmpty)
-            Material(
-              color: Colors.black26,
-              child: Column(
-                children: [
-                  for (final r in rows)
-                    ListTile(
-                      dense: true,
-                      contentPadding: const EdgeInsets.only(left: 16, right: 8),
-                      title: Text(
-                        '${r.label}: ${r.value}',
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 12,
-                          color: r.stored ? Colors.white : Colors.white38,
-                        ),
-                      ),
-                      subtitle: Text(
-                        r.detail,
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: Colors.white38,
-                        ),
-                      ),
-                      trailing: (r.stored && onRecall != null)
-                          ? IconButton(
-                              tooltip: 'Recall this value from backup',
-                              icon: const Icon(Icons.restore, size: 18),
-                              onPressed: busy
-                                  ? null
-                                  : () => onRecall!(
-                                      b.type,
-                                      b.inst,
-                                      r.field,
-                                      r.key,
-                                    ),
-                            )
-                          : null,
-                    ),
-                ],
-              ),
+            TamuTable<_BackupRow>(
+              embedded: true,
+              showHeader: false,
+              columns: [
+                TamuColumn(
+                  label: 'Field',
+                  text: (r) => r.label,
+                  flex: 3,
+                  muted: true,
+                ),
+                TamuColumn(
+                  label: 'Stored value',
+                  text: (r) => r.value,
+                  flex: 4,
+                  mono: true,
+                ),
+                TamuColumn(
+                  label: 'Type',
+                  text: (r) => r.detail,
+                  flex: 4,
+                  muted: true,
+                ),
+              ],
+              rows: rows,
+              trailing: (context, r) => (r.stored && onRecall != null)
+                  ? IconButton(
+                      tooltip: 'Recall this value from backup',
+                      icon: const Icon(Icons.restore, size: IconSize.md),
+                      onPressed: busy
+                          ? null
+                          : () => onRecall!(b.type, b.inst, r.field, r.key),
+                    )
+                  : const SizedBox.shrink(),
             ),
         ],
       ),

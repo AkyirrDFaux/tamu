@@ -102,6 +102,30 @@ class TamuChipRow extends StatelessWidget {
   }
 }
 
+/// A small round swatch showing a Colour-typed value, so a viewer never paints a
+/// device colour by hand. [argb] is the wire buffer: alpha, red, green, blue.
+/// Renders nothing for a buffer too short to carry a colour.
+class ColourSwatch extends StatelessWidget {
+  const ColourSwatch(this.argb, {super.key});
+
+  final List<int> argb;
+
+  @override
+  Widget build(BuildContext context) {
+    if (argb.length < 4) return const SizedBox.shrink();
+    return Container(
+      width: IconSize.sm,
+      height: IconSize.sm,
+      margin: const EdgeInsets.only(right: Spacing.md),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: Color.fromARGB(argb[3], argb[0], argb[1], argb[2]),
+        border: Border.all(color: kTextDisabled),
+      ),
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Monospace text
 // ---------------------------------------------------------------------------
@@ -226,6 +250,8 @@ class TamuTable<T> extends StatelessWidget {
     this.pageSize,
     this.initialRows,
     this.emptyMessage,
+    this.embedded = false,
+    this.showHeader = true,
   });
 
   /// The columns, left to right.
@@ -257,6 +283,16 @@ class TamuTable<T> extends StatelessWidget {
   /// The empty state shown when [rows] is empty.
   final String? emptyMessage;
 
+  /// Render inside a parent scroll view instead of filling the parent: the table
+  /// shrink-wraps its rows and leaves the scrolling to the caller. A card or a
+  /// section that holds one table sets this; a page body leaves it false.
+  final bool embedded;
+
+  /// Draw the column-label row. A table whose surrounding card already names the
+  /// data (a block card, a titled section) turns it off so the labels are not
+  /// repeated under every heading.
+  final bool showHeader;
+
   @override
   Widget build(BuildContext context) {
     return TamuPagedList<T>(
@@ -264,7 +300,8 @@ class TamuTable<T> extends StatelessWidget {
       pageSize: pageSize,
       initialCount: initialRows,
       emptyMessage: emptyMessage,
-      header: _header(context),
+      embedded: embedded,
+      header: showHeader ? _header(context) : null,
       itemBuilder: (context, row, _) => _dataRow(context, row),
     );
   }
@@ -378,6 +415,7 @@ class TamuPagedList<T> extends StatefulWidget {
     this.header,
     this.padding,
     this.emptyMessage,
+    this.embedded = false,
   });
 
   final List<T> items;
@@ -399,6 +437,10 @@ class TamuPagedList<T> extends StatefulWidget {
 
   /// The empty state shown when [items] is empty.
   final String? emptyMessage;
+
+  /// Shrink-wrap the list and leave the scrolling to a parent scroll view, instead
+  /// of filling the parent. A list nested in a card or a section sets this.
+  final bool embedded;
 
   @override
   State<TamuPagedList<T>> createState() => _TamuPagedListState<T>();
@@ -443,18 +485,20 @@ class _TamuPagedListState<T> extends State<TamuPagedList<T>> {
     final allShown = page == null || _shown >= items.length;
     final count = allShown ? items.length : _shown;
     final header = widget.header;
+    final list = ListView.builder(
+      shrinkWrap: widget.embedded,
+      physics: widget.embedded ? const NeverScrollableScrollPhysics() : null,
+      padding: widget.padding ?? Insets.page,
+      itemCount: count,
+      itemBuilder: (context, index) =>
+          widget.itemBuilder(context, items[index], index),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: widget.embedded ? MainAxisSize.min : MainAxisSize.max,
       children: [
         ?header,
-        Expanded(
-          child: ListView.builder(
-            padding: widget.padding ?? Insets.page,
-            itemCount: count,
-            itemBuilder: (context, index) =>
-                widget.itemBuilder(context, items[index], index),
-          ),
-        ),
+        if (widget.embedded) list else Expanded(child: list),
         if (!allShown) _footer(context, count, items.length),
       ],
     );

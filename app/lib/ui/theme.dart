@@ -113,6 +113,18 @@ abstract final class Insets {
 
   /// A page body.
   static const EdgeInsets page = EdgeInsets.all(Spacing.lg);
+
+  /// A nested list row: a field inside a block card (indented one level).
+  static const EdgeInsets nestedRow = EdgeInsets.only(
+    left: Spacing.indent,
+    right: Spacing.lg,
+  );
+
+  /// A row one level deeper again: a key or struct member inside a field.
+  static const EdgeInsets memberRow = EdgeInsets.only(
+    left: Spacing.indent + Spacing.xl,
+    right: Spacing.lg,
+  );
 }
 
 /// Corner radii: three steps only - a tag, a control or input, a card/dialog.

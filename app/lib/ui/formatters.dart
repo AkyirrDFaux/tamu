@@ -14,6 +14,8 @@
 /// because the core uses them too.
 library;
 
+import '../core/render_dict.dart' show renderKeyFieldInfo;
+import '../core/script_file.dart' show ScriptField;
 import '../core/storage_client.dart' show normalizeFileName;
 import '../core/types.dart';
 
@@ -211,3 +213,33 @@ String fileTypeLabel(String name) => switch (storageFileType(name)) {
   StorageFileType.dynamicValues => 'Dynamic values',
   StorageFileType.backup => 'Registry backup',
 };
+
+/// The Register view's name for a script block's category field.
+String scriptFieldLabel(int field) => switch (field) {
+  ScriptField.header => 'Header',
+  ScriptField.input => 'Input',
+  ScriptField.output => 'Output',
+  _ => 'Field $field',
+};
+
+/// The ` · RO · P` suffix a dynamic entry's subtitle carries, or an empty string.
+String flagsSuffix(ValueInfo meta) {
+  final flags = <String>[if (meta.readOnly) 'RO', if (meta.persistent) 'P'];
+  return flags.isEmpty ? '' : ' · ${flags.join(' · ')}';
+}
+
+/// A dynamic (field, key) entry, with a dictionary's key rendering its enum label
+/// where the dictionary specifies one.
+String formatDynamicValue(
+  ({ValueInfo meta, List<int> value}) entry,
+  bool isDict,
+  int dictType,
+  int key,
+) {
+  if (entry.meta.dataType == DataType.enum_ && entry.value.isNotEmpty) {
+    final enums = isDict ? renderKeyFieldInfo(dictType, key).enumValues : null;
+    final label = enums?[entry.value[0]];
+    if (label != null) return label;
+  }
+  return formatValue(entry.meta.dataType, entry.value);
+}
