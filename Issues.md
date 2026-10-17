@@ -36,6 +36,18 @@ are hardware-only.
 - **E26** **`valu_upload.py` drives `wlink` over SWD, which this board cannot do.** The ISP recipe that
   actually works (USB port reset, then a single `wchisp-nightly` invocation) needs folding into it
   as an `--isp` mode so `./upload.sh boot valu` matches reality.
+- **E30** **DAS_v0_1 is 308 B over the beta-window flash gate, and the documented headroom is stale.**
+  Clean rebuilds (2026-10-17, `3e6f505`): `RAM 100.0% (2048/2048)` / `Flash 95.9% (13748/14336)`; at
+  `fc964e5` (2026-10-13) `RAM 99.0% (2028)` / `Flash 93.9% (13464)`. So `.text` grew 13160 -> 13444
+  (+284 B) and statics +20 B across the 2026-10-13..2026-10-15 storage/discovery/subscription work.
+  The beta gate `TODO.md:165` ("DAS <= 2028 B RAM, <= 13440 B flash", written 2026-10-11) is breached
+  on both counts, and the "~94 % flash / ~99 % RAM" figures in `TODO.md:176` and `AGENTS.md` no longer
+  match the code. The 100 % RAM figure is by design - statics (1048 B) + stack (1000 B) fill the 2 KB
+  exactly, the state `firmware/platformio.ini` documents and the linker guards - so the 2028 B gate
+  cannot be met without cutting a static. **Decision needed (owner):** move the gate to the measured
+  reality, or keep 13440 B and trim >= 308 B of DAS flash. Tracked as kanban `t_2143e21b`. Size lines
+  are only trustworthy after `pio run -e DAS_v0_1 -t clean` - a stale `.pio/build/DAS_v0_1` can still
+  report "up to date".
 
 ## Valu v2.0 app (2026-10-06) - parked (owner: not now)
 
