@@ -118,11 +118,20 @@ Akyirr: "some UI elements are hard to see because foreground and background colo
 together", and (added mid-run) the offending group is multiple **app-bar** elements. Measured, not
 guessed: `dart run tool/contrast.dart` from `app/` reads the tokens out of `lib/ui/theme.dart`,
 composites the translucent ones over the surface they are drawn on and prints the WCAG ratio of all
-67 pairs the theme and the shared widgets render (4.5:1 body text, 3:1 large text and non-text UI;
+68 pairs the theme and the shared widgets render (4.5:1 body text, 3:1 large text and non-text UI;
 exit 1 on any failure). Ad-hoc pair: `dart run tool/contrast.dart --pair <fg> <bg>`.
-**Before: 23 pairs below threshold + 6 close. After: 0 below, 6 close** (all >= threshold).
+The "before" column is reproducible - the pre-fix palette is committed as a fixture:
 
-Theme-level changes (all in `ui/theme.dart`; one commit, app version 26.10.17.5):
+    dart run tool/contrast.dart --theme tool/fixtures/theme_before_2026_10_17.dart
+
+**Before (fixture): 29 pairs below threshold + 6 close (exit 1). After: 0 below, 7 close** (all >=
+threshold, exit 0). The 7 close calls are 4.88 app-bar TabBar label, 4.61 `bodySmall` on a card,
+4.85 accent on a card, 3.12 x3 control boundary/checkbox/switch outline on a card, 4.79
+`kSymConstant` on a card. (An earlier handoff quoted "23 below + 6 close" from an uncommitted
+pre-fix copy; the fixture run above supersedes it - the numbers differ because the fixture is the
+real `d982495^` palette, including the badge pair and the pre-fix rendered inks.)
+
+Theme-level changes (all in `ui/theme.dart`; commits `d982495` + this one, app version 26.10.17.6):
 
 - surfaces darkened: `kSurface` `#353C3F` -> `#262C2F`, `kSurfaceAlt` `#4F575C` -> `#333B3E`, so
   every white-alpha text role reaches 4.5:1 on a card (`bodySmall` was 3.45);
@@ -133,7 +142,10 @@ Theme-level changes (all in `ui/theme.dart`; one commit, app version 26.10.17.5)
   for a disabled action (`kTextDisabled` was 1.59 on the bar), the refresh spinner moved off
   `kOrange` (1.17 -> 7.47), and the autorefresh mark is now a ringed dot (ring 7.47, fill 14.7
   against the ring; the bare dot was 2.30 green / 1.03 red on the bar). `PageAppBar` wraps its
-  actions in that ink theme, so a disabled page action is covered too;
+  actions in that ink theme, so a disabled page action is covered too; the Logs app bar's filter
+  badge (a label-less `Badge`, `log_page.dart:205`) was painting `colorScheme.error` at 1.03:1 on
+  the pre-fix bar (1.23 on the new one) - a `badgeTheme` now fills it with `kBadgeFill`
+  (`kOnAccent`), 7.47:1;
 - `kError` `redAccent` -> redAccent 100 `#FF8A80` (3.52 page / 2.31 card -> 6.35 / 5.01), `kLine`
   `white24` -> `white38` (borders: 2.07/1.82 -> 3.41/3.12), input hints `kTextDisabled` ->
   `kTextMuted`, unselected switch track a `kSurface` well with the `kLine` outline, `kSubtleTint`
@@ -150,7 +162,8 @@ new tokens, measured with `tool/contrast.dart --pair`):
   All of these are raw Material steps where the tokens exist: `kTextMuted` (5.26 page / 4.61 card)
   and `kLine`/`kTextDisabled` (3.41/3.12). `subscriptions_page.dart:137`, `:148`, `:211`, `:223`,
   `:304` (`white54`) and `:269` (`Colors.red`) are styling debt, not failures - the TabBar override
-  at `:90-96` now measures 4.90 (black at 0.7 alpha on the new bar), so it passes.
+  at `:90-96` now measures 4.88 (black at 0.7 alpha on the new bar; the old bar was 4.39), so it
+  passes.
 - **Batch 5 (Connection / Devices / Device View).** `connection_page.dart:136-139` (RSSI readout:
   `white38` 3.41 as text, `redAccent` 3.58), `:363` (`kOrange.withAlpha(38)` fill - a second accent
   alpha the token layer should own); `device_view_page.dart:274` (`Colors.redAccent` icon).

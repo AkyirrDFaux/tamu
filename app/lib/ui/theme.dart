@@ -52,6 +52,12 @@ const Color kOnAccent = Colors.black;
 /// this rather than [kTextDisabled] (which is an ink for the dark surfaces).
 const Color kOnAccentDim = Colors.black54;
 
+/// The badge dot's fill: the app-bar ink, because the Material default
+/// (`colorScheme.error`) is 1.23:1 on the bar. A named token rather than
+/// `kOnAccent` directly so the pair the audit measures and the palette fixture
+/// can name the same side of the pair across a revision.
+const Color kBadgeFill = kOnAccent;
+
 /// Headings, and the value you came to the page to read.
 const Color kTextPrimary = Colors.white;
 
@@ -272,6 +278,17 @@ AppBarThemeData get _appBar => AppBarThemeData(
   actionsIconTheme: const IconThemeData(color: kOnAccent),
   titleTextStyle: _textTheme.titleLarge?.copyWith(color: kOnAccent),
 );
+
+/// Badges: the one call site is the Logs app bar's device filter
+/// (`log_page.dart:205`), a label-less dot that marks "a filter is active". The
+/// Material default fill is `colorScheme.error`, which on this bar measures
+/// 1.23:1 - a state indicator needs 3:1 - so the dot takes the bar's ink
+/// ([kBadgeFill], 7.47:1 as a filled dot, the same logic as the ringed autorefresh
+/// mark). A badge placed on a *dark* surface would need its own fill: black on
+/// `kSurfaceAlt` is 1.75:1, so the theme default here is the app-bar ink, not a
+/// universal one. The label ink is for the labelled variant (none renders today).
+BadgeThemeData get _badge =>
+    const BadgeThemeData(backgroundColor: kBadgeFill, textColor: kTextPrimary);
 
 /// Cards: the raised grey, flat, with the page owning the gap around them
 /// (no built-in margin). This is what `InfoCard` already looked like.
@@ -494,6 +511,7 @@ ThemeData buildTheme() {
     scaffoldBackgroundColor: kSurface,
     textTheme: _textTheme,
     appBarTheme: _appBar,
+    badgeTheme: _badge,
     cardTheme: _card,
     dialogTheme: _dialog,
     listTileTheme: _listTile,

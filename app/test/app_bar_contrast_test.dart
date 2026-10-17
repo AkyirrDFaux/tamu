@@ -124,6 +124,45 @@ void main() {
     expect((dots.single.border! as Border).top.color, kOnAccent);
   });
 
+  testWidgets('a label-less app-bar badge paints the bar ink, not '
+      'colorScheme.error', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Scaffold(
+          appBar: AppBar(
+            title: const Text('Contrast'),
+            actions: [
+              // What log_page.dart:205 renders while a device filter is active.
+              Badge(
+                isLabelVisible: true,
+                smallSize: 8,
+                child: const Icon(Icons.filter_alt_outlined),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final theme = Theme.of(tester.element(find.byType(Scaffold)));
+    expect(
+      theme.badgeTheme.backgroundColor,
+      kBadgeFill,
+      reason: 'the Material default is colorScheme.error: 1.23:1 on the bar',
+    );
+
+    final dotFills = tester
+        .widgetList<Container>(find.byType(Container))
+        .map((c) => c.decoration)
+        .whereType<ShapeDecoration>()
+        .where((d) => d.shape is StadiumBorder)
+        .map((d) => d.color)
+        .toList();
+    expect(dotFills, [kBadgeFill], reason: 'the rendered badge dot');
+  });
+
   testWidgets('a disabled app-bar action draws in the dimmed accent ink', (
     tester,
   ) async {

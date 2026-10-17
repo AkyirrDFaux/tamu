@@ -13,10 +13,20 @@
 ///     dart run tool/contrast.dart
 ///
 /// Options:
-///     `--theme <path>`   theme file to read (default `lib/ui/theme.dart`; point
-///                        it at another copy to compare two palettes)
+///     `--theme <path>`   theme file to read (default `lib/ui/theme.dart`). Point
+///                        it at another palette to compare two revisions - the
+///                        pre-fix palette is committed as a fixture, so the
+///                        "before" numbers in TODO.md are reproducible:
+///
+///                            dart run tool/contrast.dart \
+///                                --theme tool/fixtures/theme_before_2026_10_17.dart
+///
+///                        A token the palette does not define prints `n/a` and is
+///                        counted as such instead of aborting the run (the
+///                        pre-fix palette has no `kOnAccent`; pairs that name it
+///                        did not exist yet).
 ///     `--pair <fg> <bg>` print one ad-hoc pair (a token name, or a `#RRGGBB` /
-///                        `#AARRGGBB` literal) and stop
+///                        `#AARRGGBB` literal) and stop; honours `--theme`
 ///     `--quiet`          print only the failures, the close calls and the summary
 ///
 /// Exit status is 1 when any pair is below its threshold, so it can be used as a
@@ -57,7 +67,7 @@ void main(List<String> args) {
       stderr.writeln('--pair needs a foreground and a background');
       exit(2);
     }
-    _printPair(args[pairIndex + 1], args[pairIndex + 2]);
+    _printPair(args[pairIndex + 1], args[pairIndex + 2], themePath);
     return;
   }
 
@@ -71,6 +81,7 @@ void main(List<String> args) {
   final failures = <String>[];
   final close = <String>[];
   final exempt = <String>[];
+  final skipped = <String>[];
 
   stdout.writeln('theme: $themePath');
   stdout.writeln('tokens read: ${theme.names.length}');
@@ -86,6 +97,16 @@ void main(List<String> args) {
       stdout.writeln('${group.name}  (${group.pairs.length} pairs)');
     }
     for (final pair in group.pairs) {
+      final missing = _missingToken(theme, pair);
+      if (missing != null) {
+        final row =
+            '${_pad('n/a', 6)} ${_pad(pair.needs.toStringAsFixed(1), 5)} '
+            '${_pad('n/a', 7)} ${pair.label}\n'
+            '${' ' * 20}token not in $themePath: $missing - ${pair.where}';
+        skipped.add(row);
+        if (!quiet) stdout.writeln(row);
+        continue;
+      }
       final line = _measure(theme, pair);
       final verdict = pair.exempt
           ? 'exempt'
@@ -131,12 +152,25 @@ void main(List<String> args) {
     }
   }
 
+  if (skipped.isNotEmpty) {
+    stdout.writeln('');
+    stdout.writeln(
+      'Not in this palette (token added by a later change; n/a, not a failure):',
+    );
+    for (final row in skipped) {
+      stdout.writeln(row);
+    }
+  }
+
   stdout.writeln('');
   stdout.writeln('-' * 100);
   final total = auditGroups.fold<int>(0, (sum, g) => sum + g.pairs.length);
+  final ok =
+      total - failures.length - close.length - exempt.length - skipped.length;
   stdout.writeln(
-    '$total pairs: ${total - failures.length - close.length - exempt.length} ok, '
-    '${close.length} close, ${failures.length} FAIL, ${exempt.length} exempt',
+    '$total pairs: $ok ok, '
+    '${close.length} close, ${failures.length} FAIL, ${exempt.length} exempt'
+    '${skipped.isEmpty ? '' : ', ${skipped.length} n/a'}',
   );
   if (failures.isNotEmpty) {
     stdout.writeln('');
@@ -195,6 +229,15 @@ class Wash {
   final String surface;
 }
 
+/// A token drawn at a reduced opacity as a foreground, so the contrast maths
+/// composites it over the pair's own background: `Alpha('kOnAccent', 0.7)` is
+/// what `Color.withValues(alpha: 0.7)` renders on the bar.
+class Alpha {
+  const Alpha(this.token, this.opacity);
+  final String token;
+  final double opacity;
+}
+
 class Group {
   const Group(this.name, this.pairs);
   final String name;
@@ -221,23 +264,59 @@ Line _measure(ThemeTokens theme, Pair pair) {
 
 /// The pair's foreground: a token keeps its alpha (the contrast maths composites
 /// it over the pair's background), a [Wash] is already composited over the
-/// surface it is drawn on.
-List<double> _foreground(ThemeTokens theme, Object fg) => fg is Wash
-    ? compose(theme.colour(fg.token), theme.colour(fg.surface))
-    : theme.colour(fg as String);
+/// surface it is drawn on, and an [Alpha] takes the token's rgb at that opacity.
+List<double> _foreground(ThemeTokens theme, Object fg) {
+  if (fg is Wash) {
+    return compose(theme.colour(fg.token), theme.colour(fg.surface));
+  }
+  if (fg is Alpha) {
+    final rgb = theme.colour(fg.token);
+    return [rgb[0], rgb[1], rgb[2], fg.opacity];
+  }
+  return theme.colour(fg as String);
+}
 
 List<double> _background(ThemeTokens theme, Object bg) {
   if (bg is Wash) {
     return compose(theme.colour(bg.token), theme.colour(bg.surface));
   }
+  if (bg is Alpha) {
+    final rgb = theme.colour(bg.token);
+    return [rgb[0], rgb[1], rgb[2], bg.opacity];
+  }
   return compose(theme.colour(bg as String), const [0, 0, 0, 1]);
 }
 
-String _describe(Object bg) =>
-    bg is Wash ? '${bg.token} over ${bg.surface}' : bg as String;
+String _describe(Object side) => switch (side) {
+  Wash() => '${side.token} over ${side.surface}',
+  Alpha() => '${side.token} @ ${(side.opacity * 100).round()} %',
+  _ => side as String,
+};
 
-String _hexOfStack(ThemeTokens theme, Object bg) {
-  final rgb = _background(theme, bg);
+/// The first token a pair names that the palette does not define, or null when
+/// every token resolves. A palette fixture can predate a token (the pre-fix copy
+/// has no `kOnAccent`), so a missing token is reported, not fatal.
+String? _missingToken(ThemeTokens theme, Pair pair) =>
+    _missingIn(theme, pair.fg) ?? _missingIn(theme, pair.bg);
+
+String? _missingIn(ThemeTokens theme, Object side) {
+  if (side is Wash) {
+    if (!theme.contains(side.token)) return side.token;
+    if (!theme.contains(side.surface)) return side.surface;
+    return null;
+  }
+  if (side is Alpha) return theme.contains(side.token) ? null : side.token;
+  final name = side as String;
+  return name.startsWith('#') || theme.contains(name) ? null : name;
+}
+
+String _hexOfStack(ThemeTokens theme, Object side) {
+  if (side is Alpha) {
+    final rgb = theme.colour(side.token);
+    return '#${rgb.take(3).map((c) => c.round().toRadixString(16).padLeft(2, '0')).join()}'
+        .toUpperCase();
+  }
+  final rgb = _background(theme, side);
   return '#${rgb.take(3).map((c) => c.round().toRadixString(16).padLeft(2, '0')).join()}'
       .toUpperCase();
 }
@@ -319,6 +398,16 @@ const List<Group> auditGroups = [
         exempt: true,
       ),
       Pair(
+        'app-bar filter badge dot (label-less Badge)',
+        'kBadgeFill',
+        'kOrangeDark',
+        3.0,
+        'log_page.dart:205 Badge(isLabelVisible: _deviceFilter != null) - the '
+            'fill is theme.dart badgeTheme.backgroundColor; before the theme set '
+            'it, Material fell back to colorScheme.error (kError), which the '
+            'pre-fix fixture models as the pre-fix kError',
+      ),
+      Pair(
         'app-bar surface vs page surface',
         'kOrangeDark',
         'kSurface',
@@ -328,10 +417,12 @@ const List<Group> auditGroups = [
       ),
       Pair(
         'app-bar TabBar label (unselected)',
-        'kOnAccent',
+        Alpha('kOnAccent', 0.7),
         'kOrangeDark',
         4.5,
-        'subscriptions_page.dart:92-96 sets onPrimary at alpha 0.7 by hand',
+        'subscriptions_page.dart:90-96 draws onPrimary at alpha 0.7 by hand, so '
+            'the pair is modelled at that alpha (opaque kOnAccent would print '
+            '7.47 and overstate it)',
         note: 'page-owned (batch 4), listed in TODO.md',
       ),
     ],
@@ -783,11 +874,9 @@ List<double> compose(List<double> fg, List<double> bg) {
 
 double _alpha(double stored) => stored > 1 ? stored / 255.0 : stored;
 
-void _printPair(String fg, String bg) {
+void _printPair(String fg, String bg, String themePath) {
   final theme = ThemeTokens.parse(
-    File('lib/ui/theme.dart').existsSync()
-        ? File('lib/ui/theme.dart').readAsStringSync()
-        : '',
+    File(themePath).existsSync() ? File(themePath).readAsStringSync() : '',
   );
   final f = theme.colour(fg);
   final b = theme.colour(bg);
@@ -818,6 +907,9 @@ class ThemeTokens {
   );
   static final RegExp _tint = RegExp(
     r'const\s+Color\s+(k[A-Za-z0-9_]+)\s*=\s*(k[A-Za-z0-9_]+)\.withAlpha\((\d+)\)',
+  );
+  static final RegExp _alias = RegExp(
+    r'const\s+Color\s+(k[A-Za-z0-9_]+)\s*=\s*(k[A-Za-z0-9_]+)\s*;',
   );
 
   static const Map<String, int> materialSteps = {
@@ -870,7 +962,8 @@ class ThemeTokens {
       }
       add(m.group(1)!, step);
     }
-    // Tints declared from another token (kSuccessTint = kSuccess.withAlpha(46)).
+    // Tints declared from another token (kSuccessTint = kSuccess.withAlpha(46))
+    // and plain aliases (kBadgeFill = kOnAccent), resolved in dependency order.
     var pending = true;
     while (pending) {
       pending = false;
@@ -886,9 +979,19 @@ class ThemeTokens {
         names.add(m.group(1)!);
         pending = true;
       }
+      for (final m in _alias.allMatches(source)) {
+        final base = values[m.group(2)!];
+        if (base == null || values.containsKey(m.group(1)!)) continue;
+        values[m.group(1)!] = base;
+        names.add(m.group(1)!);
+        pending = true;
+      }
     }
     return ThemeTokens(names, values);
   }
+
+  bool contains(String name) =>
+      values.containsKey(name) || name.startsWith('#');
 
   List<double> colour(String name) {
     final direct = values[name];
