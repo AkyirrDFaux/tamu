@@ -88,9 +88,14 @@ the log page and register tiles before their own batch.
 - `formatters.dart` - one home for `idToString`, `dataTypeLabel`, `formatValue`, `fileTypeLabel`,
   `formatSystemValue`, `formatCapabilities`, `formatUptimeMs`, `formatOffsetMs` (spread over three
   files today, plus inline formatting elsewhere). No display formatting outside it.
-- **Value editing** - today a facade (`value_editor.dart`) over three backends plus a parallel script
-  implementation (`script_value_dialog.dart`, 318 lines): 1 770 lines doing one job. Target is one
-  entry point, with the script dialog as a caller.
+- **Value editing** - was a facade (`value_editor.dart`) over three backends plus a parallel script
+  implementation (`script_value_dialog.dart`, 318 lines): 1 770 lines doing one job. Since 1b there is
+  one entry point (`showValueEditor`), with `script_value_dialog.dart` as a caller of it, and 1c.3
+  (`` below) finished the family: the five files carry no raw colour, `TextStyle(fontSize:)` or bare
+  `EdgeInsets`, and the controls they had written twice (the size stepper, the numeric cell grid, the
+  hex field's byte decode, the dropdown value guard) are one implementation each. Left alone, with a
+  reason: the per-type numeric dialogs differ by contract (the byte-width-preserving enum entry against
+  `_editInt`'s fixed uint32), and the dialog bodies keep their per-content width bounds.
 - **Viewers** - four near-parallel table/tree implementations (`file_viewers.dart` 695,
   `log_page.dart` 519, `storage_page.dart` 444, `register_backup_view.dart` 279) and they hold the
   tree's worst styling debt (`register_page_tiles.dart`: 23 `Colors.` / 29 `TextStyle()`). Target is
@@ -104,6 +109,20 @@ the log page and register tiles before their own batch.
 4. Viewers - file, storage, log, register backup, SNDB, subscriptions
 5. Connection / Devices / Device View (list + graph), adopting `DeviceTile`
 6. Update / Backup / Settings - small, already mostly shared
+
+**Status (2026-10-17):** 1 Register cluster `3e6f505`; 2 Script cluster `71fbc59` + the loading-frame
+fix `3047d01`; 3 the value editor cluster `3632a68` (below). The five value-editing files were already
+free of raw colour, `TextStyle(fontSize:)` and bare insets when 1b finished, so 1c.3 closed the
+duplication inside the family instead: one size stepper (a vector's length, a matrix's rows/columns),
+one numeric cell grid (the matrix editor, the transform editor's raw mode), one hex-field byte decode
+(the colour field and the hex fallback), one guarded value dropdown (`dialogValueItems`, now in
+`dialogs.dart`, for the script dialog's Type/UI-style and the BlockInfo Block lists) and
+`ScriptValueDialog` shown through `showTamuPicker` like every other editor that renders its own chassis.
+**Visible changes of 1c.3 to veto:** the BlockInfo dialog body 360 to 400 - its Block dropdown
+overflowed the old width by 4.5 px on the longest label (`Resistive Measure`); the matrix Rows/Cols
+field 40 to 44 px (the shared stepper's field width); and a BlockInfo whose type is not in the pickable
+list (a fresh/zeroed one, or a script/dynamic marker) now lists that entry *first* where the old code
+appended it last - same items, same labels, same selection.
 
 Same behaviour per page; one batch per cluster, stopped for Akyirr's review after each. Per batch:
 `dart format`, then `dart fix --apply --code=curly_braces_in_flow_control_structures`, then
