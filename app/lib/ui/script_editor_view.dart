@@ -300,9 +300,9 @@ extension on _ScriptEditorPageState {
     final draft = _draft!;
     final list = draft.listOf(category);
     if (index >= list.length) return;
-    final updated = await showDialog<ScriptDraftValue>(
-      context: context,
-      builder: (_) => ScriptValueDialog(
+    final updated = await showTamuPicker<ScriptDraftValue>(
+      context,
+      ScriptValueDialog(
         category: category,
         initial: list[index],
         index: index,

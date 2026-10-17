@@ -178,17 +178,11 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
               labelText: 'Type',
               helperText: 'Size: ${defaultSizeForType(_draft.type)} bytes',
             ),
-            items: [
-              // Guard against a value type the picker no longer offers (a handler reading an
-              // unknown type would otherwise assert inside DropdownButtonFormField).
-              if (!scriptValueTypes.contains(_draft.type))
-                DropdownMenuItem(
-                  value: _draft.type,
-                  child: Text(dataTypeLabel(_draft.type)),
-                ),
-              for (final t in scriptValueTypes)
-                DropdownMenuItem(value: t, child: Text(dataTypeLabel(t))),
-            ],
+            items: dialogValueItems(
+              scriptValueTypes,
+              _draft.type,
+              dataTypeLabel,
+            ),
             onChanged: _changeType,
           ),
           if (_isInput) ...[
@@ -196,18 +190,11 @@ class _ScriptValueDialogState extends State<ScriptValueDialog> {
             DropdownButtonFormField<int>(
               initialValue: _draft.spec.uiType,
               decoration: const InputDecoration(labelText: 'UI style'),
-              items: [
-                if (!uiStyles.contains(_draft.spec.uiType))
-                  DropdownMenuItem(
-                    value: _draft.spec.uiType,
-                    child: Text(ScriptUiType.label(_draft.spec.uiType)),
-                  ),
-                for (final t in uiStyles)
-                  DropdownMenuItem(
-                    value: t,
-                    child: Text(ScriptUiType.label(t)),
-                  ),
-              ],
+              items: dialogValueItems(
+                uiStyles,
+                _draft.spec.uiType,
+                ScriptUiType.label,
+              ),
               onChanged: (t) => setState(
                 () => _draft.spec = _draft.spec.copyWith(
                   uiType: t ?? ScriptUiType.auto,

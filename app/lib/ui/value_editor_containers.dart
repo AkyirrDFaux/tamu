@@ -1,5 +1,131 @@
 part of 'value_editor.dart';
 
+// ---------------------------------------------------------------------------
+// Shared editor blocks
+// ---------------------------------------------------------------------------
+
+/// A count stepper: a label, a decrement, the centred numeric field and an
+/// increment - the one implementation behind every size control in the family
+/// (a vector's length, a matrix's rows and columns). The caller owns what a new
+/// count means, so the clamps and the resize stay with the data they resize.
+class _SizeStepper extends StatelessWidget {
+  const _SizeStepper({
+    required this.label,
+    required this.controller,
+    required this.onText,
+    required this.onStep,
+  });
+
+  /// The label printed before the field (`Size`, `Rows`, `Cols`).
+  final String label;
+
+  /// The field's text; the caller keeps it in sync with the count.
+  final TextEditingController controller;
+
+  /// The text as typed, for a caller that re-reads the count from it.
+  final ValueChanged<String> onText;
+
+  /// A one-step change from the `-`/`+` buttons (the delta is -1 or 1).
+  final ValueChanged<int> onStep;
+
+  /// A dense numeric field: wide enough for the two digits a count reaches,
+  /// narrow enough that both buttons stay beside it.
+  static const double _fieldWidth = 44;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text('$label: ', style: Theme.of(context).textTheme.labelSmall),
+        IconButton(
+          icon: const Icon(Icons.remove_circle_outline, size: IconSize.lg),
+          onPressed: () => onStep(-1),
+        ),
+        SizedBox(
+          width: _fieldWidth,
+          child: TextField(
+            controller: controller,
+            keyboardType: TextInputType.number,
+            textAlign: TextAlign.center,
+            decoration: const InputDecoration(),
+            onChanged: onText,
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.add_circle_outline, size: IconSize.lg),
+          onPressed: () => onStep(1),
+        ),
+      ],
+    );
+  }
+}
+
+/// A `rows` x `cols` grid of numeric cells: the one implementation behind the
+/// matrix editor and the transform editor's raw mode. [labels] names each cell
+/// (the transform prints the matrix element name); [onCellChanged] fires on
+/// every keystroke for an editor that re-derives its other view from the cells.
+class _NumberGrid extends StatelessWidget {
+  const _NumberGrid({
+    required this.rows,
+    required this.cols,
+    required this.controllers,
+    this.labels,
+    this.onCellChanged,
+    this.signed = false,
+  });
+
+  final int rows;
+  final int cols;
+
+  /// One controller per cell, row-major.
+  final List<TextEditingController> controllers;
+
+  /// Cell labels, row-major; null for an unlabelled grid.
+  final List<String>? labels;
+
+  /// Fires after any cell is edited.
+  final VoidCallback? onCellChanged;
+
+  /// Accept a minus sign and a decimal point in the cell keyboard.
+  final bool signed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var r = 0; r < rows; r++)
+          Row(
+            children: [
+              for (var c = 0; c < cols; c++)
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(Spacing.xs),
+                    child: TextField(
+                      controller: controllers[r * cols + c],
+                      keyboardType: signed
+                          ? const TextInputType.numberWithOptions(
+                              signed: true,
+                              decimal: true,
+                            )
+                          : TextInputType.number,
+                      textAlign: TextAlign.center,
+                      decoration: labels == null
+                          ? null
+                          : InputDecoration(labelText: labels![r * cols + c]),
+                      onChanged: onCellChanged == null
+                          ? null
+                          : (_) => onCellChanged!(),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+      ],
+    );
+  }
+}
+
 /// Vector (N Numbers): one numeric field per component, with a size picker so the
 /// length can be chosen/edited (Docs/Data Formats.md: size-flexible).
 Future<List<int>?> _editVector(
@@ -45,32 +171,11 @@ Future<List<int>?> _editVector(
       builder: (context, setState) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Text('Size: ', style: Theme.of(context).textTheme.labelSmall),
-              IconButton(
-                icon: const Icon(
-                  Icons.remove_circle_outline,
-                  size: IconSize.lg,
-                ),
-                onPressed: () => setState(() => resize(n - 1)),
-              ),
-              SizedBox(
-                width: 44,
-                child: TextField(
-                  controller: sizeCtrl,
-                  keyboardType: TextInputType.number,
-                  textAlign: TextAlign.center,
-                  decoration: const InputDecoration(),
-                  onChanged: (_) =>
-                      setState(() => resize(int.tryParse(sizeCtrl.text) ?? n)),
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.add_circle_outline, size: IconSize.lg),
-                onPressed: () => setState(() => resize(n + 1)),
-              ),
-            ],
+          _SizeStepper(
+            label: 'Size',
+            controller: sizeCtrl,
+            onText: (text) => setState(() => resize(int.tryParse(text) ?? n)),
+            onStep: (delta) => setState(() => resize(n + delta)),
           ),
           for (var i = 0; i < n; i++)
             Padding(
@@ -171,69 +276,25 @@ Future<List<int>?> _editMatrix(
     maxWidth: 320,
     body: StatefulBuilder(
       builder: (context, setState) {
-        final styles = Theme.of(context).textTheme;
-        Widget sizeRow(
-          String label,
-          TextEditingController ctrl,
-          void Function(int delta) bump,
-        ) {
-          return Row(
-            children: [
-              Text('$label: ', style: styles.labelSmall),
-              IconButton(
-                icon: const Icon(
-                  Icons.remove_circle_outline,
-                  size: IconSize.lg,
-                ),
-                onPressed: () => setState(() => bump(-1)),
-              ),
-              SizedBox(
-                width: 40,
-                child: TextField(
-                  controller: ctrl,
-                  keyboardType: TextInputType.number,
-                  textAlign: TextAlign.center,
-                  decoration: const InputDecoration(),
-                  onChanged: (_) => setState(() {
-                    final v = int.tryParse(ctrl.text) ?? 0;
-                    if (label == 'Rows') {
-                      resize(v, w);
-                    } else {
-                      resize(h, v);
-                    }
-                  }),
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.add_circle_outline, size: IconSize.lg),
-                onPressed: () => setState(() => bump(1)),
-              ),
-            ],
-          );
-        }
-
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            sizeRow('Rows', rowsCtrl, (d) => resize(h + d, w)),
-            sizeRow('Cols', colsCtrl, (d) => resize(h, w + d)),
+            _SizeStepper(
+              label: 'Rows',
+              controller: rowsCtrl,
+              onText: (text) =>
+                  setState(() => resize(int.tryParse(text) ?? 0, w)),
+              onStep: (delta) => setState(() => resize(h + delta, w)),
+            ),
+            _SizeStepper(
+              label: 'Cols',
+              controller: colsCtrl,
+              onText: (text) =>
+                  setState(() => resize(h, int.tryParse(text) ?? 0)),
+              onStep: (delta) => setState(() => resize(h, w + delta)),
+            ),
             const SizedBox(height: Spacing.sm),
-            for (var r = 0; r < h; r++)
-              Row(
-                children: [
-                  for (var c = 0; c < w; c++)
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.all(Spacing.xs),
-                        child: TextField(
-                          controller: controllers[r * w + c],
-                          keyboardType: TextInputType.number,
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+            _NumberGrid(rows: h, cols: w, controllers: controllers),
           ],
         );
       },
@@ -279,14 +340,13 @@ Future<List<int>?> _editBlockInfo(BuildContext context, List<int> current) {
           t != BlockType.dynamic)
         (t.value, t.label),
   ];
-  if (!types.any((e) => e.$1 == type)) {
-    types.add((type, blockTypeLabel(type)));
-  }
+  final typeLabels = {for (final (value, label) in types) value: label};
 
   return showTamuDialog<List<int>>(
     context,
     title: 'BlockInfo',
-    maxWidth: 360,
+    // The shared dialog body (400): the dropdown's widest label ('Resistive
+    // Measure') does not fit the 360 this editor used to bound itself to.
     body: StatefulBuilder(
       builder: (context, setState) {
         final name = blockInfoFor(
@@ -298,10 +358,11 @@ Future<List<int>?> _editBlockInfo(BuildContext context, List<int> current) {
             DropdownButtonFormField<int>(
               initialValue: type,
               decoration: const InputDecoration(labelText: 'Block'),
-              items: [
-                for (final (v, l) in types)
-                  DropdownMenuItem(value: v, child: Text(l)),
-              ],
+              items: dialogValueItems(
+                types.map((e) => e.$1),
+                type,
+                (value) => typeLabels[value] ?? blockTypeLabel(value),
+              ),
               onChanged: (v) => setState(() {
                 if (v != null) {
                   type = v;

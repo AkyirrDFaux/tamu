@@ -113,6 +113,24 @@ List<Widget> tamuDialogActions({
   FilledButton(onPressed: onConfirm, child: Text(confirmLabel)),
 ];
 
+/// The items a dialog's value dropdown shows: [values] in order, with [current]
+/// first when the list no longer offers it. A value read from a device or an
+/// older file has to keep rendering, so the dropdown never asserts on a value the
+/// list does not contain - the guard every such dropdown used to write by hand.
+List<DropdownMenuItem<T>> dialogValueItems<T>(
+  Iterable<T> values,
+  T current,
+  String Function(T value) label,
+) {
+  final list = values.toList();
+  return [
+    if (!list.contains(current))
+      DropdownMenuItem(value: current, child: Text(label(current))),
+    for (final value in list)
+      DropdownMenuItem(value: value, child: Text(label(value))),
+  ];
+}
+
 /// The chrome every picker shares: a title (with an optional back affordance
 /// when the picker drills into a group), a [DialogBody]-bounded list, an
 /// optional hint line and Cancel plus any extra actions. The block-info,

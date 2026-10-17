@@ -1,5 +1,19 @@
 part of 'value_editor.dart';
 
+/// The bytes a hex field's text encodes, or null when it carries no whole byte
+/// pair. Separators and any other non-hex character are ignored, which is what
+/// the hex fields have always accepted (`ab cd` reads as one byte).
+List<int>? _hexBytes(String text) {
+  final clean = text.replaceAll(RegExp(r'[^0-9a-fA-F]'), '');
+  if (clean.isEmpty || clean.length.isOdd) {
+    return null;
+  }
+  return [
+    for (var i = 0; i < clean.length; i += 2)
+      int.parse(clean.substring(i, i + 2), radix: 16),
+  ];
+}
+
 /// Colour: RGBA byte order on the wire (Data Formats.md). Editor offers an RGBA hex
 /// field, HSVA sliders, a live preview and presets.
 Future<List<int>?> _editColour(BuildContext context, List<int> current) {
@@ -7,12 +21,12 @@ Future<List<int>?> _editColour(BuildContext context, List<int> current) {
   var g = current.length >= 4 ? current[1] : 255;
   var b = current.length >= 4 ? current[2] : 255;
   var a = current.length >= 4 ? current[3] : 255;
-  final controller = TextEditingController(
-    text: [r, g, b, a].map((v) => v.toRadixString(16).padLeft(2, '0')).join(),
-  );
 
+  // The four bytes as `RRGGBBAA`: the hex field's text and its round trip.
   String hex() =>
       [r, g, b, a].map((v) => v.toRadixString(16).padLeft(2, '0')).join();
+
+  final controller = TextEditingController(text: hex());
   Color preview() => Color.fromARGB((a & 0xFF), r & 0xFF, g & 0xFF, b & 0xFF);
 
   // HSVA slider state, derived from the current RGBA.
@@ -110,12 +124,12 @@ Future<List<int>?> _editColour(BuildContext context, List<int> current) {
                 labelText: 'RGBA hex',
               ),
               onChanged: (text) {
-                final clean = text.replaceAll(RegExp(r'[^0-9a-fA-F]'), '');
-                if (clean.length == 8) {
-                  r = int.parse(clean.substring(0, 2), radix: 16);
-                  g = int.parse(clean.substring(2, 4), radix: 16);
-                  b = int.parse(clean.substring(4, 6), radix: 16);
-                  a = int.parse(clean.substring(6, 8), radix: 16);
+                final bytes = _hexBytes(text);
+                if (bytes != null && bytes.length == 4) {
+                  r = bytes[0];
+                  g = bytes[1];
+                  b = bytes[2];
+                  a = bytes[3];
                   syncHsv();
                 }
                 setState(() {});
@@ -370,29 +384,14 @@ Future<List<int>?> _editTransformMatrix(
                 ],
               ),
             ] else ...[
-              for (var r = 0; r < 2; r++)
-                Row(
-                  children: [
-                    for (var c = 0; c < 3; c++)
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.all(Spacing.xs),
-                          child: TextField(
-                            controller: raw[r * 3 + c],
-                            keyboardType: const TextInputType.numberWithOptions(
-                              signed: true,
-                              decimal: true,
-                            ),
-                            textAlign: TextAlign.center,
-                            decoration: InputDecoration(
-                              labelText: cellNames[r * 3 + c],
-                            ),
-                            onChanged: (_) => syncFromRaw(),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
+              _NumberGrid(
+                rows: 2,
+                cols: 3,
+                controllers: raw,
+                labels: cellNames,
+                signed: true,
+                onCellChanged: syncFromRaw,
+              ),
             ],
           ],
         );
@@ -521,14 +520,11 @@ Future<List<int>?> _editHex(
     actions: tamuDialogActions(
       onCancel: () => Navigator.pop(context),
       onConfirm: () {
-        final clean = controller.text.replaceAll(RegExp(r'[^0-9a-fA-F]'), '');
-        if (clean.isEmpty || clean.length.isOdd) {
+        final bytes = _hexBytes(controller.text);
+        if (bytes == null) {
           return;
         }
-        Navigator.pop(context, [
-          for (var i = 0; i < clean.length; i += 2)
-            int.parse(clean.substring(i, i + 2), radix: 16),
-        ]);
+        Navigator.pop(context, bytes);
       },
     ),
   );
