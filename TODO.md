@@ -41,6 +41,8 @@ exists (`app/lib/ui/widgets.dart`, imported by 22 of 34 files) - adoption is the
 twice. Styling lives in the theme and the shared widgets only.
 
 ### Phase 1a - token layer (`ui/theme.dart`), first
+**Status: done** (`c8a310a`), with the component themes filled in.
+
 
 Spacing scale, radius scale, named text roles (the three body styles become roles and the missing
 title/label/headline roles are added), plus the absent component themes: input/TextField, Card,
@@ -48,6 +50,21 @@ ListTile, Dialog, Chip, TabBar, Switch/Checkbox/Radio, IconButton, TextButton/Ou
 Dropdown, Tooltip.
 
 ### Phase 1b - one implementation per situation
+
+**Status: built and committed (2026-10-17).** `ec67c17` the shared widgets (`StateMessage`,
+`TamuPage`, `PageAppBar` + `PageActions`, `DeviceTile`, `TaskProgress`) and `dialogs.dart`
+(`TamuDialog`, `showTamuDialog`, `showTamuPicker`, `PickerShell`), with all four pickers moved onto
+the shell; `28eeb67` the viewer toolkit (`viewer_kit.dart`, 10 tests); `c2191f7` the value-editing
+entry point (`showValueEditor`). `formatters.dart` landed earlier as 1b-A (`7830095`).
+Gates at each step: `dart format` stable, `dart fix --apply` nothing to fix, `flutter analyze`
+clean, `flutter test --exclude-tags hil` 243 passed + 1 skipped (baseline 233 + 10 new).
+**Visible changes to veto at the 1c review stop:** `InfoRow` vertical padding 3 to 2; the colour
+`H` readout shows `45 degrees` not `45`; simple editors render in the shared 400 px dialog body
+(was about 280); matrix/transform cell padding uses `Spacing.xs`. When a page adopts `TamuChip`
+its text grows 10 to 12.
+**Deliberately deferred to 1c:** re-pointing `ChipLabel` at `TamuChip` - doing it now would restyle
+the log page and register tiles before their own batch.
+
 
 `ui/widgets.dart` is the home. Counts below are measured call sites today, not guesses.
 
