@@ -769,7 +769,7 @@ const List<Group> auditGroups = [
       'kTextDisabled',
       'kSurfaceAlt',
       3.0,
-      'theme.dart:357 IconButtonTheme',
+      'theme.dart:425 _iconButton disabledForegroundColor',
       exempt: true,
     ),
   ]),

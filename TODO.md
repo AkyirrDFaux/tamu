@@ -147,7 +147,10 @@ Two of its app-bar rows have no pre-fix counterpart (the busy spinner and the ri
 mark's ring) and one later fill (`kActiveLineTint`) is not in that palette at all: those rows carry
 their own label or `n/a` marker instead of a pre-fix ratio, so the number next to a row that did not
 exist cannot be read as "it passed before". The pre-fix spinner's own pair is
-`--pair kOrange kOrangeDark` = 1.17:1.
+`--theme tool/fixtures/theme_before_2026_10_17.dart --pair kOrange kOrangeDark` = 1.17:1 - the
+palette-qualified form, because *both* of that pair's tokens moved in this audit (the fixture's
+`kOrange` `#F57600` / `kOrangeDark` `#E16D00` are now `#FF8A1F` / `#F57600`), so the bare
+`--pair kOrange kOrangeDark` on the current palette prints 1.19:1 instead.
 
 **Before (fixture): 29 pairs below threshold + 6 close + 5 n/a (exit 1). After: 0 below, 7 close**
 (all >= threshold, exit 0). The 7 close calls are 4.88 app-bar TabBar label, 4.61 `bodySmall` on a card,
@@ -208,10 +211,12 @@ new tokens, measured with `tool/contrast.dart --pair`):
   `dart run tool/contrast.dart --pair '#62FFFFFF' kSurfaceAlt` = 3.12:1 against the 4.5:1 it needs.
   The fix token is `kTextMuted` (4.61 on the rail); the 24/30 px icon is non-text (3:1) and 3.12
   passes. This is *not* the checker's exempt "disabled control / icon ink (`kTextDisabled`)" row -
-  that row is a disabled control's ink (`theme.dart:357`) - and it is not an accepted exemption
-  either: WCAG 1.4.3 exempts an *inactive user interface component*, and the `OFF` badge is a status
-  label rather than a component that can be inoperative, so it stays an offender. Like the
-  batch-owned entries above it is listed here and left out of the checker, which keeps its exit 0.
+  that row is a disabled control's ink, `IconButtonThemeData.disabledForegroundColor` (`theme.dart`
+  `_iconButton`, the checker's where-text `theme.dart:425 _iconButton disabledForegroundColor`) -
+  and it is not an accepted exemption either: WCAG 1.4.3 exempts an *inactive user interface
+  component*, and the `OFF` badge is a status label rather than a component that can be inoperative,
+  so it stays an offender. Like the batch-owned entries above it is listed here and left out of the
+  checker, which keeps its exit 0.
 - **Found while re-measuring the numbers above (2026-10-17, recorded, not fixed):**
   `script_editor_line.dart:123` (the line index) and `:271` (a symbol chip's role hint) draw 12 px
   informative text in `kTextDisabled` - 3.12 on a card (`--pair kTextDisabled kSurfaceAlt`) and 3.22
