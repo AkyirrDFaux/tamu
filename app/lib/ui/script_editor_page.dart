@@ -410,16 +410,21 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         ],
         // Loading covers both the initial read and the moment between the file
         // arriving and the draft being built; a failed read gets the retry state.
+        // The failure copy and its Retry action belong to the error kind only:
+        // the shell draws whatever it is handed for every kind, so the loading
+        // frame would otherwise sit under "Could not load ..." with a Retry.
         state: _loadError != null
             ? StateKind.error
             : (_loading || draft == null ? StateKind.loading : null),
-        stateMessage: 'Could not load $_fileName',
+        stateMessage: _loadError == null ? null : 'Could not load $_fileName',
         stateDetails: _loadError,
-        stateAction: FilledButton.icon(
-          onPressed: _load,
-          icon: const Icon(Icons.refresh),
-          label: const Text('Retry'),
-        ),
+        stateAction: _loadError == null
+            ? null
+            : FilledButton.icon(
+                onPressed: _load,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+              ),
         floatingActionButton: _dirty
             ? FloatingActionButton.extended(
                 onPressed: _busy ? null : _save,

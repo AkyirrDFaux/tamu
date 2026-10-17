@@ -37,6 +37,35 @@ void main() {
     },
   );
 
+  // The failure copy and its Retry belong to the load-error state: the shell draws
+  // whatever it is handed for every kind, so passing them unconditionally put
+  // "Could not load ..." over the spinner of the loading frame.
+  testWidgets(
+    'ScriptEditorPage keeps the failure copy out of the loading frame',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildTheme(),
+          home: const ScriptEditorPage(
+            deviceId: 1,
+            fileId: 0,
+            name: 'SCR_000',
+            loaded: false,
+          ),
+        ),
+      );
+      // First frame: the read is still in flight.
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('Could not load SCR_000'), findsNothing);
+      expect(find.widgetWithText(FilledButton, 'Retry'), findsNothing);
+
+      // Once the (off-device) read fails, the error state still shows both.
+      await tester.pump();
+      expect(find.text('Could not load SCR_000'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Retry'), findsOneWidget);
+    },
+  );
+
   testWidgets('SubscriptionDialog mounts and lays out', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
