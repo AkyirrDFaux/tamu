@@ -226,6 +226,14 @@ new tokens, measured with `tool/contrast.dart --pair`):
   `:155` labels the instruction chip in `kOrange` on its `kAccentTint` fill = 3.67
   (`--pair kOrange '#584938'`). The tokens they would take are `kTextMuted` (5.26 page / 4.61 card)
   and `kTextPrimary` (8.66 on that wash).
+- **The checker's own breadcrumbs have drifted (recorded 2026-10-17, not fixed):** ~30 of the
+  `theme.dart:NNN` line numbers in `tool/contrast.dart`'s `where` texts are stale, and this section
+  quotes several of them, so a reader who follows one lands on the wrong rendering. The two
+  spot-checked at app version 26.10.17.8: the tab-divider breadcrumb `theme.dart:368` is off by 81
+  lines (that line is a `),`; `dividerColor: kLine` is `theme.dart:449`) and the checkbox side
+  `theme.dart:382` by 70 (`CheckboxThemeData` is `theme.dart:452`). Line numbers in a 550-line theme
+  file go stale on every insertion, so the durable fix is symbol names - `theme.dart _iconButton`,
+  which the disabled-ink row above now carries - as a `tool/contrast.dart` sweep on its own card.
 - **Not rendered, so not fixed:** table row striping (the viewers have no zebra rows) and a disabled
   action in a page's own `AppBar` (`subscriptions_page.dart:99` is never disabled) - see the
   `tool/contrast.dart` exempt section for the pairs that WCAG does not hold to a threshold.
