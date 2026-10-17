@@ -218,7 +218,8 @@ Future<List<VisitedBlock>?> walkDeviceBlocks(RegisterClient reg) async {
       // `0..size-1` sweep stops at the first gap and silently drops every field past it. A
       // captured LED State entry then has no live counterpart and the restore reports it as
       // unmatched, while a fresh capture drops it altogether.
-      final fieldKeys = await reg.enumerateFieldKeys(type, b.inst) ?? const <int>[];
+      final fieldKeys =
+          await reg.enumerateFieldKeys(type, b.inst) ?? const <int>[];
       final visited = <VisitedField>[];
       for (final fk in fieldKeys) {
         final field = fk >> 8;

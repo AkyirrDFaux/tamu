@@ -26,9 +26,11 @@ class SubscriptionClient {
   static const int _cidGetRequester = 0x10;
   static const int _cidSetRequester = 0x11;
   static const int _cidGetProvider = 0x20;
+
   /// SubCid::Change (0x01): the requester installs/cancels a provider entry on a node. This is
   /// the install command - `ProviderSet` (0x21) is a different one and is not it.
   static const int _cidSetProvider = 0x01;
+
   /// SubCid::ProviderSet (0x21): installs a FULL provider-table entry on a node, carrying the
   /// requester's address in the payload (the payload is the 32-byte entry, and the TRID rides the
   /// packet header). Change (0x01) is the requester's own install - its requester address is the
@@ -109,9 +111,7 @@ class SubscriptionClient {
   /// CURRENT VALUE (so the requester starts from a known state), or with a short ack when the
   /// source does not resolve - either way a reply means the entry was accepted; only a timeout
   /// (null) is a failure. Checking `ok` instead reported false on every success.
-  Future<bool> setProviderSubscriptionEntry(
-    ProviderSubscription entry,
-  ) async {
+  Future<bool> setProviderSubscriptionEntry(ProviderSubscription entry) async {
     final reply = await _request(
       _cidSetProvider,
       payload: entry.toChangePayload(),

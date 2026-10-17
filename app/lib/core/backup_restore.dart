@@ -57,7 +57,9 @@ int? archiveRefReg(BackupDevice device, BackupBlockRef ref) {
   block ??= device.blocks.where((b) => b.type == ref.block).firstOrNull;
   if (block == null) return null;
   BackupEntry? entry = block.entries
-      .where((e) => e.fieldIndex == ref.fieldIndex && e.keyIndex == ref.keyIndex)
+      .where(
+        (e) => e.fieldIndex == ref.fieldIndex && e.keyIndex == ref.keyIndex,
+      )
       .firstOrNull;
   entry ??= block.entries
       .where((e) => e.field == ref.field && e.key == ref.key)
@@ -438,7 +440,8 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
       for (final entry in block.entries) {
         // A reserved placeholder carries neither a type nor a value, so there is nothing to
         // write; planning it would report it as an unready item on every restore forever.
-        if (entry.value == null && dataTypeFromWord(entry.type) == DataType.none) {
+        if (entry.value == null &&
+            dataTypeFromWord(entry.type) == DataType.none) {
           continue;
         }
         items.add(
@@ -593,7 +596,7 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
           AppDiagnostics.log(
             'backup',
             'dynamic entry ${block.name}/${entry.field}[${entry.key}] '
-            'not created',
+                'not created',
           );
           continue;
         }
@@ -875,8 +878,7 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         final providerDev = providerDeviceFor(plan.liveDevices, s.provider);
         final source = providerDev?.resolveRef(s.source);
         final targetReg =
-            target.resolveRef(s.target) ??
-            archiveRefReg(item.device, s.target);
+            target.resolveRef(s.target) ?? archiveRefReg(item.device, s.target);
         if (source == null || targetReg == null || provider == null) {
           failItem(item, describe(item));
           break;
@@ -909,10 +911,7 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         // local counter collides with the entries the device carries and the writes then
         // overwrite one another - a restore silently replaces subscriptions instead of adding
         // them, and the replaced ones look like subscriptions that never update.
-        final usedTrids = <int>{
-          ...mine.map((e) => e.trid),
-          ...allocatedTrids,
-        };
+        final usedTrids = <int>{...mine.map((e) => e.trid), ...allocatedTrids};
         var freeTrid = tridSubBase;
         while (usedTrids.contains(freeTrid) && freeTrid < tridSubMax) {
           freeTrid++;

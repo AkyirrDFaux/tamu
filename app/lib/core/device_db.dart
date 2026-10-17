@@ -218,7 +218,12 @@ class DeviceDatabase extends ChangeNotifier {
       ...meta.toBytes(),
       ...bytes,
     ];
-    final reply = await _request(id, ServiceType.register, RegisterCid.write, payload: payload);
+    final reply = await _request(
+      id,
+      ServiceType.register,
+      RegisterCid.write,
+      payload: payload,
+    );
     if (reply == null) return false;
     final entry = _devices[id];
     if (entry != null) entry.name = name;

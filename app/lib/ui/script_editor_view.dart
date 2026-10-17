@@ -216,10 +216,7 @@ extension on _ScriptEditorPageState {
         children: [
           Text(
             title,
-            style: const TextStyle(
-              color: kOrange,
-              fontWeight: FontWeight.w600,
-            ),
+            style: const TextStyle(color: kOrange, fontWeight: FontWeight.w600),
           ),
           const SizedBox(width: 6),
           Text(
@@ -371,9 +368,7 @@ extension on _ScriptEditorPageState {
             tooltip: 'Add line',
             onPressed: () => _rebuild(() {
               lines.add(
-                ScriptLine(
-                  instruction: ScriptSymbol.instruction(catMath, 0),
-                ),
+                ScriptLine(instruction: ScriptSymbol.instruction(catMath, 0)),
               );
               _dirty = true;
             }),
@@ -465,9 +460,7 @@ extension on _ScriptEditorPageState {
           dense: true,
           contentPadding: EdgeInsets.zero,
           title: Text(
-            draft.functions[i].name.isEmpty
-                ? '#$i'
-                : draft.functions[i].name,
+            draft.functions[i].name.isEmpty ? '#$i' : draft.functions[i].name,
           ),
           subtitle: Text(
             draft.functions[i].isGlobal
