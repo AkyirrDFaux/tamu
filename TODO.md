@@ -124,12 +124,47 @@ field 40 to 44 px (the shared stepper's field width); and a BlockInfo whose type
 list (a fresh/zeroed one, or a script/dynamic marker) now lists that entry *first* where the old code
 appended it last - same items, same labels, same selection.
 
+**1c.4 (the viewer cluster).** `file_viewers.dart`, `log_page.dart`, `storage_page.dart`,
+`sndb_page.dart` and `subscriptions_page.dart` render through `viewer_kit.dart` (one table shell, one
+hex/ASCII view, one paging shell, one chip row) and `formatters.dart`; `register_backup_view.dart` was
+already there. The six files now carry 0 `Colors.`, 0 `TextStyle(` and 0 `fontSize:` (was 21 / 33 / 27
+across them) and no bare `EdgeInsets`. `widgets.dart`'s `ChipLabel` - whose last user was the log page -
+is deleted; `HexView.widths` replaced the file viewer's private `bytesPerLineOptions`; `MonoText` grew
+a `tone` for a struck (tombstoned) cell; `formatFileSize` moved from the Storage page into
+`formatters.dart`. Kept local, with the reason: the LAY LED grid (a spatial map where the cell's
+position is the datum, not rows of columns), the selectable text preview (`SelectableText` is what
+makes a text file copyable out of the app; `MonoText` is a plain `Text`) and the byte-per-line
+`PopupMenuButton` (a control, not a viewer shape).
+Every table sizes its columns by `flex` and pins a width only where the datum is fixed width, so the
+viewers reflow between a portrait and a landscape window instead of resting on one pixel width.
+**Visible changes of 1c.4 to veto:** the log tile's chips 10 to 12 px with 1 to 2 px vertical padding
+(`ChipLabel` to `TamuChip`); the log footer 11 to 13 px and the device header's count 10 to 12 px, both
+now `kTextMuted` (brighter than the old `white38`); the diagnostics dialog 11 to 13 px; a failing
+entry's red `redAccent` to `kError` `#FF8A80` (3.58 to 5.01 on a card - the point of the fix, so it is
+lighter); the file viewer's hex offsets now `hex32`-shaped (uppercase) and `kTextMuted`, and an empty
+file goes through the toolkit's empty state (icon + text); the `.SNREG/.SV/.DT_/.SUBREQ` rows become
+table rows with column labels (the embedded card tables drop the labels), their 10 px subtext becomes
+13 px, a block subtitle becomes a chip, the SUBREQ leading icon 20 to 18 px; the LAY grid's header
+11 to 13 px, its cell text 10 to 12 px and its cell gap 1 to 2 px (the 44x22 cell box is unchanged);
+the Storage list becomes a table (type icon 24 to 18 px, `Insets.row` row padding, no row dividers) and
+a size below 1 kB prints `512 B` where the page printed `0.5 kB`; the file-table page becomes a
+four-column table (`#`, File, Size, Offset); the SNDB registry loses its orange row dividers and moves
+the device-type icon from trailing to leading; the subscription detail rows become a two-column table
+(the label column shares the row by flex instead of a fixed 120 px), the delete icon `Colors.red` to
+`kError`, the "Add Subscription" button loses its 14 px padding override (the theme's 16/12 applies),
+and an empty/unavailable tab gains the toolkit's icon.
+
 Same behaviour per page; one batch per cluster, stopped for Akyirr's review after each. Per batch:
 `dart format`, then `dart fix --apply --code=curly_braces_in_flow_control_structures`, then
 `dart format` again; `flutter analyze` clean; `flutter test --exclude-tags hil` green; `version.json`
 in the same commit. The agent can run the app gates in-tree (`app/.dart_tool` is writable, unlike the
 firmware's ESP-IDF tree), but it cannot run the GUI - so a batch ends with a build handed over plus a
 what-changed-where checklist, and the HIL suite for anything touching bus behaviour.
+`dart format` is not tree-clean under the installed SDK (3.12.2): six test files were formatted by an
+older one and want a rewrite (`backup_value_test.dart`, `backup_restore_test.dart`,
+`backup_script_options_test.dart`, `backup_script_raw_test.dart`, `backup_provider_capture_test.dart`,
+`hil_bootloader_upload_test.dart`). 1c.4 formatted only the files it touched and left that churn in
+place, so a `dart format .` sweep is its own card.
 
 ### Contrast audit (2026-10-17) - theme level fixed, per-page offenders parked
 
@@ -188,15 +223,21 @@ Theme-level changes (all in `ui/theme.dart`; commits `d982495` + this one, app v
 Leftovers for the batches that own the files (do **not** fix out of batch; ratios are against the
 new tokens, measured with `tool/contrast.dart --pair`):
 
-- **Batch 4 (viewers).** `log_page.dart:295` (`white38`, 11 px, 3.41), `:317` (`white38`, 10 px,
-  3.41), `:325`/`:341` (`Colors.redAccent`, 13 px, 3.58 on a card); `storage_page.dart:247`, `:388`,
-  `:432` (`white38` 3.12-3.41; `white24` icons on `:255` 2.08 - below 3:1); `file_viewers.dart:172`,
-  `:266`, `:320`, `:527`, `:591` (`white38` 3.12-3.41), `:222`, `:233`, `:290` (`white24` 2.08).
-  All of these are raw Material steps where the tokens exist: `kTextMuted` (5.26 page / 4.61 card)
-  and `kLine`/`kTextDisabled` (3.41/3.12). `subscriptions_page.dart:137`, `:148`, `:211`, `:223`,
-  `:304` (`white54`) and `:269` (`Colors.red`) are styling debt, not failures - the TabBar override
-  at `:90-96` now measures 4.88 (black at 0.7 alpha on the new bar; the old bar was 4.39), so it
-  passes.
+- **Batch 4 (viewers) - closed by 1c.4.** `log_page.dart:295` (`white38`, 11 px, 3.41), `:317`
+  (`white38`, 10 px, 3.41), `:325`/`:341` (`Colors.redAccent`, 13 px, 3.58 on a card);
+  `storage_page.dart:247`, `:388`, `:432` (`white38` 3.12-3.41; `white24` icons on `:255` 2.08 - below
+  3:1); `file_viewers.dart:172`, `:266`, `:320`, `:527`, `:591` (`white38` 3.12-3.41), `:222`, `:233`,
+  `:290` (`white24` 2.08). All of these were raw Material steps where the tokens existed:
+  `kTextMuted` (5.26 page / 4.61 card) and `kLine`/`kTextDisabled` (3.41/3.12).
+  `subscriptions_page.dart:137`, `:148`, `:211`, `:223`, `:304` (`white54`) and `:269` (`Colors.red`)
+  were styling debt, not failures - the TabBar override at `:90-96` now measures 4.88 (black at 0.7
+  alpha on the new bar; the old bar was 4.39), so it passes.
+  **Closed:** the muted-text sites took `kTextMuted`, the icon/line sites `kTextDisabled`, the two
+  `redAccent` title icons and the delete icon `kError` (5.01 on a card), and the five `white54` labels
+  `kTextMuted` (same value, now a token). Re-measured after the batch with `--pair`: `kTextMuted`
+  on `kSurface` 5.26 / on `kSurfaceAlt` 4.61, `kError` on `kSurfaceAlt` 5.01, `kTextDisabled` on
+  `kSurfaceAlt` 3.12, `kOrange` on `kSurface` 6.00. `dart run tool/contrast.dart` still prints
+  `73 pairs: 57 ok, 7 close, 0 FAIL, 9 exempt` - the 7 close and 9 exempt rows did not grow.
 - **Batch 5 (Connection / Devices / Device View).** `connection_page.dart:136-139` (RSSI readout:
   `white38` 3.41 as text, `redAccent` 3.58), `:363` (`kOrange.withAlpha(38)` fill - a second accent
   alpha the token layer should own); `device_view_page.dart:274` (`Colors.redAccent` icon).

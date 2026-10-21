@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../core/connection.dart';
 import '../core/device_db.dart';
 import '../core/types.dart';
+import 'theme.dart';
+import 'viewer_kit.dart';
 import 'widgets.dart';
 
 /// SNDB viewer page (Docs/App/Device view.md, core only): serial number
@@ -163,37 +165,45 @@ class _SndbPageState extends State<SndbPage> with AutoRefreshMixin<SndbPage> {
     if (entries == null) {
       return Center(child: Text(_error ?? 'Loading...'));
     }
-    if (entries.isEmpty) return const Center(child: Text('Database empty'));
-    return ListView.separated(
-      itemCount: entries.length,
-      separatorBuilder: (_, _) => const Divider(height: 1),
-      itemBuilder: (context, index) {
-        final (id, sn) = entries[index];
-        final entry = _db.byId(id);
-        return ListTile(
-          dense: true,
-          leading: Text(idToString(id)),
-          title: Text(
-            entry?.displayName ?? '(unknown device)',
-            style: const TextStyle(fontSize: 13),
-          ),
-          subtitle: Text(
-            sn,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-          ),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.delete_outline, size: 18),
-                tooltip: 'Remove from registry',
-                onPressed: () => _removeEntry(id, sn),
-              ),
-              if (entry != null) Icon(deviceTypeIcon(entry.type), size: 18),
-            ],
-          ),
+    // The registry is the toolkit's table shell: the device's type icon leads, the
+    // short ID, name and serial print as columns, and the row's delete action trails.
+    return TamuTable<(int, String)>(
+      columns: [
+        TamuColumn<(int, String)>(
+          label: 'ID',
+          text: (r) => idToString(r.$1),
+          mono: true,
+          flex: 1,
+        ),
+        TamuColumn<(int, String)>(
+          label: 'Device',
+          text: (r) => _db.byId(r.$1)?.displayName ?? '(unknown device)',
+          flex: 3,
+        ),
+        TamuColumn<(int, String)>(
+          label: 'Serial number',
+          text: (r) => r.$2,
+          mono: true,
+          muted: true,
+          flex: 4,
+        ),
+      ],
+      rows: entries,
+      leading: (context, r) {
+        final entry = _db.byId(r.$1);
+        if (entry == null) return const SizedBox.shrink();
+        return Icon(
+          deviceTypeIcon(entry.type),
+          size: IconSize.md,
+          color: kTextSecondary,
         );
       },
+      trailing: (context, r) => IconButton(
+        icon: const Icon(Icons.delete_outline, size: IconSize.md),
+        tooltip: 'Remove from registry',
+        onPressed: () => _removeEntry(r.$1, r.$2),
+      ),
+      emptyMessage: 'Database empty',
     );
   }
 }

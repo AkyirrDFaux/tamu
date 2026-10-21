@@ -12,6 +12,8 @@ import 'package:tamuapp/core/types.dart'
         RequesterSubscription,
         blockInfoLabel;
 import 'subscriptions_dialog.dart' show SubscriptionDialog;
+import 'theme.dart';
+import 'viewer_kit.dart';
 import 'widgets.dart' show showSnack;
 
 class SubscriptionsPage extends StatefulWidget {
@@ -110,7 +112,7 @@ class _SubscriptionsPageState extends State<SubscriptionsPage>
           ? Center(
               child: Text(
                 'Error: $_error',
-                style: TextStyle(color: theme.colorScheme.error),
+                style: theme.textTheme.bodySmall?.copyWith(color: kError),
               ),
             )
           : TabBarView(
@@ -128,37 +130,23 @@ class _SubscriptionsPageState extends State<SubscriptionsPage>
         (device!.capabilities & Capability.subscriptionProvide) != 0;
 
     if (!hasProviderCapability) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(16),
-          child: Text(
-            'This device does not support acting as a subscription provider.\n'
-            'Provider subscriptions require available RAM for the provider table.',
-            style: TextStyle(color: Colors.white54),
-            textAlign: TextAlign.center,
-          ),
-        ),
+      return _unavailable(
+        'This device does not support acting as a subscription provider.\n'
+        'Provider subscriptions require available RAM for the provider table.',
       );
     }
 
-    if (_providerSubs.isEmpty) {
-      return const Center(
-        child: Text(
-          'No provider subscriptions',
-          style: TextStyle(color: Colors.white54),
-        ),
-      );
-    }
-    return ListView.builder(
-      padding: const EdgeInsets.all(8),
-      itemCount: _providerSubs.length,
-      itemBuilder: (context, i) => _buildProviderTile(_providerSubs[i]),
+    return TamuPagedList<ProviderSubscription>(
+      items: _providerSubs,
+      padding: const EdgeInsets.all(Spacing.md),
+      emptyMessage: 'No provider subscriptions',
+      itemBuilder: (context, sub, _) => _buildProviderTile(sub),
     );
   }
 
   Widget _buildProviderTile(ProviderSubscription sub) {
     return Card(
-      margin: const EdgeInsets.symmetric(vertical: 4),
+      margin: const EdgeInsets.symmetric(vertical: Spacing.xs),
       child: ExpansionTile(
         title: Text('Sub #${sub.index}'),
         subtitle: Text(
@@ -166,28 +154,19 @@ class _SubscriptionsPageState extends State<SubscriptionsPage>
         ),
         children: [
           Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _detailRow('Trigger', sub.trigger.label),
-                _detailRow('Period', '${sub.periodMs} ms'),
-                _detailRow('Min Interval', '${sub.minTimeMs} ms'),
-                _detailRow('Deadzone', '${sub.deadzone}'),
-                // lastSentMs is an absolute ms value in the provider's local uptime, not a
-                // "time ago" delta (Docs/Services/Subscriptions.md:43).
-                _detailRow('Last Sent', '${sub.lastSentMs} ms (uptime)'),
-                _detailRow('Requester Addr', '${sub.requesterAddr}'),
-                _detailRow(
-                  'TRID',
-                  '0x${sub.trid.toRadixString(16).padLeft(4, '0')}',
-                ),
-                _detailRow(
-                  'Hash',
-                  '0x${sub.hash.toRadixString(16).padLeft(8, '0')}',
-                ),
-              ],
-            ),
+            padding: Insets.cardBody,
+            child: _details([
+              ('Trigger', sub.trigger.label),
+              ('Period', '${sub.periodMs} ms'),
+              ('Min Interval', '${sub.minTimeMs} ms'),
+              ('Deadzone', '${sub.deadzone}'),
+              // lastSentMs is an absolute ms value in the provider's local uptime, not a
+              // "time ago" delta (Docs/Services/Subscriptions.md:43).
+              ('Last Sent', '${sub.lastSentMs} ms (uptime)'),
+              ('Requester Addr', '${sub.requesterAddr}'),
+              ('TRID', '0x${sub.trid.toRadixString(16).padLeft(4, '0')}'),
+              ('Hash', '0x${sub.hash.toRadixString(16).padLeft(8, '0')}'),
+            ]),
           ),
         ],
       ),
@@ -202,62 +181,46 @@ class _SubscriptionsPageState extends State<SubscriptionsPage>
         device != null &&
         (device.capabilities & Capability.subscriptionRequest) != 0;
     if (!canRequest) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(16),
-          child: Text(
-            'This device does not support requester subscriptions.\n'
-            'Requester subscriptions are a core feature.',
-            style: TextStyle(color: Colors.white54),
-            textAlign: TextAlign.center,
-          ),
-        ),
+      return _unavailable(
+        'This device does not support requester subscriptions.\n'
+        'Requester subscriptions are a core feature.',
       );
     }
-    final listChildren = <Widget>[
-      Expanded(
-        child: _requesterSubs.isEmpty
-            ? const Center(
-                child: Text(
-                  'No requester subscriptions',
-                  style: TextStyle(color: Colors.white54),
-                ),
-              )
-            : ListView.builder(
-                padding: const EdgeInsets.all(8),
-                itemCount: _requesterSubs.length,
-                itemBuilder: (context, i) =>
-                    _buildRequesterTile(_requesterSubs[i]),
+    return Column(
+      children: [
+        Expanded(
+          child: TamuPagedList<RequesterSubscription>(
+            items: _requesterSubs,
+            padding: const EdgeInsets.all(Spacing.md),
+            emptyMessage: 'No requester subscriptions',
+            itemBuilder: (context, sub, _) => _buildRequesterTile(sub),
+          ),
+        ),
+        Padding(
+          padding: Insets.cardBody,
+          child: SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: () => _showSubscriptionDialog(),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.add, size: IconSize.lg),
+                  SizedBox(width: Spacing.md),
+                  Text('Add Subscription'),
+                ],
               ),
-      ),
-      Padding(
-        padding: const EdgeInsets.all(16),
-        child: SizedBox(
-          width: double.infinity,
-          child: FilledButton(
-            onPressed: () => _showSubscriptionDialog(),
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.add, size: 20),
-                SizedBox(width: 8),
-                Text('Add Subscription'),
-              ],
             ),
           ),
         ),
-      ),
-      const SizedBox(height: 8),
-    ];
-    return Column(children: listChildren);
+        const SizedBox(height: Spacing.md),
+      ],
+    );
   }
 
   Widget _buildRequesterTile(RequesterSubscription sub) {
     return Card(
-      margin: const EdgeInsets.symmetric(vertical: 4),
+      margin: const EdgeInsets.symmetric(vertical: Spacing.xs),
       child: ExpansionTile(
         title: Text(
           'Sub #${sub.index} (TRID: 0x${sub.trid.toRadixString(16).padLeft(4, '0')})',
@@ -266,21 +229,23 @@ class _SubscriptionsPageState extends State<SubscriptionsPage>
           'Target: ${_formatBlockInfo(sub.targetReg)} ← Source: ${_formatBlockInfo(sub.sourceReg)}',
         ),
         trailing: IconButton(
-          icon: const Icon(Icons.delete, color: Colors.red),
+          icon: const Icon(Icons.delete, size: IconSize.lg, color: kError),
           onPressed: () => _deleteRequesterSubscription(sub.index),
         ),
         children: [
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: Insets.cardBody,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _detailRow('Provider', '${sub.providerAddr}'),
-                _detailRow('Trigger', sub.trigger.label),
-                _detailRow('Period', '${sub.periodMs} ms'),
-                _detailRow('Min Interval', '${sub.minTimeMs} ms'),
-                _detailRow('Deadzone', '${sub.deadzone}'),
-                const SizedBox(height: 8),
+                _details([
+                  ('Provider', '${sub.providerAddr}'),
+                  ('Trigger', sub.trigger.label),
+                  ('Period', '${sub.periodMs} ms'),
+                  ('Min Interval', '${sub.minTimeMs} ms'),
+                  ('Deadzone', '${sub.deadzone}'),
+                ]),
+                const SizedBox(height: Spacing.md),
                 FilledButton(
                   onPressed: () => _showSubscriptionDialog(sub),
                   child: const Text('Edit'),
@@ -293,23 +258,41 @@ class _SubscriptionsPageState extends State<SubscriptionsPage>
     );
   }
 
-  Widget _detailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(label, style: const TextStyle(color: Colors.white54)),
-          ),
-          Expanded(
-            child: Text(value, style: const TextStyle(fontFamily: 'monospace')),
-          ),
-        ],
+  /// A tab's "this device cannot do that" state.
+  Widget _unavailable(String message) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(Spacing.xl),
+      child: Text(
+        message,
+        textAlign: TextAlign.center,
+        style: Theme.of(
+          context,
+        ).textTheme.bodySmall?.copyWith(color: kTextMuted),
       ),
-    );
-  }
+    ),
+  );
+
+  /// One subscription's detail fields: the toolkit's table with a muted label
+  /// column and a monospace value column, so a tile never hand-places a label width.
+  Widget _details(List<(String, String)> fields) => TamuTable<(String, String)>(
+    embedded: true,
+    showHeader: false,
+    columns: [
+      TamuColumn<(String, String)>(
+        label: 'Field',
+        text: (r) => r.$1,
+        muted: true,
+        flex: 2,
+      ),
+      TamuColumn<(String, String)>(
+        label: 'Value',
+        text: (r) => r.$2,
+        mono: true,
+        flex: 3,
+      ),
+    ],
+    rows: fields,
+  );
 
   String _formatBlockInfo(int bi) => blockInfoLabel(bi);
 

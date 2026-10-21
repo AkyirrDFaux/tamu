@@ -12,6 +12,7 @@ import '../core/types.dart';
 import 'formatters.dart';
 import 'theme.dart';
 import 'file_viewers.dart';
+import 'viewer_kit.dart';
 import 'widgets.dart';
 
 /// Storage service view (Docs/App/Service views/Storage.md): file table with
@@ -59,12 +60,6 @@ class _StoragePageState extends State<StoragePage>
       _error = null;
       _files = files ?? [];
     });
-  }
-
-  String _formatSize(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} kB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
   }
 
   Future<String?> _promptText(
@@ -218,67 +213,88 @@ class _StoragePageState extends State<StoragePage>
           ),
         ],
       ),
-      body: _buildBody(),
+      body: _buildBody(context),
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildBody(BuildContext context) {
     final files = _files;
     if (files == null) return Center(child: Text(_error ?? 'Loading...'));
-    if (files.isEmpty) {
-      return const Center(child: Text('No file table'));
-    }
-    return ListView.builder(
-      itemCount: files.length,
-      itemBuilder: (context, index) {
-        final file = files[index];
-        final isTable = file.isFiletable;
-        return ListTile(
-          // The file table is read-only but still openable: tapping shows the
-          // decoded directory (Docs/Services/Storage.md). Read-only-ness is
-          // signalled by the lock icon, not by disabling the row.
-          leading: Icon(
-            isTable ? Icons.table_rows_outlined : storageFileIcon(file.name),
+    // The list is the toolkit's table shell: a type icon, the name, the type/size/
+    // offset detail and the per-row actions. The file table itself is read-only but
+    // still openable: tapping shows the decoded directory
+    // (Docs/Services/Storage.md). Read-only-ness is signalled by the lock icon, not
+    // by disabling the row.
+    return TamuTable<FileRecord>(
+      columns: [
+        TamuColumn<FileRecord>(
+          label: 'File',
+          flex: 4,
+          cell: (context, file) => Text(
+            _fileName(file),
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: file.isFiletable ? kTextMuted : kTextPrimary,
+            ),
           ),
-          title: Text(
-            isTable
-                ? '${normalizeFileName(file.name)} (file table)'
-                : normalizeFileName(file.name),
-            style: isTable ? const TextStyle(color: Colors.white38) : null,
-          ),
-          subtitle: Text(
-            '${isTable ? "Internal directory" : fileTypeLabel(file.name)}   '
-            '${_formatSize(file.size)}   '
-            'offset ${hex32(file.offset)}',
-          ),
-          trailing: isTable
-              ? const Icon(Icons.lock_outline, size: 16, color: Colors.white24)
-              : PopupMenuButton<String>(
-                  tooltip: 'Actions',
-                  onSelected: (action) {
-                    switch (action) {
-                      case 'view':
-                        _showFile(file);
-                      case 'download':
-                        _downloadFile(file);
-                      case 'rename':
-                        _renameFile(file);
-                      case 'delete':
-                        _deleteFile(file);
-                    }
-                  },
-                  itemBuilder: (_) => [
-                    PopupMenuItem(value: 'view', child: Text('View')),
-                    PopupMenuItem(value: 'download', child: Text('Download')),
-                    PopupMenuItem(value: 'rename', child: Text('Rename')),
-                    PopupMenuItem(value: 'delete', child: Text('Delete')),
-                  ],
-                ),
-          onTap: () => isTable ? _showTable(file) : _showFile(file),
-        );
-      },
+        ),
+        TamuColumn<FileRecord>(
+          label: 'Type  ·  size  ·  offset',
+          flex: 6,
+          text: _fileDetail,
+          muted: true,
+        ),
+      ],
+      rows: files,
+      leading: (context, file) => Icon(
+        file.isFiletable
+            ? Icons.table_rows_outlined
+            : storageFileIcon(file.name),
+        size: IconSize.md,
+        color: kTextSecondary,
+      ),
+      trailing: (context, file) => file.isFiletable
+          ? const Icon(
+              Icons.lock_outline,
+              size: IconSize.sm,
+              color: kTextDisabled,
+            )
+          : PopupMenuButton<String>(
+              tooltip: 'Actions',
+              onSelected: (action) {
+                switch (action) {
+                  case 'view':
+                    _showFile(file);
+                  case 'download':
+                    _downloadFile(file);
+                  case 'rename':
+                    _renameFile(file);
+                  case 'delete':
+                    _deleteFile(file);
+                }
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem(value: 'view', child: Text('View')),
+                PopupMenuItem(value: 'download', child: Text('Download')),
+                PopupMenuItem(value: 'rename', child: Text('Rename')),
+                PopupMenuItem(value: 'delete', child: Text('Delete')),
+              ],
+            ),
+      onTap: (file) => file.isFiletable ? _showTable(file) : _showFile(file),
+      emptyMessage: 'No file table',
     );
   }
+
+  /// The name a row prints: the stored name, marked when it is the directory itself.
+  String _fileName(FileRecord file) => file.isFiletable
+      ? '${normalizeFileName(file.name)} (file table)'
+      : normalizeFileName(file.name);
+
+  /// The row's subtext: what the file is, how big it is and where it lives.
+  String _fileDetail(FileRecord file) =>
+      '${file.isFiletable ? "Internal directory" : fileTypeLabel(file.name)}   '
+      '${formatFileSize(file.size)}   '
+      'offset ${hex32(file.offset)}';
 
   /// The file table itself, decoded: one row per file record.
   Future<void> _showTable(FileRecord table) async {
@@ -362,14 +378,66 @@ class _TableBody extends StatefulWidget {
   State<_TableBody> createState() => _TableBodyState();
 }
 
+/// One decoded file-table record.
+class _FileTableRow {
+  const _FileTableRow({
+    required this.index,
+    required this.name,
+    required this.size,
+    required this.offset,
+    this.invalidated = false,
+  });
+
+  final int index;
+  final String name;
+  final String size;
+  final String offset;
+  final bool invalidated;
+}
+
 class _TableBodyState extends State<_TableBody> {
   bool _showInvalidated = false;
 
+  /// The record columns, shared by the live and the invalidated table so the two
+  /// can never drift out of alignment.
+  List<TamuColumn<_FileTableRow>> get _columns => [
+    TamuColumn<_FileTableRow>(
+      label: '#',
+      text: (r) => '${r.index}',
+      mono: true,
+      muted: true,
+      flex: 1,
+    ),
+    TamuColumn<_FileTableRow>(
+      label: 'File',
+      flex: 3,
+      cell: (context, r) => MonoText(
+        r.name,
+        tone: r.invalidated ? kTextDisabled : kTextSecondary,
+      ),
+    ),
+    TamuColumn<_FileTableRow>(
+      label: 'Size',
+      text: (r) => r.size,
+      mono: true,
+      muted: true,
+      flex: 2,
+    ),
+    TamuColumn<_FileTableRow>(
+      label: 'Offset',
+      text: (r) => r.offset,
+      mono: true,
+      muted: true,
+      flex: 2,
+    ),
+  ];
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final data = widget.data;
-    final live = <Widget>[];
-    final invalidated = <Widget>[];
+    final live = <_FileTableRow>[];
+    final invalidated = <_FileTableRow>[];
     for (var off = 0; off + 16 <= data.length; off += 16) {
       final recOffset = uint32FromBytes(data, off);
       final fileSize = uint32FromBytes(data, off + 4);
@@ -377,32 +445,16 @@ class _TableBodyState extends State<_TableBody> {
       // Offset 0 marks a superseded/invalidated record (the device zeroes the 4-byte
       // offset, leaving the size).
       final isInvalidated = !unwritten && recOffset == 0;
-      String name() => normalizeFileName(
-        String.fromCharCodes(data.sublist(off + 8, off + 16)),
-      );
-      final row = ListTile(
-        dense: true,
-        leading: Icon(
-          isInvalidated ? Icons.delete_outline : Icons.table_rows_outlined,
-          size: 18,
-          color: isInvalidated ? Colors.white24 : Colors.white38,
-        ),
-        title: Text(
-          '#${off ~/ 16}  '
-          '${isInvalidated ? "(invalidated)" : name()}'
-          '   ${!isInvalidated ? "${(fileSize / 1024).toStringAsFixed(1)} kB" : ""}',
-          style: TextStyle(
-            fontFamily: 'monospace',
-            fontSize: 12,
-            color: isInvalidated ? Colors.white24 : Colors.white70,
-          ),
-        ),
-        subtitle: isInvalidated
-            ? null
-            : Text(
-                'offset ${hex32(recOffset)}   $fileSize B',
-                style: const TextStyle(fontSize: 11),
+      final row = _FileTableRow(
+        index: off ~/ 16,
+        name: isInvalidated
+            ? '(invalidated)'
+            : normalizeFileName(
+                String.fromCharCodes(data.sublist(off + 8, off + 16)),
               ),
+        size: isInvalidated ? '' : formatFileSize(fileSize),
+        offset: isInvalidated ? '' : hex32(recOffset),
+        invalidated: isInvalidated,
       );
       if (isInvalidated) {
         invalidated.add(row);
@@ -411,33 +463,43 @@ class _TableBodyState extends State<_TableBody> {
       }
     }
     return ListView(
-      padding: const EdgeInsets.all(12),
+      padding: Insets.page,
       children: [
         Padding(
-          padding: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.only(bottom: Spacing.md),
           child: Text(
             'File table (${widget.size} B) - '
             '${live.length} live, ${invalidated.length} invalidated',
-            style: const TextStyle(color: kOrange),
+            style: theme.textTheme.bodySmall?.copyWith(color: kOrange),
           ),
         ),
-        ...live,
+        TamuTable<_FileTableRow>(
+          embedded: true,
+          columns: _columns,
+          rows: live,
+          emptyMessage: 'No live records',
+        ),
         if (invalidated.isNotEmpty) ...[
-          const Divider(height: 20),
+          const Divider(height: Spacing.xl),
           ListTile(
             dense: true,
             leading: Icon(
               _showInvalidated ? Icons.expand_less : Icons.expand_more,
-              size: 18,
-              color: Colors.white38,
+              size: IconSize.md,
+              color: kTextDisabled,
             ),
             title: Text(
               '${invalidated.length} invalidated (old) records',
-              style: const TextStyle(fontSize: 12, color: Colors.white54),
+              style: theme.textTheme.bodySmall?.copyWith(color: kTextMuted),
             ),
             onTap: () => setState(() => _showInvalidated = !_showInvalidated),
           ),
-          if (_showInvalidated) ...invalidated,
+          if (_showInvalidated)
+            TamuTable<_FileTableRow>(
+              embedded: true,
+              columns: _columns,
+              rows: invalidated,
+            ),
         ],
       ],
     );

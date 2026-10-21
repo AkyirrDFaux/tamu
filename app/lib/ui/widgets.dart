@@ -413,34 +413,6 @@ IconData deviceTypeIcon(DeviceType type) => switch (type) {
   DeviceType.unknown => Icons.devices_other,
 };
 
-/// Small rounded label chip used across the memory pages. Styled from the tokens
-/// ([kSubtleTint]/[kAccentTint] and the text roles) so it cannot invent a colour.
-class ChipLabel extends StatelessWidget {
-  const ChipLabel(this.text, {super.key, this.subtle = false});
-
-  final String text;
-  final bool subtle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-      decoration: BoxDecoration(
-        color: subtle ? kSubtleTint : kAccentTint,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 10,
-          color: subtle ? kTextSecondary : kTextPrimary,
-          fontWeight: subtle ? FontWeight.w400 : FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
-
 /// Shared refresh button (Docs/App/Connection.md + Service views):
 /// - short press: one immediate refresh
 /// - long press: menu to select an autorefresh interval for this page;

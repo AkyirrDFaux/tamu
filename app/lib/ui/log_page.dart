@@ -11,6 +11,7 @@ import '../core/protocol.dart';
 import '../core/types.dart';
 import 'formatters.dart';
 import 'theme.dart';
+import 'viewer_kit.dart';
 import 'widgets.dart';
 
 /// Log viewer for CORE devices (Docs/Services/Log Handler.md): fetches the RAM
@@ -162,7 +163,9 @@ class _LogViewerPageState extends State<LogViewerPage>
           child: SingleChildScrollView(
             child: SelectableText(
               text,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
             ),
           ),
         ),
@@ -238,11 +241,11 @@ class _LogViewerPageState extends State<LogViewerPage>
           ),
         ],
       ),
-      body: _buildBody(),
+      body: _buildBody(context),
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildBody(BuildContext context) {
     if (_loading && _logs == null) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -282,17 +285,21 @@ class _LogViewerPageState extends State<LogViewerPage>
     return Column(
       children: [
         Expanded(
-          child: ListView(
-            padding: const EdgeInsets.all(12),
-            children: children,
+          // The toolkit's one incremental list shell, with no pageSize: the device
+          // returns its whole log store, so there is nothing further to page in.
+          child: TamuPagedList<Widget>(
+            items: children,
+            itemBuilder: (context, child, _) => child,
           ),
         ),
         Padding(
-          padding: const EdgeInsets.all(6),
+          padding: const EdgeInsets.all(Spacing.sm),
           child: Text(
             '${_logs!.length} entr${_logs!.length == 1 ? 'y' : 'ies'}'
             ' from ${byDevice.length} device${byDevice.length == 1 ? '' : 's'}',
-            style: const TextStyle(fontSize: 11, color: Colors.white38),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: kTextMuted),
           ),
         ),
       ],
@@ -302,7 +309,12 @@ class _LogViewerPageState extends State<LogViewerPage>
   Widget _deviceHeader(int id, String? name, int count) {
     final device = DeviceDatabase.instance.byId(id);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 4, 4, 2),
+      padding: const EdgeInsets.fromLTRB(
+        Spacing.xs,
+        Spacing.xs,
+        Spacing.xs,
+        Spacing.hairline,
+      ),
       child: ListTile(
         leading: Icon(
           deviceTypeIcon(device?.type ?? DeviceType.unknown),
@@ -310,47 +322,46 @@ class _LogViewerPageState extends State<LogViewerPage>
         ),
         title: Text(
           name ?? idToString(id),
-          style: const TextStyle(fontWeight: FontWeight.w600),
+          style: Theme.of(context).textTheme.titleSmall,
         ),
         subtitle: Text(
           '$count entr${count == 1 ? 'y' : 'ies'}',
-          style: const TextStyle(fontSize: 10, color: Colors.white38),
+          style: Theme.of(
+            context,
+          ).textTheme.labelSmall?.copyWith(color: kTextMuted),
         ),
       ),
     );
   }
 
   Widget _logTile(LogEntry log) {
+    final theme = Theme.of(context);
     final isError = log.code != 0;
-    final accent = isError ? Colors.redAccent : kOrange;
+    final accent = isError ? kError : kOrange;
     return Card(
-      color: kSurfaceAlt,
-      margin: const EdgeInsets.only(bottom: 2),
+      margin: const EdgeInsets.only(bottom: Spacing.hairline),
       clipBehavior: Clip.antiAlias,
       child: ListTile(
         dense: true,
         leading: Icon(
           log.isBlock ? Icons.widgets_outlined : Icons.settings_suggest,
-          size: 20,
+          size: IconSize.lg,
           color: accent,
         ),
         title: Text(
           log.describe(),
-          style: TextStyle(
-            fontSize: 13,
-            color: isError ? Colors.redAccent : Colors.white,
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: isError ? kError : kTextPrimary,
           ),
         ),
         subtitle: Padding(
-          padding: const EdgeInsets.only(top: 2),
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 2,
-            children: [
-              ChipLabel(log.isBlock ? 'Block' : 'Service', subtle: true),
-              ChipLabel(log.sourceName(), subtle: true),
-              ChipLabel('x${log.count}', subtle: true),
-              ChipLabel(formatUptimeMs(log.timestampMs), subtle: true),
+          padding: const EdgeInsets.only(top: Spacing.hairline),
+          child: TamuChipRow(
+            chips: [
+              TamuChip(log.isBlock ? 'Block' : 'Service'),
+              TamuChip(log.sourceName()),
+              TamuChip('x${log.count}'),
+              TamuChip(formatUptimeMs(log.timestampMs)),
             ],
           ),
         ),

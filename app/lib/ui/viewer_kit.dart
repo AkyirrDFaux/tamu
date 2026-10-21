@@ -133,19 +133,25 @@ class ColourSwatch extends StatelessWidget {
 /// Monospace text drawn from the theme: the one place a viewer prints an offset,
 /// a hex column, an id or an ASCII gutter. It reads the small body role (size
 /// and family aside, no viewer sets a font of its own); [muted] drops it to the
-/// subtext colour, and the text is clipped rather than wrapped so a fixed-width
-/// token never breaks mid-value.
+/// subtext colour, [tone] pins an explicit ink for a value the row's state picks
+/// (a struck tombstone, a live accent), and the text is clipped rather than
+/// wrapped so a fixed-width token never breaks mid-value.
 class MonoText extends StatelessWidget {
   const MonoText(
     this.text, {
     super.key,
     this.muted = false,
+    this.tone,
     this.align = TextAlign.start,
     this.overflow = TextOverflow.ellipsis,
   });
 
   final String text;
   final bool muted;
+
+  /// The ink for this cell; takes precedence over [muted].
+  final Color? tone;
+
   final TextAlign align;
   final TextOverflow overflow;
 
@@ -158,7 +164,7 @@ class MonoText extends StatelessWidget {
       overflow: overflow,
       style: Theme.of(context).textTheme.bodySmall?.copyWith(
         fontFamily: 'monospace',
-        color: muted ? kTextMuted : kTextPrimary,
+        color: tone ?? (muted ? kTextMuted : kTextPrimary),
       ),
     );
   }

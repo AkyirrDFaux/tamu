@@ -332,4 +332,65 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull, reason: 'FileViewPage hex threw');
   });
+
+  // The raw path is the toolkit's [HexView] now, so the offsets, the byte groups
+  // and the ASCII gutter are its formatters' output - a viewer that grew its own
+  // hex table again would fail here.
+  testWidgets('the raw view prints through HexView with byte-width rows', (
+    tester,
+  ) async {
+    final data = [0x41, 0x42, 0x43, 0x00, ...List<int>.filled(12, 0)];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Scaffold(
+          body: FileViewPage(
+            deviceId: 1,
+            name: 'BIN.DAT',
+            size: data.length,
+            data: data,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text(hex32(0)), findsOneWidget);
+    expect(find.text(formatHexBytes(data)), findsOneWidget);
+    expect(find.text(formatAsciiBytes(data)), findsOneWidget);
+    // One row of 16 bytes: the second row's offset is not drawn.
+    expect(find.text(hex32(16)), findsNothing);
+  });
+
+  testWidgets('a tombstoned .SNREG entry prints as unavailable', (
+    tester,
+  ) async {
+    // 32-byte RegistryEntry (SNDB.h): u16 valid marker (0x0000 = removed), u16
+    // device, u8 net, 11 reserved, 14-byte serial, 2 bytes tail padding.
+    final data = <int>[
+      0, 0, // marker: removed
+      5, 0, // device 5
+      0, // net 0
+      ...List.filled(11, 0),
+      ...List<int>.generate(14, (i) => i),
+      0, 0,
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Scaffold(
+          body: FileViewPage(
+            deviceId: 1,
+            name: '.SNREG',
+            size: data.length,
+            data: data,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('id 5 (removed)'), findsOneWidget);
+    expect(find.text(serialNumberToHex(data.sublist(16, 30))), findsOneWidget);
+  });
 }

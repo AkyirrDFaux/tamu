@@ -5,18 +5,27 @@
 //   grid, text, hex).
 // - MemoryBackupView: decodes the `.SV` / SUBREQ registry backups and the
 //   .DT_ dynamic block table.
+//
+// Both render through `viewer_kit.dart` - the one table shell ([TamuTable]), the
+// one hex/ASCII view ([HexView]) and the one chip row ([TamuChipRow]) - with every
+// string from `formatters.dart` and every colour, size and inset from `theme.dart`.
+// What stays local is only what the toolkit does not cover, and each such shape says
+// why in place: the LAY grid (a spatial LED map, not rows of columns), the selectable
+// text preview and a monospace cell that prints a struck value.
 library;
 
 import 'package:flutter/material.dart';
 
 import '../core/block_registry.dart' show blockInfoFor;
-import '../core/storage_client.dart' show normalizeFileName, StorageClient;
 import '../core/device_backup.dart';
-import '../core/system_schema.dart' show hasNetIdFor;
 import '../core/register_client.dart';
+import '../core/storage_client.dart' show StorageClient, normalizeFileName;
+import '../core/system_schema.dart' show hasNetIdFor;
 import '../core/types.dart';
-import 'theme.dart' show kOrange, kSurfaceAlt;
 import 'formatters.dart';
+import 'theme.dart';
+import 'viewer_kit.dart';
+import 'widgets.dart' show BlockScrollBody;
 
 // ---------------------------------------------------------------------------
 // Known file types (Docs/Services/Storage.md: "the viewer/editor of files
@@ -33,6 +42,73 @@ IconData storageFileIcon(String name) => switch (storageFileType(name)) {
   StorageFileType.dynamicValues => Icons.storage_outlined,
   StorageFileType.backup => Icons.storage_outlined,
 };
+
+// ---------------------------------------------------------------------------
+// Table rows the decoders below print
+// ---------------------------------------------------------------------------
+
+/// One `.SNREG` record: the id its 32-byte entry resolves to and the serial it
+/// carries. A tombstoned entry keeps its row but is drawn as unavailable.
+class _SnregRow {
+  const _SnregRow(this.id, this.serial, {this.removed = false});
+
+  final String id;
+  final String serial;
+  final bool removed;
+}
+
+/// One field/key row of a decoded table: what the entry is, its type, and the
+/// value (a decoded value, a flag list or a block/type name).
+class _FieldRow {
+  const _FieldRow({
+    required this.label,
+    required this.type,
+    required this.value,
+  });
+
+  final String label;
+  final String type;
+  final String value;
+}
+
+/// One requester-subscription row: the route it copies and how it is triggered.
+class _SubreqRow {
+  const _SubreqRow(this.route, this.transfer);
+
+  final String route;
+  final String transfer;
+}
+
+/// The one field/key table the file viewer and both backup decoders print.
+Widget _fieldTable({
+  required List<_FieldRow> rows,
+  bool embedded = true,
+  bool showHeader = false,
+}) => TamuTable<_FieldRow>(
+  embedded: embedded,
+  showHeader: showHeader,
+  columns: [
+    TamuColumn<_FieldRow>(
+      label: 'Field',
+      text: (r) => r.label,
+      mono: true,
+      flex: 2,
+    ),
+    TamuColumn<_FieldRow>(
+      label: 'Type',
+      text: (r) => r.type,
+      muted: true,
+      flex: 2,
+    ),
+    TamuColumn<_FieldRow>(
+      label: 'Value',
+      text: (r) => r.value,
+      mono: true,
+      flex: 3,
+    ),
+  ],
+  rows: rows,
+);
 
 /// Formatted preview of one file's content. Known types render decoded
 /// (SNREG registry, LAY LED-index grid, backup registries, text); a raw hex
@@ -72,6 +148,11 @@ class _FileViewPageState extends State<FileViewPage> {
   List<int>?
   _dvTable; // sibling `.DT_<hex2>` bytes, for the `.DV_` value viewer
 
+  // The LED grid's cell box: a fixed size so a 128-wide layout scrolls sideways by
+  // pixels instead of reflowing. These are the grid's dimensions, not spacing steps.
+  static const double _ledCellWidth = 44;
+  static const double _ledCellHeight = 22;
+
   @override
   void initState() {
     super.initState();
@@ -109,8 +190,6 @@ class _FileViewPageState extends State<FileViewPage> {
     if (mounted) setState(() => _dvTable = bytes);
   }
 
-  static final List<int> bytesPerLineOptions = [8, 16, 32, 64];
-
   bool get _hasFormatted =>
       storageFileType(widget.name) != StorageFileType.binary;
 
@@ -128,71 +207,30 @@ class _FileViewPageState extends State<FileViewPage> {
     return printable / data.length > 0.9;
   }
 
-  Widget _mono(String text) => SingleChildScrollView(
-    padding: const EdgeInsets.all(12),
-    child: SelectableText(
-      text,
-      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-    ),
-  );
-
-  /// Standard raw view: one lazily-built row per N bytes with offset, grouped hex and ASCII.
-  /// Each row scrolls horizontally so 32/64-byte widths scroll sideways instead of overflowing.
-  Widget _hexView() {
-    final data = widget.data!;
-    if (data.isEmpty) return const Center(child: Text('(empty file)'));
-    final per = _bytesPerLine;
-    final lines = (data.length + per - 1) ~/ per;
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: lines,
-      itemBuilder: (context, line) {
-        final off = line * per;
-        final end = (off + per) < data.length ? off + per : data.length;
-        final chunk = data.sublist(off, end);
-        final hex = [
-          for (var i = 0; i < chunk.length; i++)
-            chunk[i].toRadixString(16).padLeft(2, '0'),
-        ].join(' ');
-        final ascii = chunk
-            .map((b) => (b >= 0x20 && b < 0x7F) ? String.fromCharCode(b) : '.')
-            .join();
-        return SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: 82,
-                child: Text(
-                  '0x${off.toRadixString(16).padLeft(8, '0')}',
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 11,
-                    color: Colors.white38,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                hex,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                ascii,
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                  color: Colors.white54,
-                ),
-              ),
-            ],
+  /// A plain-text file's preview, or a decoder's one-line explanation. Kept local
+  /// because the preview must stay **selectable** - a log or a text file is
+  /// something you copy out of the app - and [MonoText] is a plain `Text`. The look
+  /// still comes from the theme's body role, not from a literal size.
+  Widget _textPreview(BuildContext context, String text) =>
+      SingleChildScrollView(
+        padding: Insets.page,
+        child: SelectableText(
+          text,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            fontFamily: 'monospace',
+            color: kTextPrimary,
           ),
-        );
-      },
-    );
-  }
+        ),
+      );
+
+  /// The raw view: the toolkit's [HexView], one lazily-built row per N bytes with
+  /// the offset, grouped hex and ASCII, each row scrolling sideways so 32/64-byte
+  /// widths scroll instead of overflowing.
+  Widget _hexView() => HexView(
+    data: widget.data!,
+    bytesPerLine: _bytesPerLine,
+    emptyMessage: '(empty file)',
+  );
 
   /// SNREG: 32-byte RegistryEntry records (SNDB.h): u16 valid marker, u16 device ID,
   /// u8 owning net, 11 reserved bytes, 14-byte serial number. The stored pair is
@@ -200,7 +238,7 @@ class _FileViewPageState extends State<FileViewPage> {
   /// Markers: 0x55AA valid, 0x0000 removed, 0xFFFF unwritten.
   Widget _snregView() {
     final data = widget.data!;
-    final rows = <Widget>[];
+    final rows = <_SnregRow>[];
     for (var off = 0; off + 32 <= data.length; off += 32) {
       final valid = data[off] | (data[off + 1] << 8);
       if (valid == 0xFFFF) break; // unwritten slot
@@ -208,90 +246,74 @@ class _FileViewPageState extends State<FileViewPage> {
       final net = data[off + 4] & 0x3F;
       final id = (net << 10) | (device & 0x3FF);
       final removed = valid == 0x0000;
-      final sn = serialNumberToHex(data.sublist(off + 16, off + 30));
       rows.add(
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
-          child: Row(
-            children: [
-              SizedBox(
-                width: 88,
-                child: Text(
-                  removed ? 'id $id (removed)' : idToString(id),
-                  style: TextStyle(
-                    color: removed ? Colors.white24 : kOrange,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-              Expanded(
-                child: Text(
-                  sn,
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12,
-                    color: removed ? Colors.white24 : Colors.white70,
-                  ),
-                ),
-              ),
-            ],
-          ),
+        _SnregRow(
+          removed ? 'id $id (removed)' : idToString(id),
+          serialNumberToHex(data.sublist(off + 16, off + 30)),
+          removed: removed,
         ),
       );
     }
-    return ListView(padding: const EdgeInsets.all(12), children: rows);
+    return TamuTable<_SnregRow>(
+      columns: [
+        TamuColumn<_SnregRow>(
+          label: 'ID',
+          flex: 2,
+          cell: (context, r) => Text(
+            r.id,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: r.removed ? kTextDisabled : kOrange,
+            ),
+          ),
+        ),
+        TamuColumn<_SnregRow>(
+          label: 'Serial number',
+          flex: 3,
+          cell: (context, r) => MonoText(
+            r.serial,
+            tone: r.removed ? kTextDisabled : kTextSecondary,
+          ),
+        ),
+      ],
+      rows: rows,
+      emptyMessage: '(no registry entries)',
+    );
   }
 
   /// Layout file: row-first W x H uint16 LED indexes, 0xFFFF = missing
   /// (Docs/Modules and blocks/LED display.md). Header is u8 brightness limit (0-255 as a
   /// percentage) + u8 width + u8 height (3 bytes), then W*H little-endian uint16 indexes.
-  Widget _layoutView() {
+  ///
+  /// Stays local: the cell's *position* is the datum, so this is a spatial map
+  /// rather than a table of rows, which is the one shape [TamuTable] cannot print.
+  Widget _layoutView(BuildContext context) {
     final data = widget.data!;
-    if (data.length < 3) return _mono('(empty)');
+    if (data.length < 3) return _textPreview(context, '(empty)');
     final limit = data[0];
     final w = data[1];
     final h = data[2];
     if (w == 0 || h == 0 || w > 128 || h > 128 || 3 + w * h * 2 > data.length) {
-      return _mono('Invalid layout header (${w}x$h)');
+      return _textPreview(context, 'Invalid layout header (${w}x$h)');
     }
+    final theme = Theme.of(context);
     final limitPct = (limit * 100 + 127) ~/ 255;
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
+      padding: Insets.page,
       scrollDirection: Axis.horizontal,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             '${w}x$h LEDs · limit $limit ($limitPct%)',
-            style: const TextStyle(color: Colors.white38, fontSize: 11),
+            style: theme.textTheme.bodySmall?.copyWith(color: kTextMuted),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: Spacing.sm),
           for (var r = 0; r < h; r++)
             Row(
               children: [
                 for (var c = 0; c < w; c++)
-                  Container(
-                    width: 44,
-                    height: 22,
-                    margin: const EdgeInsets.all(1),
-                    color: kSurfaceAlt,
-                    alignment: Alignment.center,
-                    child: Text(
-                      () {
-                        final i = 3 + (r * w + c) * 2;
-                        final v = data[i] | (data[i + 1] << 8);
-                        return v == 0xFFFF ? '-' : '$v';
-                      }(),
-                      style: TextStyle(
-                        fontSize: 10,
-                        color:
-                            data[3 + (r * w + c) * 2] == 0xFF &&
-                                data[3 + (r * w + c) * 2 + 1] == 0xFF
-                            ? Colors.white24
-                            : Colors.white,
-                      ),
-                    ),
-                  ),
+                  _ledCell(theme.textTheme, data, 3 + (r * w + c) * 2),
               ],
             ),
         ],
@@ -299,9 +321,28 @@ class _FileViewPageState extends State<FileViewPage> {
     );
   }
 
+  /// One LED cell: the index a layout file holds at [at], or `-` for a missing one.
+  Widget _ledCell(TextTheme text, List<int> data, int at) {
+    final value = data[at] | (data[at + 1] << 8);
+    final missing = value == 0xFFFF;
+    return Container(
+      width: _ledCellWidth,
+      height: _ledCellHeight,
+      margin: const EdgeInsets.all(Spacing.hairline),
+      color: kSurfaceAlt,
+      alignment: Alignment.center,
+      child: Text(
+        missing ? '-' : '$value',
+        style: text.labelSmall?.copyWith(
+          color: missing ? kTextDisabled : kTextPrimary,
+        ),
+      ),
+    );
+  }
+
   /// `.DV_<hex2>`: the block's packed persistent values, decoded against the sibling
   /// `.DT_<hex2>` table (offsets and sizes) so each field/key shows its typed value.
-  Widget _dvView() {
+  Widget _dvView(BuildContext context) {
     final tableBytes = _dvTable;
     final table = tableBytes == null ? null : decodeDynamicTable(tableBytes);
     final inst = _dvIndex();
@@ -311,41 +352,45 @@ class _FileViewPageState extends State<FileViewPage> {
     }
     final entries = decodeDynamicValues(inst, table, widget.data!);
     if (entries.isEmpty) return _hexView();
-    final rows = <Widget>[
-      Padding(
-        padding: const EdgeInsets.only(left: 4, bottom: 6),
-        child: Text(
-          '${table.name.isEmpty ? 'Block' : table.name}'
-          ' (${blockTypeLabel(dynamicTypeForIndex(inst))})',
-          style: const TextStyle(color: Colors.white38, fontSize: 11),
-        ),
-      ),
-      for (final e in entries)
-        ListTile(
-          dense: true,
-          contentPadding: const EdgeInsets.only(left: 16, right: 12),
-          title: Text(
-            'f${e.field}.k${e.key}: ${dataTypeLabel(e.meta.dataType)}  ${e.meta.size} B',
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-          ),
-          subtitle: Text(
-            e.meta.dataType == DataType.none
-                ? '∅'
-                : formatValue(e.meta.dataType, e.value),
-            style: const TextStyle(fontSize: 12),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: Insets.row,
+          child: Text(
+            '${table.name.isEmpty ? 'Block' : table.name}'
+            ' (${blockTypeLabel(dynamicTypeForIndex(inst))})',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: kTextMuted),
           ),
         ),
-    ];
-    return ListView(padding: const EdgeInsets.all(12), children: rows);
+        Expanded(
+          child: _fieldTable(
+            embedded: false,
+            rows: [
+              for (final e in entries)
+                _FieldRow(
+                  label: 'f${e.field}.k${e.key}',
+                  type: '${dataTypeLabel(e.meta.dataType)}  ${e.meta.size} B',
+                  value: e.meta.dataType == DataType.none
+                      ? '∅'
+                      : formatValue(e.meta.dataType, e.value),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
-  Widget _formattedBody() {
+  Widget _formattedBody(BuildContext context) {
     final data = widget.data!;
     switch (storageFileType(widget.name)) {
       case StorageFileType.snreg:
         return _snregView();
       case StorageFileType.layout:
-        return _layoutView();
+        return _layoutView(context);
       case StorageFileType.dynamicTable:
       case StorageFileType.backup:
         {
@@ -362,10 +407,10 @@ class _FileViewPageState extends State<FileViewPage> {
         }
       case StorageFileType.dynamicValues:
         // The persistent value space, decoded against its sibling `.DT_` table.
-        return _dvView();
+        return _dvView(context);
       case StorageFileType.text when _looksTextual:
         final text = String.fromCharCodes(data).replaceAll(RegExp(r' +'), ' ');
-        return _mono(text);
+        return _textPreview(context, text);
       default:
         return _hexView();
     }
@@ -401,13 +446,13 @@ class _FileViewPageState extends State<FileViewPage> {
               initialValue: _bytesPerLine,
               onSelected: (v) => setState(() => _bytesPerLine = v),
               itemBuilder: (_) => [
-                for (final n in bytesPerLineOptions)
+                for (final n in HexView.widths)
                   PopupMenuItem(value: n, child: Text('$n bytes per line')),
               ],
             ),
         ],
       ),
-      body: raw ? _hexView() : _formattedBody(),
+      body: raw ? _hexView() : _formattedBody(context),
     );
   }
 }
@@ -466,26 +511,24 @@ class _MemoryBackupViewState extends State<MemoryBackupView> {
     hasNetId: hasNetId,
   );
 
-  Widget _blockCard(String title, String subtitle, List<Widget> children) {
+  /// One titled card holding a decoded table: the block's name and a summary chip
+  /// over the rows, the shape `register_backup_view.dart` uses for the same data.
+  Widget _blockCard(
+    BuildContext context,
+    String title,
+    String summary,
+    List<_FieldRow> rows,
+  ) {
     return Card(
-      color: kSurfaceAlt,
-      margin: const EdgeInsets.only(bottom: 6),
+      margin: const EdgeInsets.only(bottom: Spacing.sm),
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
           ListTile(
-            dense: true,
-            title: Text(
-              title,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            subtitle: Text(subtitle, style: const TextStyle(fontSize: 10)),
+            title: Text(title, style: Theme.of(context).textTheme.titleSmall),
+            subtitle: TamuChipRow(chips: [TamuChip(summary)]),
           ),
-          if (children.isNotEmpty)
-            Material(
-              color: Colors.black26,
-              child: Column(children: children),
-            ),
+          if (rows.isNotEmpty) _fieldTable(rows: rows),
         ],
       ),
     );
@@ -507,37 +550,31 @@ class _MemoryBackupViewState extends State<MemoryBackupView> {
     return int.tryParse(n.substring(4), radix: 16);
   }
 
-  List<Widget> _parseDynamicTable() {
+  List<Widget> _parseDynamicTable(BuildContext context) {
     final table = decodeDynamicTable(data);
     if (table == null) return [const Text('(corrupt table)')];
 
-    final children = <Widget>[];
-    for (final e in table.entries) {
-      final flags = ValueFlags.describe(e.flags);
-      children.add(
-        ListTile(
-          dense: true,
-          contentPadding: const EdgeInsets.only(left: 40, right: 12),
-          title: Text(
-            'f${e.field}.k${e.key}: ${dataTypeLabel(e.meta.dataType)}  ${e.size} B',
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-          ),
-          subtitle: Text(
-            flags.isEmpty ? '(no flags)' : flags.join(' · '),
-            style: const TextStyle(fontSize: 10, color: Colors.white38),
-          ),
+    final rows = <_FieldRow>[
+      for (final e in table.entries)
+        _FieldRow(
+          label: 'f${e.field}.k${e.key}',
+          type: '${dataTypeLabel(e.meta.dataType)}  ${e.size} B',
+          value: () {
+            final flags = ValueFlags.describe(e.flags);
+            return flags.isEmpty ? '(no flags)' : flags.join(' · ');
+          }(),
         ),
-      );
-    }
+    ];
     final idx = _dynamicIndex();
     final typeLabel = idx == null
         ? ''
         : ' (${blockTypeLabel(dynamicTypeForIndex(idx))})';
     return [
       _blockCard(
+        context,
         '${table.name.isEmpty ? 'Block' : table.name}$typeLabel',
         '${table.entries.length} entries',
-        children,
+        rows,
       ),
     ];
   }
@@ -547,7 +584,7 @@ class _MemoryBackupViewState extends State<MemoryBackupView> {
   // -------------------------------------------------------------------------
   List<Widget> _parseSv() {
     final registry = staticRegistryOf(blocks);
-    final rows = <Widget>[];
+    final rows = <_FieldRow>[];
     for (final e in decodeSv(data, _svLayout, registry)) {
       String title;
       String subtitle;
@@ -573,28 +610,15 @@ class _MemoryBackupViewState extends State<MemoryBackupView> {
         subtitle = BlockType.fromValue(e.blockType).label;
       }
       rows.add(
-        ListTile(
-          dense: true,
-          contentPadding: const EdgeInsets.only(left: 16, right: 12),
-          title: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '$title: ${_formatBytes(e.meta, e.value)}',
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                ),
-              ),
-            ],
-          ),
-          subtitle: Text(
-            subtitle,
-            style: const TextStyle(fontSize: 10, color: Colors.white38),
-          ),
+        _FieldRow(
+          label: title,
+          type: subtitle,
+          value: _formatBytes(e.meta, e.value),
         ),
       );
     }
     if (rows.isEmpty) return [const Text('(no entries)')];
-    return rows;
+    return [_fieldTable(rows: rows)];
   }
 
   // -------------------------------------------------------------------------
@@ -610,29 +634,39 @@ class _MemoryBackupViewState extends State<MemoryBackupView> {
     }
     if (claimed == 0) return [const Text('(no subscriptions)')];
 
-    final rows = <Widget>[];
     final entries = decodeSubreq(data);
-    for (var i = 0; i < entries.length; i++) {
-      final e = entries[i];
-      final triggerLabel = TriggerType.fromValue(e.trigger).label;
-      final dz = e.deadzone == 0 ? '' : '  ·  deadzone ${e.deadzone}';
-      rows.add(
-        ListTile(
-          dense: true,
-          leading: const Icon(Icons.sync_alt, size: 20, color: kOrange),
-          title: Text(
-            '#${i + 1}  ${_regLabel(e.targetReg)}  <-  ${_regLabel(e.sourceReg)}',
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-          ),
-          subtitle: Text(
-            '$triggerLabel  ·  every ${e.periodMs} ms  ·  '
-            'min ${e.minTimeMs} ms$dz  ·  provider ${idToString(e.providerAddr)}',
-            style: const TextStyle(fontSize: 11),
-          ),
+    final rows = <_SubreqRow>[
+      for (final (i, e) in entries.indexed)
+        _SubreqRow(
+          '#${i + 1}  ${_regLabel(e.targetReg)}  <-  ${_regLabel(e.sourceReg)}',
+          '${TriggerType.fromValue(e.trigger).label}  ·  '
+              'every ${e.periodMs} ms  ·  min ${e.minTimeMs} ms'
+              '${e.deadzone == 0 ? '' : '  ·  deadzone ${e.deadzone}'}  ·  '
+              'provider ${idToString(e.providerAddr)}',
         ),
-      );
-    }
-    return rows;
+    ];
+    return [
+      TamuTable<_SubreqRow>(
+        embedded: true,
+        leading: (context, r) =>
+            const Icon(Icons.sync_alt, size: IconSize.md, color: kOrange),
+        columns: [
+          TamuColumn<_SubreqRow>(
+            label: 'Target <- source',
+            text: (r) => r.route,
+            mono: true,
+            flex: 3,
+          ),
+          TamuColumn<_SubreqRow>(
+            label: 'Trigger  ·  period  ·  provider',
+            text: (r) => r.transfer,
+            muted: true,
+            flex: 4,
+          ),
+        ],
+        rows: rows,
+      ),
+    ];
   }
 
   @override
@@ -642,13 +676,10 @@ class _MemoryBackupViewState extends State<MemoryBackupView> {
       '.SV' => _parseSv(),
       '.SUBREQ' => _parseSubreq(),
       'SUBREQ' => _parseSubreq(),
-      _ when upper.startsWith('.DT_') => _parseDynamicTable(),
+      _ when upper.startsWith('.DT_') => _parseDynamicTable(context),
       _ => [const Text('(unknown registry file)')],
     };
     if (rows.isEmpty) return const Center(child: Text('(empty backup)'));
-    return ListView(
-      padding: const EdgeInsets.all(12),
-      children: [for (final r in rows) r],
-    );
+    return BlockScrollBody(children: rows);
   }
 }

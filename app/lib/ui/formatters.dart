@@ -44,6 +44,14 @@ String formatOffsetMs(int ms) {
       '${msPart.toString().padLeft(3, '0')}';
 }
 
+/// A stored file's size the way the Storage views print it: bytes below 1 kB, then
+/// one decimal of kB, then two of MB.
+String formatFileSize(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} kB';
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
+}
+
 /// A fixed-point number for display or for a text field: whole values lose their
 /// decimals, everything else keeps three. Used by the scalar formatter and by
 /// every numeric field in the transform editor.
