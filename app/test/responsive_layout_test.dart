@@ -18,6 +18,11 @@
 //                               -> 'A RenderFlex overflowed by 882 pixels on the
 //                                  bottom.' at 640x360 (780 px at 360x480): the
 //                                  rows were clipped, not reachable.
+//   the same, with the hint line above the body
+//                               -> 'A RenderFlex overflowed by 903 pixels on the
+//                                  bottom.' at 640x360: the hint wrapper's
+//                                  Expanded forced the content-sized body to the
+//                                  leftover height.
 //
 // After the fix a short window gets the Drawer instead of the clipped rail, and
 // a content-sized body gets a scroll view, so the last row is reachable by
@@ -181,7 +186,7 @@ void main() {
 
       // The same shell with a content-sized body (a form column, as the pickers
       // that draw their own form use). Before the fix this body was laid out at
-      // its natural height inside a 158 px box and overflowed by 962 px at
+      // its natural height inside a 158 px box and overflowed by 882 px at
       // 640x360, clipping the rows instead of scrolling them.
       testWidgets('PickerShell(500, 400) with a form body at $size', (
         tester,
@@ -218,5 +223,48 @@ void main() {
         );
       });
     }
+
+    // The hint line wraps the body in a Column with an Expanded, so the body has
+    // to get the same fit rule inside that wrapper. Pre-fix the Expanded forced
+    // a content-sized body to the leftover height and overflowed by 903 px at
+    // 640x360 (body box 500x158), leaving the last row unreachable.
+    testWidgets('PickerShell with a hint and a form body at Size(640, 360)', (
+      tester,
+    ) async {
+      await openPicker(
+        tester,
+        const Size(640, 360),
+        PickerShell(
+          title: 'Pick something',
+          maxWidth: 500,
+          height: 400,
+          hint: 'pick one',
+          body: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < 20; i++) ListTile(title: Text('item $i')),
+            ],
+          ),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+      // The hint stays pinned above the scrolling body.
+      expect(find.text('pick one'), findsOneWidget);
+
+      final body = tester.getRect(find.byType(DialogBody));
+      expect(
+        body.height,
+        lessThanOrEqualTo(360),
+        reason: 'the body box exceeds the window it was given',
+      );
+
+      await tester.drag(find.byType(Scrollable).last, const Offset(0, -4000));
+      await tester.pump();
+      expect(
+        fitsInside(tester.getRect(find.text('item 19')), body),
+        isTrue,
+        reason: 'the last row is not reachable inside the ${body.size} body',
+      );
+    });
   });
 }

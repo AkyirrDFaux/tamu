@@ -15,7 +15,7 @@ library;
 import 'package:flutter/material.dart';
 
 import 'theme.dart';
-import 'widgets.dart' show DialogBody;
+import 'widgets.dart' show DialogBody, fitToBox;
 
 /// The standard dialog: the raised surface, the title role, a [DialogBody]-
 /// bounded child and the action row. Built by [showTamuDialog], and the chrome
@@ -190,22 +190,7 @@ class PickerShell extends StatelessWidget {
       content: DialogBody(
         maxWidth: maxWidth,
         height: height,
-        child: hint == null
-            ? body
-            : Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: Spacing.xs),
-                    child: Text(
-                      hint!,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: kOrange,
-                      ),
-                    ),
-                  ),
-                  Expanded(child: body),
-                ],
-              ),
+        child: hint == null ? body : _hintAndBody(theme),
       ),
       actions: [
         TextButton(
@@ -216,4 +201,22 @@ class PickerShell extends StatelessWidget {
       ],
     );
   }
+
+  /// The hint line above the body. The body keeps its own fit rule inside the
+  /// flexible row ([fitToBox]), so a content-sized body scrolls in the leftover
+  /// height instead of being stretched to it: a bare `Expanded` would force the
+  /// body to that height and overflow by everything above it (measured: 903 px
+  /// for a 20-row column in the 500x158 box of a 640x360 window).
+  Widget _hintAndBody(ThemeData theme) => Column(
+    children: [
+      Padding(
+        padding: const EdgeInsets.only(bottom: Spacing.xs),
+        child: Text(
+          hint!,
+          style: theme.textTheme.labelSmall?.copyWith(color: kOrange),
+        ),
+      ),
+      Expanded(child: fitToBox(body)),
+    ],
+  );
 }

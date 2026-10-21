@@ -232,10 +232,15 @@ every page inherits the fix:
   other body now gets a scroll view, so its rows stay reachable. The caller's `height` stays the
   largest box it may ask for and the dialog's own constraints clamp it, which is why
   `PickerShell(500, 400)` still measures 500x158 at 640x360 but now scrolls to its last row.
+  The decision is the shared `fitToBox`, so a shell that wraps the body in its own flexible row
+  applies the same rule inside the wrapper: `PickerShell`'s hint line keeps an `Expanded` around the
+  body, and a content-sized body there used to be stretched to the leftover height and overflowed by
+  `903 pixels on the bottom` at 640x360 instead of scrolling.
 
 Pinned by `test/responsive_layout_test.dart` (real shell at 640x360 / 800x360 / 1024x600 / 1280x400;
-`PickerShell(500, 400)` with a viewport body and with a content-sized body at 640x360 and 360x480);
-the same test fails on the pre-fix code with the 23 px rail exception and the 882 px form overflow.
+`PickerShell(500, 400)` with a viewport body and with a content-sized body at 640x360 and 360x480,
+plus the hint line above a content-sized body at 640x360); the same test fails on the pre-fix code
+with the 23 px rail exception, the 882 px form overflow and the 903 px hint overflow.
 Per-element variants stay per batch - the 1c.5 / 1c.6 pages own their own layouts.
 
 ### Contrast audit (2026-10-17) - theme level fixed, per-page offenders parked

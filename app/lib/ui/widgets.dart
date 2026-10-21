@@ -347,6 +347,17 @@ bool _fillsItsBox(Widget body) {
   return false;
 }
 
+/// Makes [body] fit whatever box it is given, by the same rule [DialogBody]
+/// applies: a body that sizes itself to its box (a scroll view, or a [Flex] with
+/// a flexible child — the shape of a hint line above a list) is returned as is,
+/// and anything content-sized is wrapped in a scroll view.
+///
+/// Public because a shared shell that composes a body inside its own flexible
+/// wrapper has to apply the same decision to the wrapped body: an `Expanded`
+/// around a content-sized body would force it to a height it does not have.
+Widget fitToBox(Widget body) =>
+    _fillsItsBox(body) ? body : SingleChildScrollView(child: body);
+
 /// A dialog/panel body with a desktop-friendly [maxWidth] that still shrinks to
 /// fit a phone screen, and which never hands its content more than the space the
 /// dialog has to give it.
@@ -357,6 +368,10 @@ bool _fillsItsBox(Widget body) {
 ///  * a content-sized body (a form column, a field, a radio list) is wrapped in
 ///    a scroll view, so on a short window its rows stay reachable by scrolling
 ///    instead of being clipped with a RenderFlex overflow.
+///
+/// That decision is [fitToBox], so a shell that wraps the body in its own
+/// flexible row (PickerShell's hint line) applies the same rule inside the
+/// wrapper rather than handing a content-sized body a forced height.
 ///
 /// [height] is the largest box the body may ask for, not one it gets: the dialog
 /// has already subtracted its inset, title and action row, and the incoming
@@ -381,9 +396,7 @@ class DialogBody extends StatelessWidget {
     // Use a FINITE width. `width: double.infinity` has an infinite intrinsic width, which
     // makes AlertDialog's IntrinsicWidth recurse without bound (the dialog freezes on open).
     // A finite SizedBox still shrinks to a narrower parent / dialog.
-    final body = _fillsItsBox(child)
-        ? child
-        : SingleChildScrollView(child: child);
+    final body = fitToBox(child);
     return SizedBox(width: maxWidth, height: height, child: body);
   }
 }
