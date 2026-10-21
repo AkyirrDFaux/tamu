@@ -170,13 +170,35 @@ class ShellTabs extends ChangeNotifier {
   }
 }
 
-/// Compact vs expanded shell layout. Phones (narrow) use a navigation Drawer;
-/// wider screens keep the always-visible NavigationRail.
+/// Compact vs expanded shell layout.
+///
+/// The decision is structural and two-axis: the always-visible NavigationRail
+/// is used only while it fits the space it is given on **both** axes. The rail
+/// itself is 146 logical px wide and its labelled content (`labelType: all`,
+/// five destinations plus the leading link badge) needs ~389 px of height, which
+/// is the rail's own minimum, not a window preference. Flutter's rail is not
+/// scrollable (`navigation_rail.dart` only wraps the destinations in a scroll
+/// view when `scrollable: true`), so a window shorter than that clips the rail
+/// with a RenderFlex overflow however wide it is. Such a window — a landscape
+/// phone, for instance — gets the Drawer instead.
+///
+/// Measured on the real shell (`test/responsive_layout_test.dart`, fresh mount):
+/// 640x360 and 800x360 overflow the rail by 23 px; 1024x600 and 1280x400 fit.
 class ShellLayout {
+  /// Width at which the rail still fits beside a page's own minimum content.
+  /// This is a width-of-the-element rule, not a window preference: narrower than
+  /// this the drawer replaces the rail.
   static const double breakpoint = 600;
 
-  static bool isCompact(BuildContext context) =>
-      MediaQuery.sizeOf(context).width < breakpoint;
+  /// The rail's own minimum height: five labelled destinations plus the leading
+  /// badge measure ~389 px (380 px overflows by 9, 400 px fits). A shorter
+  /// window cannot show the rail without clipping it.
+  static const double railMinHeight = 400;
+
+  static bool isCompact(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return size.width < breakpoint || size.height < railMinHeight;
+  }
 }
 
 /// Key of the shell Scaffold, so the compact-layout app-bar button can open the
@@ -310,9 +332,38 @@ class InfoRow extends StatelessWidget {
   }
 }
 
+/// True when [body] fills the box it is handed instead of sizing to its content:
+/// a viewport that scrolls itself ([ScrollView], [SingleChildScrollView]) or a
+/// [Flex] that distributes the box through an [Expanded]/[Flexible] child (the
+/// shape [PickerShell] builds for its hint line). Such a body has no content
+/// height of its own to grow to, so it is given the box directly.
+bool _fillsItsBox(Widget body) {
+  if (body is ScrollView || body is SingleChildScrollView) return true;
+  if (body is Flex) {
+    for (final child in body.children) {
+      if (child is Flexible) return true;
+    }
+  }
+  return false;
+}
+
 /// A dialog/panel body with a desktop-friendly [maxWidth] that still shrinks to
-/// fit a phone screen. The surrounding dialog bounds the actual width, so
-/// `double.infinity` resolves to the available space and [maxWidth] caps it.
+/// fit a phone screen, and which never hands its content more than the space the
+/// dialog has to give it.
+///
+/// The rule is structural, and it lives here instead of in each page:
+///  * a body that fills its box (a picker list, a viewport) is given the box as
+///    is — it scrolls within it;
+///  * a content-sized body (a form column, a field, a radio list) is wrapped in
+///    a scroll view, so on a short window its rows stay reachable by scrolling
+///    instead of being clipped with a RenderFlex overflow.
+///
+/// [height] is the largest box the body may ask for, not one it gets: the dialog
+/// has already subtracted its inset, title and action row, and the incoming
+/// constraints clamp the request. A `PickerShell(maxWidth: 500, height: 400)`
+/// therefore measures 500x398 in a 1024x600 window but 500x158 in a 640x360
+/// landscape phone — and the body has to survive the smaller box, which is what
+/// the scroll view guarantees.
 class DialogBody extends StatelessWidget {
   const DialogBody({
     super.key,
@@ -327,15 +378,13 @@ class DialogBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // A fixed body height can exceed a small window and push the dialog's buttons off-screen
-    // (the dialog then looks frozen); clamp it to the available height.
-    var available = MediaQuery.sizeOf(context).height - 180;
-    if (available < 120) available = 120;
-    final h = height == null || height! < available ? height : available;
     // Use a FINITE width. `width: double.infinity` has an infinite intrinsic width, which
     // makes AlertDialog's IntrinsicWidth recurse without bound (the dialog freezes on open).
     // A finite SizedBox still shrinks to a narrower parent / dialog.
-    return SizedBox(width: maxWidth, height: h, child: child);
+    final body = _fillsItsBox(child)
+        ? child
+        : SingleChildScrollView(child: child);
+    return SizedBox(width: maxWidth, height: height, child: body);
   }
 }
 

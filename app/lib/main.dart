@@ -126,7 +126,9 @@ class _ShellPageState extends State<ShellPage> {
     );
     return Scaffold(
       key: shellScaffoldKey,
-      // Phones get a hamburger drawer; wide screens keep the visible rail.
+      // A window that cannot fit the rail on both axes (too narrow, or too short
+      // for its five labelled destinations) gets the drawer; otherwise the rail
+      // stays visible.
       drawer: compact ? _buildDrawer() : null,
       body: compact
           ? SafeArea(child: content)
@@ -192,11 +194,14 @@ class _ShellPageState extends State<ShellPage> {
                   children: [
                     _linkBadge(iconSize: 30),
                     const SizedBox(width: 12),
-                    Text(
-                      ConnectionManager.instance.isConnected
-                          ? 'Link established'
-                          : 'Not connected',
-                      style: Theme.of(context).textTheme.titleMedium,
+                    Expanded(
+                      child: Text(
+                        ConnectionManager.instance.isConnected
+                            ? 'Link established'
+                            : 'Not connected',
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
                     ),
                   ],
                 ),
