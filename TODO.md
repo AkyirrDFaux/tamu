@@ -148,39 +148,46 @@ fix):
   both now `kTextMuted` - white54 where they were white38, so *brighter*, deliberately; the device
   header's title 16 to 15 px, weight unchanged at w600; a failing entry's title and icon `redAccent`
   to `kError` `#FF8A80` (3.58 to 5.01 on a card - *lighter*, deliberately); the App-diagnostics
-  dialog's dump 11 to 13 px. The page's own empty state is untouched: it still prints `No logs
-  recorded` / `No logs match the filter`, not the toolkit's.
+  dialog's dump 11 to 13 px and its ink white to `kTextMuted` (white54) - *dimmer*: the old style
+  carried no colour and `SelectableText` merged the dialog body's white, the new one is the muted
+  token. The page's own empty state is untouched: it still prints `No logs recorded` / `No logs
+  match the filter`, not the toolkit's.
 - File viewer: hex offsets `0x00000000` lowercase to `hex32` uppercase, 11 to 13 px and `kTextMuted`
   (was white38); the hex bytes and the ASCII gutter 11 to 13 px (the gutter white54 to `kTextMuted`,
-  same value); an empty file now goes through the toolkit's empty state - an inbox icon (36 px,
-  `kTextMuted`) over the message - and an empty `.SNREG` prints `(no registry entries)`, which the
-  page printed nothing at all for before. `.SNREG` becomes a two-column table with a label row (ID
-  12 px `kOrange` out of a fixed 88 px box into a flex column; serial 12 to 13 px, white70 to
-  `kTextSecondary` - same value - and white24 to `kTextDisabled` when tombstoned); `.DV_` becomes a
-  three-column table (label mono 13 px, type muted 13 px, value mono 13 px, all from 12 px), with no
+  same value); the selectable text preview (a text file, and a `.LAY` header that will not decode)
+  12 to 13 px with its ink unchanged at white (`kTextPrimary`); an empty file now goes through the
+  toolkit's empty state - an inbox icon (36 px, `kTextMuted`) over the message - and an empty
+  `.SNREG` prints `(no registry entries)`, which the page printed nothing at all for before. `.SNREG`
+  becomes a two-column table with a label row (ID 12 px `kOrange` out of a fixed 88 px box into a
+  flex column; serial 12 to 13 px, white70 to `kTextSecondary` - same value); a tombstoned row's ID
+  white24 to `kTextDisabled` (*brighter*, `white38`) and its serial the same token at 12 to 13 px;
+  `.DV_` becomes a three-column table (label mono 13 px, type muted 13 px, value mono 13 px, all from
+  12 px), with no
   label row, under the block-name line (11 to 13 px); the `.DT_`/`.SV` rows become three-column tables
   and `.SUBREQ` a two-column one - the 10-12 px title/subtext goes to 13 px, the `.DT_`/`.SV` per-row
   left indent and the `Colors.black26` band under the decoded rows are gone (those rows now sit on the
   card surface, and the embedded tables drop their label row), the `N entries` subtitle becomes a chip
   (10 to 12 px), the block title 16 to 15 px (w600 unchanged), the SUBREQ leading icon 20 to 18 px and
-  its trigger/period/provider line 11 to 13 px; the LAY grid's header 11 to 13 px, its cell text 10 to
-  12 px (`labelSmall`) and its cell gap 1 to 2 px (the 44x22 cell box is unchanged).
+  its trigger/period/provider line 11 to 13 px; the LAY grid's header 11 to 13 px with its ink
+  white38 to `kTextMuted` - *brighter* - its cell text 10 to 12 px (`labelSmall`), its missing-cell
+  ink white24 to `kTextDisabled` (white38, *brighter*) and its cell gap 1 to 2 px (the 44x22 cell box
+  is unchanged).
 - Storage: the list's two-line tile (name over detail) becomes one table row with a label row - name
   and detail side by side at flex 4:6, so in a narrow window the name ellipsises where it once had the
   full width; the name 16 to 13 px (a file-table entry's name white38 to `kTextMuted`, *brighter*)
   and the detail 15 to 13 px muted; the type icon 24 to 18 px, the lock 16 px white24 to
-  `kTextDisabled` (white38, *brighter*), no row dividers, `Insets.row` padding; a size below 1 kB
-  prints `512 B` where the list printed `0.5 kB`; an empty list keeps `No file table` and gains the
-  inbox icon. The file-table page's records become four columns (`#`, File, Size, Offset) with a
-  label row: the headline 15 to 13 px and the record name 12 to 13 px (invalidated white24 to
-  `kTextDisabled`, *brighter*), the per-row type/delete icon is gone, the size is `formatFileSize`
-  per column where the row printed `0.5 kB` in the title and `512 B` in the subtitle, and an empty
-  live table prints `No live records` where it printed nothing; the invalidated toggle's headline
-  12 to 13 px.
+  `kTextDisabled` (white38, *brighter*), no row dividers, `Insets.row` padding; an empty list keeps
+  `No file table` and gains the inbox icon. The file-table page's records become four columns (`#`,
+  File, Size, Offset) with a label row: the headline 15 to 13 px and the record name 12 to 13 px
+  (invalidated white24 to `kTextDisabled`, *brighter*), the per-row type/delete icon is gone, the
+  size is `formatFileSize` per column where the row printed `0.5 kB` in the title and `512 B` in the
+  subtitle, and an empty live table prints `No live records` where it printed nothing; the
+  invalidated toggle's headline 12 to 13 px.
 - SNDB: the registry becomes a table with a label row - the ID leaves a leading `Text` (15 px,
   proportional) for a mono column (13 px), the serial goes 12 to 13 px and white to
-  `kTextSecondary` (white70 - one step *dimmer*, but not the muted token), the type icon moves from
-  trailing to leading (18 px on both sides of the move), and the orange row dividers are gone;
+  `kTextMuted` (white54 - two steps *dimmer*: the cell is `muted: true`, and the muted token still
+  measures 4.61:1 on a card), the type icon moves from trailing to leading (18 px on both sides of
+  the move), and the orange row dividers are gone;
   `Database empty` keeps its words and gains the inbox icon.
 - Subscriptions: the detail fields become a two-column table (label 15 to 13 px `kTextMuted`, value
   mono 15 to 13 px) with the label column sharing the row by flex instead of a fixed 120 px; the
