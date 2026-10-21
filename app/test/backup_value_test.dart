@@ -134,7 +134,8 @@ void main() {
     expect(isDevicePersistence('.TABLE  '), isTrue);
     expect(isDevicePersistence('.DT_0A'), isTrue);
     expect(isDevicePersistence('.DV_ff'), isTrue);
-    // User files and the semantic LED layout have no semantic form and are still archived.
+    // User files have no semantic form and are still archived; an LED layout has one now (it is
+    // archived as the semantic map), which is a different gate from this predicate.
     expect(isDevicePersistence('LAY1'), isFalse);
     expect(isDevicePersistence('notes.txt'), isFalse);
     expect(isDevicePersistence('SCR_000'), isFalse);
@@ -232,7 +233,8 @@ void main() {
     // carry the global index so the decoder rebuilds the same bank. A global >= 64 used to be
     // written as the local instance and restored into bank 0.
     final bank1 = makeBlockInfo(dynamicTypeBase + 1, 5, 3, 7);
-    final semantic = encodeSemantic(DataType.blockInfo, uint32ToBytes(bank1)) as Map;
+    final semantic =
+        encodeSemantic(DataType.blockInfo, uint32ToBytes(bank1)) as Map;
     expect(semantic['block'], 'Dynamic');
     expect(semantic['instance'], 64 + 5);
     expect(
@@ -251,7 +253,8 @@ void main() {
     // A script slot in bank 1 follows the same rule.
     final script = makeBlockInfo(scriptTypeBase + 1, 2, 1, 0);
     expect(
-      (encodeSemantic(DataType.blockInfo, uint32ToBytes(script)) as Map)['block'],
+      (encodeSemantic(DataType.blockInfo, uint32ToBytes(script))
+          as Map)['block'],
       'Script',
     );
     expect(

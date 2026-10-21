@@ -5,8 +5,8 @@
 /// containing per device JSON files if backing up the entire network."
 ///
 /// Capture records the ENTIRE register (every block entry, volatile and read-only
-/// included), the Subscriptions tables, the Scripts and the SNDB semantically, plus
-/// every device file. The zip holds one JSON per device (no aggregate manifest).
+/// included), the Subscriptions tables, the Scripts, the LED layouts and the SNDB semantically,
+/// plus every device file. The zip holds one JSON per device (no aggregate manifest).
 /// Restore matches items by name so small firmware changes do not break an archive,
 /// and items can be synced to a different device/block when compatible.
 library;
@@ -17,6 +17,7 @@ import 'dart:typed_data';
 import 'package:archive/archive_io.dart';
 
 import 'backup_format.dart';
+import 'backup_layout.dart';
 import 'backup_script.dart';
 import 'backup_value.dart';
 import 'block_registry.dart';

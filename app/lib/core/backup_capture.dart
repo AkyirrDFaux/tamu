@@ -2,18 +2,20 @@ part of 'backup.dart';
 
 /// True when a captured file's bytes are read from the device into the raw archive list.
 ///
-/// A script file carries a semantic form and is read whatever the caller's "include device files"
-/// choice; a raw device file is read only when the caller asked for it.
+/// A file of a kind that has a semantic form (a script, an LED layout) is read whatever the
+/// caller's "include device files" choice, because it is semantic data rather than a raw device
+/// file - dropping it there would lose a script or the layout from the archive entirely. A raw
+/// device file is read only when the caller asked for it.
 bool readCapturedFile(String name, {required bool includeFiles}) =>
-    includeFiles || backupFileKind(name) == 'Script';
+    includeFiles || hasSemanticForm(backupFileKind(name));
 
 /// True when a captured file is dropped from the raw archive list.
 ///
-/// A file the semantic pass already archived (a parsed script), the requester-subscription table
-/// and the device's own persistence files all have a semantic form, so a raw copy would only let a
-/// foreign device's bytes overwrite a target. "Include device files" off drops the raw device files
-/// too - but never a script: a parsed one is rebuilt from `RestoreKind.script`, and one whose image
-/// failed to parse keeps its bytes as the only copy.
+/// A file the semantic pass already archived (a parsed script or layout), the requester-subscription
+/// table and the device's own persistence files all have a semantic form, so a raw copy would only
+/// let a foreign device's bytes overwrite a target. "Include device files" off drops the raw device
+/// files too - but never a file whose kind has a semantic form: a parsed one is rebuilt from its
+/// semantic entry, and one whose image failed to parse keeps its bytes as the only copy.
 bool dropCapturedFile(
   String name, {
   required bool includeFiles,
@@ -22,7 +24,7 @@ bool dropCapturedFile(
     archivedSemantically ||
     isSubscriptionTable(name) ||
     isDevicePersistence(name) ||
-    (!includeFiles && backupFileKind(name) != 'Script');
+    (!includeFiles && !hasSemanticForm(backupFileKind(name)));
 
 Future<BackupDevice?> captureDevice(
   int deviceId, {
@@ -68,10 +70,25 @@ Future<BackupDevice?> captureDevice(
       AppDiagnostics.log('backup', 'script ${file.name} parse failed: $error');
     }
   }
+  // LED layouts: the same rule as the scripts. A layout file that decodes into the semantic map is
+  // dropped from the raw list and rebuilt on restore, so the archive never carries the same layout
+  // twice. The fallback is the bytes: a file the decoder rejects - an older 2-byte-header layout (its
+  // map starts where this format reads the height), a size that does not match its header, a table
+  // past the firmware's limit - has no semantic form, so the binary is its only copy and stays.
+  final layouts = <BackupLayout>[];
+  for (final file in files) {
+    if (file.kind != 'LED layout') continue;
+    try {
+      layouts.add(BackupLayout.fromImage(file.name, file.bytes));
+      semanticallyArchived.add(file.name);
+    } catch (error) {
+      AppDiagnostics.log('backup', 'layout ${file.name} parse failed: $error');
+    }
+  }
   // Keep only files that have no semantic form. Device-owned persistence (a dotted name - `.SV`,
   // `.SNREG`, `.DT_xx`/`.DV_xx`, `.TABLE`) is dropped too: the firmware writes it itself and the
   // restore rebuilds it semantically, so a raw copy would let a foreign device's persistent space
-  // be written over a target. LAY_1 and user files have no semantic form and are still archived.
+  // be written over a target. User files have no semantic form and are still archived.
   files.removeWhere(
     (f) => dropCapturedFile(
       f.name,
@@ -135,6 +152,7 @@ Future<BackupDevice?> captureDevice(
   if (captured.isEmpty &&
       files.isEmpty &&
       scripts.isEmpty &&
+      layouts.isEmpty &&
       requesters.isEmpty &&
       providers.isEmpty &&
       sndb.isEmpty) {
@@ -150,6 +168,7 @@ Future<BackupDevice?> captureDevice(
     serial: identity?.serial,
     blocks: captured,
     scripts: scripts,
+    layouts: layouts,
     requesterSubscriptions: requesters,
     providerSubscriptions: providers,
     sndb: sndb,

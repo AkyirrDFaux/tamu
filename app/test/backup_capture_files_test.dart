@@ -61,5 +61,40 @@ void main() {
       ),
       isTrue,
     );
+
+    // An LED layout now has a semantic form too, so the same rule applies to it: the parsed map is
+    // archived and the binary is dropped, and the file is read even when device files are not
+    // wanted (it is the display's setup, not a raw device file).
+    expect(readCapturedFile('LAY_1', includeFiles: false), isTrue);
+    expect(
+      dropCapturedFile('LAY_1', includeFiles: true, archivedSemantically: true),
+      isTrue,
+    );
+    expect(
+      dropCapturedFile(
+        'LAY_1',
+        includeFiles: false,
+        archivedSemantically: true,
+      ),
+      isTrue,
+    );
+    // One the decoder rejects has no semantic form after all, so its bytes stay - with device files
+    // off as well, because they are then the only copy.
+    expect(
+      dropCapturedFile(
+        'LAY_1',
+        includeFiles: false,
+        archivedSemantically: false,
+      ),
+      isFalse,
+    );
+    expect(
+      dropCapturedFile(
+        'LAY_1',
+        includeFiles: true,
+        archivedSemantically: false,
+      ),
+      isFalse,
+    );
   });
 }

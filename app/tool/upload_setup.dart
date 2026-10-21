@@ -114,6 +114,7 @@ Future<int> _run(List<String> args) async {
       '  ${device.address} ${device.type} name="${device.name}" '
       'serial=${device.serial ?? '-'} '
       'blocks=${device.blocks.length} scripts=${device.scripts.length} '
+      'layouts=${device.layouts.length} '
       'subs=${device.requesterSubscriptions.length} '
       'sndb=${device.sndb.length} files=${device.files.length}'
       '${devices.contains(device) ? '' : '   (not selected)'}',

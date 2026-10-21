@@ -228,17 +228,24 @@ enum RestoreKind { entry, script, subscription, sndb, file }
 
 /// True when a backup file has no semantic form and must be written back from its raw bytes.
 ///
-/// The requester-subscription table has its own semantic form (`RestoreKind.subscription`), and a
-/// Script file whose slot also carries a semantic script is rebuilt from `RestoreKind.script` -
-/// for both, the raw bytes are not the authoritative copy. Every other file is restored as-is,
-/// including a Script whose image failed to parse: it has no semantic form, so its bytes are the
-/// only copy and were being dropped.
+/// The requester-subscription table has its own semantic form (`RestoreKind.subscription`), a
+/// Script file whose slot also carries a semantic script is rebuilt from `RestoreKind.script`, and
+/// an LED layout whose file also carries a semantic layout is rebuilt from that layout - for all
+/// three, the raw bytes are not the authoritative copy. Every other file is restored as-is,
+/// including a Script or a layout whose image failed to parse: it has no semantic form, so its
+/// bytes are the only copy and were being dropped.
 bool restoresAsRawFile(BackupDevice device, BackupFile file) {
   if (isSubscriptionTable(file.name)) return false;
+  if (device.layouts.any((l) => _sameFile(l.file, file.name))) return false;
   if (file.kind != 'Script') return true;
   final slot = scriptFileId(file.name);
   return slot == null || !device.scripts.any((s) => s.slot == slot);
 }
+
+/// True when two names are the same storage file, ignoring the 8-byte wire padding a device-side
+/// name may carry (`LAY_1` vs `LAY_1   ` vs `LAY_1\0\0\0`).
+bool _sameFile(String a, String b) =>
+    normalizeFileName(a).toUpperCase() == normalizeFileName(b).toUpperCase();
 
 /// The issue text for an entry the restore skips BY DESIGN - a read-only register the device owns
 /// (its identity, its live readings). It is informational, not a lost item, so the apply never
@@ -493,11 +500,39 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
         RestoreItem(kind: RestoreKind.sndb, device: device, sndbEntry: sndb),
       );
     }
+    // A layout has a semantic form, so its bytes are rebuilt from the semantic map and written
+    // through the SAME file item the raw path uses: the layout file is written before the block
+    // entries, and the display's LayoutFile entry (an ordinary entry item) is written after it, so
+    // the field's trigger loads the layout as it lands. A layout the rebuild cannot describe is
+    // reported and skipped rather than written as a truncated map; the capture never produces one
+    // (it only stores what the decoder accepted), so this is an edited-archive case.
+    for (final layout in device.layouts) {
+      try {
+        items.add(
+          RestoreItem(
+            kind: RestoreKind.file,
+            device: device,
+            file: BackupFile(
+              name: layout.file,
+              kind: 'LED layout',
+              data: base64Encode(layout.toImage()),
+            ),
+          ),
+        );
+      } on FormatException catch (error) {
+        AppDiagnostics.log(
+          'backup',
+          'layout ${layout.file} of ${device.name} cannot be rebuilt: $error',
+        );
+      }
+    }
     for (final file in device.files) {
       // A file is skipped only when it has a semantic form: a Script rebuilt from
-      // `RestoreKind.script`, or the requester-subscription table from `RestoreKind.subscription`
-      // (the device regenerates its own `.SUBREQ` when it saves). A Script whose image failed to
-      // parse has no semantic form and is written back from its raw bytes.
+      // `RestoreKind.script`, a layout rebuilt from `device.layouts`, or the requester-subscription
+      // table from `RestoreKind.subscription` (the device regenerates its own `.SUBREQ` when it
+      // saves). A Script or layout whose image failed to parse has no semantic form and is written
+      // back from its raw bytes - which is how an archive captured before layouts had a semantic
+      // form still restores its `LAY_1`.
       if (!restoresAsRawFile(device, file)) continue;
       items.add(
         RestoreItem(kind: RestoreKind.file, device: device, file: file),

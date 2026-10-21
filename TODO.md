@@ -578,7 +578,12 @@ Open:
 - **`.SUBREQ` is removed when the requester table empties** (`SaveRequesterTable` deletes it at
   count 0).
 - **Backup zips** are semantic format 2, one JSON per device (no manifest); entries are built from
-  UTF-8 bytes. Large files are skipped above 128 kB by default.
+  UTF-8 bytes. Large files are skipped above 128 kB by default. An LED layout (`LAY_1`) is semantic
+  like a script: `layouts[]` carries the decoded map (brightness byte, width, height, LED indices,
+  `null` for an unused cell) and the restore rebuilds the file, so `files[]` holds only a file with
+  no semantic form - a layout the decoder rejects (older 2-byte header, size mismatch) keeps its
+  bytes there. `format` stays 2: `layouts` is additive, and an archive without it restores its raw
+  `LAY_1` exactly as before.
 
 - **Android builds.** All distributable APKs are built on Akyirr's machine; a build made here signs
   with a different debug key, so one must never be installed over an existing install or handed to

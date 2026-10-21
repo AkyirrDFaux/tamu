@@ -84,6 +84,16 @@ String backupFileKind(String name) {
   return 'Binary';
 }
 
+/// True when a file of [kind] has a semantic form in the backup model, so its bytes are decoded
+/// into that form and the file is rebuilt on restore (`Docs/App/Backup.md`: "a file that has a
+/// semantic form never also travels as raw bytes").
+///
+/// A `SCR_XXX` script is stored as the semantic script and an LED layout as the semantic map; both
+/// are read and dropped from `files[]` whatever the "include device files" choice says, because
+/// they are semantic data rather than a raw device file. A file of such a kind whose image fails to
+/// parse has no semantic form after all and keeps its bytes.
+bool hasSemanticForm(String kind) => kind == 'Script' || kind == 'LED layout';
+
 // ---------------------------------------------------------------------------
 // Semantic value codec
 // ---------------------------------------------------------------------------

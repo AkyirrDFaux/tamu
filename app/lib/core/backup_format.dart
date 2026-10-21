@@ -3,7 +3,8 @@
 /// "Creates a zipfile containing per device JSON files if backing up the entire
 /// network." Each device JSON holds the whole functionality set semantically: the
 /// entire Register (System/static/dynamic/serialised blocks and their entries), the
-/// Subscriptions tables, the Scripts, the SNDB (cores) and the device file system.
+/// Subscriptions tables, the Scripts, the LED layouts, the SNDB (cores) and the device
+/// file system.
 ///
 /// Pure data model + JSON; capture/restore I/O lives in `backup.dart`.
 library;
@@ -11,6 +12,7 @@ library;
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'backup_layout.dart';
 import 'backup_script.dart';
 import 'types.dart';
 
@@ -294,6 +296,12 @@ class BackupDevice {
   final String? serial;
   final List<BackupBlock> blocks;
   final List<BackupScript> scripts;
+
+  /// LED layouts, decoded from their files (`LAY_1`) into the semantic map. A layout listed here
+  /// is rebuilt on restore and never also travels in [files] - the same rule the scripts follow.
+  /// Absent in an archive captured before layouts had a semantic form: such an archive carries the
+  /// file's bytes in [files] instead, and the restore writes them as it does today.
+  final List<BackupLayout> layouts;
   final List<BackupRequesterSubscription> requesterSubscriptions;
   final List<BackupProviderSubscription> providerSubscriptions;
   final List<BackupSndbEntry> sndb;
@@ -309,6 +317,7 @@ class BackupDevice {
     this.serial,
     required this.blocks,
     this.scripts = const [],
+    this.layouts = const [],
     this.requesterSubscriptions = const [],
     this.providerSubscriptions = const [],
     this.sndb = const [],
@@ -330,6 +339,9 @@ class BackupDevice {
     'serial': serial,
     'blocks': [for (final b in blocks) b.toJson()],
     'scripts': [for (final s in scripts) s.toJson()],
+    // Omitted when empty, so a device with no layout (and any archive captured before layouts had
+    // a semantic form) is written exactly as before.
+    if (layouts.isNotEmpty) 'layouts': [for (final l in layouts) l.toJson()],
     'subscriptions': {
       'requester': [for (final s in requesterSubscriptions) s.toJson()],
       'provider': [for (final s in providerSubscriptions) s.toJson()],
@@ -342,6 +354,12 @@ class BackupDevice {
     // Development phase: no pre-release archives ship, so only the current
     // semantic format is read. The legacy numeric-format rejection was dropped
     // along with the other pre-release archive branches.
+    //
+    // The format version stays 2 with the semantic layout added: `layouts` is an ADDITIVE key, and
+    // an archive without it (every archive captured before layouts had a semantic form, and the
+    // setup archives) reads as a device whose layouts are absent - its `LAY_1` is in `files` and
+    // the restore writes those bytes as before. So no archive in the wild is broken by the change
+    // and none needs a version-gated branch: the two shapes coexist under one version.
     final format = (json['format'] as num?)?.toInt() ?? backupFormatVersion;
     final subs = json['subscriptions'] as Map<String, dynamic>? ?? const {};
     return BackupDevice(
@@ -359,6 +377,9 @@ class BackupDevice {
           .toList(),
       scripts: (json['scripts'] as List? ?? [])
           .map((s) => BackupScript.fromJson(s as Map<String, dynamic>))
+          .toList(),
+      layouts: (json['layouts'] as List? ?? [])
+          .map((l) => BackupLayout.fromJson(l as Map<String, dynamic>))
           .toList(),
       requesterSubscriptions: (subs['requester'] as List? ?? [])
           .map(
