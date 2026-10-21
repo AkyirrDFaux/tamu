@@ -205,6 +205,32 @@ older one and want a rewrite (`backup_value_test.dart`, `backup_restore_test.dar
 `hil_bootloader_upload_test.dart`). 1c.4 formatted only the files it touched and left that churn in
 place, so a `dart format .` sweep is its own card.
 
+### Responsive shared layer (2026-10-21) - two-axis shell, dialog bodies that fit
+
+From the read-only study of the same date: the app must fit both vertically and horizontally oriented
+screens, and the decision per element comes from that element's own minimum size against the space it
+is given - never from a window width alone. Two breaks were measured and fixed in the shared layer, so
+every page inherits the fix:
+
+- **Shell (`ShellLayout`, `widgets.dart`).** The gate was width only (600 px), but the labelled
+  `NavigationRail` needs ~389 px of height for five destinations plus the leading badge and Flutter's
+  rail does not scroll. A landscape phone window (640x360, 800x360, fresh mount) overflowed it by
+  `23 pixels on the bottom`. `isCompact` is now `width < 600 || height < 400`: a short window gets the
+  Drawer and the app bar's hamburger, however wide it is. 1024x600 and 1280x400 keep the rail.
+- **Dialogs/pickers (`DialogBody`, `widgets.dart`).** The body used to hand its content whatever
+  `SizedBox` the caller asked for after a `window - 180` guess, so a content-sized body (a form column,
+  a field, a radio list) laid out at its natural height inside a 158 px box at 640x360 and overflowed
+  (882 px with 20 rows; 346-466 px for a 12-field form) - clipped and unreachable. A body that fills
+  its box (a picker list, a viewport, or a `Column` with an `Expanded` child) still gets the box; every
+  other body now gets a scroll view, so its rows stay reachable. The caller's `height` stays the
+  largest box it may ask for and the dialog's own constraints clamp it, which is why
+  `PickerShell(500, 400)` still measures 500x158 at 640x360 but now scrolls to its last row.
+
+Pinned by `test/responsive_layout_test.dart` (real shell at 640x360 / 800x360 / 1024x600 / 1280x400;
+`PickerShell(500, 400)` with a viewport body and with a content-sized body at 640x360 and 360x480);
+the same test fails on the pre-fix code with the 23 px rail exception and the 882 px form overflow.
+Per-element variants stay per batch - the 1c.5 / 1c.6 pages own their own layouts.
+
 ### Contrast audit (2026-10-17) - theme level fixed, per-page offenders parked
 
 Akyirr: "some UI elements are hard to see because foreground and background colours sit too close
