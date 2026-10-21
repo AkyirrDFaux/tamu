@@ -127,32 +127,71 @@ appended it last - same items, same labels, same selection.
 **1c.4 (the viewer cluster).** `file_viewers.dart`, `log_page.dart`, `storage_page.dart`,
 `sndb_page.dart` and `subscriptions_page.dart` render through `viewer_kit.dart` (one table shell, one
 hex/ASCII view, one paging shell, one chip row) and `formatters.dart`; `register_backup_view.dart` was
-already there. The six files now carry 0 `Colors.`, 0 `TextStyle(` and 0 `fontSize:` (was 21 / 33 / 27
-across them) and no bare `EdgeInsets`. `widgets.dart`'s `ChipLabel` - whose last user was the log page -
-is deleted; `HexView.widths` replaced the file viewer's private `bytesPerLineOptions`; `MonoText` grew
-a `tone` for a struck (tombstoned) cell; `formatFileSize` moved from the Storage page into
-`formatters.dart`. Kept local, with the reason: the LAY LED grid (a spatial map where the cell's
-position is the datum, not rows of columns), the selectable text preview (`SelectableText` is what
-makes a text file copyable out of the app; `MonoText` is a plain `Text`) and the byte-per-line
-`PopupMenuButton` (a control, not a viewer shape).
+already there. The six files now carry 0 `Colors.`, 0 `TextStyle(` and 0 `fontSize:`, and no bare
+`EdgeInsets` - at `f6b8e05` they carried 27 lines holding a `Colors.` reference (31 occurrences), 38
+`TextStyle(` literals, 27 `fontSize:` and 31 `EdgeInsets`, with `register_backup_view.dart`
+contributing none of them (`file_viewers` 11 / 19 / 18 / 13, `log_page` 4 / 5 / 4 / 5,
+`storage_page` 6 / 5 / 3 / 2, `sndb_page` 0 / 2 / 2 / 0, `subscriptions_page` 6 / 7 / 0 / 11).
+`widgets.dart`'s `ChipLabel` - whose last user was the log page - is deleted; `HexView.widths` replaced
+the file viewer's private `bytesPerLineOptions`; `MonoText` grew a `tone` for a struck (tombstoned)
+cell; `formatFileSize` moved from the Storage page into `formatters.dart`. Kept local, with the
+reason: the LAY LED grid (a spatial map where the cell's position is the datum, not rows of columns),
+the selectable text preview (`SelectableText` is what makes a text file copyable out of the app;
+`MonoText` is a plain `Text`) and the byte-per-line `PopupMenuButton` (a control, not a viewer shape).
 Every table sizes its columns by `flex` and pins a width only where the datum is fixed width, so the
 viewers reflow between a portrait and a landscape window instead of resting on one pixel width.
-**Visible changes of 1c.4 to veto:** the log tile's chips 10 to 12 px with 1 to 2 px vertical padding
-(`ChipLabel` to `TamuChip`); the log footer 11 to 13 px and the device header's count 10 to 12 px, both
-now `kTextMuted` (brighter than the old `white38`); the diagnostics dialog 11 to 13 px; a failing
-entry's red `redAccent` to `kError` `#FF8A80` (3.58 to 5.01 on a card - the point of the fix, so it is
-lighter); the file viewer's hex offsets now `hex32`-shaped (uppercase) and `kTextMuted`, and an empty
-file goes through the toolkit's empty state (icon + text); the `.SNREG/.SV/.DT_/.SUBREQ` rows become
-table rows with column labels (the embedded card tables drop the labels), their 10 px subtext becomes
-13 px, a block subtitle becomes a chip, the SUBREQ leading icon 20 to 18 px; the LAY grid's header
-11 to 13 px, its cell text 10 to 12 px and its cell gap 1 to 2 px (the 44x22 cell box is unchanged);
-the Storage list becomes a table (type icon 24 to 18 px, `Insets.row` row padding, no row dividers) and
-a size below 1 kB prints `512 B` where the page printed `0.5 kB`; the file-table page becomes a
-four-column table (`#`, File, Size, Offset); the SNDB registry loses its orange row dividers and moves
-the device-type icon from trailing to leading; the subscription detail rows become a two-column table
-(the label column shares the row by flex instead of a fixed 120 px), the delete icon `Colors.red` to
-`kError`, the "Add Subscription" button loses its 14 px padding override (the theme's 16/12 applies),
-and an empty/unavailable tab gains the toolkit's icon.
+**Visible changes of 1c.4 to veto** - every size in px, every ratio from `dart run tool/contrast.dart`
+(any change that moves a glyph's size, weight or brightness is here even when it is the point of the
+fix):
+- Log page: the tile's chips 10 to 12 px with 1 to 2 px vertical padding (`ChipLabel` to `TamuChip`;
+  the ink stays `kTextSecondary`); the footer 11 to 13 px and the device header's count 10 to 12 px,
+  both now `kTextMuted` - white54 where they were white38, so *brighter*, deliberately; the device
+  header's title 16 to 15 px, weight unchanged at w600; a failing entry's title and icon `redAccent`
+  to `kError` `#FF8A80` (3.58 to 5.01 on a card - *lighter*, deliberately); the App-diagnostics
+  dialog's dump 11 to 13 px. The page's own empty state is untouched: it still prints `No logs
+  recorded` / `No logs match the filter`, not the toolkit's.
+- File viewer: hex offsets `0x00000000` lowercase to `hex32` uppercase, 11 to 13 px and `kTextMuted`
+  (was white38); the hex bytes and the ASCII gutter 11 to 13 px (the gutter white54 to `kTextMuted`,
+  same value); an empty file now goes through the toolkit's empty state - an inbox icon (36 px,
+  `kTextMuted`) over the message - and an empty `.SNREG` prints `(no registry entries)`, which the
+  page printed nothing at all for before. `.SNREG` becomes a two-column table with a label row (ID
+  12 px `kOrange` out of a fixed 88 px box into a flex column; serial 12 to 13 px, white70 to
+  `kTextSecondary` - same value - and white24 to `kTextDisabled` when tombstoned); `.DV_` becomes a
+  three-column table (label mono 13 px, type muted 13 px, value mono 13 px, all from 12 px), with no
+  label row, under the block-name line (11 to 13 px); the `.DT_`/`.SV` rows become three-column tables
+  and `.SUBREQ` a two-column one - the 10-12 px title/subtext goes to 13 px, the `.DT_`/`.SV` per-row
+  left indent and the `Colors.black26` band under the decoded rows are gone (those rows now sit on the
+  card surface, and the embedded tables drop their label row), the `N entries` subtitle becomes a chip
+  (10 to 12 px), the block title 16 to 15 px (w600 unchanged), the SUBREQ leading icon 20 to 18 px and
+  its trigger/period/provider line 11 to 13 px; the LAY grid's header 11 to 13 px, its cell text 10 to
+  12 px (`labelSmall`) and its cell gap 1 to 2 px (the 44x22 cell box is unchanged).
+- Storage: the list's two-line tile (name over detail) becomes one table row with a label row - name
+  and detail side by side at flex 4:6, so in a narrow window the name ellipsises where it once had the
+  full width; the name 16 to 13 px (a file-table entry's name white38 to `kTextMuted`, *brighter*)
+  and the detail 15 to 13 px muted; the type icon 24 to 18 px, the lock 16 px white24 to
+  `kTextDisabled` (white38, *brighter*), no row dividers, `Insets.row` padding; a size below 1 kB
+  prints `512 B` where the list printed `0.5 kB`; an empty list keeps `No file table` and gains the
+  inbox icon. The file-table page's records become four columns (`#`, File, Size, Offset) with a
+  label row: the headline 15 to 13 px and the record name 12 to 13 px (invalidated white24 to
+  `kTextDisabled`, *brighter*), the per-row type/delete icon is gone, the size is `formatFileSize`
+  per column where the row printed `0.5 kB` in the title and `512 B` in the subtitle, and an empty
+  live table prints `No live records` where it printed nothing; the invalidated toggle's headline
+  12 to 13 px.
+- SNDB: the registry becomes a table with a label row - the ID leaves a leading `Text` (15 px,
+  proportional) for a mono column (13 px), the serial goes 12 to 13 px and white to
+  `kTextSecondary` (white70 - one step *dimmer*, but not the muted token), the type icon moves from
+  trailing to leading (18 px on both sides of the move), and the orange row dividers are gone;
+  `Database empty` keeps its words and gains the inbox icon.
+- Subscriptions: the detail fields become a two-column table (label 15 to 13 px `kTextMuted`, value
+  mono 15 to 13 px) with the label column sharing the row by flex instead of a fixed 120 px; the
+  unavailable-tab message 15 to 13 px (padding 16 to `Spacing.xl`, the same 16); the error line 15 to
+  13 px (ink already `kError`); the delete icon `Colors.red` to `kError` and 24 to 20 px; "Add
+  Subscription" loses its 14 px padding override (the theme's 16/12 applies), making the button 4 px
+  shorter; both empty tabs keep their words and gain the inbox icon, white54 15 px to `kTextPrimary`
+  15 px - *brighter*.
+No visible change where the diff only swapped a literal for its own token: the log tile's card colour
+(`kSurfaceAlt` is the theme's card colour), its 20 px icon, the 12 px page padding, the 6/2 chip gaps
+and the 2 px card margins all keep their old values.
 
 Same behaviour per page; one batch per cluster, stopped for Akyirr's review after each. Per batch:
 `dart format`, then `dart fix --apply --code=curly_braces_in_flow_control_structures`, then
