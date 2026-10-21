@@ -65,13 +65,20 @@ Nothing is written without --yes. Exit codes: 0 ok, 2 usage/archive, 3 no rig or
 4 write or read-back failure.
 ''';
 
+/// How the CLI opens the link to the core. The default is the real serial channel
+/// ([RigChannel.open]); a test substitutes a fake so the plan and the refusal paths run without a
+/// rig.
+typedef RigOpener = Future<RigLink> Function(String portName);
+
 Future<void> main(List<String> args) async {
   // The VM ignores an int returned from an async main, so the code goes through `exitCode`
   // (which also lets stdout flush, unlike exit()).
-  exitCode = await _run(args);
+  exitCode = await runUpload(args);
 }
 
-Future<int> _run(List<String> args) async {
+/// The CLI: returns the exit code, with the link opener injectable for tests.
+Future<int> runUpload(List<String> args, {RigOpener? openRig}) async {
+  final open = openRig ?? RigChannel.open;
   final options = _Options.parse(args);
   if (options == null) {
     stderr.writeln(_usage);
@@ -130,7 +137,7 @@ Future<int> _run(List<String> args) async {
 
   // --- The link: optional. Without a rig the plan is built against zero live devices, which is
   // a complete (and safe) dry run: every archive device is reported as having no target. -----
-  RigChannel? channel;
+  RigLink? channel;
   final loadedLib = preloadLibserialport();
   final port = options.port ?? corePortCandidates().firstOrNull;
   var liveIdentities = <int, DeviceIdentity>{};
@@ -145,7 +152,7 @@ Future<int> _run(List<String> args) async {
       '\nLINK $port${loadedLib == null ? '' : ' (libserialport: $loadedLib)'}',
     );
     try {
-      channel = await RigChannel.open(port);
+      channel = await open(port);
       installRequestChannel(channel);
       final settled = await _awaitCore();
       if (!settled) {
@@ -185,25 +192,24 @@ Future<int> _run(List<String> args) async {
   }
 
   if (channel == null) {
-    stderr.writeln('ERROR: refusing to write without a rig.');
-    return _exitNoRig;
+    return _refuse(null, 'ERROR: refusing to write without a rig.');
   }
   if (refusals.isNotEmpty) {
-    stderr.writeln(
+    return _refuse(
+      channel,
       'ERROR: refusing to write: ${refusals.length} archive device(s) are not restorable '
       'onto this rig (see above).',
     );
-    return _exitNoRig;
   }
   final withoutTarget = plan.devices
       .where((d) => plan.deviceTargets[d.id] == null)
       .toList();
   if (withoutTarget.isNotEmpty) {
-    stderr.writeln(
+    return _refuse(
+      channel,
       'ERROR: refusing to write: no live target for '
       '${withoutTarget.map((d) => d.name).join(', ')}.',
     );
-    return _exitNoRig;
   }
 
   // --- The write, between a read-back before it and one after. ------------------------------
@@ -227,6 +233,18 @@ Future<int> _run(List<String> args) async {
   }
   stdout.writeln('\nOK: the setup is on the rig and the read-back agrees.');
   return 0;
+}
+
+/// Prints [message] on stderr, closes the link and returns the "no rig / refused" exit code.
+///
+/// Every refusal comes through here for a reason: an open serial port keeps its readers alive and
+/// with them the whole isolate, so a refusal that just returned never let the process exit -
+/// measured on 2026-10-21, the `--yes` run died on a 400 s timeout (exit 124) while the dry run on
+/// the same port exited at once.
+Future<int> _refuse(RigLink? channel, String message) async {
+  stderr.writeln(message);
+  await channel?.close();
+  return _exitNoRig;
 }
 
 /// Waits for the core to answer a ping (opening the port resets it).

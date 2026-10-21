@@ -91,14 +91,45 @@ List<String> corePortCandidates() {
   return out;
 }
 
+/// The link surface a command-line tool uses: the request channel the service clients talk
+/// through, plus an explicit shutdown.
+///
+/// Shutdown is part of the surface because an open serial port keeps the Dart isolate alive: a
+/// tool that returns without closing hangs instead of exiting. Naming it here keeps the old bug
+/// (a refusal that returned with the port still open, killed at 400 s) out of reach, and lets the
+/// CLI's exit paths be tested without a rig - a fake link counts its closes.
+abstract class RigLink implements RequestChannel {
+  /// Closes the port and fails anything still waiting for a reply. Idempotent.
+  Future<void> close();
+}
+
+/// The receive path: USB link frames, then the packet stream (Docs/Services/App Interface.md).
+///
+/// The core answers INSIDE the USB link framing (`0xFA | CRC8 | Length | payload | 0xBF`), so a
+/// reply needs both stages - [UsbFrameParser] to unwrap the link frame, then
+/// [PacketStreamParser] to decode the packet. `UsbTransport` composes exactly these two stages
+/// for the app (`transport.dart`); this is that composition for the command-line link, and the
+/// channel feeds every incoming byte through it.
+///
+/// Skipping the first stage is not a near miss: the packet parser takes framing bytes for packet
+/// bytes, resyncs through a frame it can never complete and returns nothing, so every request
+/// times out against a perfectly healthy rig.
+class RigReceivePath {
+  final UsbFrameParser _frames = UsbFrameParser();
+  final PacketStreamParser _packets = PacketStreamParser();
+
+  /// Feeds wire bytes and returns the frames they completed (usually none, or one per reply).
+  List<PacketFrame> feed(List<int> bytes) => _packets.feed(_frames.feed(bytes));
+}
+
 /// One request/response channel over a serial port (the core, at address 1).
-class RigChannel implements RequestChannel {
+class RigChannel implements RigLink {
   RigChannel._(this._port, this._reader);
 
   final SerialPort _port;
   final SerialPortReader _reader;
   StreamSubscription<Uint8List>? _sub;
-  final PacketStreamParser _parser = PacketStreamParser();
+  final RigReceivePath _receive = RigReceivePath();
   final FragmentReassembler _reassembler = FragmentReassembler();
   final Map<int, Completer<PacketResponse>> _pending = {};
   int _nextTxId = tridAppBase;
@@ -253,7 +284,7 @@ class RigChannel implements RequestChannel {
   void _onBytes(Uint8List bytes) {
     final List<PacketFrame> frames;
     try {
-      frames = _parser.feed(bytes);
+      frames = _receive.feed(bytes);
     } on FormatException catch (error) {
       lastError = 'packet parse error: $error';
       return;
@@ -304,7 +335,11 @@ class RigChannel implements RequestChannel {
     _reassembler.clear();
   }
 
+  @override
   Future<void> close() async {
+    // Idempotent: the CLI closes on every exit path, and a second close must not free the
+    // native port handle twice.
+    if (!_open && _sub == null) return;
     _open = false;
     _failPending('link closed');
     await _sub?.cancel();
