@@ -22,6 +22,14 @@ Per part selection of synced items, can sync to different device/block/part if t
 The storage format is semantic (types, keys, enums, etc. are described in words), numbers are not used unless it's the literal value or index.
 This makes the system more resilient against small firmware updates (reordering, adding/removing of fields).
 
+The archive functionally mirrors the persistence-giving state of each device; it is version
+independent only because that state is described semantically. A per-device JSON carries the
+Register's persistent entries, every dynamic block's whole table (a non-persistent row travels as
+structure, without a value), the requester subscription table, the Scripts, the LED layouts, the
+SNDB of a core and the device's files. State that no persistence file holds is absent: a static
+block's non-persistent field is not archived, and neither is the provider subscription table, which
+lives in RAM.
+
 A file is archived as a binary only when it has no semantic form: a `SCR_XXX` script is stored
 only as the semantic script and the file is rebuilt on restore, so a file that has a semantic
 form never also travels as raw bytes.
