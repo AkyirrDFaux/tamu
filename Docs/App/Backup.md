@@ -19,6 +19,11 @@ Per part selection of synced items, can sync to different device/block/part if t
 - Footer shows the selected / unavailable counts; **Restore** applies the checked items and
   reports written/failed counts.
 
+A restore cancels the requester entries the archive does not carry, so the device's requester table
+ends up equal to the archive's. The cancellation is part of the restore and takes effect at once, not
+at the next boot. The provider table is never part of an archive — it is not persistent — so a restore
+never writes provider rows; a device re-forms them when its requesters re-request.
+
 The storage format is semantic (types, keys, enums, etc. are described in words), numbers are not used unless it's the literal value or index.
 This makes the system more resilient against small firmware updates (reordering, adding/removing of fields).
 
