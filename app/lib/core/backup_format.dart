@@ -1,10 +1,10 @@
 /// Semantic backup archive model (Docs/App/Backup.md).
 ///
 /// "Creates a zipfile containing per device JSON files if backing up the entire
-/// network." Each device JSON holds the whole functionality set semantically: the
-/// entire Register (System/static/dynamic/serialised blocks and their entries), the
-/// Subscriptions tables, the Scripts, the LED layouts, the SNDB (cores) and the device
-/// file system.
+/// network." Each device JSON mirrors the persistence-giving state semantically: the
+/// Register's persistent entries (a dynamic block travels whole, its non-persistent rows as
+/// structural rows without values), the requester subscription table, the Scripts, the LED
+/// layouts, the SNDB (cores) and the device file system.
 ///
 /// Pure data model + JSON; capture/restore I/O lives in `backup.dart`.
 library;
