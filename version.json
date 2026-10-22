@@ -1,8 +1,8 @@
 {
   "DAS_v0_1": {
-    "day": 15,
-    "hash": "b66bd088c96a217eb5adbb0898692c628836d6bbdad6f7d229a6a731e9ae7905",
-    "iteration": 2,
+    "day": 21,
+    "hash": "ca4c76b418843b3bd97d5f8817ca2df2f627fd3ba8192c1735215bff07a88870",
+    "iteration": 1,
     "month": 10,
     "year": 26
   },
@@ -14,16 +14,16 @@
     "year": 26
   },
   "Valu_v2_0": {
-    "day": 15,
-    "hash": "209cc4d4d9ddea55b6fd48406cae771d138ab8f47d684317870ad5ccb8318bd2",
+    "day": 21,
+    "hash": "8f9364873522ed4f6d09f186e6c0b81540cc204df22de0759dec1569f6c35896",
     "iteration": 1,
     "month": 10,
     "year": 26
   },
   "app": {
-    "day": 21,
-    "hash": "c502c75fe79c35c8c97d7dd0e81cf9c75b51ae6559013812bf155920f4f2eb75",
-    "iteration": 5,
+    "day": 22,
+    "hash": "ee7a8676a836bb4c3d93401fa0ec67a5aa44a5fe7cbc89a13a6f0e4d75704561",
+    "iteration": 3,
     "month": 10,
     "year": 26
   }
