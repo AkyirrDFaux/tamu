@@ -32,6 +32,10 @@ const int _button = 0x09;
 /// list that is short for a real reason.
 const int _pwm = 0x04;
 
+/// A block type the rig's own archive carries in TWO instances (0 and 1), so a message built per
+/// source BLOCK would name it twice: `the target carries no LED Display, LED Display block`.
+const int _led = 0x06;
+
 void main() {
   group('upload_setup: a lost block read', () {
     late Directory dir;
@@ -42,10 +46,14 @@ void main() {
       if (dir.existsSync()) dir.deleteSync(recursive: true);
     });
 
-    /// Runs the CLI against [rig] with the archive the rig's own setup would carry.
-    Future<({int code, String out, String err})> run(_FakeRig rig) async {
+    /// Runs the CLI against [rig] with the archive the rig's own setup would carry, plus any
+    /// [extraBlocks] the case needs.
+    Future<({int code, String out, String err})> run(
+      _FakeRig rig, {
+      List<({int type, int instance})> extraBlocks = const [],
+    }) async {
       final archive = File('${dir.path}/setup.zip')
-        ..writeAsBytesSync(_setupZip());
+        ..writeAsBytesSync(_setupZip(extra: extraBlocks));
       final out = _Captured();
       final err = _Captured();
       final code = await IOOverrides.runZoned(
@@ -84,11 +92,11 @@ void main() {
     });
 
     test('a block instance read that loses one reply is retried', () async {
-      final rig = _FakeRig(types: [_button], buttonMetaFailures: 1);
+      final rig = _FakeRig(types: [_button], metaFailures: {_button: 1});
 
       final result = await run(rig);
 
-      expect(rig.buttonMetaCalls, 2);
+      expect(rig.metaCalls[_button], 2);
       expect(result.out, contains('items=1/1 to write'));
       expect(result.out, isNot(contains('carries no')));
       expect(result.code, 0);
@@ -140,14 +148,11 @@ void main() {
     });
 
     test('the rig\'s own case: a Button instance read that never answers', () async {
-      final rig = _FakeRig(
-        types: [_button],
-        buttonMetaFailures: RegisterClient.snapshotReadAttempts,
-      );
+      final rig = _FakeRig(types: [_button], deadTypes: {_button});
 
       final result = await run(rig);
 
-      expect(rig.buttonMetaCalls, RegisterClient.snapshotReadAttempts);
+      expect(rig.metaCalls[_button], RegisterClient.snapshotReadAttempts);
       expect(
         result.out,
         contains(
@@ -160,6 +165,57 @@ void main() {
         isNot(contains('carries no Button block')),
         reason: 'this is the message the 2026-10-22 run printed for a healthy rig',
       );
+      expect(result.code, 3);
+    });
+
+    test('a two-instance type nobody answers is named once, not twice', () async {
+      // `akyirr_setup.zip` carries the LED Display at instances 0 AND 1. The unread message is
+      // built per source BLOCK, so an undeduped list would name the type twice - and AC 1 wants
+      // one name per block type.
+      final rig = _FakeRig(
+        types: [_button, _led],
+        instances: {_led: 1},
+        deadTypes: {_led},
+      );
+
+      final result = await run(
+        rig,
+        extraBlocks: const [(type: _led, instance: 0), (type: _led, instance: 1)],
+      );
+
+      expect(
+        rig.metaCalls[_led],
+        2 * RegisterClient.snapshotReadAttempts,
+        reason: 'BOTH instances were re-sent, and neither answered',
+      );
+      expect(
+        result.out,
+        contains(
+          'REFUSED: the target did not answer the LED Display block read '
+          '(${RegisterClient.snapshotReadAttempts} attempts) - unread, not absent',
+        ),
+        reason: 'a second instance is not a second block type',
+      );
+      expect(result.out, isNot(contains('LED Display, LED Display')));
+      expect(result.code, 3);
+    });
+
+    test('a two-instance type really absent is refused once, as before', () async {
+      // Same archive shape, but the device answers everything: it simply has no LED Display.
+      final rig = _FakeRig(types: [_button]);
+
+      final result = await run(
+        rig,
+        extraBlocks: const [(type: _led, instance: 0), (type: _led, instance: 1)],
+      );
+
+      expect(
+        result.out,
+        contains('REFUSED: the target carries no LED Display block'),
+        reason: 'AC 1\'s message, unchanged for a type carried in several instances',
+      );
+      expect(result.out, isNot(contains('LED Display, LED Display')));
+      expect(result.out, isNot(contains('unread')));
       expect(result.code, 3);
     });
 
@@ -187,8 +243,9 @@ void main() {
   });
 }
 
-/// A one-device setup archive whose device carries a persistent Button entry.
-List<int> _setupZip() {
+/// A one-device setup archive whose device carries a persistent Button entry, plus [extra]
+/// blocks (type + instance) - the LED Display twice, as `akyirr_setup.zip` carries it.
+List<int> _setupZip({List<({int type, int instance})> extra = const []}) {
   final json = jsonEncode(<String, Object?>{
     'app': 'tamuapp',
     'format': backupFormatVersion,
@@ -215,6 +272,15 @@ List<int> _setupZip() {
           },
         ],
       },
+      for (final b in extra)
+        {
+          'type': blockTypeDisplayName(b.type),
+          'typeIndex': b.type,
+          'instance': b.instance,
+          'name': blockTypeDisplayName(b.type),
+          // No entries: this case is about the block TYPE's presence, not a value.
+          'entries': <Object?>[],
+        },
     ],
     'scripts': <Object?>[],
     'files': <Object?>[],
@@ -226,24 +292,39 @@ List<int> _setupZip() {
 }
 
 /// A rig whose Register service answers a fixed block list, and can lose a chosen number of
-/// replies: the first [enumerateFailures] block-type enumerations and the first
-/// [buttonMetaFailures] Button instance reads go unanswered, exactly as a lost reply does.
+/// replies: the first [enumerateFailures] block-type enumerations, and the first N instance-meta
+/// reads of a type in [metaFailures], go unanswered exactly as a lost reply does. A type in
+/// [deadTypes] never answers its instance-meta read at all.
 class _FakeRig implements RigLink {
   _FakeRig({
     required this.types,
+    this.instances = const {},
     this.enumerateFailures = 0,
-    this.buttonMetaFailures = 0,
+    this.metaFailures = const {},
+    this.deadTypes = const {},
     this.typeFieldFailures = 0,
   });
 
-  /// The block types the device reports, one instance each.
+  /// The block types the device reports.
   final List<int> types;
+
+  /// Per type: the highest instance the enumeration reports (absent = one instance, index 0).
+  final Map<int, int> instances;
+
   final int enumerateFailures;
-  final int buttonMetaFailures;
+
+  /// Per type: how many of its instance-metadata reads go unanswered - a lost reply, which the
+  /// bounded retry is supposed to recover.
+  final Map<int, int> metaFailures;
+
+  /// Types whose instance-metadata read never answers: the device is up and the block is UNREAD,
+  /// which the run must not report as absent.
+  final Set<int> deadTypes;
+
   final int typeFieldFailures;
 
   int enumerateCalls = 0;
-  int buttonMetaCalls = 0;
+  final Map<int, int> metaCalls = {};
   int typeFieldCalls = 0;
   int closeCount = 0;
   bool _closed = false;
@@ -306,7 +387,9 @@ class _FakeRig implements RigLink {
       case RegisterCid.enumerateBlocks:
         enumerateCalls++;
         if (enumerateCalls <= enumerateFailures) return null;
-        return _words([for (final type in types) type << 6]);
+        return _words([
+          for (final type in types) (type << 6) | (instances[type] ?? 0),
+        ]);
       case RegisterCid.enumerateFields:
         final packed = payload[0] | (payload[1] << 8);
         if (!types.contains((packed >> 6) & 0x3FF)) return null;
@@ -327,10 +410,9 @@ class _FakeRig implements RigLink {
           if (type == systemBlockTypeValue) {
             return _reply(DataType.none.value, 9, _padded('System'));
           }
-          if (type == _button) {
-            buttonMetaCalls++;
-            if (buttonMetaCalls <= buttonMetaFailures) return null;
-          }
+          final calls = metaCalls[type] = (metaCalls[type] ?? 0) + 1;
+          if (deadTypes.contains(type)) return null;
+          if (calls <= (metaFailures[type] ?? 0)) return null;
           if (!types.contains(type)) return null;
           return _reply(
             DataType.none.value,

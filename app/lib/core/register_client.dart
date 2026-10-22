@@ -73,7 +73,7 @@ class RegisterClient {
   /// 2026-10-22 a healthy rig was refused as "the target carries no Button block" that way.
   /// The bound is the core ping's order of magnitude (`tool/upload_setup.dart` `_awaitCore`
   /// re-sends 20 times, 250 ms apart, with an 800 ms timeout): 3 attempts of the 2 s request
-  /// timeout, the same 250 ms apart, spans ~4.5 s.
+  /// timeout, the same 250 ms apart, spans at most 3 x 2 s + 2 x 250 ms = 6.5 s.
   static const int snapshotReadAttempts = 3;
 
   /// The gap between two attempts of [requestRead].

@@ -350,8 +350,11 @@ List<String> _reportPlan(
     // are never confused - on 2026-10-22 a healthy rig was refused as "the target carries no
     // Button block" by a single lost reply.
     final targetTypes = {for (final b in target.blocks) b.type};
-    final absent = <String>[];
-    final unreadTypes = <String>[];
+    // Ordered sets: a type the archive carries in more than one instance (the LED Display sits at
+    // instances 0 and 1 in `akyirr_setup.zip`) is one block type, so it is named once - "carries
+    // no LED Display block", never "no LED Display, LED Display block".
+    final absent = <String>{};
+    final unreadTypes = <String>{};
     for (final b in source.blocks) {
       if (isDynamicType(b.typeIndex) ||
           isScriptType(b.typeIndex) ||
