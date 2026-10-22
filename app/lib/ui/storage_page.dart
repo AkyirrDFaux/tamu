@@ -320,10 +320,10 @@ class _StoragePageState extends State<StoragePage>
     // the decoder can compute the field layout and name the blocks and fields.
     List<({int type, int inst, ValueInfo meta, String name})?>? blocks;
     if (normalizeFileName(file.name).toUpperCase() == '.SV') {
-      final all = await RegisterClient(deviceId: widget.deviceId).readBlocks();
-      blocks = all
-          ?.where((b) => b != null && isStaticRegistryType(b.type))
-          .toList();
+      final all = (await RegisterClient(
+        deviceId: widget.deviceId,
+      ).readBlocks())?.blocks;
+      blocks = all?.where((b) => isStaticRegistryType(b.type)).toList();
     }
     if (!mounted) return;
     Navigator.of(context).push(

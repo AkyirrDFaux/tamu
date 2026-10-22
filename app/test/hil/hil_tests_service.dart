@@ -757,9 +757,7 @@ final List<HilTest> serviceTests = <HilTest>[
           final blocks = await reg.readBlocks(scriptSlots: [slot]);
           expect(blocks, isNotNull);
           expect(
-            blocks!.any(
-              (b) => b != null && isScriptType(b.type) && b.inst == slot,
-            ),
+            blocks!.blocks.any((b) => isScriptType(b.type) && b.inst == slot),
             isTrue,
             reason: 'script block listed by readBlocks()',
           );

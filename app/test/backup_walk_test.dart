@@ -116,10 +116,10 @@ void main() {
   test(
     'the shared walk visits static and dynamic blocks in one order',
     () async {
-      final walked = await walkDeviceBlocks(_FakeRegister());
+      final walked = (await walkDeviceBlocks(_FakeRegister()))!.blocks;
       expect(walked, isNotNull);
 
-      final pwm = walked!.firstWhere((b) => b.type == 0x04);
+      final pwm = walked.firstWhere((b) => b.type == 0x04);
       expect(pwm.name, 'Fan');
       expect(pwm.isDynamic, isFalse);
       expect(pwm.fields.map((f) => f.field), [0, 1]);
@@ -138,7 +138,7 @@ void main() {
   );
 
   test('capture keeps persistent entries and a dynamic block\'s structure', () async {
-    final walked = (await walkDeviceBlocks(_FakeRegister()))!;
+    final walked = (await walkDeviceBlocks(_FakeRegister()))!.blocks;
 
     // A STATIC block's non-persistent field is dropped: its layout is compile-time, so there is
     // nothing structural to archive and the value is a live output.
@@ -171,7 +171,7 @@ void main() {
   test(
     'a captured device round-trips through the archive back to live bytes',
     () async {
-      final walked = (await walkDeviceBlocks(_FakeRegister()))!;
+      final walked = (await walkDeviceBlocks(_FakeRegister()))!.blocks;
       final device = BackupDevice(
         type: 'Tamu v2.0A',
         typeId: 1,

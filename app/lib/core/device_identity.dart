@@ -36,7 +36,15 @@ class DeviceIdentity {
 
 /// Reads [id]'s identity: a ping first, then the System fields. Returns null when the device
 /// does not answer the ping - it is not reachable on the bus.
-Future<DeviceIdentity?> readDeviceIdentity(int id) async {
+///
+/// [readAttempts] is passed through to the Register reads: a caller that decides device SHAPE
+/// from this identity (a restore's snapshot, the setup tool's rig scan) passes
+/// `RegisterClient.snapshotReadAttempts`, because a lost Device Type read reports type 0 - a
+/// device of the wrong type - rather than a read that never arrived.
+Future<DeviceIdentity?> readDeviceIdentity(
+  int id, {
+  int readAttempts = 1,
+}) async {
   final ping = await serviceRequest(
     id,
     ServiceType.device,
@@ -46,7 +54,7 @@ Future<DeviceIdentity?> readDeviceIdentity(int id) async {
   );
   if (ping == null) return null;
 
-  final reg = RegisterClient(deviceId: id);
+  final reg = RegisterClient(deviceId: id, readAttempts: readAttempts);
   // System fields are exposed as one entry per field at key 0 (the struct position is not
   // on the wire; Docs/Services/System Block and Device Commands.md).
   String? serial;

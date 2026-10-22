@@ -103,12 +103,18 @@ class LiveDevice {
   final int capabilities;
   final List<LiveBlock> blocks;
 
+  /// The block types whose instance metadata read was lost, so this snapshot cannot say whether
+  /// the device carries them ([BlocksRead.unreadTypes]). Such a type is UNREAD, not absent: a
+  /// plan must not read it as the wrong device shape.
+  final Set<int> unreadTypes;
+
   LiveDevice({
     required this.id,
     required this.name,
     this.serial,
     this.capabilities = 0,
     required this.blocks,
+    this.unreadTypes = const {},
   });
 
   LiveBlock? findBlock(BackupBlock source) {
@@ -182,23 +188,46 @@ int? resolveArchiveAddress(RestorePlan plan, String address) {
   return (idNet(local.id) << 10) | node;
 }
 
+/// One device's live read: the snapshot, and - when the device answered but its block list did
+/// not - why there is no snapshot.
+///
+/// [device] is null both when the device did not answer a ping (it is not on the bus) and when
+/// it answered its identity but not its block list. The two are not the same thing: only the
+/// second carries [unread], so a plan can say "the block list was not read" instead of "the
+/// target carries no `<Type>` block".
+typedef LiveRead = ({LiveDevice? device, String? unread});
+
 /// Reads a live device's identity and block/entry layout (metadata only, no values).
 ///
 /// The identity comes from the device itself, so a snapshot does not depend on the app's device
 /// database having been refreshed first - and a `dart run` tool with no database at all reads
 /// the same snapshot.
-Future<LiveDevice?> readLiveDevice(int deviceId) async {
-  final identity = await readDeviceIdentity(deviceId);
-  final reg = RegisterClient(deviceId: deviceId);
+Future<LiveRead> readLiveDevice(int deviceId) async {
+  const attempts = RegisterClient.snapshotReadAttempts;
+  final identity = await readDeviceIdentity(deviceId, readAttempts: attempts);
+  // No ping answer: the device is not on the bus, which is not a lost read.
+  if (identity == null) return (device: null, unread: null);
+  final reg = RegisterClient(deviceId: deviceId, readAttempts: attempts);
   final walked = await walkDeviceBlocks(reg);
-  if (walked == null) return null;
-  final live = [for (final b in walked) liveBlockFromVisited(b)];
-  return LiveDevice(
-    id: deviceId,
-    name: identity?.name ?? 'Device ${idToString(deviceId)}',
-    serial: identity?.serial,
-    capabilities: identity?.capabilities ?? 0,
-    blocks: live,
+  if (walked == null) {
+    return (
+      device: null,
+      unread:
+          'the target ${idToString(deviceId)} did not answer its block list read '
+          '($attempts attempts)',
+    );
+  }
+  final live = [for (final b in walked.blocks) liveBlockFromVisited(b)];
+  return (
+    device: LiveDevice(
+      id: deviceId,
+      name: identity.name,
+      serial: identity.serial,
+      capabilities: identity.capabilities,
+      blocks: live,
+      unreadTypes: walked.unreadTypes,
+    ),
+    unread: null,
   );
 }
 
@@ -315,12 +344,19 @@ class RestorePlan {
   final Map<String, LiveBlock>
   blockTargets; // "deviceId:type:instance" -> live block
 
+  /// The live nodes that answered their identity but not their block list: node id -> why there
+  /// is no snapshot. A source device with no target that appears here was NOT absent from the
+  /// rig - its snapshot is incomplete, and a plan must say that rather than let the missing
+  /// target read as the wrong device shape.
+  final Map<int, String> unreadDevices;
+
   RestorePlan({
     required this.devices,
     required this.liveDevices,
     required this.items,
     required this.deviceTargets,
     required this.blockTargets,
+    this.unreadDevices = const {},
   });
 
   static String blockKey(int deviceId, BackupBlock block) =>
@@ -453,18 +489,30 @@ Future<List<int>> _networkNodeIds() async {
 /// it is now (and a `dart run` tool can build one). Sequential on purpose: the RS bus is
 /// half-duplex and the connection layer serialises requests, so concurrent reads would not
 /// overlap.
-Future<List<LiveDevice>> _readLiveDevices() async {
+///
+/// A node that answered its identity but not its block list is reported in `unread` instead of
+/// being dropped from `live`: dropping it would make a live device look like one that is not on
+/// the rig at all.
+Future<({List<LiveDevice> live, Map<int, String> unread})>
+_readLiveDevices() async {
   final live = <LiveDevice>[];
+  final unread = <int, String>{};
   for (final id in await _networkNodeIds()) {
-    final snapshot = await readLiveDevice(id);
-    if (snapshot != null) live.add(snapshot);
+    final read = await readLiveDevice(id);
+    final snapshot = read.device;
+    if (snapshot != null) {
+      live.add(snapshot);
+    } else if (read.unread != null) {
+      unread[id] = read.unread!;
+    }
   }
-  return live;
+  return (live: live, unread: unread);
 }
 
 /// Builds a restore plan for [devices] against the currently known devices.
 Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
-  final live = await _readLiveDevices();
+  final read = await _readLiveDevices();
+  final live = read.live;
 
   final targets = <int, LiveDevice>{};
   for (final source in devices) {
@@ -562,6 +610,7 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
     items: items,
     deviceTargets: targets,
     blockTargets: {},
+    unreadDevices: read.unread,
   );
   plan.resolve();
   // Default selection: restorable items; read-only entries stay informational.
@@ -678,7 +727,8 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
   }
   if (created == 0) return 0;
 
-  final live = await _readLiveDevices();
+  final read = await _readLiveDevices();
+  final live = read.live;
   plan.liveDevices
     ..clear()
     ..addAll(live);

@@ -11,6 +11,20 @@ import 'service_request.dart';
 import 'system_schema.dart';
 import 'types.dart';
 
+/// One block instance a device reported: its type, instance, own metadata and name.
+typedef ReportedBlock = ({int type, int inst, ValueInfo meta, String name});
+
+/// What [RegisterClient.readBlocks] found: the blocks, and the block types the device did not
+/// answer for.
+///
+/// [unreadTypes] is NOT a list of absent blocks. A type lands there when an instance's metadata
+/// read came back with no answer even after the bounded retry, so as far as anyone knows the
+/// device still carries it. A caller that decides device SHAPE (a restore's target match) has to
+/// read such a type as *unread*, never as *absent*: on 2026-10-22 a healthy rig was refused as
+/// "the target carries no Button block" out of exactly that confusion, one lost reply in a block
+/// walk that had no retry.
+typedef BlocksRead = ({List<ReportedBlock> blocks, Set<int> unreadTypes});
+
 /// One entry of a dynamic block (dynamic/keyed memory is part of the Register service).
 class DynField {
   final int index;
@@ -38,7 +52,32 @@ class DynBlock {
 class RegisterClient {
   final int deviceId;
 
-  RegisterClient({required this.deviceId});
+  RegisterClient({required this.deviceId, this.readAttempts = 1});
+
+  /// How many times a READ is re-sent before the caller treats the reply as lost.
+  ///
+  /// Default 1 - a read is sent once, as it always was, and no timer is scheduled - because the
+  /// UI polls a device that may simply be unplugged, and a polling refresh must not slow down
+  /// three-fold for a reply that is never going to come.
+  ///
+  /// A caller that builds a SNAPSHOT (a capture, a restore's live walk) passes
+  /// [snapshotReadAttempts] instead, because there a lost reply does not read as "no data": it
+  /// reads as a device carrying fewer blocks than it does, or as a device of the wrong type.
+  final int readAttempts;
+
+  /// The attempt bound a SNAPSHOT read uses.
+  ///
+  /// The RS link is half-duplex and a reply can be lost to a collision or to a reset still in
+  /// progress. [readBlocks] skips an instance whose metadata read came back null, so a device
+  /// that loses one reply looks exactly like a device with a shorter block list - and on
+  /// 2026-10-22 a healthy rig was refused as "the target carries no Button block" that way.
+  /// The bound is the core ping's order of magnitude (`tool/upload_setup.dart` `_awaitCore`
+  /// re-sends 20 times, 250 ms apart, with an 800 ms timeout): 3 attempts of the 2 s request
+  /// timeout, the same 250 ms apart, spans ~4.5 s.
+  static const int snapshotReadAttempts = 3;
+
+  /// The gap between two attempts of [requestRead].
+  static const Duration readRetryDelay = Duration(milliseconds: 250);
 
   Duration get _requestTimeout => const Duration(seconds: 2);
 
@@ -56,6 +95,24 @@ class RegisterClient {
     defaultTimeout: _requestTimeout,
     tag: 'register',
   );
+
+  /// Sends a READ - a CID that returns data and changes nothing - and re-sends it while no reply
+  /// arrives, so one lost reply does not read as empty data. Returns null only when every
+  /// attempt went unanswered.
+  ///
+  /// Writes go through [request] unchanged: a re-sent write is not a safe thing to guess at.
+  Future<List<int>?> requestRead(
+    int cid, {
+    List<int> payload = const [],
+    Duration? timeout,
+  }) async {
+    for (var attempt = 1; attempt <= readAttempts; attempt++) {
+      final reply = await request(cid, payload: payload, timeout: timeout);
+      if (reply != null) return reply;
+      if (attempt < readAttempts) await Future<void>.delayed(readRetryDelay);
+    }
+    return null;
+  }
 
   /// Like [request], but keeps the packet-level SUCCESS/FAIL flags alongside the payload.
   /// The flag-answering commands (dynamic create/set-name/delete, Save/Recall All) report
@@ -131,7 +188,7 @@ class RegisterClient {
   Future<List<({int type, int maxInstance})>?> enumerateBlockTypes() async {
     final cached = _blockTypesCache;
     if (cached != null) return cached;
-    final reply = await request(RegisterCid.enumerateBlocks, payload: const []);
+    final reply = await requestRead(RegisterCid.enumerateBlocks, payload: const []);
     if (reply == null) return null;
     final types = [
       for (final w in _streamWords(reply))
@@ -194,7 +251,7 @@ class RegisterClient {
       return _fieldKeysCache[blockType];
     }
     final packed = ((blockType & 0x3FF) << 6) | (instance & 0x3F);
-    final reply = await request(
+    final reply = await requestRead(
       RegisterCid.enumerateFields,
       payload: [packed & 0xFF, (packed >> 8) & 0xFF, 0, 0],
     );
@@ -262,7 +319,7 @@ class RegisterClient {
   ) async {
     // For block meta, we need type|inst|field=0xFF|key=0
     final payload = blockInfoBytes(blockType, instance, 0xFF, 0);
-    final reply = await request(RegisterCid.read, payload: payload);
+    final reply = await requestRead(RegisterCid.read, payload: payload);
     if (reply == null || reply.length < 8) return null;
     final meta = ValueInfo.fromBytes(reply, 4);
     final name = reply.length > 8 ? _blockName(reply.sublist(8)) : '';
@@ -283,7 +340,7 @@ class RegisterClient {
       field,
       member != null ? 0 : key,
     );
-    final reply = await request(RegisterCid.read, payload: payload);
+    final reply = await requestRead(RegisterCid.read, payload: payload);
     if (reply == null || reply.length < 8) return null;
     final meta = ValueInfo.fromBytes(reply, 4);
     var value = valueSlice(reply, meta.size);
@@ -313,7 +370,7 @@ class RegisterClient {
     int key,
   ) async {
     final payload = blockInfoBytes(blockType, instance, field, key);
-    final reply = await request(RegisterCid.read, payload: payload);
+    final reply = await requestRead(RegisterCid.read, payload: payload);
     if (reply == null || reply.length < 8) return null;
     // The wire ValueInfo has no key, so the one we asked with goes back into the meta.
     final meta = ValueInfo.fromBytes(reply, 4, key);
@@ -338,11 +395,11 @@ class RegisterClient {
   /// Reads all blocks (static + dynamic + loaded scripts) by enumerating types/instances.
   /// The System block (type 0, inst 0) is a virtual block not in the static registry.
   /// The banked dynamic (0x3F0-0x3F3) and script (0x3F4-0x3F7) ranges are handled separately.
-  Future<List<({int type, int inst, ValueInfo meta, String name})?>?>
-  readBlocks({List<int>? scriptSlots}) async {
+  Future<BlocksRead?> readBlocks({List<int>? scriptSlots}) async {
     final types = await enumerateBlockTypes();
     if (types == null) return null;
-    final blocks = <({int type, int inst, ValueInfo meta, String name})?>[];
+    final blocks = <ReportedBlock>[];
+    final unread = <int>{};
 
     // System block (type 0, inst 0): a virtual block not present in the static registry.
     final sysBlock = await readBlockMeta(systemBlockTypeValue, 0);
@@ -353,6 +410,8 @@ class RegisterClient {
         meta: sysBlock.meta,
         name: 'System',
       ));
+    } else {
+      unread.add(systemBlockTypeValue);
     }
 
     // Use the already-fetched type list; static instances are dense (0..maxInstance),
@@ -360,14 +419,16 @@ class RegisterClient {
     Future<void> addType(({int type, int maxInstance}) t) async {
       for (var inst = 0; inst <= t.maxInstance; inst++) {
         final block = await readBlockMeta(t.type, inst);
-        if (block != null) {
-          blocks.add((
-            type: t.type,
-            inst: inst,
-            meta: block.meta,
-            name: block.name,
-          ));
+        if (block == null) {
+          unread.add(t.type);
+          continue;
         }
+        blocks.add((
+          type: t.type,
+          inst: inst,
+          meta: block.meta,
+          name: block.name,
+        ));
       }
     }
 
@@ -386,14 +447,16 @@ class RegisterClient {
             dynamicTypeForIndex(g),
             dynamicInstanceForIndex(g),
           );
-          if (block != null) {
-            blocks.add((
-              type: dynamicTypeForIndex(g),
-              inst: g,
-              meta: block.meta,
-              name: block.name,
-            ));
+          if (block == null) {
+            unread.add(t.type);
+            continue;
           }
+          blocks.add((
+            type: dynamicTypeForIndex(g),
+            inst: g,
+            meta: block.meta,
+            name: block.name,
+          ));
         }
         continue;
       }
@@ -405,17 +468,19 @@ class RegisterClient {
         scriptTypeForIndex(slot),
         scriptInstanceForIndex(slot),
       );
-      if (block != null) {
-        blocks.add((
-          type: scriptTypeForIndex(slot),
-          inst: slot,
-          meta: block.meta,
-          name: block.name,
-        ));
+      if (block == null) {
+        unread.add(scriptTypeForIndex(slot));
+        continue;
       }
+      blocks.add((
+        type: scriptTypeForIndex(slot),
+        inst: slot,
+        meta: block.meta,
+        name: block.name,
+      ));
     }
 
-    return blocks;
+    return (blocks: blocks, unreadTypes: unread);
   }
 
   /// The persistent fields of each static block type, read from the device (CID 1 field list
@@ -482,14 +547,14 @@ class RegisterClient {
     int block, {
     bool withName = true,
   }) async {
-    final reply = await request(RegisterCid.read, payload: _dynBi(block, 0xFF));
+    final reply = await requestRead(RegisterCid.read, payload: _dynBi(block, 0xFF));
     if (reply == null || reply.length < 8) return null;
     final meta = ValueInfo.fromBytes(reply, 4);
 
     var name = '';
     if (withName) {
       // The name is a fixed 16-char field (Docs "Dynamic Block Table"), read by CID 0x12.
-      final nameReply = await request(
+      final nameReply = await requestRead(
         DynamicCid.getName,
         payload: [block & 0xFF, (block >> 8) & 0xFF],
       );
@@ -506,7 +571,7 @@ class RegisterClient {
     int field, [
     int key = 0,
   ]) async {
-    final reply = await request(
+    final reply = await requestRead(
       RegisterCid.read,
       payload: _dynBi(block.index, field, key),
     );

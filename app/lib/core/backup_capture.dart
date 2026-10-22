@@ -33,13 +33,19 @@ Future<BackupDevice?> captureDevice(
 }) async {
   // The identity is read off the device, so a capture describes the device itself rather than
   // whatever the app's device database last saw.
-  final identity = await readDeviceIdentity(deviceId);
-  final reg = RegisterClient(deviceId: deviceId);
+  final identity = await readDeviceIdentity(
+    deviceId,
+    readAttempts: RegisterClient.snapshotReadAttempts,
+  );
+  final reg = RegisterClient(
+    deviceId: deviceId,
+    readAttempts: RegisterClient.snapshotReadAttempts,
+  );
   final captured = <BackupBlock>[];
 
   final walked = await walkDeviceBlocks(reg);
   if (walked != null) {
-    for (final b in walked) {
+    for (final b in walked.blocks) {
       final block = backupBlockFromVisited(b);
       if (block.entries.isNotEmpty) captured.add(block);
     }

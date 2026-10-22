@@ -189,11 +189,11 @@ class _RegisterPageState extends State<RegisterPage>
       }
       // Script blocks are not in the type list (the Script service owns their slots), so
       // pass its loaded list to keep them in the view.
-      final blocks = await _client.readBlocks(
+      final blocks = (await _client.readBlocks(
         scriptSlots: await ScriptClient(
           deviceId: widget.deviceId,
         ).loadedScripts(),
-      );
+      ))?.blocks;
       if (!mounted) return;
       if (blocks == null) {
         setState(() => _error = 'Device did not respond');
@@ -209,10 +209,6 @@ class _RegisterPageState extends State<RegisterPage>
           );
       _fieldCache.clear();
       for (final b in blocks) {
-        if (b == null) {
-          newMetas.add(null);
-          continue;
-        }
         final cacheKey = (b.type << 8) | b.inst;
         if (oldCache.containsKey(cacheKey)) {
           _fieldCache[cacheKey] = oldCache[cacheKey]!;

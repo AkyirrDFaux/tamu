@@ -135,17 +135,24 @@ class VisitedBlock {
   });
 }
 
+/// What [walkDeviceBlocks] visited, plus the block types the device did not answer for.
+///
+/// [unreadTypes] carries the block types whose instance metadata read was lost (see
+/// [BlocksRead.unreadTypes]): a type in there is UNREAD, not absent, so a caller that decides
+/// device shape must not report it as a block the device does not carry.
+typedef DeviceWalk = ({List<VisitedBlock> blocks, Set<int> unreadTypes});
+
 /// Walks every restorable block of [reg] in one defined read order, skipping script
 /// blocks and dynamic tombstones. Returns null when the block list cannot be read.
 ///
 /// This is the single place that decides which fields/keys a device has and how they
 /// are named, so backup capture and the live restore snapshot cannot drift apart.
-Future<List<VisitedBlock>?> walkDeviceBlocks(RegisterClient reg) async {
-  final blocks = await reg.readBlocks();
-  if (blocks == null) return null;
+Future<DeviceWalk?> walkDeviceBlocks(RegisterClient reg) async {
+  final read = await reg.readBlocks();
+  if (read == null) return null;
+  final blocks = read.blocks;
   final out = <VisitedBlock>[];
   for (final b in blocks) {
-    if (b == null) continue;
     final type = b.type;
     if (isScriptType(type)) continue; // scripts captured semantically
     // Dynamic tombstones (None/Deleted) carry no data; skip them.
@@ -253,7 +260,7 @@ Future<List<VisitedBlock>?> walkDeviceBlocks(RegisterClient reg) async {
       );
     }
   }
-  return out;
+  return (blocks: out, unreadTypes: read.unreadTypes);
 }
 
 /// Capture side of the shared walk: a walked block as the semantic backup model.

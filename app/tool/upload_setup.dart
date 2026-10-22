@@ -273,7 +273,12 @@ Future<Map<int, DeviceIdentity>> _scanRig() async {
   final identities = <int, DeviceIdentity>{};
   stdout.writeln('  rig:');
   for (final id in sorted) {
-    final identity = await readDeviceIdentity(id);
+    // This identity decides the per-device TYPE refusal, so a lost reply must not read as the
+    // wrong device type.
+    final identity = await readDeviceIdentity(
+      id,
+      readAttempts: RegisterClient.snapshotReadAttempts,
+    );
     if (identity == null) {
       stdout.writeln('    ${idToString(id)}: no answer');
       continue;
@@ -293,6 +298,10 @@ Future<Map<int, DeviceIdentity>> _scanRig() async {
 /// A device is refused when its live target is a different device TYPE (the archive's own type
 /// word against the live System Device Type) or when the target does not carry a block type the
 /// archive's device has: writing either would put one device's setup on another kind of device.
+///
+/// A block type the target did not ANSWER for is a third case, and not a shape mismatch: the run
+/// says the read failed and leaves "the target carries no `<Type>` block" for a device that really
+/// lacks it (see `RegisterClient.snapshotReadAttempts`).
 List<String> _reportPlan(
   RestorePlan plan,
   Map<int, DeviceIdentity> liveIdentities,
@@ -313,7 +322,17 @@ List<String> _reportPlan(
                 '(live serial ${target.serial ?? '-'}, matched by $basis)'}'
       '  items=$selected/${items.length} to write, $skippedWrites unresolved',
     );
-    if (target == null) continue;
+    if (target == null) {
+      // No snapshot is not the same as no device: a node that answered its identity but not its
+      // block list is UNREAD, and saying so is the whole difference between "check the link"
+      // and "this is the wrong rig for the archive".
+      final unread = plan.unreadDevices[source.id];
+      if (unread != null) {
+        refusals.add(source.name);
+        stdout.writeln('    REFUSED: $unread - unread, not absent');
+      }
+      continue;
+    }
 
     final live = liveIdentities[target.id];
     final sourceType = DeviceType.fromValue(source.typeId);
@@ -325,22 +344,42 @@ List<String> _reportPlan(
       );
       continue;
     }
+    // A source block type the live snapshot does not carry is one of two very different things:
+    // the target really has no such block (a wrong-device-type refusal, which must stay), or the
+    // walk lost that block's metadata read. The client reports the second as UNREAD, so the two
+    // are never confused - on 2026-10-22 a healthy rig was refused as "the target carries no
+    // Button block" by a single lost reply.
     final targetTypes = {for (final b in target.blocks) b.type};
-    final missingTypes = {
-      for (final b in source.blocks)
-        if (!isDynamicType(b.typeIndex) &&
-            !isScriptType(b.typeIndex) &&
-            b.typeIndex != systemBlockTypeValue &&
-            !targetTypes.contains(b.typeIndex))
-          blockTypeDisplayName(b.typeIndex),
-    };
-    if (missingTypes.isNotEmpty) {
-      refusals.add(source.name);
-      stdout.writeln(
-        '    REFUSED: the target carries no ${missingTypes.join(', ')} block',
+    final absent = <String>[];
+    final unreadTypes = <String>[];
+    for (final b in source.blocks) {
+      if (isDynamicType(b.typeIndex) ||
+          isScriptType(b.typeIndex) ||
+          b.typeIndex == systemBlockTypeValue ||
+          targetTypes.contains(b.typeIndex)) {
+        continue;
+      }
+      (target.unreadTypes.contains(b.typeIndex) ? unreadTypes : absent).add(
+        blockTypeDisplayName(b.typeIndex),
       );
-      continue;
     }
+    var refused = false;
+    if (unreadTypes.isNotEmpty) {
+      refusals.add(source.name);
+      refused = true;
+      stdout.writeln(
+        '    REFUSED: the target did not answer the ${unreadTypes.join(', ')} block read '
+        '(${RegisterClient.snapshotReadAttempts} attempts) - unread, not absent',
+      );
+    }
+    if (absent.isNotEmpty) {
+      // A refusal stops the per-device report here, exactly as it did when there was one case:
+      // the "not ready" lines describe a device that is about to be written, and this one is not.
+      if (!refused) refusals.add(source.name);
+      refused = true;
+      stdout.writeln('    REFUSED: the target carries no ${absent.join(', ')} block');
+    }
+    if (refused) continue;
     for (final item in skipped) {
       if (item.issue == readOnlyIssue) continue;
       stdout.writeln(

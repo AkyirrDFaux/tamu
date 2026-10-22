@@ -63,13 +63,12 @@ class FieldSelection {
 /// Reads a device's blocks (with any loaded-script slots) as pickable selections.
 Future<List<BlockSelection>> fetchBlockSelections(int deviceId) async {
   final reg = RegisterClient(deviceId: deviceId);
-  final blocks = await reg.readBlocks(
+  final read = await reg.readBlocks(
     scriptSlots: await ScriptClient(deviceId: deviceId).loadedScripts(),
   );
-  if (blocks == null) return [];
+  if (read == null) return [];
   final out = <BlockSelection>[];
-  for (final b in blocks) {
-    if (b == null) continue;
+  for (final b in read.blocks) {
     final label = b.name.trim().isNotEmpty
         ? b.name
         : BlockType.fromValue(b.type).label;

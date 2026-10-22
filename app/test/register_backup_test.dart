@@ -17,17 +17,19 @@ class _CountingRegisterClient extends RegisterClient {
   int readBlocksCalls = 0;
 
   @override
-  Future<List<({int type, int inst, ValueInfo meta, String name})?>?>
-  readBlocks({List<int>? scriptSlots}) async {
+  Future<BlocksRead?> readBlocks({List<int>? scriptSlots}) async {
     readBlocksCalls++;
-    return [
-      (
-        type: 0,
-        inst: 0,
-        meta: const ValueInfo(type: 0, size: 9),
-        name: 'System',
-      ),
-    ];
+    return (
+      blocks: <ReportedBlock>[
+        (
+          type: 0,
+          inst: 0,
+          meta: const ValueInfo(type: 0, size: 9),
+          name: 'System',
+        ),
+      ],
+      unreadTypes: const <int>{},
+    );
   }
 }
 
