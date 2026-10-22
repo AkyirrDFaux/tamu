@@ -219,9 +219,14 @@ class BackupRequesterSubscription {
       );
 }
 
-/// Provider-side subscription (installed by a remote requester: the entry the device
-/// serves, which the restore rebuilds so a requester that is not present to re-register
-/// still finds the node sending).
+/// Provider-side subscription (installed by a remote requester: the entry the device serves).
+///
+/// NOT captured and NOT restored: the provider table is RAM-only on this side
+/// (`Docs/Services/Subscriptions.md` - "active until cancelled; the information is not persistent
+/// on this side"), so the archive must not carry it - it would be state with no persistence file
+/// behind it. The node rebuilds it when its requesters re-register after boot. The model is kept so
+/// an archive captured by an earlier build still reads (the restore ignores it, see
+/// `buildRestorePlan`).
 class BackupProviderSubscription {
   final String requester; // "net.device"
   final int trid; // subscription identity; the provider table is keyed by it

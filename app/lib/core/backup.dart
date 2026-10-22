@@ -5,9 +5,9 @@
 /// containing per device JSON files if backing up the entire network."
 ///
 /// Capture records the register's PERSISTENT state (every persistent block entry; a dynamic
-/// block's non-persistent rows travel as structural rows without their values), the Subscriptions
-/// tables, the Scripts, the LED layouts and the SNDB semantically, plus every device file. The
-/// zip holds one JSON per device (no aggregate manifest).
+/// block's non-persistent rows travel as structural rows without their values), the requester
+/// subscription table, the Scripts, the LED layouts and the SNDB semantically, plus every device
+/// file. The zip holds one JSON per device (no aggregate manifest).
 /// Restore matches items by name so small firmware changes do not break an archive,
 /// and items can be synced to a different device/block when compatible.
 library;

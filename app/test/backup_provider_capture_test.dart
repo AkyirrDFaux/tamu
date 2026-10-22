@@ -2,12 +2,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/backup.dart';
 import 'package:tamuapp/core/backup_format.dart';
 
-/// Provider-side subscriptions are captured into the archive for the record, but they are NOT a
-/// restore item: a provider entry is created by the requester that owns it, and the restored
-/// requester re-registers itself (CID 0x01 Change on its first tick, and again at boot), so the
-/// node rebuilds its own provider table. The restore is requester-only; writing the provider half
-/// as well duplicated that work and its read-back verification raced with the node's own table
-/// churn (B34).
+/// Provider-side subscriptions: the model is still READ (an archive captured by an earlier build
+/// carries them) but they are neither captured nor a restore item. The provider table is RAM-only
+/// on the serving device (`Docs/Services/Subscriptions.md` - "active until cancelled; the
+/// information is not persistent on this side"), so the archive must not carry it at all: it would
+/// be state with no persistence file behind it. The node rebuilds the table when the requesters
+/// that own each entry re-register after boot (CID 0x01 Change on their first tick, and again at
+/// boot), which is why writing the provider half as well duplicated the work and its read-back
+/// verification raced with the node's own table churn (B34).
 void main() {
   const source = BackupBlockRef(
     block: 'Resistive measurement',

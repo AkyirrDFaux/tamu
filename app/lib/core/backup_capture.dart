@@ -97,10 +97,16 @@ Future<BackupDevice?> captureDevice(
     ),
   );
 
-  // Subscriptions (requester is restorable; provider is informational).
+  // Subscriptions. The archive mirrors the persistence-giving files, and of the two tables only
+  // the REQUESTER table has one: `Docs/Services/Subscriptions.md` - the requester table
+  // "re-activates after boot and recalls its values from a file in Storage, a 1:1 copy of the
+  // table except for the timeout value", while the PROVIDER table is "active until cancelled; the
+  // information is not persistent on this side" (RAM only). So the requester table is captured
+  // (and restored), and the provider table is NOT: it is rebuilt by the requesters that own it
+  // when they re-register after boot. A provider entry in the archive would be state with no
+  // persistence file behind it - the one thing the semantic archive must not carry.
   final subClient = SubscriptionClient(deviceId: deviceId);
   final requesters = <BackupRequesterSubscription>[];
-  final providers = <BackupProviderSubscription>[];
   try {
     for (final s in await subClient.getRequesterSubscriptions()) {
       requesters.add(
@@ -117,23 +123,6 @@ Future<BackupDevice?> captureDevice(
     }
   } catch (error) {
     AppDiagnostics.log('backup', 'requester subscriptions read failed: $error');
-  }
-  try {
-    for (final s in await subClient.getProviderSubscriptions()) {
-      providers.add(
-        BackupProviderSubscription(
-          requester: idToString(s.requesterAddr),
-          trid: s.trid,
-          trigger: s.trigger.label,
-          periodMs: s.periodMs,
-          minTimeMs: s.minTimeMs,
-          deadzone: s.deadzone,
-          source: _blockRef(s.sourceReg),
-        ),
-      );
-    }
-  } catch (error) {
-    AppDiagnostics.log('backup', 'provider subscriptions read failed: $error');
   }
 
   // SNDB lives on cores.
@@ -154,7 +143,6 @@ Future<BackupDevice?> captureDevice(
       scripts.isEmpty &&
       layouts.isEmpty &&
       requesters.isEmpty &&
-      providers.isEmpty &&
       sndb.isEmpty) {
     return null;
   }
@@ -170,7 +158,6 @@ Future<BackupDevice?> captureDevice(
     scripts: scripts,
     layouts: layouts,
     requesterSubscriptions: requesters,
-    providerSubscriptions: providers,
     sndb: sndb,
     files: files,
   );
