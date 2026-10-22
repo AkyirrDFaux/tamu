@@ -686,18 +686,32 @@ Future<void> _persistWrites(Set<int> deviceIds) async {
   }
 }
 
+/// Whether a restored script is a function library.
+///
+/// A library is a FILE other scripts call into, not a program the device runs on its own: the
+/// firmware links a global call by reading that file when the USING script loads
+/// (`ScriptProgram.h`, link stage: `FileExists` + `ReadFromFile` + `ScriptPropFunctionLib`), and
+/// `Docs/Services/Script.md` "Functions and Macros" asks only that the file be present on the
+/// target. So a library never needs a slot, and must never hold one.
+bool _isFunctionLibrary(RestoreItem item) =>
+    item.script!.properties.contains('Function library');
+
 /// Brings up the scripts a restore wrote and reports each one's outcome.
 ///
 /// A restored script is only a stored file: the device runs what it loads, not what it holds. The
-/// load-on-boot scripts come back at the next boot, but a function library is not one, so nothing
-/// loads it - and every script that calls into it faults on its Service instruction. A script that
-/// faulted earlier also STAYS in Error until it is explicitly started, and a restore does not
-/// reboot, so without this a restored rig sits with its automation dead while the restore reports
-/// success. Load the libraries first (their users link against them as they load), then start the
-/// ones marked to run on load. The items are the scripts THIS run wrote, so a script the user left
-/// out is never loaded over whatever the device already holds; and a load that fails is returned
-/// with its reason, so the apply can count it rather than let the file write stand for a script
-/// that never runs.
+/// load-on-boot scripts come back at the next boot, and a script that faulted earlier STAYS in
+/// Error until it is explicitly started - a restore does not reboot, so without this a restored
+/// rig sits with its automation dead while the restore reports success. So the non-library items
+/// are unloaded and reloaded (which is what re-links them against the library as it now stands),
+/// after the libraries are written, and the ones marked to run on load are started.
+///
+/// A function library is not loaded at all: it is used through its FILE (see
+/// [_isFunctionLibrary]), so it is written and left as a file, and a slot one occupies - put
+/// there by an earlier build that loaded every item, or by a user - is released, so the run
+/// converges on "file present, slot empty" instead of leaving the library occupying a slot. The
+/// items are the scripts THIS run wrote, so a script the user left out is never loaded over
+/// whatever the device already holds; and a load that fails is returned with its reason, so the
+/// apply can count it rather than let the file write stand for a script that never runs.
 Future<List<({RestoreItem item, String? reason})>> _bringUpScripts(
   List<RestoreItem> items,
 ) async {
@@ -708,12 +722,11 @@ Future<List<({RestoreItem item, String? reason})>> _bringUpScripts(
   final results = <({RestoreItem item, String? reason})>[];
   for (final group in byDevice.entries) {
     final client = ScriptClient(deviceId: group.key);
-    final libraries = group.value
-        .where((i) => i.script!.properties.contains('Function library'))
-        .toList();
+    // Libraries first, so a user script loaded afterwards links against the file as it now
+    // stands rather than against an older library the device happened to hold.
     final ordered = [
-      ...libraries,
-      ...group.value.where((i) => !libraries.contains(i)),
+      ...group.value.where(_isFunctionLibrary),
+      ...group.value.where((i) => !_isFunctionLibrary(i)),
     ];
     for (final item in ordered) {
       final slot = item.script!.slot;
@@ -723,11 +736,22 @@ Future<List<({RestoreItem item, String? reason})>> _bringUpScripts(
         results.add((item: item, reason: null));
         continue;
       }
+      final loaded = await client.loadedSlotMap();
+      if (_isFunctionLibrary(item)) {
+        // NEVER loaded: the file is what the using scripts read. Any slot that already holds this
+        // file id is released, which is the state the archive asks for - and the one a run on a
+        // rig left dirty by an older build has to reach, not leave behind.
+        for (final entry in loaded.entries) {
+          if (entry.value == slot) await client.unload(entry.key);
+        }
+        results.add((item: item, reason: null));
+        continue;
+      }
       // Unload and reload so the script links against the library as it now stands. A script the
-      // device loaded at boot did so before the library was loaded, and a stale link leaves its
-      // global-function calls dead while the script itself reports no error. The file id and the
-      // loaded slot are independent; a restored file sits at its own slot.
-      if ((await client.loadedSlotMap()).containsKey(slot)) {
+      // device loaded at boot did so before the library file was replaced, and a stale link leaves
+      // its global-function calls dead while the script itself reports no error. The file id and
+      // the loaded slot are independent; a restored file sits at its own slot.
+      if (loaded.containsKey(slot)) {
         await client.unload(slot);
       }
       if (!await client.load(slot, slot)) {
