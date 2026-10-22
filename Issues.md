@@ -69,6 +69,18 @@ are hardware-only.
   chip total and the app/storage bases to `Devices.md`'s DAS section, and one sentence to
   `Bootloader.md`'s App size note that storage reserved by the linker is not code space.
 
+- **E32** **A capture whose requester-table read fails archives an empty table, and a restore now
+  prunes to it.** `_captureDevice` (`app/lib/core/backup_capture.dart:114-132`) logs a failed read of
+  the requester table and stores `requesterSubscriptions: []`; `SubscriptionClient`'s table read also
+  reports a timeout as an empty list. Since 2026-10-22 a restore cancels every target entry its
+  archive does not name (`pruneRequesterTable`, `app/lib/core/backup_restore.dart`), and "the archive
+  names none" is indistinguishable from "the capture could not read them" — restoring such an archive
+  cancels every entry on the target. The prune does report the count and TRIDs of what it cancelled,
+  so it is visible, but it is still a delete. Fix options: carry a `requesterRead` marker in the
+  per-device JSON and skip the prune for a device whose archive does not claim the table was read, or
+  fail the device capture rather than storing an empty table. Not done here: the archive's JSON
+  contents are a Docs-governed decision (`Docs/App/Backup.md`).
+
 ## Valu v2.0 app (2026-10-06) - parked (owner: not now)
 
 - **E27** **Resistive measurement reference resistor is undefined.** `Docs/Devices.md` gives three ADC
