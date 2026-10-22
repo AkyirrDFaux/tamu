@@ -4,9 +4,10 @@
 /// file systems (backup restoration), optional live restore. Creates a zipfile
 /// containing per device JSON files if backing up the entire network."
 ///
-/// Capture records the ENTIRE register (every block entry, volatile and read-only
-/// included), the Subscriptions tables, the Scripts, the LED layouts and the SNDB semantically,
-/// plus every device file. The zip holds one JSON per device (no aggregate manifest).
+/// Capture records the register's PERSISTENT state (every persistent block entry; a dynamic
+/// block's non-persistent rows travel as structural rows without their values), the Subscriptions
+/// tables, the Scripts, the LED layouts and the SNDB semantically, plus every device file. The
+/// zip holds one JSON per device (no aggregate manifest).
 /// Restore matches items by name so small firmware changes do not break an archive,
 /// and items can be synced to a different device/block when compatible.
 library;
@@ -256,6 +257,18 @@ Future<List<VisitedBlock>?> walkDeviceBlocks(RegisterClient reg) async {
 }
 
 /// Capture side of the shared walk: a walked block as the semantic backup model.
+///
+/// Only PERSISTENT state is archived (Docs/Services/Register.md "System + Static Memory Blocks":
+/// `Persistent` = settings kept in flash, `Volatile` = everything else), because everything else
+/// is runtime state the firmware resets at boot or keeps itself:
+///
+///  * A STATIC block has a compile-time layout, so a non-persistent field is dropped outright: its
+///    value is a live reading (a measurement, a button state) and there is nothing structural the
+///    archive would need to carry.
+///  * A DYNAMIC block's table is persistent device state of its own (`.DT_<hex2>`, separate from
+///    the value space `.DV_<hex2>` - firmware `MemoryDynamic.h`), and a restore rebuilds that table
+///    from the archived rows. So a non-persistent row is kept as a STRUCTURAL row - identity,
+///    type, flags and size, with no value - and only its value is dropped.
 BackupBlock backupBlockFromVisited(VisitedBlock b) => BackupBlock(
   type: blockTypeDisplayName(b.type),
   typeIndex: b.type,
@@ -264,17 +277,21 @@ BackupBlock backupBlockFromVisited(VisitedBlock b) => BackupBlock(
   isDynamic: b.isDynamic,
   entries: [
     for (final f in b.fields)
-      BackupEntry(
-        field: f.fieldName,
-        fieldIndex: f.field,
-        key: f.keyName,
-        keyIndex: f.key,
-        type: dataTypeWord(f.meta.dataType),
-        flags: flagWords(f.meta.flags),
-        unit: f.info?.unit,
-        value: encodeSemantic(f.meta.dataType, f.value, info: f.info),
-        size: f.value.length,
-      ),
+      if (f.meta.persistent || b.isDynamic)
+        BackupEntry(
+          field: f.fieldName,
+          fieldIndex: f.field,
+          key: f.keyName,
+          keyIndex: f.key,
+          type: dataTypeWord(f.meta.dataType),
+          flags: flagWords(f.meta.flags),
+          unit: f.info?.unit,
+          value: f.meta.persistent
+              ? encodeSemantic(f.meta.dataType, f.value, info: f.info)
+              : null,
+          structural: !f.meta.persistent,
+          size: f.value.length,
+        ),
   ],
 );
 

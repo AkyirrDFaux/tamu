@@ -34,6 +34,20 @@ class BackupEntry {
   final Object? value;
   final int size; // wire byte length (size-flexible types)
 
+  /// True for a STRUCTURAL row: a dynamic block entry whose identity, type, flags and size are
+  /// archived but whose value is not. Its JSON carries no `value` key at all.
+  ///
+  /// A dynamic block's table (`.DT_<hex2>`) is persistent device state, separate from its value
+  /// space (`.DV_<hex2>`; firmware `MemoryDynamic.h`), and a restore rebuilds that table from the
+  /// archived rows (`prepareDynamicBlocks`) before it can write any value. A row whose flags lack
+  /// `Persistent` holds a value the firmware resets to its default at boot, so the archive keeps
+  /// the row (the structure is what a restore needs) and drops the value: the capture stores it
+  /// as a structural row and the restore plans no value write for it.
+  ///
+  /// A static block has a compile-time layout (`Docs/Services/Register.md`), so it never carries a
+  /// structural row: a non-persistent field there is not captured at all.
+  final bool structural;
+
   BackupEntry({
     required this.field,
     required this.fieldIndex,
@@ -44,9 +58,11 @@ class BackupEntry {
     this.unit,
     required this.value,
     required this.size,
+    this.structural = false,
   });
 
   bool get readOnly => flags.contains('Read Only');
+  bool get persistent => flags.contains('Persistent');
 
   Map<String, dynamic> toJson() => {
     'field': field,
@@ -56,7 +72,9 @@ class BackupEntry {
     'type': type,
     if (flags.isNotEmpty) 'flags': flags,
     if (unit != null && unit!.isNotEmpty) 'unit': unit,
-    'value': value,
+    // A structural row has no value, so the key is absent rather than null: the archive says
+    // "this row exists" without carrying a reading the device will discard at boot.
+    if (!structural) 'value': value,
     'size': size,
   };
 
@@ -69,6 +87,9 @@ class BackupEntry {
     flags: (json['flags'] as List?)?.cast<String>() ?? const [],
     unit: json['unit'] as String?,
     value: json['value'],
+    // An absent `value` key means a structural row; every value-carrying row keeps the key
+    // (a reserved placeholder writes it as null), so both shapes round-trip unchanged.
+    structural: !json.containsKey('value'),
     size: (json['size'] as num?)?.toInt() ?? 0,
   );
 }

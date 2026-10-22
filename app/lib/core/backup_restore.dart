@@ -47,6 +47,10 @@ LiveEntry? _matchLiveEntry(
 /// loses subscriptions - and whole eye blocks - when restoring onto a device that was empty.
 /// The archive carries the address in full, so encode it from there; callers fall back to the
 /// live lookup for anything the archive does not describe.
+///
+/// A structural row resolves here exactly like a value-carrying one: the address is built from the
+/// row's identity (block type/instance, field, key), never from its value. That is why a dynamic
+/// block's non-persistent rows stay in the archive without their values.
 int? archiveRefReg(BackupDevice device, BackupBlockRef ref) {
   BackupBlock? block = device.blocks
       .where((b) => b.typeIndex == ref.typeIndex && b.instance == ref.instance)
@@ -251,6 +255,18 @@ bool _sameFile(String a, String b) =>
 /// (its identity, its live readings). It is informational, not a lost item, so the apply never
 /// counts it as a failure; every other issue means an item the restore was asked to write.
 const readOnlyIssue = 'Read Only';
+
+/// True when a captured entry is a row the restore PLANS a value write for.
+///
+/// Two kinds of row are not: a STRUCTURAL row (a dynamic block's non-persistent entry - see
+/// [BackupEntry.structural]) carries no value to write, and a reserved placeholder carries neither
+/// a type nor a value. Neither is a restore item: a structural row exists so the block's structure
+/// can be rebuilt by [prepareDynamicBlocks] from the same rows, and the firmware resets its value
+/// to the default at boot anyway. Shared with the tools that reproduce the plan's item list, so a
+/// tool cannot drift from the plan.
+bool restoresEntryValue(BackupEntry entry) =>
+    !entry.structural &&
+    !(entry.value == null && dataTypeFromWord(entry.type) == DataType.none);
 
 /// A resolved restore target for one source item.
 class RestoreItem {
@@ -462,10 +478,10 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
       for (final entry in block.entries) {
         // A reserved placeholder carries neither a type nor a value, so there is nothing to
         // write; planning it would report it as an unready item on every restore forever.
-        if (entry.value == null &&
-            dataTypeFromWord(entry.type) == DataType.none) {
-          continue;
-        }
+        // A structural row (a dynamic block's non-persistent entry) is planned the same way -
+        // not at all: it carries no value, its only job is the structure that
+        // `prepareDynamicBlocks` rebuilds from these same rows.
+        if (!restoresEntryValue(entry)) continue;
         items.add(
           RestoreItem(
             kind: RestoreKind.entry,
@@ -562,6 +578,12 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
 /// but only the fields that firmware creates. Without this, an entry at a field the device never
 /// made has no live counterpart to match and is dropped as "No matching entry" with no failure
 /// recorded.
+///
+/// The rows it creates are every row the archive carries for a dynamic block - a persistent one
+/// (whose value is then written) AND a structural one (whose value the archive does not carry and
+/// which therefore only ever lands as the entry's own default). The structure is the persistent
+/// part of a dynamic block: its table is device state (`.DT_<hex2>`), so a restore onto a wiped
+/// target has to build it from these rows or the block's addresses do not exist at all.
 ///
 /// Re-reads the live devices and re-points the plan afterwards, so it resolves against the
 /// structure that now exists; newly restorable items join the default selection. A structure that

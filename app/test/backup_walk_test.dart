@@ -53,12 +53,21 @@ class _FakeRegister extends RegisterClient {
           return null; // no System block in this fixture
         }
         if (type == _pwm && inst == 0 && field == 0) {
-          return _reply(DataType.number.value, 4, numberToBytes(25000));
+          // Frequency is a Persistent setting (kept in flash), Duty is not - it is a live output
+          // the firmware resets, so a capture archives the first and drops the second.
+          return _reply(
+            DataType.number.value,
+            4,
+            numberToBytes(25000),
+            flags: ValueFlags.persistent,
+          );
         }
         if (type == _pwm && inst == 0 && field == 1) {
           return _reply(DataType.number.value, 4, numberToBytes(50));
         }
         if (type == _dyn && inst == 0 && field == 0 && key == 0) {
+          // A volatile row of a dynamic block: the row is device structure, the value is a
+          // reading the firmware resets at boot and the archive must not carry.
           return _reply(DataType.number.value, 4, numberToBytes(7));
         }
         return null;
@@ -73,7 +82,12 @@ class _FakeRegister extends RegisterClient {
   }
 
   /// A reply is a 4-byte echoed BlockInfo, the 4-byte ValueInfo, then the payload.
-  static List<int> _reply(int type, int size, List<int> payload) => [
+  static List<int> _reply(
+    int type,
+    int size,
+    List<int> payload, {
+    int flags = 0,
+  }) => [
     0,
     0,
     0,
@@ -81,7 +95,7 @@ class _FakeRegister extends RegisterClient {
     type & 0xFF,
     (type >> 8) & 0xFF,
     size,
-    0,
+    flags,
     ...payload,
   ];
 
@@ -123,24 +137,35 @@ void main() {
     },
   );
 
-  test('capture and live mappings agree on every address and name', () async {
+  test('capture keeps persistent entries and a dynamic block\'s structure', () async {
     final walked = (await walkDeviceBlocks(_FakeRegister()))!;
-    for (final b in walked) {
-      final backup = backupBlockFromVisited(b);
-      final live = liveBlockFromVisited(b);
-      expect(backup.typeIndex, live.type);
-      expect(backup.instance, live.instance);
-      expect(backup.name, live.name);
-      expect(backup.isDynamic, live.isDynamic);
-      expect(backup.entries.length, live.entries.length);
-      for (var i = 0; i < backup.entries.length; i++) {
-        final e = backup.entries[i], l = live.entries[i];
-        expect(
-          [e.field, e.fieldIndex, e.key, e.keyIndex],
-          [l.fieldName, l.field, l.keyName, l.key],
-        );
-      }
-    }
+
+    // A STATIC block's non-persistent field is dropped: its layout is compile-time, so there is
+    // nothing structural to archive and the value is a live output.
+    final pwm = walked.firstWhere((b) => b.type == 0x04);
+    final backupPwm = backupBlockFromVisited(pwm);
+    expect(backupPwm.entries.map((e) => e.field), ['Frequency']);
+    expect(backupPwm.entries.single.persistent, isTrue);
+    expect(backupPwm.entries.single.value, 25000.0);
+    expect(backupPwm.entries.single.toJson()['value'], 25000.0);
+
+    // A DYNAMIC block's non-persistent row stays, WITHOUT its value: the row (with its type, flags
+    // and size) is the structure a restore rebuilds, and the value is reset at boot.
+    final dyn = walked.firstWhere((b) => b.isDynamic);
+    final backupDyn = backupBlockFromVisited(dyn);
+    final liveDyn = liveBlockFromVisited(dyn);
+    expect(backupDyn.entries, hasLength(liveDyn.entries.length));
+    final e = backupDyn.entries.single;
+    final l = liveDyn.entries.single;
+    expect(e.structural, isTrue);
+    expect(e.value, isNull);
+    expect(e.toJson().containsKey('value'), isFalse);
+    expect(e.type, dataTypeWord(DataType.number));
+    expect(e.size, 4);
+    expect(
+      [e.field, e.fieldIndex, e.key, e.keyIndex],
+      [l.fieldName, l.field, l.keyName, l.key],
+    );
   });
 
   test(
@@ -168,6 +193,16 @@ void main() {
           final target = live.entries.firstWhere(
             (l) => l.field == e.fieldIndex && l.key == e.keyIndex,
           );
+          // A structural row still matches an address on the target, but plans no write.
+          if (!restoresEntryValue(e)) {
+            expect(e.structural, isTrue);
+            expect(
+              [block.isDynamic, e.field],
+              [true, 'Field 0'],
+              reason: 'only a dynamic block carries a structural row',
+            );
+            continue;
+          }
           final bytes = resolveEntryBytes(e, target);
           expect(bytes, isNotNull, reason: '${block.name} ${e.field}');
           // The bytes restored to the live target re-encode to the archived value.
@@ -178,7 +213,7 @@ void main() {
           checked++;
         }
       }
-      expect(checked, 3, reason: 'two PWM fields + one dynamic field');
+      expect(checked, 1, reason: 'one persistent PWM field');
     },
   );
 }
