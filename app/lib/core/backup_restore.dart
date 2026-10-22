@@ -188,14 +188,23 @@ int? resolveArchiveAddress(RestorePlan plan, String address) {
   return (idNet(local.id) << 10) | node;
 }
 
+/// Why a live node has no snapshot, and who it said it was.
+///
+/// A node that answered its identity but not its block list is NOT absent from the rig: [reason]
+/// names the read that failed, and [name]/[serial] are the identity it answered with. Carrying the
+/// identity is what lets a plan recognise the archive device the node belongs to when the
+/// archive's ADDRESS differs from the live one - a device re-addressed since the archive was
+/// captured is the same device, and its unread snapshot must not read as a different rig.
+typedef UnreadNode = ({String name, String? serial, String reason});
+
 /// One device's live read: the snapshot, and - when the device answered but its block list did
-/// not - why there is no snapshot.
+/// not - why there is no snapshot, along with the identity it answered.
 ///
 /// [device] is null both when the device did not answer a ping (it is not on the bus) and when
 /// it answered its identity but not its block list. The two are not the same thing: only the
 /// second carries [unread], so a plan can say "the block list was not read" instead of "the
 /// target carries no `<Type>` block".
-typedef LiveRead = ({LiveDevice? device, String? unread});
+typedef LiveRead = ({LiveDevice? device, UnreadNode? unread});
 
 /// Reads a live device's identity and block/entry layout (metadata only, no values).
 ///
@@ -212,9 +221,13 @@ Future<LiveRead> readLiveDevice(int deviceId) async {
   if (walked == null) {
     return (
       device: null,
-      unread:
-          'the target ${idToString(deviceId)} did not answer its block list read '
-          '($attempts attempts)',
+      unread: (
+        name: identity.name,
+        serial: identity.serial,
+        reason:
+            'the target ${idToString(deviceId)} did not answer its block list read '
+            '($attempts attempts)',
+      ),
     );
   }
   final live = [for (final b in walked.blocks) liveBlockFromVisited(b)];
@@ -344,11 +357,11 @@ class RestorePlan {
   final Map<String, LiveBlock>
   blockTargets; // "deviceId:type:instance" -> live block
 
-  /// The live nodes that answered their identity but not their block list: node id -> why there
-  /// is no snapshot. A source device with no target that appears here was NOT absent from the
-  /// rig - its snapshot is incomplete, and a plan must say that rather than let the missing
-  /// target read as the wrong device shape.
-  final Map<int, String> unreadDevices;
+  /// The live nodes that answered their identity but not their block list, by live node id: why
+  /// there is no snapshot, and the identity each one answered with. A source device that matches
+  /// one of these was NOT absent from the rig - its snapshot is incomplete, and a plan must say
+  /// that rather than let the missing target read as the wrong device shape.
+  final Map<int, UnreadNode> unreadDevices;
 
   RestorePlan({
     required this.devices,
@@ -358,6 +371,32 @@ class RestorePlan {
     required this.blockTargets,
     this.unreadDevices = const {},
   });
+
+  /// Why [source]'s live node did not answer its block list, or null when no node that answered
+  /// its identity is [source].
+  ///
+  /// The ladder is [matchLiveDevice]'s as far as an unread node can support it: the serial, then
+  /// the address, then the name. An unread node carries no blocks, so there is no block-type step
+  /// - and no "any remaining device" last resort either, because blaming a node that is not
+  /// [source] would name the wrong read. The identity steps are the point: an archive captured at
+  /// one address and restored onto the same device at another (re-addressed since the capture)
+  /// printed `NO TARGET` for a node that had just answered, which is the same misdiagnosis of a
+  /// failed read as a wrong shape that the unread reason exists to remove.
+  String? unreadReasonFor(BackupDevice source) {
+    if (source.serial != null) {
+      for (final node in unreadDevices.values) {
+        if (node.serial == source.serial) return node.reason;
+      }
+    }
+    final byAddress = unreadDevices[source.id];
+    if (byAddress != null) return byAddress.reason;
+    for (final node in unreadDevices.values) {
+      if (node.name.toLowerCase() == source.name.toLowerCase()) {
+        return node.reason;
+      }
+    }
+    return null;
+  }
 
   static String blockKey(int deviceId, BackupBlock block) =>
       '$deviceId:${block.typeIndex}:${block.instance}';
@@ -493,10 +532,10 @@ Future<List<int>> _networkNodeIds() async {
 /// A node that answered its identity but not its block list is reported in `unread` instead of
 /// being dropped from `live`: dropping it would make a live device look like one that is not on
 /// the rig at all.
-Future<({List<LiveDevice> live, Map<int, String> unread})>
+Future<({List<LiveDevice> live, Map<int, UnreadNode> unread})>
 _readLiveDevices() async {
   final live = <LiveDevice>[];
-  final unread = <int, String>{};
+  final unread = <int, UnreadNode>{};
   for (final id in await _networkNodeIds()) {
     final read = await readLiveDevice(id);
     final snapshot = read.device;

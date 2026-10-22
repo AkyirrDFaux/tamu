@@ -325,8 +325,11 @@ List<String> _reportPlan(
     if (target == null) {
       // No snapshot is not the same as no device: a node that answered its identity but not its
       // block list is UNREAD, and saying so is the whole difference between "check the link"
-      // and "this is the wrong rig for the archive".
-      final unread = plan.unreadDevices[source.id];
+      // and "this is the wrong rig for the archive". The reason is reached by IDENTITY, not only
+      // by address: an archive captured before the device was re-addressed names it at the old
+      // address, and the live node that answered is still the same device (see
+      // `RestorePlan.unreadReasonFor`).
+      final unread = plan.unreadReasonFor(source);
       if (unread != null) {
         refusals.add(source.name);
         stdout.writeln('    REFUSED: $unread - unread, not absent');

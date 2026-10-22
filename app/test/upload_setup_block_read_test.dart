@@ -36,6 +36,10 @@ const int _pwm = 0x04;
 /// source BLOCK would name it twice: `the target carries no LED Display, LED Display block`.
 const int _led = 0x06;
 
+/// `0.2`: an address the archive can name that the live node does not sit at, which is what a
+/// device re-addressed since the capture looks like.
+const int _otherNode = 2;
+
 void main() {
   group('upload_setup: a lost block read', () {
     late Directory dir;
@@ -47,13 +51,25 @@ void main() {
     });
 
     /// Runs the CLI against [rig] with the archive the rig's own setup would carry, plus any
-    /// [extraBlocks] the case needs.
+    /// [extraBlocks] the case needs. [write] passes `--yes`, which is what exercises the
+    /// refused-to-write gates (a dry run returns before them).
     Future<({int code, String out, String err})> run(
       _FakeRig rig, {
       List<({int type, int instance})> extraBlocks = const [],
+      int id = coreId,
+      String name = 'Tamu v2.0A',
+      String? serial,
+      bool write = false,
     }) async {
       final archive = File('${dir.path}/setup.zip')
-        ..writeAsBytesSync(_setupZip(extra: extraBlocks));
+        ..writeAsBytesSync(
+          _setupZip(
+            extra: extraBlocks,
+            id: id,
+            name: name,
+            serial: serial,
+          ),
+        );
       final out = _Captured();
       final err = _Captured();
       final code = await IOOverrides.runZoned(
@@ -61,6 +77,7 @@ void main() {
           archive.path,
           '--port',
           '/dev/null-test',
+          if (write) '--yes',
         ], openRig: (_) async => rig),
         stdout: () => out,
         stderr: () => err,
@@ -240,19 +257,131 @@ void main() {
       expect(result.out, isNot(contains('unread')));
       expect(result.code, 3, reason: 'and today\'s exit code');
     });
+
+    test('a device re-addressed since the capture is still the node that failed', () async {
+      // The archive names the device at 0.2; the node it belongs to answered its identity at 0.1
+      // under the same name and then never answered its block list. The unread reason is keyed by
+      // the LIVE id, so looking it up with the archive's id lost it and the run printed NO TARGET
+      // - blaming the archive's shape for a read that failed.
+      final rig = _FakeRig(
+        types: [_button],
+        enumerateFailures: RegisterClient.snapshotReadAttempts,
+      );
+
+      final result = await run(rig, id: _otherNode, write: true);
+
+      expect(
+        result.out,
+        contains(
+          'REFUSED: the target 0.1 did not answer its block list read '
+          '(${RegisterClient.snapshotReadAttempts} attempts) - unread, not absent',
+        ),
+        reason:
+            'the live node answered its identity under the archive device\'s name, so the run '
+            'knows which device is unread even though the address differs',
+      );
+      expect(
+        result.out,
+        isNot(contains('carries no')),
+        reason: 'nothing was read, so nothing can be called absent',
+      );
+      expect(
+        result.err,
+        contains('are not restorable'),
+        reason: 'the write is refused for the failed read, not for a missing target',
+      );
+      expect(
+        result.err,
+        isNot(contains('no live target')),
+        reason: 'this device IS on the rig - it is the read that failed',
+      );
+      expect(result.code, 3);
+    });
+
+    test('a serial identifies the unread node under another address and name', () async {
+      // The same case with the archive device renamed as well: the serial is the only thing that
+      // says the two names are one device, and it is the strongest identity an archive carries.
+      const serialBytes = [
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, //
+        0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE,
+      ];
+      final serial = serialNumberToHex(serialBytes);
+      final rig = _FakeRig(
+        types: [_button],
+        serial: serialBytes,
+        enumerateFailures: RegisterClient.snapshotReadAttempts,
+      );
+
+      final result = await run(
+        rig,
+        id: _otherNode,
+        name: 'Door node',
+        serial: serial,
+        write: true,
+      );
+
+      expect(
+        result.out,
+        contains(
+          'REFUSED: the target 0.1 did not answer its block list read '
+          '(${RegisterClient.snapshotReadAttempts} attempts) - unread, not absent',
+        ),
+      );
+      expect(result.out, isNot(contains('carries no')));
+      expect(result.err, contains('are not restorable'));
+      expect(result.code, 3);
+    });
+
+    test('a device nothing answers is still NO TARGET, refused as one', () async {
+      // The control: the rig answers nothing at all - the ping included - so no node can be this
+      // device. Nothing answered, so nothing is unread, and the run keeps today's NO TARGET line
+      // and the `no live target for ...` gate. (With any live device on the bus, `matchLiveDevice`
+      // falls back to it as the target, so NO TARGET is the zero-live-device case.)
+      final rig = _FakeRig(types: [_button], silent: true);
+
+      final result = await run(
+        rig,
+        id: _otherNode,
+        name: 'Door node',
+        write: true,
+      );
+
+      expect(result.out, contains('NO TARGET'));
+      expect(
+        result.out,
+        isNot(contains('unread')),
+        reason: 'no node answered that device, so there is no failed read to report',
+      );
+      expect(
+        result.err,
+        contains('refusing to write: no live target for Door node.'),
+        reason: 'today\'s gate and message for a device that is genuinely absent',
+      );
+      expect(result.code, 3);
+    });
   });
 }
 
 /// A one-device setup archive whose device carries a persistent Button entry, plus [extra]
 /// blocks (type + instance) - the LED Display twice, as `akyirr_setup.zip` carries it.
-List<int> _setupZip({List<({int type, int instance})> extra = const []}) {
+///
+/// The device's own address, name and serial are the archive's, and are what a restore matches a
+/// live node by: [id] defaults to the rig's core, and differs from it for a device re-addressed
+/// since the archive was captured.
+List<int> _setupZip({
+  List<({int type, int instance})> extra = const [],
+  int id = coreId,
+  String name = 'Tamu v2.0A',
+  String? serial,
+}) {
   final json = jsonEncode(<String, Object?>{
     'app': 'tamuapp',
     'format': backupFormatVersion,
     'type': 'Tamu v2.0A',
     'typeId': DeviceType.tamuV20A.value,
-    'id': coreId,
-    'name': 'Tamu v2.0A',
+    'id': id,
+    'name': name,
+    'serial': ?serial,
     'blocks': <Object?>[
       {
         'type': blockTypeDisplayName(_button),
@@ -303,6 +432,8 @@ class _FakeRig implements RigLink {
     this.metaFailures = const {},
     this.deadTypes = const {},
     this.typeFieldFailures = 0,
+    this.serial,
+    this.silent = false,
   });
 
   /// The block types the device reports.
@@ -322,6 +453,13 @@ class _FakeRig implements RigLink {
   final Set<int> deadTypes;
 
   final int typeFieldFailures;
+
+  /// The 14 serial bytes the identity answers with (System field 1), when a case needs a serial
+  /// to match by; absent means the field reads as zeros.
+  final List<int>? serial;
+
+  /// A rig that answers nothing at all, the ping included: no device is on the bus.
+  final bool silent;
 
   int enumerateCalls = 0;
   final Map<int, int> metaCalls = {};
@@ -379,6 +517,7 @@ class _FakeRig implements RigLink {
   }
 
   List<int>? _answer(ServiceType service, int cid, List<int> payload) {
+    if (silent) return null;
     // The ping every identity read starts with.
     if (service == ServiceType.device && cid == 1) return const [0];
     // Storage / Scripts / Subscriptions are not this fake's business: unanswered.
@@ -443,6 +582,9 @@ class _FakeRig implements RigLink {
       typeFieldCalls++;
       if (typeFieldCalls <= typeFieldFailures) return null;
       value[0] = DeviceType.tamuV20A.value;
+    }
+    if (field == 1 && serial != null) {
+      value.setAll(0, serial!);
     }
     if (field == 6) {
       const name = 'Tamu v2.0A';
