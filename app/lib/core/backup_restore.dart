@@ -203,7 +203,6 @@ int? resolveArchiveAddress(RestorePlan plan, String address) {
 String requesterKey(int providerAddr, int sourceReg, int targetReg) =>
     '${idDevice(providerAddr)}:$sourceReg:$targetReg';
 
-
 /// Why a live node has no snapshot, and who it said it was.
 ///
 /// A node that answered its identity but not its block list is NOT absent from the rig: [reason]
@@ -913,7 +912,13 @@ class RequesterPrune {
   final List<int> cancelled;
 
   /// The TRIDs the target still holds after the save - read back from the device, not assumed.
+  /// Empty when [confirmed] is false, which means the table could not be read back at all.
   final List<int> remaining;
+
+  /// True when [remaining] is a real read of the target. False means the read-back itself failed,
+  /// so what the target now holds is unknown: the prune is reported as unconfirmed rather than as
+  /// a clean table.
+  final bool confirmed;
 
   /// True when the table was left untouched; [reason] says why.
   final bool skipped;
@@ -925,6 +930,7 @@ class RequesterPrune {
     this.before = const [],
     this.cancelled = const [],
     this.remaining = const [],
+    this.confirmed = true,
     this.skipped = false,
     this.reason,
   });
@@ -935,11 +941,13 @@ class RequesterPrune {
   /// The TRIDs the target held before the prune, as a report reads them.
   String get beforeText => _tridText(before);
 
-  /// The remaining TRIDs as a report reads them.
-  String get remainingText => _tridText(remaining);
+  /// The remaining TRIDs as a report reads them, or `unconfirmed` when the table could not be read
+  /// back - never an empty list standing in for "I could not look".
+  String get remainingText => confirmed ? _tridText(remaining) : 'unconfirmed';
 
-  static String _tridText(List<int> trids) =>
-      trids.isEmpty ? '-' : trids.map((t) => '0x${t.toRadixString(16)}').join(', ');
+  static String _tridText(List<int> trids) => trids.isEmpty
+      ? '-'
+      : trids.map((t) => '0x${t.toRadixString(16)}').join(', ');
 }
 
 /// Cancels every requester entry the plan's targets hold that the archive does not name, then makes
@@ -965,9 +973,13 @@ class RequesterPrune {
 /// bus, say) is left alone and reported: without that identity the live entry it would match cannot
 /// be told apart from a stale one, and a delete on a guess is exactly what the previous "never
 /// prune" rule existed to prevent.
-Future<({List<RequesterPrune> prunes, List<String> failures})> pruneRequesterTable(
-  RestorePlan plan,
-) async {
+///
+/// The same goes for a table that cannot be READ: "could not look" is not "holds nothing". A target
+/// that does not return its requester table (no link, timeout, FAIL) is reported as a skipped prune
+/// with no cancels and no save, and one whose table cannot be read back after the save is reported
+/// as unconfirmed - never as a clean, empty table.
+Future<({List<RequesterPrune> prunes, List<String> failures})>
+pruneRequesterTable(RestorePlan plan) async {
   final prunes = <RequesterPrune>[];
   final failures = <String>[];
 
@@ -998,7 +1010,8 @@ Future<({List<RequesterPrune> prunes, List<String> failures})> pruneRequesterTab
           deviceId: target.id,
           deviceName: target.name,
           skipped: true,
-          reason: "the archive names a subscription that does not resolve "
+          reason:
+              "the archive names a subscription that does not resolve "
               '($unresolved)',
         ),
       );
@@ -1010,7 +1023,28 @@ Future<({List<RequesterPrune> prunes, List<String> failures})> pruneRequesterTab
     }
 
     final subs = SubscriptionClient(deviceId: target.id);
-    final held = await subs.getRequesterSubscriptions();
+    final held = await subs.readRequesterSubscriptions();
+    if (held == null) {
+      // A table the target would not return is NOT an empty table. Pruning against an unread one
+      // would cancel nothing, issue no save and report `before=[] cancelled=[] remaining=[]` -
+      // a clean-looking restore that leaves exactly the stale rows this exists to remove. So the
+      // device is left alone and the failure is reported.
+      prunes.add(
+        RequesterPrune(
+          deviceId: target.id,
+          deviceName: target.name,
+          confirmed: false,
+          skipped: true,
+          reason: 'the target did not return its requester table',
+        ),
+      );
+      failures.add(
+        '${target.name}: requester table not pruned: the target did not return '
+        'its requester table (no reply or FAIL), so the entries the archive does '
+        'not name are still there',
+      );
+      continue;
+    }
     final before = [for (final e in held) e.trid];
     final doomed = [
       for (final e in held)
@@ -1054,16 +1088,27 @@ Future<({List<RequesterPrune> prunes, List<String> failures})> pruneRequesterTab
     }
 
     // Read back rather than assume: the point of reporting is to catch a cancel the device did not
-    // actually apply.
-    final remaining = [
-      for (final e in await subs.getRequesterSubscriptions()) e.trid,
-    ];
-    for (final trid in cancelled) {
-      if (remaining.contains(trid)) {
-        failures.add(
-          '${target.name}: requester entry 0x${trid.toRadixString(16)} is still '
-          'in the table after the cancel and the save',
-        );
+    // actually apply. A read-back that does not answer is a failure too - reporting `remaining=[]`
+    // for a table nobody managed to read would make the "still present" check below vacuous.
+    final after = await subs.readRequesterSubscriptions();
+    if (after == null) {
+      failures.add(
+        '${target.name}: could not confirm the requester save: the table could '
+        'not be read back after ${cancelled.length} cancel(s) (no reply or '
+        'FAIL), so what the target now holds is unknown',
+      );
+    }
+    final remaining = after == null
+        ? const <int>[]
+        : [for (final e in after) e.trid];
+    if (after != null) {
+      for (final trid in cancelled) {
+        if (remaining.contains(trid)) {
+          failures.add(
+            '${target.name}: requester entry 0x${trid.toRadixString(16)} is '
+            'still in the table after the cancel and the save',
+          );
+        }
       }
     }
     prunes.add(
@@ -1073,6 +1118,7 @@ Future<({List<RequesterPrune> prunes, List<String> failures})> pruneRequesterTab
         before: before,
         cancelled: cancelled,
         remaining: remaining,
+        confirmed: after != null,
       ),
     );
   }
@@ -1081,12 +1127,14 @@ Future<({List<RequesterPrune> prunes, List<String> failures})> pruneRequesterTab
 
 /// Applies the ready + selected items of [plan]. Returns the number of written
 /// items and failures.
-Future<({
-  int written,
-  int failed,
-  List<String> failures,
-  List<RequesterPrune> requesterPrune,
-})>
+Future<
+  ({
+    int written,
+    int failed,
+    List<String> failures,
+    List<RequesterPrune> requesterPrune,
+  })
+>
 applyRestorePlan(RestorePlan plan) async {
   // A dynamic block's values can only be written into a block that exists.
   await prepareDynamicBlocks(plan);

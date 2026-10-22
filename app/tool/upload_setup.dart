@@ -391,7 +391,9 @@ List<String> _reportPlan(
       // the "not ready" lines describe a device that is about to be written, and this one is not.
       if (!refused) refusals.add(source.name);
       refused = true;
-      stdout.writeln('    REFUSED: the target carries no ${absent.join(', ')} block');
+      stdout.writeln(
+        '    REFUSED: the target carries no ${absent.join(', ')} block',
+      );
     }
     if (refused) continue;
     for (final item in skipped) {

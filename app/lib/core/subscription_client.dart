@@ -85,19 +85,37 @@ class SubscriptionClient {
     }
   }
 
-  /// Decodes a fixed-size-entry table reply: the provider table is 32-byte entries and the
-  /// requester table 28-byte ones (CIDs 0x20 and 0x10 respectively). Entries fill the stream.
-  Future<List<T>> _getSubscriptionList<T>(
+  /// Reads a fixed-size-entry table, or null when it could NOT be read: no link, no reply within
+  /// the timeout, or a FAIL answer. The provider table is 32-byte entries and the requester table
+  /// 28-byte ones (CIDs 0x20 and 0x10 respectively). Entries fill the stream.
+  ///
+  /// The null is what lets a caller that DELETES rows tell "the device holds nothing" from "I
+  /// could not look". An empty table is a real answer - the firmware streams one empty fragment
+  /// for a count of zero (`SubscriptionsControl.h`, `StreamSubscriptionTable`) - so `[]` here is
+  /// never a stand-in for a failed read.
+  ///
+  /// Only the FAIL flag is checked, not [PacketResponse.ok]: a table reply is a FRAGMENT stream,
+  /// and fragments carry neither SUCCESS nor FAIL (`SendFragFragment` sets FLAG_TYPE|FLAG_FRAG and
+  /// the start/stop bits), so demanding SUCCESS would make every real table read look like a
+  /// failure.
+  Future<List<T>?> _readSubscriptionList<T>(
     int cid,
     int entrySize,
     T Function(int index, List<int> bytes) decode,
   ) async {
     final reply = await _request(cid, payload: []);
-    final data = reply?.payload;
-    if (data == null || data.isEmpty) return [];
+    if (reply == null || reply.fail) {
+      AppDiagnostics.log(
+        'subscriptions',
+        'table read CID 0x${cid.toRadixString(16)} unreadable: '
+            '${reply == null ? 'no reply' : 'device answered FAIL'}',
+      );
+      return null;
+    }
 
     final result = <T>[];
     int offset = 0;
+    final data = reply.payload;
     for (int i = 0; offset + entrySize <= data.length; i++) {
       result.add(decode(i, data.sublist(offset, offset + entrySize)));
       offset += entrySize;
@@ -105,9 +123,14 @@ class SubscriptionClient {
     return result;
   }
 
-  /// CID 0x20: Get provider subscriptions (device as provider)
-  Future<List<ProviderSubscription>> getProviderSubscriptions() =>
-      _getSubscriptionList(_cidGetProvider, 32, ProviderSubscription.fromBytes);
+  /// CID 0x20: Get provider subscriptions (device as provider). Empty when the read fails.
+  Future<List<ProviderSubscription>> getProviderSubscriptions() async =>
+      await _readSubscriptionList(
+        _cidGetProvider,
+        32,
+        ProviderSubscription.fromBytes,
+      ) ??
+      const [];
 
   /// CID 0x21: change a provider subscription on a node, telling it to send [entry]'s source
   /// register to the requester that asked. The entry is keyed by its TRID, and a table whose
@@ -140,9 +163,17 @@ class SubscriptionClient {
     return reply?.ok ?? false;
   }
 
-  /// CID 0x10: Get requester subscriptions (device as requester - Tamu only)
-  Future<List<RequesterSubscription>> getRequesterSubscriptions() =>
-      _getSubscriptionList(
+  /// CID 0x10: Get requester subscriptions (device as requester - Tamu only). Empty when the read
+  /// fails, which keeps every pre-existing caller's behaviour; a caller that DELETES rows uses
+  /// [readRequesterSubscriptions] instead, because it must never read a failed read as an empty
+  /// table.
+  Future<List<RequesterSubscription>> getRequesterSubscriptions() async =>
+      await readRequesterSubscriptions() ?? const [];
+
+  /// CID 0x10 as a read that can say "no answer": the target's requester table, or null when the
+  /// device did not return it (no link, timeout, or a FAIL answer). `[]` is a real, empty table.
+  Future<List<RequesterSubscription>?> readRequesterSubscriptions() =>
+      _readSubscriptionList(
         _cidGetRequester,
         28,
         RequesterSubscription.fromBytes,

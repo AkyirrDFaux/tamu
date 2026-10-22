@@ -15,7 +15,8 @@ class _FakeTable implements RequestChannel {
   final List<RequesterSubscription> entries;
 
   /// Every request, in the order it was sent.
-  final sent = <({ServiceType service, int cid, List<int> payload, int? trid})>[];
+  final sent =
+      <({ServiceType service, int cid, List<int> payload, int? trid})>[];
 
   /// Refuse every cancel, as a device that answers FAIL would.
   bool refuseCancel = false;
@@ -23,13 +24,34 @@ class _FakeTable implements RequestChannel {
   /// Refuse the Save-all, as a device whose `.SUBREQ` write failed would.
   bool failSave = false;
 
+  /// Answer the Get (0x10) with FAIL from the Nth read on (1-based; 0 = never). A read that fails
+  /// is NOT an empty table, which is the whole point of the read this drives.
+  int failGetFrom = 0;
+
+  /// Answer the Get with FAIL once a cancel has landed: the read-back case, where the cancels
+  /// applied and were saved but the device then stopped returning its table.
+  bool failGetAfterCancel = false;
+
+  /// Never answer the Get at all, as a timeout does - `SubscriptionClient._request` turns the
+  /// thrown error into "no reply".
+  bool getTimesOut = false;
+
+  /// How many Get (0x10) requests the run sent.
+  int reads = 0;
+
+  bool _unreadable = false;
+
   /// How many Save-all requests the run sent.
   int saves = 0;
 
   int _txId = 0x40;
 
   static const _ok = PacketResponse(payload: [], success: true, fail: false);
-  static const _failed = PacketResponse(payload: [], success: false, fail: true);
+  static const _failed = PacketResponse(
+    payload: [],
+    success: false,
+    fail: true,
+  );
 
   /// The TRIDs the table holds, in order.
   List<int> get trids => [for (final e in entries) e.trid];
@@ -96,6 +118,11 @@ class _FakeTable implements RequestChannel {
     if (service != ServiceType.subscriptions) return _ok;
     switch (functionCid) {
       case 0x10: // Get subscriptions: the table, 28-byte entries, no count prefix in the payload.
+        reads++;
+        if (getTimesOut) throw StateError('no reply');
+        if (_unreadable || (failGetFrom > 0 && reads >= failGetFrom)) {
+          return _failed;
+        }
         return PacketResponse(
           payload: [for (final e in entries) ...e.toCreatePayload()],
           success: true,
@@ -106,6 +133,9 @@ class _FakeTable implements RequestChannel {
         if (entry.trigger == TriggerType.none) {
           if (refuseCancel) return _failed;
           entries.removeWhere((e) => e.trid == entry.trid);
+          if (failGetAfterCancel) {
+            _unreadable = true;
+          }
           return _ok;
         }
         final at = entries.indexWhere((e) => e.trid == entry.trid);
@@ -306,10 +336,9 @@ void main() {
     installRequestChannel(device);
     final archive = _archive();
 
-    final result = await applyRestorePlan(_plan(archive, [
-      _liveRequester(),
-      _liveProvider(),
-    ]));
+    final result = await applyRestorePlan(
+      _plan(archive, [_liveRequester(), _liveProvider()]),
+    );
 
     final prune = result.requesterPrune.single;
     print(
@@ -324,10 +353,11 @@ void main() {
       '0x1004',
       '0x1005',
     ], reason: 'the rig held six entries before the restore');
-    expect(_hex(prune.cancelled), [
-      '0x1004',
-      '0x1005',
-    ], reason: 'only the two the archive does not name are cancelled');
+    expect(
+      _hex(prune.cancelled),
+      ['0x1004', '0x1005'],
+      reason: 'only the two the archive does not name are cancelled',
+    );
     expect(_hex(prune.remaining), [
       '0x1000',
       '0x1001',
@@ -361,10 +391,9 @@ void main() {
     device = _FakeTable(_sixEntries());
     installRequestChannel(device);
 
-    await applyRestorePlan(_plan(_archive(), [
-      _liveRequester(),
-      _liveProvider(),
-    ]));
+    await applyRestorePlan(
+      _plan(_archive(), [_liveRequester(), _liveProvider()]),
+    );
 
     expect(device.cancelTrids, [0x1004, 0x1005]);
     expect(device.saves, 1);
@@ -392,7 +421,9 @@ void main() {
     expect(
       device.sent
           .skip(lastCancel + 1)
-          .where((c) => c.cid == 0x10 && c.service == ServiceType.subscriptions),
+          .where(
+            (c) => c.cid == 0x10 && c.service == ServiceType.subscriptions,
+          ),
       isNotEmpty,
       reason: 'the table is read back after the save',
     );
@@ -402,18 +433,16 @@ void main() {
     device = _FakeTable(_sixEntries());
     installRequestChannel(device);
 
-    await applyRestorePlan(_plan(_archive(), [
-      _liveRequester(),
-      _liveProvider(),
-    ]));
+    await applyRestorePlan(
+      _plan(_archive(), [_liveRequester(), _liveProvider()]),
+    );
     final afterFirst = [...device.trids];
     final mark = device.sent.length;
     final savesAfterFirst = device.saves;
 
-    final second = await applyRestorePlan(_plan(_archive(), [
-      _liveRequester(),
-      _liveProvider(),
-    ]));
+    final second = await applyRestorePlan(
+      _plan(_archive(), [_liveRequester(), _liveProvider()]),
+    );
     final again = device.sent.sublist(mark);
 
     expect(device.trids, afterFirst);
@@ -449,14 +478,17 @@ void main() {
     device = _FakeTable([_held(0x1000, 0), _held(0x1001, 1)]);
     installRequestChannel(device);
 
-    final result = await applyRestorePlan(_plan(_archive(), [
-      _liveRequester(),
-      _liveProvider(),
-    ]));
+    final result = await applyRestorePlan(
+      _plan(_archive(), [_liveRequester(), _liveProvider()]),
+    );
 
     final prune = result.requesterPrune.single;
     expect(device.entries, hasLength(4));
-    expect(prune.cancelled, isEmpty, reason: 'nothing the archive does not name');
+    expect(
+      prune.cancelled,
+      isEmpty,
+      reason: 'nothing the archive does not name',
+    );
     expect(_hex(device.trids.take(2).toList()), ['0x1000', '0x1001']);
     expect(device.saves, 0);
     expect(result.failed, 0, reason: result.failures.toString());
@@ -467,10 +499,9 @@ void main() {
     device.refuseCancel = true;
     installRequestChannel(device);
 
-    final result = await applyRestorePlan(_plan(_archive(), [
-      _liveRequester(),
-      _liveProvider(),
-    ]));
+    final result = await applyRestorePlan(
+      _plan(_archive(), [_liveRequester(), _liveProvider()]),
+    );
 
     final prune = result.requesterPrune.single;
     expect(prune.cancelled, isEmpty);
@@ -488,25 +519,162 @@ void main() {
     expect(device.saves, 0, reason: 'a failed run must not claim a save');
   });
 
-  test('an archive subscription that does not resolve leaves the table alone', () async {
-    device = _FakeTable(_sixEntries());
-    installRequestChannel(device);
-    // The archive names provider `0.3`, which is not on this rig: the identity of the entry it
-    // means cannot be computed, so nothing may be deleted on a guess.
-    final archive = _archive(provider: '0.3');
+  test(
+    'an archive subscription that does not resolve leaves the table alone',
+    () async {
+      device = _FakeTable(_sixEntries());
+      installRequestChannel(device);
+      // The archive names provider `0.3`, which is not on this rig: the identity of the entry it
+      // means cannot be computed, so nothing may be deleted on a guess.
+      final archive = _archive(provider: '0.3');
 
-    final result = await applyRestorePlan(_plan(archive, [
-      _liveRequester(),
-      _liveProvider(),
-    ]));
+      final result = await applyRestorePlan(
+        _plan(archive, [_liveRequester(), _liveProvider()]),
+      );
 
-    final prune = result.requesterPrune.single;
-    expect(prune.skipped, isTrue);
-    expect(prune.reason, isNotNull);
-    expect(prune.cancelled, isEmpty);
-    expect(device.entries, hasLength(6));
-    expect(device.cancelTrids, isEmpty);
-    expect(device.saves, 0);
-    expect(result.failures.join('\n'), contains('requester table not pruned'));
-  });
+      final prune = result.requesterPrune.single;
+      expect(prune.skipped, isTrue);
+      expect(prune.reason, isNotNull);
+      expect(prune.cancelled, isEmpty);
+      expect(device.entries, hasLength(6));
+      expect(device.cancelTrids, isEmpty);
+      expect(device.saves, 0);
+      expect(
+        result.failures.join('\n'),
+        contains('requester table not pruned'),
+      );
+    },
+  );
+
+  test(
+    'a target that answers the table read with FAIL is reported, not pruned',
+    () async {
+      device = _FakeTable(_sixEntries());
+      device.failGetFrom =
+          1; // every Get fails, as a device that answers FAIL does
+      installRequestChannel(device);
+
+      final result = await applyRestorePlan(
+        _plan(_archive(), [_liveRequester(), _liveProvider()]),
+      );
+
+      final prune = result.requesterPrune.single;
+      print(
+        'PRUNE UNREAD: failed=${result.failed} skipped=${prune.skipped} '
+        'confirmed=${prune.confirmed} before=[${prune.beforeText}] '
+        'cancelled=[${prune.cancelledText}] remaining=[${prune.remainingText}] '
+        'saves=${device.saves} reads=${device.reads} '
+        'entries=${_hex(device.trids)}',
+      );
+      expect(
+        prune.skipped,
+        isTrue,
+        reason: 'an unread table leaves the device alone',
+      );
+      expect(prune.confirmed, isFalse, reason: 'nothing was read back');
+      expect(
+        prune.remainingText,
+        'unconfirmed',
+        reason: 'an unread table is never reported as an empty one',
+      );
+      expect(prune.before, isEmpty);
+      expect(prune.cancelled, isEmpty);
+      expect(device.cancelTrids, isEmpty);
+      expect(device.saves, 0);
+      expect(
+        device.entries,
+        hasLength(6),
+        reason: 'the stale entries the read would have found are still there',
+      );
+      expect(
+        result.failed,
+        1,
+        reason:
+            'a prune that could not look is a reported failure: '
+            '${result.failures}',
+      );
+      expect(
+        result.failures.join('\n'),
+        contains('requester table not pruned'),
+      );
+    },
+  );
+
+  test(
+    'a requester-table read that times out is reported, not read as empty',
+    () async {
+      device = _FakeTable(_sixEntries());
+      device.getTimesOut = true; // no reply at all: _request returns null
+      installRequestChannel(device);
+
+      final result = await applyRestorePlan(
+        _plan(_archive(), [_liveRequester(), _liveProvider()]),
+      );
+
+      final prune = result.requesterPrune.single;
+      print(
+        'PRUNE TIMEOUT: failed=${result.failed} skipped=${prune.skipped} '
+        'confirmed=${prune.confirmed} remaining=[${prune.remainingText}] '
+        'cancelled=${prune.cancelled.length} saves=${device.saves}',
+      );
+      expect(prune.skipped, isTrue);
+      expect(prune.confirmed, isFalse);
+      expect(prune.before, isEmpty);
+      expect(device.cancelTrids, isEmpty);
+      expect(device.saves, 0);
+      expect(device.entries, hasLength(6));
+      expect(result.failed, 1, reason: result.failures.toString());
+      expect(
+        result.failures.join('\n'),
+        contains('requester table not pruned'),
+      );
+    },
+  );
+
+  test(
+    'a failed read-back is reported as unconfirmed, not as a clean table',
+    () async {
+      device = _FakeTable(_sixEntries());
+      device.failGetAfterCancel = true;
+      installRequestChannel(device);
+
+      final result = await applyRestorePlan(
+        _plan(_archive(), [_liveRequester(), _liveProvider()]),
+      );
+
+      final prune = result.requesterPrune.single;
+      print(
+        'PRUNE UNCONFIRMED: cancelled=${_hex(prune.cancelled)} '
+        'confirmed=${prune.confirmed} remaining=[${prune.remainingText}] '
+        'saves=${device.saves} entries=${_hex(device.trids)} '
+        'failed=${result.failed}',
+      );
+      expect(_hex(prune.cancelled), ['0x1004', '0x1005']);
+      expect(
+        device.saves,
+        1,
+        reason: 'the cancels landed and were persisted before the read-back',
+      );
+      expect(_hex(device.trids), ['0x1000', '0x1001', '0x1002', '0x1003']);
+      expect(prune.confirmed, isFalse);
+      expect(
+        prune.remainingText,
+        'unconfirmed',
+        reason:
+            'the table holds four, and the report may not claim it holds none',
+      );
+      expect(prune.remaining, isEmpty);
+      expect(
+        result.failures.join('\n'),
+        contains('could not confirm the requester save'),
+      );
+      expect(result.failed, 1, reason: result.failures.toString());
+      expect(
+        result.failures.where((f) => f.contains('is still in the table')),
+        isEmpty,
+        reason:
+            'a table nobody read cannot be asked whether a TRID is still in it',
+      );
+    },
+  );
 }
