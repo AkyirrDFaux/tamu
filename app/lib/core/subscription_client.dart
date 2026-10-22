@@ -25,6 +25,7 @@ class SubscriptionClient {
   // The requester table is 0x10/0x11; the provider table 0x20/0x21.
   static const int _cidGetRequester = 0x10;
   static const int _cidSetRequester = 0x11;
+  static const int _cidSaveRequester = 0x13;
   static const int _cidGetProvider = 0x20;
 
   /// SubCid::Change (0x01): the requester installs/cancels a provider entry on a node. This is
@@ -179,6 +180,22 @@ class SubscriptionClient {
     return reply?.ok ?? false;
   }
 
+  /// CID 0x13: Save all subscriptions. Rewrites the requester table's persistence file (`.SUBREQ`)
+  /// from the LIVE table, so the entries currently in RAM are exactly the ones a boot recalls.
+  ///
+  /// This is the durability half of a cancel: a Set with a None trigger removes the entry from RAM
+  /// (and the firmware's cancel path rewrites the file itself - `SubscriptionsControl.h`,
+  /// RequesterSet), but only a Save states, in one command, that the table as it now stands is the
+  /// one to keep. Its answer is the device's own write result, so a failed save is visible instead
+  /// of being read as "the table is what the app just sent".
+  ///
+  /// The counterpart, Recall all (CID 0x12), re-reads `.SUBREQ` over the live table; nothing here
+  /// uses it - on a restore it would undo the cancels it had just made.
+  Future<bool> saveRequesterSubscriptions() async {
+    final reply = await _request(_cidSaveRequester, payload: const []);
+    return reply?.ok ?? false;
+  }
+
   /// UI-position facade over the TRID-keyed protocol: [index] is the row's position in the
   /// current list. `entry == null` cancels the row; otherwise it creates/updates it,
   /// allocating a fresh TRID when the entry does not carry one.
@@ -210,10 +227,10 @@ class SubscriptionClient {
     return setRequesterSubscriptionEntry(e);
   }
 
-  // The persisting recall/save CIDs (0x12/0x13) and the direct provider-set CID
-  // (0x21) are firmware-management commands the app does not currently expose:
-  // the Subscriptions page only edits the requester table. Add them here if a UI
-  // needs table persistence or direct provider management.
+  // The persisting recall CID (0x12) and the direct provider-set CID (0x21) are firmware
+  // management commands the app does not currently expose: the Subscriptions page only edits the
+  // requester table, and only the restore persists it (see [saveRequesterSubscriptions]). Add
+  // them here if a UI needs table persistence or direct provider management.
 
   void dispose() {
     _valueUpdateController.close();

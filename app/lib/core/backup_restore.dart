@@ -188,6 +188,22 @@ int? resolveArchiveAddress(RestorePlan plan, String address) {
   return (idNet(local.id) << 10) | node;
 }
 
+/// The identity of one requester entry: the provider's NODE, the source register on that provider
+/// and the target register here.
+///
+/// A requester entry is keyed on the wire by its TRID, which a restore allocates and which nothing
+/// in the archive carries - so TRID cannot answer "does the archive name this entry?". What the
+/// archive does describe is the subscription itself, and these three fields are its identity. The
+/// provider's ADDRESS carries the net it was written under while the firmware re-qualifies it at
+/// every use (`SubscriptionsRequester.h`, RequesterProviderAddr), so the node is what identifies
+/// the provider: comparing addresses would miss every entry set before a net change.
+///
+/// The restore writes and the prune read through this one helper, so "named by the archive" and
+/// "written by this restore" cannot drift apart.
+String requesterKey(int providerAddr, int sourceReg, int targetReg) =>
+    '${idDevice(providerAddr)}:$sourceReg:$targetReg';
+
+
 /// Why a live node has no snapshot, and who it said it was.
 ///
 /// A node that answered its identity but not its block list is NOT absent from the rig: [reason]
@@ -878,11 +894,200 @@ Future<List<({RestoreItem item, String? reason})>> _bringUpScripts(
   return results;
 }
 
-/// Applies the ready + selected items of [plan]. Returns the number of written
-/// items and failures.
-Future<({int written, int failed, List<String> failures})> applyRestorePlan(
+/// One target's requester table as a restore leaves it: the entries it cancelled, what the target
+/// held before and after, and why the table was left alone when it was.
+///
+/// A restore result carries one of these per target, because a cancellation is a DELETION: it is
+/// reported with its TRIDs rather than applied silently, so a table that lost rows shows it.
+class RequesterPrune {
+  /// The live node id of the target that was pruned.
+  final int deviceId;
+
+  /// The target's name, for a report a person reads.
+  final String deviceName;
+
+  /// The TRIDs the target held before the prune.
+  final List<int> before;
+
+  /// The TRIDs cancelled, in the order they were cancelled.
+  final List<int> cancelled;
+
+  /// The TRIDs the target still holds after the save - read back from the device, not assumed.
+  final List<int> remaining;
+
+  /// True when the table was left untouched; [reason] says why.
+  final bool skipped;
+  final String? reason;
+
+  const RequesterPrune({
+    required this.deviceId,
+    required this.deviceName,
+    this.before = const [],
+    this.cancelled = const [],
+    this.remaining = const [],
+    this.skipped = false,
+    this.reason,
+  });
+
+  /// The cancelled TRIDs as a report reads them (`0x1000, 0x1002`).
+  String get cancelledText => _tridText(cancelled);
+
+  /// The TRIDs the target held before the prune, as a report reads them.
+  String get beforeText => _tridText(before);
+
+  /// The remaining TRIDs as a report reads them.
+  String get remainingText => _tridText(remaining);
+
+  static String _tridText(List<int> trids) =>
+      trids.isEmpty ? '-' : trids.map((t) => '0x${t.toRadixString(16)}').join(', ');
+}
+
+/// Cancels every requester entry the plan's targets hold that the archive does not name, then makes
+/// that durable, so the target's requester table equals the archive's the moment the restore
+/// finishes instead of at the next boot (Docs/App/Backup.md).
+///
+/// The two tools are the device's own (Docs/Services/Subscriptions.md "Requester commands"):
+///  * Set subscription (CID 0x11) with a None trigger cancels one entry by TRID
+///    ([SubscriptionClient.cancelRequesterSubscription], `RequesterSubscription.cancel`).
+///  * Save all subscriptions (CID 0x13) rewrites `.SUBREQ` from the live table, so a reboot cannot
+///    recall a row this run cancelled. The firmware's cancel path rewrites the file too
+///    (`SubscriptionsControl.h`), so the save is the explicit durability step rather than the only
+///    one - and it is the one whose own result is checked and reported.
+/// Recall all (CID 0x12) is deliberately NOT used: it reads `.SUBREQ` over the live table, which
+/// is the opposite direction and would undo the cancels.
+///
+/// What is "named by the archive" is decided by [requesterKey] over the identities the archive
+/// carries, resolved exactly as the writes resolve them - not by TRID, which the archive does not
+/// carry. So an entry the same restore just created is IN the wanted set and survives, and a second
+/// restore of the same archive finds nothing to cancel (and issues no save).
+///
+/// A device whose archive names a subscription that does not resolve here (its provider is off the
+/// bus, say) is left alone and reported: without that identity the live entry it would match cannot
+/// be told apart from a stale one, and a delete on a guess is exactly what the previous "never
+/// prune" rule existed to prevent.
+Future<({List<RequesterPrune> prunes, List<String> failures})> pruneRequesterTable(
   RestorePlan plan,
 ) async {
+  final prunes = <RequesterPrune>[];
+  final failures = <String>[];
+
+  for (final source in plan.devices) {
+    final target = plan.deviceTargets[source.id];
+    if (target == null) continue;
+    // A device without the requester role has no table to prune; every subscription item was
+    // already reported as unsupported.
+    if (target.capabilities & Capability.subscriptionRequest == 0) continue;
+
+    final wanted = <String>{};
+    String? unresolved;
+    for (final sub in source.requesterSubscriptions) {
+      final provider = resolveArchiveAddress(plan, sub.provider);
+      final providerDev = providerDeviceFor(plan.liveDevices, sub.provider);
+      final sourceReg = providerDev?.resolveRef(sub.source);
+      final targetReg =
+          target.resolveRef(sub.target) ?? archiveRefReg(source, sub.target);
+      if (provider == null || sourceReg == null || targetReg == null) {
+        unresolved = 'from ${sub.provider}';
+        break;
+      }
+      wanted.add(requesterKey(provider, sourceReg, targetReg));
+    }
+    if (unresolved != null) {
+      prunes.add(
+        RequesterPrune(
+          deviceId: target.id,
+          deviceName: target.name,
+          skipped: true,
+          reason: "the archive names a subscription that does not resolve "
+              '($unresolved)',
+        ),
+      );
+      failures.add(
+        '${target.name}: requester table not pruned: the archive names a '
+        'subscription that does not resolve ($unresolved)',
+      );
+      continue;
+    }
+
+    final subs = SubscriptionClient(deviceId: target.id);
+    final held = await subs.getRequesterSubscriptions();
+    final before = [for (final e in held) e.trid];
+    final doomed = [
+      for (final e in held)
+        if (!wanted.contains(
+          requesterKey(e.providerAddr, e.sourceReg, e.targetReg),
+        ))
+          e,
+    ];
+    if (doomed.isEmpty) {
+      // Nothing to cancel, so nothing to save: a second restore of the same archive is a no-op.
+      prunes.add(
+        RequesterPrune(
+          deviceId: target.id,
+          deviceName: target.name,
+          before: before,
+          remaining: before,
+        ),
+      );
+      continue;
+    }
+
+    final cancelled = <int>[];
+    for (final entry in doomed) {
+      if (await subs.cancelRequesterSubscription(entry.trid)) {
+        cancelled.add(entry.trid);
+      } else {
+        failures.add(
+          '${target.name}: cancelling requester entry 0x'
+          '${entry.trid.toRadixString(16)} failed (the device refused it or did '
+          'not answer)',
+        );
+      }
+    }
+    // The save comes AFTER every cancel, and only when at least one landed: it states the table as
+    // it now stands, so it can never be what re-adds an entry.
+    if (cancelled.isNotEmpty && !await subs.saveRequesterSubscriptions()) {
+      failures.add(
+        '${target.name}: requester save-all after ${cancelled.length} cancel(s) '
+        'failed, so a reboot may recall them',
+      );
+    }
+
+    // Read back rather than assume: the point of reporting is to catch a cancel the device did not
+    // actually apply.
+    final remaining = [
+      for (final e in await subs.getRequesterSubscriptions()) e.trid,
+    ];
+    for (final trid in cancelled) {
+      if (remaining.contains(trid)) {
+        failures.add(
+          '${target.name}: requester entry 0x${trid.toRadixString(16)} is still '
+          'in the table after the cancel and the save',
+        );
+      }
+    }
+    prunes.add(
+      RequesterPrune(
+        deviceId: target.id,
+        deviceName: target.name,
+        before: before,
+        cancelled: cancelled,
+        remaining: remaining,
+      ),
+    );
+  }
+  return (prunes: prunes, failures: failures);
+}
+
+/// Applies the ready + selected items of [plan]. Returns the number of written
+/// items and failures.
+Future<({
+  int written,
+  int failed,
+  List<String> failures,
+  List<RequesterPrune> requesterPrune,
+})>
+applyRestorePlan(RestorePlan plan) async {
   // A dynamic block's values can only be written into a block that exists.
   await prepareDynamicBlocks(plan);
 
@@ -905,11 +1110,10 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
   final allocatedTrids = <int>{};
   // One write per distinct (provider, source, target): an archive can carry the same
   // subscription twice (a device that already held a duplicate captures it), and writing both
-  // leaves two entries racing for one source with the second never firing.
+  // leaves two entries racing for one source with the second never firing. The identity is
+  // `requesterKey`'s, the same one the prune compares against, so a collapsed duplicate and an
+  // archived one are the same subscription to both.
   final seenSubKeys = <String>{};
-
-  String subKey(int providerAddr, int sourceReg, int targetReg) =>
-      '${idDevice(providerAddr)}:$sourceReg:$targetReg';
 
   // One item could not be written; record what it was so a run can be diagnosed.
   void failItem(RestoreItem item, String why) {
@@ -948,14 +1152,13 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
   final ordered = [...plan.items]
     ..sort((a, b) => order(a.kind).compareTo(order(b.kind)));
 
-  // NOTE: the target's requester table is deliberately NOT pruned. An earlier version cancelled
-  // every entry the archive did not name, which is destructive: a partial or older archive then
-  // silently deletes subscriptions the device legitimately carries. The table belongs to the
-  // device - a restore adds and updates, and two entries of one identity are collapsed by the
-  // write below, but nothing is ever removed.
-  //
-  // (The same-identity collapse is what fixed an inert duplicate; cancellation is not needed
-  // for that.)
+  // The target's requester table is pruned after the items are written (see
+  // `pruneRequesterTable`): every entry the archive does not name is cancelled and the result
+  // saved, so the table equals the archive's when this returns rather than at the next boot. The
+  // prune runs LAST on purpose - an entry this run just created is then already in the table AND
+  // in the archive's identity set, so it is not a candidate; and it is skipped, with a reported
+  // failure, for a device whose archive names a subscription that does not resolve (the case the
+  // previous "never prune" rule guarded against, now reported instead of silently tolerated).
 
   for (final item in ordered) {
     // An unready item is never written, so if it is skipped here it is counted in neither
@@ -1071,7 +1274,7 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         // One entry per distinct identity: the archive can name the same subscription twice
         // (captured from a device that already held a duplicate), and a second entry would sit
         // inert behind the first.
-        if (!seenSubKeys.add(subKey(provider, source, targetReg))) {
+        if (!seenSubKeys.add(requesterKey(provider, source, targetReg))) {
           written++;
           break;
         }
@@ -1153,6 +1356,16 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
         }
     }
   }
+  // The requester table is part of the snapshot, so it is brought to the archive's before the
+  // device is saved: every entry the archive does not name is cancelled through the device's own
+  // Set-with-None command and then persisted with its Save-all. A cancel that fails, a save that
+  // fails and a cancelled TRID still in the table afterwards are all reported - a delete that
+  // cannot be seen is the failure mode this exists to remove.
+  final pruned = await pruneRequesterTable(plan);
+  for (final failure in pruned.failures) {
+    failed++;
+    if (failures.length < 100) failures.add(failure);
+  }
   // Every device this run wrote to is saved - the writes sit in RAM until then - and the scripts
   // are loaded last, so they read the values the restore has just written.
   await _persistWrites(writtenDevices);
@@ -1163,5 +1376,10 @@ Future<({int written, int failed, List<String> failures})> applyRestorePlan(
       failItem(brought.item, brought.reason!);
     }
   }
-  return (written: written, failed: failed, failures: failures);
+  return (
+    written: written,
+    failed: failed,
+    failures: failures,
+    requesterPrune: pruned.prunes,
+  );
 }

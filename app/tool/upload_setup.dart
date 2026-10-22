@@ -219,6 +219,14 @@ Future<int> runUpload(List<String> args, {RigOpener? openRig}) async {
   }
   final result = await applyRestorePlan(plan);
   stdout.writeln('\nAPPLIED written=${result.written} failed=${result.failed}');
+  for (final prune in result.requesterPrune) {
+    stdout.writeln(
+      '  REQUESTER ${idToString(prune.deviceId)} "${prune.deviceName}": '
+      'before=[${prune.beforeText}] cancelled=[${prune.cancelledText}] '
+      'remaining=[${prune.remainingText}]'
+      '${prune.skipped ? ' SKIPPED: ${prune.reason}' : ''}',
+    );
+  }
   for (final failure in result.failures) {
     stdout.writeln('  FAILED-ITEM $failure');
   }

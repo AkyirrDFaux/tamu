@@ -244,10 +244,18 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
     setState(() => _busy = true);
     try {
       final result = await applyRestorePlan(plan);
+      final cancelledTrids = [
+        for (final prune in result.requesterPrune) ...prune.cancelled,
+      ];
       if (mounted) {
         showSnack(
           context,
           'Restored ${result.written} item(s)'
+          // A cancellation is a deletion, so it is never silent: the count and the TRIDs are
+          // reported with the run (Docs/App/Backup.md).
+          '${cancelledTrids.isEmpty ? '' : ', cancelled ${cancelledTrids.length} '
+              'requester entr${cancelledTrids.length == 1 ? 'y' : 'ies'} '
+              '(${cancelledTrids.map((t) => '0x${t.toRadixString(16)}').join(', ')})'}'
           '${result.failed > 0 ? ', ${result.failed} failed' : ''}',
         );
         Navigator.of(context).pop(true);
