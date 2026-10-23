@@ -91,6 +91,26 @@ are hardware-only.
   `Docs/App/Backup.md` is the owner's to change. Proposed replacement text is in that card's
   handoff.
 
+- **E34** **A requester prune with two archives on one target cancels each archive's entries.**
+  `pruneRequesterTable` (`app/lib/core/backup_restore.dart:2689-2700`) loops per SOURCE device and
+  cancels every entry of that source's target that source's own archive does not name, so when two
+  archive devices are restored onto one live node - which the plan page's per-device target dropdown
+  allows - the first pass cancels the second archive's entries and the second pass cancels the
+  first's. Reproduced 2026-10-23 with a throwaway probe (two archives with one requester each, a live
+  table holding both entries, both sources pointed at that one node), throwaway file deleted after
+  the run:
+
+      prune 57.1: before=[0x1000, 0x1001] cancelled=[0x1001] kept=[] remaining=[0x1000]
+      prune 57.1: before=[0x1000] cancelled=[0x1000] kept=[] remaining=[]
+      device table after: []   cancel commands: [0x1001, 0x1000]
+
+  `pruneScriptSlots` had the same shape and was fixed to union the archive per TARGET (`c046e21`);
+  this one was not. The plan's diff agrees with the run here (it lists each live entry the other
+  archive does not name, so the page shows both deletions), which is why it was not a finding
+  against card `t_6ffa42c6` - the page is truthful about a wrong action. Fix: group the sources by
+  target and union `archiveRequesterKeys` over that group, as the script sweep unions slots; then
+  the plan's requester removals must be derived per target too.
+
 ## Valu v2.0 app (2026-10-06) - parked (owner: not now)
 
 - **E27** **Resistive measurement reference resistor is undefined.** `Docs/Devices.md` gives three ADC
