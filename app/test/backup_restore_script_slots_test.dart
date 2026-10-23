@@ -1,0 +1,582 @@
+import 'dart:convert';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:tamuapp/core/backup.dart';
+import 'package:tamuapp/core/backup_format.dart';
+import 'package:tamuapp/core/backup_script.dart';
+import 'package:tamuapp/core/protocol.dart';
+import 'package:tamuapp/core/request_channel.dart';
+import 'package:tamuapp/core/script_client.dart';
+import 'package:tamuapp/core/script_file.dart';
+import 'package:tamuapp/core/storage_client.dart';
+import 'package:tamuapp/core/types.dart';
+
+/// A core that answers the service requests a restore sends, so `applyRestorePlan` can be driven
+/// without a rig - the same shape as the bring-up test's fake, extended with the things the script
+/// slots phase has to survive and measure: the stored file contents (what the device HELD before a
+/// write, which is how "changed" is decided), the report record (`state`), an unload or a load the
+/// device refuses, and a slot map the device will not return.
+class _FakeCore implements RequestChannel {
+  _FakeCore({Map<int, int> loaded = const {}}) : loaded = {...loaded};
+
+  /// loaded slot -> SCR file id. The load/unload commands mutate it, so a test can read the
+  /// device state the restore left behind.
+  final Map<int, int> loaded;
+
+  /// Slots the device refuses to unload (it answers FAIL), as a stuck script would.
+  final refuseUnload = <int>{};
+
+  /// Script file ids the device refuses to load, as a damaged file would.
+  final refuseLoad = <int>{};
+
+  /// The state each loaded slot reports (Docs CID 3). Absent means `Running`, which is what a rig
+  /// left by an earlier setup reports.
+  final states = <int, int>{};
+
+  /// Never answer the slot-map read (CID 0), as a timeout does.
+  bool slotMapTimesOut = false;
+
+  /// Never answer the report record (CID 3), as a device that cannot say what it runs.
+  bool statesUnreadable = false;
+
+  /// The slot count the core reports (a v2 core's script table, generously padded).
+  static const slots = 16;
+
+  /// Every request, in the order it was sent.
+  final sent = <({ServiceType service, int cid, List<int> payload})>[];
+
+  /// File contents on the device, keyed by the name the writes landed them under.
+  final files = <String, List<int>>{};
+
+  int _txId = 0x100;
+
+  static const _ok = PacketResponse(payload: [], success: true, fail: false);
+  static const _failed = PacketResponse(
+    payload: [],
+    success: false,
+    fail: true,
+  );
+
+  List<int> _slotMap() {
+    final map = List<int>.filled(slots, 0xFFFF);
+    loaded.forEach((slot, fileId) {
+      if (slot < slots) map[slot] = fileId;
+    });
+    return [
+      for (final id in map) ...[id & 0xFF, (id >> 8) & 0xFF],
+    ];
+  }
+
+  @override
+  bool get isConnected => true;
+
+  @override
+  int takeTxId() => _txId++;
+
+  @override
+  void setSubscriptionListener(Function(List<int>)? listener) {}
+
+  @override
+  Future<List<int>> request(
+    int targetId,
+    ServiceType service,
+    int functionCid, {
+    List<int> payload = const [],
+    Duration timeout = const Duration(seconds: 2),
+    bool requestFrag = false,
+    int? transactionId,
+  }) async {
+    sent.add((service: service, cid: functionCid, payload: payload));
+    if (service == ServiceType.script && functionCid == 0) {
+      if (slotMapTimesOut) throw StateError('no reply');
+      return _slotMap();
+    }
+    if (service == ServiceType.script && functionCid == 3) {
+      if (statesUnreadable) throw StateError('no reply');
+      final slot = payload[0];
+      final state = states[slot] ?? ScriptState.running;
+      return [state, 0, 0, 0]; // state, depth, line (u16)
+    }
+    if (service == ServiceType.storage && functionCid == 6) {
+      // A write fragment: frag info (4), the file name (8), then its slice of the content.
+      final name = StorageClient.unpadName(payload.sublist(4, 12));
+      files.putIfAbsent(name, () => []).addAll(payload.sublist(12));
+      return const [0, 0]; // the sequence the device accepted
+    }
+    if (service == ServiceType.storage && functionCid == 5) {
+      // A file read: answer it the way the device does - per-fragment name echoes - or FAIL it
+      // when no such file exists, which is what "the device would not return it" looks like.
+      final name = StorageClient.unpadName(payload.sublist(0, 8));
+      final content = files[name];
+      if (content == null) throw StateError('no such file');
+      final out = <int>[];
+      for (var off = 0; off < content.length; off += 64) {
+        final end = off + 64 > content.length ? content.length : off + 64;
+        out
+          ..addAll(StorageClient.padName(name))
+          ..addAll(content.sublist(off, end));
+      }
+      return out;
+    }
+    return const [];
+  }
+
+  @override
+  Future<PacketResponse> requestWithFlags(
+    int targetId,
+    ServiceType service,
+    int functionCid, {
+    List<int> payload = const [],
+    Duration timeout = const Duration(seconds: 2),
+    bool requestFrag = false,
+    int? transactionId,
+  }) async {
+    sent.add((service: service, cid: functionCid, payload: payload));
+    if (service == ServiceType.script) {
+      switch (functionCid) {
+        case 1: // load: file id (u16), slot (u8)
+          final fileId = payload[0] | (payload[1] << 8);
+          if (refuseLoad.contains(fileId)) return _failed;
+          final slot = payload.length > 2 ? payload[2] : -1;
+          if (slot >= 0) loaded[slot] = fileId;
+        case 2: // unload: slot (u8)
+          if (refuseUnload.contains(payload[0])) return _failed;
+          loaded.remove(payload[0]);
+      }
+    }
+    if (service == ServiceType.storage && functionCid == 4) {
+      // A rename lands the staged content under the new name.
+      final from = StorageClient.unpadName(payload.sublist(0, 8));
+      final to = StorageClient.unpadName(payload.sublist(8, 16));
+      final staged = files.remove(from);
+      if (staged != null) files[to] = staged;
+    }
+    return _ok;
+  }
+
+  /// The script commands the restore sent (`cid` followed by its payload), in order.
+  List<List<int>> get scriptCommands => [
+    for (final c in sent)
+      if (c.service == ServiceType.script && c.cid != 0) [c.cid, ...c.payload],
+  ];
+
+  /// The slots the restore asked to UNLOAD, in order.
+  List<int> get unloads => [
+    for (final c in scriptCommands)
+      if (c.first == 2) c[1],
+  ];
+
+  /// The slots the restore asked to LOAD, in order.
+  List<int> get loads => [
+    for (final c in scriptCommands)
+      if (c.first == 1) c[3],
+  ];
+
+  /// The `(slot, action)` pairs the restore asked for, in order (CID 4).
+  List<(int, int)> get actions => [
+    for (final c in scriptCommands)
+      if (c.first == 4) (c[1], c[2]),
+  ];
+}
+
+BackupDevice _device(List<BackupScript> scripts, {List<BackupFile> files = const []}) =>
+    BackupDevice(
+      type: 'Tamu v2.0A',
+      typeId: 1,
+      id: idFromString('39.1')!,
+      name: 'Tamu',
+      blocks: const [],
+      scripts: scripts,
+      files: files,
+    );
+
+LiveDevice _live({int id = 0x2711}) => LiveDevice(
+  id: id,
+  name: 'Tamu',
+  capabilities: Capability.scripts,
+  blocks: const [],
+);
+
+BackupScript _script(
+  int slot,
+  String name, {
+  List<String> properties = const [],
+}) => BackupScript(
+  slot: slot,
+  functionName: name,
+  properties: properties,
+  inputs: const [],
+  outputs: const [],
+  variables: const [],
+  constants: const [],
+  lines: const [],
+);
+
+/// The image a script item writes, so a test can seed the device with the SAME bytes (unchanged) or
+/// different ones (changed).
+List<int> _image(BackupScript script) => script.toDraft().toImage();
+
+RestorePlan _plan(
+  BackupDevice device,
+  LiveDevice live, {
+  List<RestoreItem> extra = const [],
+}) {
+  final plan = RestorePlan(
+    devices: [device],
+    liveDevices: [live],
+    items: [
+      for (final script in device.scripts)
+        RestoreItem(
+          kind: RestoreKind.script,
+          device: device,
+          script: script,
+          selected: true,
+        ),
+      ...extra,
+    ],
+    deviceTargets: {device.id: live},
+    blockTargets: const {},
+  );
+  plan.resolve();
+  for (final item in plan.items) {
+    item.selected = item.ready;
+  }
+  return plan;
+}
+
+/// The rig as bambi's restore found it: slots 0-4 and 10 loaded from an earlier akyirr-era setup.
+Map<int, int> _akyirrSlots() => {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 10: 10};
+
+/// bambi's archive: scripts 1, 2, 3, 4 and 10. No slot 0 - the `Temperature regulation` script
+/// the old setup left running is not in it.
+List<BackupScript> _bambiScripts() => [
+  _script(1, 'Fan curve', properties: ['Load on boot']),
+  _script(2, 'Selector', properties: ['Load on boot']),
+  _script(3, 'LDR read'),
+  _script(4, 'Beacon'),
+  _script(10, 'ForceBlink', properties: ['Function library']),
+];
+
+String _reportLine(ScriptSlotPrune p) =>
+    'SCRIPTS ${idToString(p.deviceId)} "${p.deviceName}": '
+    'before=[${p.beforeText}] unloaded=[${p.unloadedText}] '
+    'refused=[${p.refusedText}] kept-by-selection=[${p.keptText}] '
+    'remaining=[${p.remainingText}]'
+    '${p.skipped ? ' SKIPPED: ${p.reason}' : ''}';
+
+String _reloadLine(ScriptReloadReport r) =>
+    'RELOAD ${idToString(r.deviceId)} "${r.deviceName}": '
+    'changed=[${r.changedText}] reloaded=[${r.reloadedText}] '
+    'left-alone=[${r.leftAloneText}] refused=[${r.refusedText}]'
+    '${r.skipped ? ' SKIPPED: ${r.reason}' : ''}';
+
+String _slotsText(Map<int, int> slots) =>
+    slots.isEmpty ? '-' : ScriptSlotPrune.slotText(slots);
+
+void main() {
+  late RequestChannel? previous;
+  late _FakeCore core;
+
+  void install(_FakeCore fake) {
+    core = fake;
+    installRequestChannel(fake);
+  }
+
+  setUp(() {
+    previous = requestChannel;
+    install(_FakeCore());
+  });
+
+  tearDown(() => installRequestChannel(previous));
+
+  test('a restore unloads the script slots the archive does not carry', () async {
+    final slotsBefore = _akyirrSlots();
+    install(_FakeCore(loaded: slotsBefore));
+    final device = _device(_bambiScripts());
+    final plan = _plan(device, _live());
+    expect(plan.items.every((i) => i.ready), isTrue);
+
+    final result = await applyRestorePlan(plan);
+
+    final prune = result.scriptSlots.single;
+    final reload = result.scriptReload.single;
+    // Printed on purpose: the card asks for the transcript of this case, and a transcript a
+    // reviewer can re-run is worth more than one pasted into a handoff.
+    print('slots before the restore: ${_slotsText(slotsBefore)}');
+    print('unload commands the restore sent: ${core.unloads}');
+    print('load commands the restore sent: ${core.loads}');
+    print('slots after the restore: ${_slotsText(core.loaded)}');
+    print('reported: ${_reportLine(prune)}');
+    print('reported: ${_reloadLine(reload)}');
+
+    // Slot 0 held the akyirr-era `Temperature regulation` the archive does not carry: it is
+    // unloaded and NAMED, not dropped silently.
+    // The sweep reads AFTER the reload phase and after the bring-up: the library slot has been
+    // released by then, so what it reports as `before` is what the device held at that point.
+    expect(prune.before, {0: 0, 1: 1, 2: 2, 3: 3, 4: 4});
+    expect(prune.unloaded, {0: 0});
+    expect(prune.keptBySelection, isEmpty);
+    expect(prune.refused, isEmpty);
+    expect(prune.confirmed, isTrue);
+    expect(prune.remaining, {1: 1, 2: 2, 3: 3, 4: 4});
+    expect(prune.unloadedText, 'slot 0 (SCR_000)');
+    expect(core.loaded, {1: 1, 2: 2, 3: 3, 4: 4});
+    // The archive's own scripts are reloaded because their images changed, and the library still
+    // never loads.
+    expect(reload.reloaded.keys, [1, 2, 3, 4]);
+    expect(reload.reloaded[1]!.why, contains('its image changed'));
+    expect(reload.leftAlone, isEmpty);
+    expect(core.loads, [1, 2, 3, 4]);
+    expect(core.actions, [(1, ScriptAction.start), (2, ScriptAction.start), (3, ScriptAction.start), (4, ScriptAction.start)],
+        reason: 'a reload starts a script that was running again');
+    // A function library is written as a file and never loaded.
+    expect(core.loads, isNot(contains(10)));
+    expect(result.failed, 0, reason: result.failures.toString());
+  });
+
+  test('a target that will not return its slot map is reported unswept', () async {
+    // "Could not look" is not "holds nothing": the sweep must not report a clean device it never
+    // read, or the very leftovers this exists to remove stay loaded and invisible.
+    final fake = _FakeCore(loaded: _akyirrSlots());
+    fake.slotMapTimesOut = true;
+    install(fake);
+    final device = _device(_bambiScripts());
+    final plan = _plan(device, _live());
+
+    final result = await applyRestorePlan(plan);
+
+    final prune = result.scriptSlots.single;
+    final reload = result.scriptReload.single;
+    expect(prune.skipped, isTrue);
+    expect(prune.confirmed, isFalse);
+    expect(prune.unloaded, isEmpty);
+    expect(prune.remainingText, 'unconfirmed');
+    // Both phases rest on the same read, so both refuse to claim anything about it.
+    expect(reload.skipped, isTrue);
+    expect(reload.reloaded, isEmpty);
+    expect(reload.leftAlone, isEmpty);
+    expect(result.failed, 2);
+    expect(
+      result.failures.any((f) => f.contains('scripts not reloaded')),
+      isTrue,
+    );
+    expect(
+      result.failures.any((f) => f.contains('script slots not swept')),
+      isTrue,
+    );
+    expect(fake.unloads, isEmpty);
+  });
+
+  test('a script left unticked keeps its slot and is reported as skipped', () async {
+    install(_FakeCore(loaded: {0: 0, 1: 1, 2: 2}));
+    final device = _device([_script(1, 'Fan curve'), _script(2, 'Selector')]);
+    final plan = _plan(device, _live());
+    // The user unticks the script in slot 2: its slot is "not selected", not "not in the archive".
+    plan.items.firstWhere((i) => i.script!.slot == 2).selected = false;
+
+    final result = await applyRestorePlan(plan);
+
+    final prune = result.scriptSlots.single;
+    final reload = result.scriptReload.single;
+    print('unticks slot 2 -> ${_reportLine(prune)}');
+    print('unticks slot 2 -> ${_reloadLine(reload)}');
+    expect(prune.unloaded, {0: 0}, reason: 'only the stale slot goes');
+    expect(
+      prune.keptBySelection,
+      {2: 2},
+      reason: 'the unticked script is named in the report, not unloaded',
+    );
+    expect(prune.remaining, {1: 1, 2: 2});
+    expect(core.unloads, [1, 0], reason: 'slot 2 is never named by an unload');
+    expect(core.loads, [1], reason: 'the unticked script is not loaded either');
+    // The reload phase does not touch what the user left out either: it is not in the run.
+    expect(reload.reloaded.keys, [1], reason: 'slot 2 is not reloaded');
+    expect(reload.leftAlone.containsKey(2), isFalse);
+    expect(result.failed, 0, reason: result.failures.toString());
+  });
+
+  test('only the script whose image changed is reloaded', () async {
+    final scripts = [
+      _script(1, 'Fan curve'),
+      _script(2, 'Selector'),
+      _script(3, 'LDR read'),
+    ];
+    final fake = _FakeCore(loaded: {1: 1, 2: 2, 3: 3});
+    // The device holds slot 1 and 3 exactly as the archive has them, and slot 2 with other bytes:
+    // only slot 2 changed, so only slot 2 is disturbed.
+    fake.files['SCR_001'] = _image(scripts[0]);
+    fake.files['SCR_002'] = [..._image(scripts[1]), 0xAA];
+    fake.files['SCR_003'] = _image(scripts[2]);
+    install(fake);
+    final device = _device(scripts);
+    final plan = _plan(device, _live());
+
+    final result = await applyRestorePlan(plan);
+
+    final reload = result.scriptReload.single;
+    print('one changed script -> ${_reloadLine(reload)}');
+    expect(fake.unloads, [2], reason: 'only the changed script is reloaded');
+    expect(fake.loads, [2]);
+    expect(reload.changed.keys, [2]);
+    expect(reload.reloaded.keys, [2]);
+    expect(
+      reload.leftAlone,
+      {1: 1, 3: 3},
+      reason: 'unchanged loaded scripts are left running, and said so',
+    );
+    expect(result.failed, 0, reason: result.failures.toString());
+  });
+
+  test('a second identical restore issues no unload and no reload at all', () async {
+    final device = _device(_bambiScripts());
+    // The state bambi's rig is in once the first restore has run: the archive's slots loaded, no
+    // leftover, and the files holding exactly what the archive carries.
+    install(_FakeCore(loaded: {1: 1, 2: 2, 3: 3, 4: 4}));
+    final first = await applyRestorePlan(_plan(device, _live()));
+    expect(first.failed, 0, reason: first.failures.toString());
+    expect(core.loads, [1, 2, 3, 4]);
+
+    core.sent.clear();
+    final second = await applyRestorePlan(_plan(device, _live()));
+
+    final prune = second.scriptSlots.single;
+    final reload = second.scriptReload.single;
+    print('second restore -> ${_reportLine(prune)}');
+    print('second restore -> ${_reloadLine(reload)}');
+    print('script commands the second restore sent: ${core.scriptCommands}');
+    expect(
+      core.unloads,
+      isEmpty,
+      reason: 'nothing is stale, and nothing changed, so nothing is unloaded',
+    );
+    expect(core.loads, isEmpty, reason: 'nothing is reloaded');
+    expect(core.actions, isEmpty, reason: 'nothing is restarted');
+    expect(prune.unloaded, isEmpty);
+    expect(reload.reloaded, isEmpty);
+    expect(reload.changed, isEmpty, reason: 'the images are byte-identical');
+    expect(
+      reload.leftAlone,
+      {1: 1, 2: 2, 3: 3, 4: 4},
+      reason: 'every running script is reported as left alone',
+    );
+    expect(second.failed, 0, reason: second.failures.toString());
+  });
+
+  test('a raw script file rewritten under a loaded slot is reloaded', () async {
+    // A script whose image did not parse travels as bytes; the slot holding it still runs the old
+    // bytes, so the raw write has to reload it exactly like a semantic one.
+    final fake = _FakeCore(loaded: {5: 5});
+    fake.files['SCR_005'] = const [1, 2, 3];
+    install(fake);
+    final raw = BackupFile(
+      name: 'SCR_005',
+      kind: 'Script',
+      data: base64Encode(const [9, 8, 7, 6]),
+    );
+    final device = _device(const [], files: [raw]);
+    final plan = _plan(
+      device,
+      _live(),
+      extra: [
+        RestoreItem(
+          kind: RestoreKind.file,
+          device: device,
+          file: raw,
+          selected: true,
+        ),
+      ],
+    );
+
+    final result = await applyRestorePlan(plan);
+
+    final reload = result.scriptReload.single;
+    print('raw file rewrite -> ${_reloadLine(reload)}');
+    expect(fake.unloads, [5], reason: 'the slot holding the old bytes is reloaded');
+    expect(fake.loads, [5]);
+    expect(reload.changed.keys, [5]);
+    expect(reload.reloaded.keys, [5]);
+    expect(reload.reloaded[5]!.why, contains('its image changed'));
+    expect(reload.leftAlone, isEmpty);
+    expect(result.failed, 0, reason: result.failures.toString());
+  });
+
+  test('a reload the device refuses is reported as a failure, not swallowed', () async {
+    final scripts = [_script(1, 'Fan curve')];
+    final fake = _FakeCore(loaded: {1: 1});
+    fake.files['SCR_001'] = const [0, 0]; // different from the archive's image
+    fake.refuseUnload.add(1);
+    install(fake);
+    final device = _device(scripts);
+    final plan = _plan(device, _live());
+
+    final result = await applyRestorePlan(plan);
+
+    final reload = result.scriptReload.single;
+    print('refused reload -> ${_reloadLine(reload)}');
+    expect(reload.refused, {1: 1});
+    expect(reload.reloaded, isEmpty);
+    expect(reload.refusedText, 'slot 1 (SCR_001)');
+    expect(result.failed, 1);
+    expect(
+      result.failures.single,
+      contains('reloading script slot 1 (SCR_001) failed'),
+    );
+    expect(result.failures.single, contains('still runs the image it held'));
+    // The script it could not reload is not then unloaded by the sweep: the archive carries it.
+    expect(fake.loaded, {1: 1});
+  });
+
+  test('an unload the device refuses is reported as a failure, not swallowed', () async {
+    final fake = _FakeCore(loaded: {0: 0, 1: 1, 2: 2});
+    fake.refuseUnload.add(0);
+    install(fake);
+    final device = _device([_script(1, 'Fan curve'), _script(2, 'Selector')]);
+    final plan = _plan(device, _live());
+
+    final result = await applyRestorePlan(plan);
+
+    final prune = result.scriptSlots.single;
+    expect(prune.unloaded, isEmpty);
+    expect(prune.refused, {0: 0});
+    expect(prune.unloadedText, '-');
+    expect(prune.refusedText, 'slot 0 (SCR_000)');
+    expect(prune.remaining, {0: 0, 1: 1, 2: 2});
+    expect(result.failed, 1);
+    expect(
+      result.failures.single,
+      contains('unloading script slot 0 (SCR_000) failed'),
+    );
+    expect(result.failures.single, contains('still loaded'));
+  });
+
+  test('an unchanged script in Error is reloaded, and one that is paused is not', () async {
+    final scripts = [_script(1, 'Fan curve'), _script(2, 'Selector')];
+    final fake = _FakeCore(loaded: {1: 1, 2: 2});
+    // Both files are exactly what the archive carries: nothing changed, so nothing but a fault
+    // justifies disturbing the slot.
+    fake.files['SCR_001'] = _image(scripts[0]);
+    fake.files['SCR_002'] = _image(scripts[1]);
+    fake.states
+      ..[1] = ScriptState.error
+      ..[2] = ScriptState.paused;
+    install(fake);
+    final device = _device(scripts);
+    final plan = _plan(device, _live());
+
+    final result = await applyRestorePlan(plan);
+
+    final reload = result.scriptReload.single;
+    print('error + paused slots -> ${_reloadLine(reload)}');
+    expect(reload.changed, isEmpty);
+    expect(reload.reloaded.keys, [1], reason: 'the faulted script is started again');
+    expect(reload.reloaded[1]!.why, contains('Error'));
+    expect(reload.leftAlone, {2: 2}, reason: 'the paused one is left alone');
+    expect(fake.loads, [1]);
+    expect(
+      fake.actions,
+      [(1, ScriptAction.start)],
+      reason: 'a faulted script is started again, which is what clears the error',
+    );
+    expect(result.failed, 0, reason: result.failures.toString());
+  });
+}

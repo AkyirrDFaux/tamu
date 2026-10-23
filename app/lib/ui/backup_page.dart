@@ -247,6 +247,20 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
       final cancelledTrids = [
         for (final prune in result.requesterPrune) ...prune.cancelled,
       ];
+      // An unloaded script slot stops a running script just as a cancelled requester entry stops a
+      // feed, so it is reported with its slot and file id rather than left silent.
+      final unloadedSlots = [
+        for (final prune in result.scriptSlots) ...prune.unloaded.keys,
+      ];
+      final keptSlots = [
+        for (final prune in result.scriptSlots) ...prune.keptBySelection.keys,
+      ];
+      // A reload is what makes a changed script actually run, so the slots it touched are part of
+      // the run's outcome - and so is the count it left alone, which is the evidence that unchanged
+      // running scripts were not disturbed.
+      final reloadedSlots = [
+        for (final report in result.scriptReload) ...report.reloaded.keys,
+      ];
       if (mounted) {
         showSnack(
           context,
@@ -256,6 +270,20 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
           '${cancelledTrids.isEmpty ? '' : ', cancelled ${cancelledTrids.length} '
                     'requester entr${cancelledTrids.length == 1 ? 'y' : 'ies'} '
                     '(${cancelledTrids.map((t) => '0x${t.toRadixString(16)}').join(', ')})'}'
+          // Same for an unload: the slot is what the device stops running.
+          '${unloadedSlots.isEmpty ? '' : ', unloaded ${unloadedSlots.length} '
+                    'script slot${unloadedSlots.length == 1 ? '' : 's'} the archive '
+                    'does not carry (${unloadedSlots.map((s) => 'slot $s').join(', ')})'}'
+          // ... and a slot left alone because it was not part of this run says so, so it cannot be
+          // mistaken for one the archive carries.
+          '${keptSlots.isEmpty ? '' : ', left ${keptSlots.length} '
+                    'unselected script slot${keptSlots.length == 1 ? '' : 's'} '
+                    'loaded'}'
+          // A reloaded slot is running the code this restore wrote; saying so separates "the file
+          // is new" from "the device runs it".
+          '${reloadedSlots.isEmpty ? '' : ', reloaded ${reloadedSlots.length} '
+                    'changed script slot${reloadedSlots.length == 1 ? '' : 's'} '
+                    '(${reloadedSlots.map((s) => 'slot $s').join(', ')})'}'
           '${result.failed > 0 ? ', ${result.failed} failed' : ''}',
         );
         Navigator.of(context).pop(true);

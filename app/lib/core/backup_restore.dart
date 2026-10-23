@@ -877,6 +877,17 @@ Future<List<({RestoreItem item, String? reason})>> _bringUpScripts(
       // device loaded at boot did so before the library file was replaced, and a stale link leaves
       // its global-function calls dead while the script itself reports no error. The file id and
       // the loaded slot are independent; a restored file sits at its own slot.
+      //
+      // A slot that already holds THIS file is left alone: [reloadChangedScripts] has already
+      // reloaded it when the image this run wrote differs from the one the device held, and when
+      // it does not, the running script is exactly what the archive asks for - a restore must not
+      // stop an animation nothing in it changed.
+      if (loaded[slot] == slot) {
+        results.add((item: item, reason: null));
+        continue;
+      }
+      // The slot is held by a DIFFERENT file - an earlier setup's script the sweep has not
+      // reached yet. The archive's script belongs in its own slot, so the occupant goes.
       if (loaded.containsKey(slot)) {
         await client.unload(slot);
       }
@@ -891,6 +902,590 @@ Future<List<({RestoreItem item, String? reason})>> _bringUpScripts(
     }
   }
   return results;
+}
+
+/// What a restore MEASURED about the script files it wrote: per target, the script file ids whose
+/// stored image differs from the image this run wrote, and why it judged them different.
+///
+/// A reload is a disturbance - it stops whatever was running in that slot and a reloaded script
+/// comes back stopped - so the reload phase must never treat "the restore wrote this file" as
+/// "this file changed". The image the device holds is read BEFORE the write and compared with the
+/// image about to be written; only a real difference lands here. That is what lets a second
+/// identical restore leave every running script alone, and it is a measured fact rather than an
+/// assumption, as the rule requires.
+class ScriptChanges {
+  final Map<int, Map<int, String>> _changed = {};
+
+  /// Notes that script file [fileId] on [targetId] is about to hold different bytes than it did,
+  /// with [why] as the evidence the report quotes.
+  void note(int targetId, int fileId, String why) => _changed
+      .putIfAbsent(targetId, () => <int, String>{})
+      .putIfAbsent(fileId, () => why);
+
+  /// The changed script file ids of [targetId], as file id -> why.
+  Map<int, String> forTarget(int targetId) => _changed[targetId] ?? const {};
+}
+
+/// Whether two script images are byte-identical - the comparison [ScriptChanges] rests on.
+bool sameImage(List<int> a, List<int> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+/// One target's loaded script slots as a restore leaves them, when the question is not "which
+/// slots are stale" (that is [ScriptSlotPrune]) but "what does the device RUN now".
+///
+/// [reloaded] carries the slots this run unloaded and loaded again, each with the measured fact
+/// that made it necessary; [leftAlone] carries the loaded slots whose script the archive carries
+/// and this run did not change, so the report says out loud that a running script was not
+/// disturbed. A reload the device refuses is in [refused] and in the run's failures - a reload
+/// that did not happen is not a success.
+class ScriptReloadReport {
+  /// The live node id of the target.
+  final int deviceId;
+
+  /// The target's name, for a report a person reads.
+  final String deviceName;
+
+  /// The script file ids whose image this run changed on the target, as file id -> why.
+  final Map<int, String> changed;
+
+  /// The slots unloaded and loaded again, in the order it happened, with the file each holds and
+  /// what forced the reload.
+  final Map<int, ({int fileId, String why})> reloaded;
+
+  /// The loaded slots left untouched, with the file each holds: the archive carries that script,
+  /// this run did not change it, so the device keeps running it.
+  final Map<int, int> leftAlone;
+
+  /// The slots the device would not unload or would not load again, with the file each held.
+  final Map<int, int> refused;
+
+  /// True when no reload phase ran; [reason] says why.
+  final bool skipped;
+  final String? reason;
+
+  const ScriptReloadReport({
+    required this.deviceId,
+    required this.deviceName,
+    this.changed = const {},
+    this.reloaded = const {},
+    this.leftAlone = const {},
+    this.refused = const {},
+    this.skipped = false,
+    this.reason,
+  });
+
+  String get changedText => changed.isEmpty
+      ? '-'
+      : changed.entries
+            .map((e) => '${scriptFileName(e.key)} (${e.value})')
+            .join(', ');
+
+  String get reloadedText => reloaded.isEmpty
+      ? '-'
+      : reloaded.entries
+            .map((e) => 'slot ${e.key} (${scriptFileName(e.value.fileId)}): ${e.value.why}')
+            .join(', ');
+
+  String get leftAloneText => ScriptSlotPrune.slotText(leftAlone);
+
+  String get refusedText => ScriptSlotPrune.slotText(refused);
+}
+
+/// Reloads every loaded script slot whose backing script this restore changed, and reports what it
+/// did with every loaded slot - reloaded, refused, or deliberately left alone.
+///
+/// A loaded script is a RUNNING script: the device executes the image it loaded, not the file on
+/// flash. So a restore that rewrites `SCR_XXX` while a slot holds the old image leaves the rig
+/// running stale code - the file is right, the behaviour is not - which is why a changed script has
+/// to be unloaded and loaded again. A raw `SCR_XXX` file write is no exception: a script whose
+/// image did not parse travels as bytes, and the slot that holds it runs the old bytes just the
+/// same.
+///
+/// The rule this phase acts on, stated once: it reloads a loaded slot only when the script that
+/// slot holds CHANGED in this restore ([ScriptChanges], measured before the write), or - the same
+/// fact one step removed - when a function library it links against changed, because a global call
+/// is resolved by reading the library FILE when the using script loads, so an untouched script
+/// still holds calls into the old library. Anything else is left running, and reported as left
+/// alone rather than silently skipped: stopping an animation nothing changed would be a
+/// disturbance of its own.
+///
+/// A loaded slot in Error is reloaded too, with that as the reason: a faulted script stays in
+/// Error until it is explicitly started, and a restore does not reboot, so leaving it would report
+/// success over automation that is dead (the case [_bringUpScripts] exists for).
+///
+/// A reload takes the script back to its first instruction, so what was running has to be started
+/// again or the rig sits idle. What it was doing is read from the device's report record before
+/// the unload - `Running` and `Waiting` are started again, a paused/stopped/finished one is not
+/// disturbed further - and a script the archive marks `Run on load` is started regardless, which is
+/// the rule [_bringUpScripts] already applies to every script it loads. A library is never loaded
+/// (see [_isFunctionLibrary]), so a slot holding one is left to the bring-up, which releases it.
+///
+/// Runs BEFORE [_bringUpScripts] on purpose: that phase loads the scripts a target does not hold,
+/// so a slot it is about to load is not in the loaded map here and cannot be loaded twice. A target
+/// whose slot map cannot be read is reported as a skipped phase and a failure, never as "nothing
+/// changed".
+Future<({List<ScriptReloadReport> reports, List<String> failures})>
+reloadChangedScripts(RestorePlan plan, ScriptChanges changes) async {
+  final reports = <ScriptReloadReport>[];
+  final failures = <String>[];
+
+  // Per TARGET NODE, as the sweep groups them: slots belong to the node, so two source devices
+  // remapped onto one target share one slot table.
+  final sourcesByTarget = <int, List<BackupDevice>>{};
+  final targets = <int, LiveDevice>{};
+  for (final source in plan.devices) {
+    final target = plan.deviceTargets[source.id];
+    if (target == null) continue;
+    // A device without the script role has no slots to reload.
+    if (target.capabilities & Capability.scripts == 0) continue;
+    targets[target.id] = target;
+    sourcesByTarget.putIfAbsent(target.id, () => []).add(source);
+  }
+
+  for (final group in sourcesByTarget.entries) {
+    final target = targets[group.key]!;
+    // The script file ids this run restores on the target ([restoring]), the ones the archive
+    // marks as a function library (never loaded, so never reloaded here) and the ones marked to
+    // run on load (what a reload starts when the device will not say what the slot was doing).
+    final restoring = <int>{};
+    final libraries = <int>{};
+    final runOnLoad = <int>{};
+    for (final source in group.value) {
+      for (final item in plan.items) {
+        if (item.device.id != source.id) continue;
+        if (!item.selected || !item.ready) continue;
+        if (item.kind == RestoreKind.script) {
+          final slot = item.script!.slot;
+          if (slot < 0) continue;
+          if (_isFunctionLibrary(item)) {
+            libraries.add(slot);
+            continue;
+          }
+          restoring.add(slot);
+          if (item.script!.properties.contains('Run on load')) runOnLoad.add(slot);
+        } else if (item.kind == RestoreKind.file) {
+          // A script whose image did not parse is written back as bytes; its file id is the slot
+          // its name names, so it is part of the archive's script set like any other.
+          final fileId = scriptFileId(item.file!.name);
+          if (fileId != null) restoring.add(fileId);
+        }
+      }
+    }
+    // No script of this target is part of the run, so there is nothing to compare or report.
+    if (restoring.isEmpty) continue;
+
+    final changed = changes.forTarget(target.id);
+    final client = ScriptClient(deviceId: target.id);
+    final loaded = await client.readLoadedSlotMap();
+    if (loaded == null) {
+      reports.add(
+        ScriptReloadReport(
+          deviceId: target.id,
+          deviceName: target.name,
+          skipped: true,
+          reason: 'the target did not return its slot map',
+        ),
+      );
+      failures.add(
+        '${target.name}: scripts not reloaded: the target did not return its '
+        'slot map, so a script this run changed may still run its old image',
+      );
+      continue;
+    }
+
+    // A changed library invalidates every link into it (see above), so its file ids are quoted in
+    // the reason the other slots were reloaded.
+    final librariesChanged = [
+      for (final id in changed.keys)
+        if (libraries.contains(id)) id,
+    ]..sort();
+
+    final reloaded = <int, ({int fileId, String why})>{};
+    final leftAlone = <int, int>{};
+    final refused = <int, int>{};
+
+    for (final entry in loaded.entries) {
+      final slot = entry.key;
+      final fileId = entry.value;
+      // A library's slot is the bring-up's to release, never this phase's to load.
+      if (libraries.contains(fileId)) continue;
+      final why = changed[fileId];
+      // Not one of the archive's scripts and not changed: a leftover, and the sweep owns it.
+      if (why == null && !restoring.contains(fileId)) continue;
+      // What the slot was doing, read before the reload; null when the device will not say.
+      final state = (await client.readState(slot))?.state;
+      final faulted = state == ScriptState.error || state == ScriptState.loadFailed;
+      String? reason;
+      if (why != null) {
+        reason = 'its image changed ($why)';
+      } else if (librariesChanged.isNotEmpty) {
+        reason =
+            'it links against '
+            '${librariesChanged.map(scriptFileName).join(', ')}, whose image '
+            'changed';
+      } else if (faulted) {
+        reason =
+            'it is in ${ScriptState.label(state!)}, and a faulted script '
+            'stays there until it is started';
+      }
+      if (reason == null) {
+        // Nothing about this slot changed, so it keeps running: this is the "do not disturb a
+        // running animation for no reason" half of the rule, and it is reported, not silent.
+        leftAlone[slot] = fileId;
+        continue;
+      }
+
+      if (!await client.unload(slot)) {
+        refused[slot] = fileId;
+        failures.add(
+          '${target.name}: reloading script slot $slot '
+          '(${scriptFileName(fileId)}) failed: the device refused the unload, '
+          'so it still runs the image it held ($reason)',
+        );
+        continue;
+      }
+      if (!await client.load(fileId, slot)) {
+        refused[slot] = fileId;
+        failures.add(
+          '${target.name}: reloading script slot $slot '
+          '(${scriptFileName(fileId)}) failed: the file would not load again, '
+          'so the slot is now empty ($reason)',
+        );
+        continue;
+      }
+      // A fresh load starts at the first instruction, so a script that was running has to be
+      // started again, and a faulted one is started to clear the error - that is what reloading it
+      // is FOR. The archive's `Run on load` is the bring-up's own rule and is honoured either way.
+      // Anything else (paused, stopped, finished) is not disturbed further.
+      final wasActive =
+          state == ScriptState.running || state == ScriptState.waiting;
+      final start = wasActive || faulted || runOnLoad.contains(fileId);
+      var outcome = start ? 'started again' : 'left stopped';
+      if (start && !await client.setAction(slot, ScriptAction.start)) {
+        outcome = 'reloaded, but the device refused to start it';
+        failures.add(
+          '${target.name}: script slot $slot (${scriptFileName(fileId)}) was '
+          'reloaded but would not start, so it is not running',
+        );
+      }
+      reloaded[slot] = (fileId: fileId, why: '$reason; $outcome');
+    }
+
+    reports.add(
+      ScriptReloadReport(
+        deviceId: target.id,
+        deviceName: target.name,
+        changed: changed,
+        reloaded: reloaded,
+        leftAlone: leftAlone,
+        refused: refused,
+      ),
+    );
+  }
+  return (reports: reports, failures: failures);
+}
+
+/// One target's script slots as a restore leaves them: the slots it unloaded because the archive
+/// does not name their script, the ones the target would not unload, and the ones it left because
+/// this run was not asked to restore them.
+///
+/// An unload is a DELETION - the device stops running that script - so it is reported with the
+/// slot and the file id it held rather than applied silently, exactly as [RequesterPrune] reports
+/// the TRIDs it cancels: `before` / `unloaded` / `remaining`, read from the device and not assumed.
+class ScriptSlotPrune {
+  /// The live node id of the target that was swept.
+  final int deviceId;
+
+  /// The target's name, for a report a person reads.
+  final String deviceName;
+
+  /// The slots the target held loaded when the sweep read it - after the archive's scripts were
+  /// written and loaded - as slot -> `SCR_XXX` file id.
+  final Map<int, int> before;
+
+  /// The slots unloaded, in the order they were unloaded, with the file id each held.
+  final Map<int, int> unloaded;
+
+  /// The slots the target would not unload: the command answered FAIL or nothing, so that script
+  /// is STILL loaded. Reported as a failure rather than counted as done.
+  final Map<int, int> refused;
+
+  /// The slots left loaded because this run was not asked to restore their script (its item is
+  /// unticked in the plan, or could not be placed). Those slots are "not selected", NOT "not in
+  /// the archive", so the sweep names them instead of unloading them.
+  final Map<int, int> keptBySelection;
+
+  /// The slots the target still held loaded after the unloads - read back from the device, not
+  /// assumed. Empty when [confirmed] is false, which means the slots could not be read back at
+  /// all.
+  final Map<int, int> remaining;
+
+  /// True when [remaining] is a real read of the target. False means what the target now runs is
+  /// unknown, which is reported rather than passed off as a clean sweep.
+  final bool confirmed;
+
+  /// True when no sweep ran; [reason] says why.
+  final bool skipped;
+  final String? reason;
+
+  const ScriptSlotPrune({
+    required this.deviceId,
+    required this.deviceName,
+    this.before = const {},
+    this.unloaded = const {},
+    this.refused = const {},
+    this.keptBySelection = const {},
+    this.remaining = const {},
+    this.confirmed = true,
+    this.skipped = false,
+    this.reason,
+  });
+
+  /// A set of slots as a report reads it (`slot 0 (SCR_000), slot 5 (SCR_005)`), or `-` for none.
+  static String slotText(Map<int, int> slots) => slots.isEmpty
+      ? '-'
+      : [
+          for (final e in slots.entries)
+            'slot ${e.key} (${scriptFileName(e.value)})',
+        ].join(', ');
+
+  String get beforeText => slotText(before);
+  String get unloadedText => slotText(unloaded);
+  String get refusedText => slotText(refused);
+  String get keptText => slotText(keptBySelection);
+
+  /// The still-loaded slots as a report reads them, or `unconfirmed` when the device could not be
+  /// read back - never an empty map standing in for "I could not look".
+  String get remainingText => confirmed ? slotText(remaining) : 'unconfirmed';
+}
+
+/// Unloads every loaded script slot the archive for that target does not name, then reports each
+/// one, so the device runs the archive's scripts and nothing else.
+///
+/// [_bringUpScripts] walks the ARCHIVE's scripts only: it unloads and reloads each of those slots
+/// and releases a slot a function library occupies. A slot holding a script the archive does not
+/// carry is therefore never even looked at, and a loaded script is a RUNNING script - which is how
+/// the rig kept running an akyirr-era `Temperature regulation` after bambi's archive (slots 1, 2,
+/// 3, 4 and 10, no such script) was restored over it. The archive was right; the restore was
+/// additive. This is the mirror rule [pruneRequesterTable] applies to the requester table.
+///
+/// What the archive NAMES is a slot: a stored script's identity on the device is its `SCR_XXX`
+/// file id and the restore loads file N into slot N, so the archive names a slot for every script
+/// it carries - as a semantic script, and as a raw `SCR_XXX` file whose image did not parse and is
+/// written back as bytes. Either the slot or the file id matching that set counts: unloading a
+/// script the archive does carry would be a wrong deletion, and a wrong deletion is worse than a
+/// duplicate.
+///
+/// The predicate this phase acts on, stated once: it unloads a loaded slot only when that slot is
+/// NOT one of the archive's scripts this run restores, and NOT one the run was told to leave out.
+/// A slot behind an unticked checkbox is "not selected", not "not in the archive", so it is left
+/// loaded and reported as [ScriptSlotPrune.keptBySelection] - otherwise unticking one script box
+/// would unload the very script the user meant to keep, which is precisely the kind of silent
+/// deletion this reporting exists to rule out. The phase also declines outright, with a reason, on
+/// a target whose plan carries no item for an archive script: then this run is not the whole of
+/// that device's scripts and there is nothing to compare against.
+///
+/// The sweep is per TARGET NODE, not per archive device: slots belong to the node, so two archive
+/// devices remapped onto one target share one slot table and their sets are unioned - sweeping per
+/// source device would let the first pass unload a slot the second one's archive names. Nothing
+/// here touches another target's slots, and a function library is untouched too: it is named by
+/// the archive, so it is one of the slots this run restores, and [_bringUpScripts] already
+/// released the slot it had wrongly occupied.
+///
+/// A target whose slot map cannot be read is reported as a skipped sweep, not as a clean device:
+/// "could not look" is not "holds nothing", and that is the read this whole phase rests on.
+Future<({List<ScriptSlotPrune> prunes, List<String> failures})>
+pruneScriptSlots(RestorePlan plan) async {
+  final prunes = <ScriptSlotPrune>[];
+  final failures = <String>[];
+
+  // The archive's script slots per device, split three ways: the ones the plan carries an item for
+  // at all ([covered]), the ones this run restores ([restored]) and the ones it was told to leave
+  // out - an unticked, or unplaceable, item ([leftOut]). The split IS the predicate: "restored"
+  // is the set a loaded slot has to be outside of to be a leftover, and "leftOut" is what stops an
+  // unticked script from reading as one.
+  final covered = <int, Set<int>>{};
+  final restored = <int, Set<int>>{};
+  final leftOut = <int, Set<int>>{};
+  void note(int deviceId, int slot, {required bool restoring}) {
+    covered.putIfAbsent(deviceId, () => <int>{}).add(slot);
+    final into = restoring ? restored : leftOut;
+    into.putIfAbsent(deviceId, () => <int>{}).add(slot);
+  }
+
+  for (final item in plan.items) {
+    final restoring = item.selected && item.ready;
+    if (item.kind == RestoreKind.script) {
+      note(item.device.id, item.script!.slot, restoring: restoring);
+    } else if (item.kind == RestoreKind.file && item.file!.kind == 'Script') {
+      // A script whose image did not parse travels as a raw file and is written back as bytes; it
+      // still sits at the slot its name names, so it counts as one of the archive's scripts.
+      final slot = scriptFileId(item.file!.name);
+      if (slot != null) note(item.device.id, slot, restoring: restoring);
+    }
+  }
+
+  // The live target each source device is restored onto, grouped by that target (see above).
+  final sourcesByTarget = <int, List<BackupDevice>>{};
+  final targets = <int, LiveDevice>{};
+  for (final source in plan.devices) {
+    final target = plan.deviceTargets[source.id];
+    if (target == null) continue;
+    // A device without the script role has no slot table to sweep, and every one of its script
+    // items was already reported as unsupported by the plan.
+    if (target.capabilities & Capability.scripts == 0) continue;
+    targets[target.id] = target;
+    sourcesByTarget.putIfAbsent(target.id, () => []).add(source);
+  }
+
+  for (final group in sourcesByTarget.entries) {
+    final target = targets[group.key]!;
+    // The archive's script slots for this target, the ones this run restores and the ones it was
+    // told to leave out - unioned over every source device restored onto this node.
+    final restoring = <int>{};
+    final leavingOut = <int>{};
+    final uncovered = <int>{};
+    for (final source in group.value) {
+      final slots = <int>{for (final script in source.scripts) script.slot};
+      for (final file in source.files) {
+        if (file.kind != 'Script') continue;
+        final slot = scriptFileId(file.name);
+        if (slot != null) slots.add(slot);
+      }
+      for (final slot in slots) {
+        // Every archive script must be accounted for by an item. One that is not means this run
+        // is not the whole of that device's scripts, and sweeping would be a guess about slots
+        // nothing in this run decided.
+        if (!(covered[source.id] ?? const <int>{}).contains(slot)) {
+          uncovered.add(slot);
+        }
+      }
+      restoring.addAll(restored[source.id] ?? const <int>{});
+      leavingOut.addAll(leftOut[source.id] ?? const <int>{});
+    }
+    if (uncovered.isNotEmpty) {
+      final missing = uncovered.toList()..sort();
+      prunes.add(
+        ScriptSlotPrune(
+          deviceId: target.id,
+          deviceName: target.name,
+          skipped: true,
+          reason:
+              'the plan carries no item for script slot(s) '
+              '${missing.join(', ')} the archive holds, so this run is not the '
+              "whole of the target's scripts",
+        ),
+      );
+      continue;
+    }
+
+    final client = ScriptClient(deviceId: target.id);
+    final before = await client.readLoadedSlotMap();
+    if (before == null) {
+      prunes.add(
+        ScriptSlotPrune(
+          deviceId: target.id,
+          deviceName: target.name,
+          confirmed: false,
+          skipped: true,
+          reason: 'the target did not return its slot map',
+        ),
+      );
+      failures.add(
+        '${target.name}: script slots not swept: the target did not return its '
+        'slot map (no reply or FAIL), so a script the archive does not carry may '
+        'still be loaded and running',
+      );
+      continue;
+    }
+
+    // A loaded entry the archive's restored slots name is the script the bring-up just put there.
+    // One a LEFT-OUT script names is the script the user kept, so it is reported instead of
+    // unloaded. Everything else is a leftover from an earlier setup and goes.
+    bool isRestored(MapEntry<int, int> e) =>
+        restoring.contains(e.key) || restoring.contains(e.value);
+    bool isLeftOut(MapEntry<int, int> e) =>
+        leavingOut.contains(e.key) || leavingOut.contains(e.value);
+
+    final kept = <int, int>{};
+    final doomed = <int, int>{};
+    for (final e in before.entries) {
+      if (isRestored(e)) continue;
+      if (isLeftOut(e)) {
+        kept[e.key] = e.value;
+      } else {
+        doomed[e.key] = e.value;
+      }
+    }
+    if (doomed.isEmpty) {
+      // Nothing to unload, so nothing to read back: a second restore of the same archive is a
+      // no-op, and one that unticks a script issues no unload for it either.
+      prunes.add(
+        ScriptSlotPrune(
+          deviceId: target.id,
+          deviceName: target.name,
+          before: before,
+          keptBySelection: kept,
+          remaining: before,
+        ),
+      );
+      continue;
+    }
+
+    final unloaded = <int, int>{};
+    final refused = <int, int>{};
+    for (final e in doomed.entries) {
+      if (await client.unload(e.key)) {
+        unloaded[e.key] = e.value;
+      } else {
+        refused[e.key] = e.value;
+        failures.add(
+          '${target.name}: unloading script slot ${e.key} '
+          '(${scriptFileName(e.value)}) failed (the device refused it or did not '
+          'answer), so that script is still loaded',
+        );
+      }
+    }
+
+    // Read back rather than assume: the point of reporting is to catch an unload the device did
+    // not actually apply. A read-back that does not answer is a failure too - what the target now
+    // runs would otherwise be reported as known when nobody managed to look.
+    final after = await client.readLoadedSlotMap();
+    if (after == null) {
+      failures.add(
+        '${target.name}: could not confirm the script sweep: the slot map could '
+        'not be read back after ${unloaded.length} unload(s), so what the target '
+        'now runs is unknown',
+      );
+    } else {
+      for (final e in unloaded.entries) {
+        if (after.containsKey(e.key)) {
+          failures.add(
+            '${target.name}: script slot ${e.key} (${scriptFileName(e.value)}) '
+            'is still loaded after the unload',
+          );
+        }
+      }
+    }
+    prunes.add(
+      ScriptSlotPrune(
+        deviceId: target.id,
+        deviceName: target.name,
+        before: before,
+        unloaded: unloaded,
+        refused: refused,
+        keptBySelection: kept,
+        remaining: after ?? const {},
+        confirmed: after != null,
+      ),
+    );
+  }
+  return (prunes: prunes, failures: failures);
 }
 
 /// One target's requester table as a restore leaves it: the entries it cancelled, what the target
@@ -1133,6 +1728,8 @@ Future<
     int failed,
     List<String> failures,
     List<RequesterPrune> requesterPrune,
+    List<ScriptSlotPrune> scriptSlots,
+    List<ScriptReloadReport> scriptReload,
   })
 >
 applyRestorePlan(RestorePlan plan) async {
@@ -1142,6 +1739,10 @@ applyRestorePlan(RestorePlan plan) async {
   var written = 0;
   var failed = 0;
   final failures = <String>[];
+  // What this run measured about the script images it wrote (see [ScriptChanges]): the reload phase
+  // acts on the difference between what the device HELD and what was written, not on the fact that
+  // a restore wrote it.
+  final changes = ScriptChanges();
   final register = <int, RegisterClient>{};
   final storage = <int, StorageClient>{};
   final subscriptions = <int, SubscriptionClient>{};
@@ -1281,9 +1882,29 @@ applyRestorePlan(RestorePlan plan) async {
         final slot = item.script!.slot;
         final name = scriptFileName(slot);
         try {
-          if (!await store.writeFile(name, item.script!.toDraft().toImage())) {
+          final image = item.script!.toDraft().toImage();
+          // Measure BEFORE the write, so "changed" is a fact about this device rather than an
+          // assumption about restores: what it held now against what is about to be written.
+          final held = await store.readFile(name);
+          if (!await store.writeFile(name, image)) {
             failItem(item, describe(item));
             break;
+          }
+          if (slot >= 0) {
+            if (held == null) {
+              changes.note(
+                target.id,
+                slot,
+                'the device did not return $name, so its old image is unknown',
+              );
+            } else if (!sameImage(held, image)) {
+              changes.note(
+                target.id,
+                slot,
+                'the device held ${held.length} byte(s), this run wrote '
+                    '${image.length}',
+              );
+            }
           }
         } catch (error) {
           AppDiagnostics.log(
@@ -1390,11 +2011,32 @@ applyRestorePlan(RestorePlan plan) async {
         );
         if (item.file!.name == '.TABLE') break;
         try {
-          done(
-            await store.writeFile(item.file!.name, item.file!.bytes),
-            item,
-            describe(item),
-          );
+          // A raw `SCR_XXX` is a script too: its image did not parse, so it travels as bytes, but
+          // the slot that holds it runs whatever this write put there. Measure the same way the
+          // semantic path does, so the reload phase can act on a raw-file rewrite as well.
+          final fileId = scriptFileId(item.file!.name);
+          final held = fileId == null
+              ? null
+              : await store.readFile(item.file!.name);
+          final wrote = await store.writeFile(item.file!.name, item.file!.bytes);
+          if (wrote && fileId != null) {
+            if (held == null) {
+              changes.note(
+                target.id,
+                fileId,
+                'the device did not return ${item.file!.name}, so its old '
+                    'image is unknown',
+              );
+            } else if (!sameImage(held, item.file!.bytes)) {
+              changes.note(
+                target.id,
+                fileId,
+                'the device held ${held.length} byte(s), this run wrote '
+                    '${item.file!.bytes.length}',
+              );
+            }
+          }
+          done(wrote, item, describe(item));
         } catch (error) {
           AppDiagnostics.log(
             'backup',
@@ -1417,6 +2059,16 @@ applyRestorePlan(RestorePlan plan) async {
   // Every device this run wrote to is saved - the writes sit in RAM until then - and the scripts
   // are loaded last, so they read the values the restore has just written.
   await _persistWrites(writtenDevices);
+  // Then the reload rule: a script this run CHANGED is unloaded and loaded again, because the
+  // device runs the image it loaded rather than the file on flash - a restore that only rewrote the
+  // file would leave the rig on stale code. It runs BEFORE the bring-up so a slot the bring-up is
+  // about to fill is not loaded twice, and it reloads nothing it has not measured as changed, so a
+  // running script the archive did not touch is left alone.
+  final reloadedScripts = await reloadChangedScripts(plan, changes);
+  for (final failure in reloadedScripts.failures) {
+    failed++;
+    if (failures.length < 100) failures.add(failure);
+  }
   for (final brought in await _bringUpScripts(scriptItems)) {
     if (brought.reason == null) {
       written++;
@@ -1424,10 +2076,23 @@ applyRestorePlan(RestorePlan plan) async {
       failItem(brought.item, brought.reason!);
     }
   }
+  // Then the mirror of the bring-up: a slot holding a script the archive does not carry is
+  // unloaded, so the device runs the archive's scripts and nothing else. It runs AFTER the reload
+  // phase and the bring-up on purpose - the slots those phases put the archive's own scripts in are
+  // then already occupied by them, so only an earlier setup's leftovers are candidates - and every
+  // unload is reported, because an unload is a deletion and a silent one is as bad as a silent
+  // delete of a requester entry.
+  final swept = await pruneScriptSlots(plan);
+  for (final failure in swept.failures) {
+    failed++;
+    if (failures.length < 100) failures.add(failure);
+  }
   return (
     written: written,
     failed: failed,
     failures: failures,
     requesterPrune: pruned.prunes,
+    scriptSlots: swept.prunes,
+    scriptReload: reloadedScripts.reports,
   );
 }

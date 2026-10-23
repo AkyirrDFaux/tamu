@@ -154,8 +154,21 @@ class ScriptClient {
 
   /// CID 0: the occupied slots as `slot -> file id`. The complement of this set within
   /// [slotMap] is the free slots a load may take.
-  Future<Map<int, int>> loadedSlotMap() async {
-    final map = await slotMap();
+  Future<Map<int, int>> loadedSlotMap() async =>
+      await readLoadedSlotMap() ?? const {};
+
+  /// CID 0 as [loadedSlotMap], but NULL when the device did not answer.
+  ///
+  /// [slotMap] folds "no reply" and "an empty reply" into the same empty list, which is fine for
+  /// a caller that only wants to know whether it can load. A caller that has to tell "the device
+  /// holds nothing loaded" from "the device could not be asked" - a sweep that would otherwise
+  /// report a clean device it never read - needs the difference, and this is it.
+  Future<Map<int, int>?> readLoadedSlotMap() async {
+    final reply = await _request(ServiceType.script, 0);
+    if (reply == null) return null;
+    final map = [
+      for (var i = 0; i + 1 < reply.length; i += 2) reply[i] | (reply[i + 1] << 8),
+    ];
     return {
       for (var slot = 0; slot < map.length; slot++)
         if (map[slot] != scriptSlotEmpty) slot: map[slot],

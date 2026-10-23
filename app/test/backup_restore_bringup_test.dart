@@ -215,19 +215,33 @@ void main() {
       ],
       isEmpty,
     );
-    // Libraries are written before the scripts that use them, so the link reads the new file.
-    final libraryUnload = core.sent.indexWhere(
-      (c) => c.service == ServiceType.script && c.cid == 2 && c.payload[0] == 10,
+    // The library travels in the FILE table, and every load happens after the writes, so the link
+    // reads the library as it now stands. What must NOT happen is a load naming the library's file
+    // id: a library is never loaded (a slot it holds is released instead).
+    expect(
+      [
+        for (final c in core.sent)
+          if (c.service == ServiceType.script && c.cid == 1 && c.payload[0] == 10) c,
+      ],
+      isEmpty,
+      reason: 'the library file id is never named by a load',
+    );
+    final libraryWrite = core.sent.indexWhere(
+      (c) => c.service == ServiceType.storage && c.cid == 6,
     );
     final userLoad = core.sent.indexWhere(
       (c) => c.service == ServiceType.script && c.cid == 1 && c.payload[2] == 2,
     );
-    expect(libraryUnload, lessThan(userLoad));
+    expect(
+      libraryWrite,
+      lessThan(userLoad),
+      reason: 'the files are written before any script is loaded',
+    );
     expect(result.written, 2);
     expect(result.failed, 0, reason: result.failures.toString());
   });
 
-  test('an unloaded library costs no script command at all', () async {
+  test('a library the device does not hold is written and never loaded', () async {
     final device = _device();
     final live = _live();
     core.loaded.addAll({0: 0, 1: 1, 2: 2, 3: 3, 4: 4});
@@ -237,10 +251,17 @@ void main() {
 
     final result = await applyRestorePlan(plan);
 
-    expect(core.scriptCommands, isEmpty, reason: 'no load and no unload');
     expect(core.files.keys, contains('SCR_00A'));
+    expect(
+      [for (final c in core.scriptCommands) if (c.first == 1) c],
+      isEmpty,
+      reason: 'the library itself is never loaded',
+    );
+    // The slots an earlier setup left running are not in this archive, so the sweep releases
+    // them: a library-only archive leaves the device with no script loaded at all.
+    expect(core.loaded, isEmpty);
     expect(result.written, 1);
-    expect(result.failed, 0);
+    expect(result.failed, 0, reason: result.failures.toString());
   });
 
   test('a library loaded in some other slot is released', () async {
@@ -255,9 +276,10 @@ void main() {
     await applyRestorePlan(plan);
 
     expect(core.scriptCommands, [
-      [2, 2],
+      [2, 2], // the library's slot is released ...
+      [2, 0], // ... and the sweep releases the akyirr-era slot this archive does not carry
     ]);
-    expect(core.loaded, {0: 0});
+    expect(core.loaded, isEmpty);
   });
 
   test('a user script is still unloaded and reloaded so it re-links', () async {
@@ -274,9 +296,14 @@ void main() {
     await applyRestorePlan(plan);
 
     expect(core.scriptCommands, [
-      [2, 2], // unload
+      // The reload phase first reads what the slot is doing, so a running script is started again
+      // after the reload; this core does not answer that read, and the archive's `Run on load` is
+      // the fallback.
+      [3, 2],
+      [2, 2], // unload: its image changed, so the old one must not keep running
       [1, 2, 0, 2], // load file 2 into slot 2
       [4, 2, ScriptAction.start], // Run on load
+      [2, 0], // the sweep releases the slot this archive does not carry
     ]);
   });
 }

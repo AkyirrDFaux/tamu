@@ -227,6 +227,23 @@ Future<int> runUpload(List<String> args, {RigOpener? openRig}) async {
       '${prune.skipped ? ' SKIPPED: ${prune.reason}' : ''}',
     );
   }
+  for (final prune in result.scriptSlots) {
+    stdout.writeln(
+      '  SCRIPTS ${idToString(prune.deviceId)} "${prune.deviceName}": '
+      'before=[${prune.beforeText}] unloaded=[${prune.unloadedText}] '
+      'refused=[${prune.refusedText}] kept-by-selection=[${prune.keptText}] '
+      'remaining=[${prune.remainingText}]'
+      '${prune.skipped ? ' SKIPPED: ${prune.reason}' : ''}',
+    );
+  }
+  for (final reload in result.scriptReload) {
+    stdout.writeln(
+      '  RELOAD ${idToString(reload.deviceId)} "${reload.deviceName}": '
+      'changed=[${reload.changedText}] reloaded=[${reload.reloadedText}] '
+      'left-alone=[${reload.leftAloneText}] refused=[${reload.refusedText}]'
+      '${reload.skipped ? ' SKIPPED: ${reload.reason}' : ''}',
+    );
+  }
   for (final failure in result.failures) {
     stdout.writeln('  FAILED-ITEM $failure');
   }
