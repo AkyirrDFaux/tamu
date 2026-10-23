@@ -180,16 +180,18 @@ class _FakeCore implements RequestChannel {
   ];
 }
 
-BackupDevice _device(List<BackupScript> scripts, {List<BackupFile> files = const []}) =>
-    BackupDevice(
-      type: 'Tamu v2.0A',
-      typeId: 1,
-      id: idFromString('39.1')!,
-      name: 'Tamu',
-      blocks: const [],
-      scripts: scripts,
-      files: files,
-    );
+BackupDevice _device(
+  List<BackupScript> scripts, {
+  List<BackupFile> files = const [],
+}) => BackupDevice(
+  type: 'Tamu v2.0A',
+  typeId: 1,
+  id: idFromString('39.1')!,
+  name: 'Tamu',
+  blocks: const [],
+  scripts: scripts,
+  files: files,
+);
 
 LiveDevice _live({int id = 0x2711}) => LiveDevice(
   id: id,
@@ -358,8 +360,12 @@ void main() {
     expect(reload.reloaded[1]!.why, contains('its image changed'));
     expect(reload.leftAlone, isEmpty);
     expect(core.loads, [1, 2, 3, 4]);
-    expect(core.actions, [(1, ScriptAction.start), (2, ScriptAction.start), (3, ScriptAction.start), (4, ScriptAction.start)],
-        reason: 'a reload starts a script that was running again');
+    expect(core.actions, [
+      (1, ScriptAction.start),
+      (2, ScriptAction.start),
+      (3, ScriptAction.start),
+      (4, ScriptAction.start),
+    ], reason: 'a reload starts a script that was running again');
     // A function library is written as a file and never loaded.
     expect(core.loads, isNot(contains(10)));
     expect(result.failed, 0, reason: result.failures.toString());
@@ -398,33 +404,41 @@ void main() {
     expect(fake.unloads, isEmpty);
   });
 
-  test('a script left unticked keeps its slot and is reported as skipped', () async {
-    install(_FakeCore(loaded: {0: 0, 1: 1, 2: 2}));
-    final device = _device([_script(1, 'Fan curve'), _script(2, 'Selector')]);
-    final plan = _plan(device, _live());
-    // The user unticks the script in slot 2: its slot is "not selected", not "not in the archive".
-    plan.items.firstWhere((i) => i.script!.slot == 2).selected = false;
+  test(
+    'a script left unticked keeps its slot and is reported as skipped',
+    () async {
+      install(_FakeCore(loaded: {0: 0, 1: 1, 2: 2}));
+      final device = _device([_script(1, 'Fan curve'), _script(2, 'Selector')]);
+      final plan = _plan(device, _live());
+      // The user unticks the script in slot 2: its slot is "not selected", not "not in the archive".
+      plan.items.firstWhere((i) => i.script!.slot == 2).selected = false;
 
-    final result = await applyRestorePlan(plan);
+      final result = await applyRestorePlan(plan);
 
-    final prune = result.scriptSlots.single;
-    final reload = result.scriptReload.single;
-    print('unticks slot 2 -> ${_reportLine(prune)}');
-    print('unticks slot 2 -> ${_reloadLine(reload)}');
-    expect(prune.unloaded, {0: 0}, reason: 'only the stale slot goes');
-    expect(
-      prune.keptBySelection,
-      {2: 2},
-      reason: 'the unticked script is named in the report, not unloaded',
-    );
-    expect(prune.remaining, {1: 1, 2: 2});
-    expect(core.unloads, [1, 0], reason: 'slot 2 is never named by an unload');
-    expect(core.loads, [1], reason: 'the unticked script is not loaded either');
-    // The reload phase does not touch what the user left out either: it is not in the run.
-    expect(reload.reloaded.keys, [1], reason: 'slot 2 is not reloaded');
-    expect(reload.leftAlone.containsKey(2), isFalse);
-    expect(result.failed, 0, reason: result.failures.toString());
-  });
+      final prune = result.scriptSlots.single;
+      final reload = result.scriptReload.single;
+      print('unticks slot 2 -> ${_reportLine(prune)}');
+      print('unticks slot 2 -> ${_reloadLine(reload)}');
+      expect(prune.unloaded, {0: 0}, reason: 'only the stale slot goes');
+      expect(
+        prune.keptBySelection,
+        {2: 2},
+        reason: 'the unticked script is named in the report, not unloaded',
+      );
+      expect(prune.remaining, {1: 1, 2: 2});
+      expect(core.unloads, [
+        1,
+        0,
+      ], reason: 'slot 2 is never named by an unload');
+      expect(core.loads, [
+        1,
+      ], reason: 'the unticked script is not loaded either');
+      // The reload phase does not touch what the user left out either: it is not in the run.
+      expect(reload.reloaded.keys, [1], reason: 'slot 2 is not reloaded');
+      expect(reload.leftAlone.containsKey(2), isFalse);
+      expect(result.failed, 0, reason: result.failures.toString());
+    },
+  );
 
   test('only the script whose image changed is reloaded', () async {
     final scripts = [
@@ -458,40 +472,44 @@ void main() {
     expect(result.failed, 0, reason: result.failures.toString());
   });
 
-  test('a second identical restore issues no unload and no reload at all', () async {
-    final device = _device(_bambiScripts());
-    // The state bambi's rig is in once the first restore has run: the archive's slots loaded, no
-    // leftover, and the files holding exactly what the archive carries.
-    install(_FakeCore(loaded: {1: 1, 2: 2, 3: 3, 4: 4}));
-    final first = await applyRestorePlan(_plan(device, _live()));
-    expect(first.failed, 0, reason: first.failures.toString());
-    expect(core.loads, [1, 2, 3, 4]);
+  test(
+    'a second identical restore issues no unload and no reload at all',
+    () async {
+      final device = _device(_bambiScripts());
+      // The state bambi's rig is in once the first restore has run: the archive's slots loaded, no
+      // leftover, and the files holding exactly what the archive carries.
+      install(_FakeCore(loaded: {1: 1, 2: 2, 3: 3, 4: 4}));
+      final first = await applyRestorePlan(_plan(device, _live()));
+      expect(first.failed, 0, reason: first.failures.toString());
+      expect(core.loads, [1, 2, 3, 4]);
 
-    core.sent.clear();
-    final second = await applyRestorePlan(_plan(device, _live()));
+      core.sent.clear();
+      final second = await applyRestorePlan(_plan(device, _live()));
 
-    final prune = second.scriptSlots.single;
-    final reload = second.scriptReload.single;
-    print('second restore -> ${_reportLine(prune)}');
-    print('second restore -> ${_reloadLine(reload)}');
-    print('script commands the second restore sent: ${core.scriptCommands}');
-    expect(
-      core.unloads,
-      isEmpty,
-      reason: 'nothing is stale, and nothing changed, so nothing is unloaded',
-    );
-    expect(core.loads, isEmpty, reason: 'nothing is reloaded');
-    expect(core.actions, isEmpty, reason: 'nothing is restarted');
-    expect(prune.unloaded, isEmpty);
-    expect(reload.reloaded, isEmpty);
-    expect(reload.changed, isEmpty, reason: 'the images are byte-identical');
-    expect(
-      reload.leftAlone,
-      {1: 1, 2: 2, 3: 3, 4: 4},
-      reason: 'every running script is reported as left alone',
-    );
-    expect(second.failed, 0, reason: second.failures.toString());
-  });
+      final prune = second.scriptSlots.single;
+      final reload = second.scriptReload.single;
+      print('second restore -> ${_reportLine(prune)}');
+      print('second restore -> ${_reloadLine(reload)}');
+      print('script commands the second restore sent: ${core.scriptCommands}');
+      expect(
+        core.unloads,
+        isEmpty,
+        reason: 'nothing is stale, and nothing changed, so nothing is unloaded',
+      );
+      expect(core.loads, isEmpty, reason: 'nothing is reloaded');
+      expect(core.actions, isEmpty, reason: 'nothing is restarted');
+      expect(prune.unloaded, isEmpty);
+      expect(reload.reloaded, isEmpty);
+      expect(reload.changed, isEmpty, reason: 'the images are byte-identical');
+      expect(reload.leftAlone, {
+        1: 1,
+        2: 2,
+        3: 3,
+        4: 4,
+      }, reason: 'every running script is reported as left alone');
+      expect(second.failed, 0, reason: second.failures.toString());
+    },
+  );
 
   test('a raw script file rewritten under a loaded slot is reloaded', () async {
     // A script whose image did not parse travels as bytes; the slot holding it still runs the old
@@ -522,7 +540,9 @@ void main() {
 
     final reload = result.scriptReload.single;
     print('raw file rewrite -> ${_reloadLine(reload)}');
-    expect(fake.unloads, [5], reason: 'the slot holding the old bytes is reloaded');
+    expect(fake.unloads, [
+      5,
+    ], reason: 'the slot holding the old bytes is reloaded');
     expect(fake.loads, [5]);
     expect(reload.changed.keys, [5]);
     expect(reload.reloaded.keys, [5]);
@@ -531,85 +551,100 @@ void main() {
     expect(result.failed, 0, reason: result.failures.toString());
   });
 
-  test('a reload the device refuses is reported as a failure, not swallowed', () async {
-    final scripts = [_script(1, 'Fan curve')];
-    final fake = _FakeCore(loaded: {1: 1});
-    fake.files['SCR_001'] = const [0, 0]; // different from the archive's image
-    fake.refuseUnload.add(1);
-    install(fake);
-    final device = _device(scripts);
-    final plan = _plan(device, _live());
+  test(
+    'a reload the device refuses is reported as a failure, not swallowed',
+    () async {
+      final scripts = [_script(1, 'Fan curve')];
+      final fake = _FakeCore(loaded: {1: 1});
+      fake.files['SCR_001'] = const [
+        0,
+        0,
+      ]; // different from the archive's image
+      fake.refuseUnload.add(1);
+      install(fake);
+      final device = _device(scripts);
+      final plan = _plan(device, _live());
 
-    final result = await applyRestorePlan(plan);
+      final result = await applyRestorePlan(plan);
 
-    final reload = result.scriptReload.single;
-    print('refused reload -> ${_reloadLine(reload)}');
-    expect(reload.refused, {1: 1});
-    expect(reload.reloaded, isEmpty);
-    expect(reload.refusedText, 'slot 1 (SCR_001)');
-    expect(result.failed, 1);
-    expect(
-      result.failures.single,
-      contains('reloading script slot 1 (SCR_001) failed'),
-    );
-    expect(result.failures.single, contains('still runs the image it held'));
-    // The script it could not reload is not then unloaded by the sweep: the archive carries it.
-    expect(fake.loaded, {1: 1});
-  });
+      final reload = result.scriptReload.single;
+      print('refused reload -> ${_reloadLine(reload)}');
+      expect(reload.refused, {1: 1});
+      expect(reload.reloaded, isEmpty);
+      expect(reload.refusedText, 'slot 1 (SCR_001)');
+      expect(result.failed, 1);
+      expect(
+        result.failures.single,
+        contains('reloading script slot 1 (SCR_001) failed'),
+      );
+      expect(result.failures.single, contains('still runs the image it held'));
+      // The script it could not reload is not then unloaded by the sweep: the archive carries it.
+      expect(fake.loaded, {1: 1});
+    },
+  );
 
-  test('an unload the device refuses is reported as a failure, not swallowed', () async {
-    final fake = _FakeCore(loaded: {0: 0, 1: 1, 2: 2});
-    fake.refuseUnload.add(0);
-    install(fake);
-    final device = _device([_script(1, 'Fan curve'), _script(2, 'Selector')]);
-    final plan = _plan(device, _live());
+  test(
+    'an unload the device refuses is reported as a failure, not swallowed',
+    () async {
+      final fake = _FakeCore(loaded: {0: 0, 1: 1, 2: 2});
+      fake.refuseUnload.add(0);
+      install(fake);
+      final device = _device([_script(1, 'Fan curve'), _script(2, 'Selector')]);
+      final plan = _plan(device, _live());
 
-    final result = await applyRestorePlan(plan);
+      final result = await applyRestorePlan(plan);
 
-    final prune = result.scriptSlots.single;
-    expect(prune.unloaded, isEmpty);
-    expect(prune.refused, {0: 0});
-    expect(prune.unloadedText, '-');
-    expect(prune.refusedText, 'slot 0 (SCR_000)');
-    expect(prune.remaining, {0: 0, 1: 1, 2: 2});
-    expect(result.failed, 1);
-    expect(
-      result.failures.single,
-      contains('unloading script slot 0 (SCR_000) failed'),
-    );
-    expect(result.failures.single, contains('still loaded'));
-  });
+      final prune = result.scriptSlots.single;
+      expect(prune.unloaded, isEmpty);
+      expect(prune.refused, {0: 0});
+      expect(prune.unloadedText, '-');
+      expect(prune.refusedText, 'slot 0 (SCR_000)');
+      expect(prune.remaining, {0: 0, 1: 1, 2: 2});
+      expect(result.failed, 1);
+      expect(
+        result.failures.single,
+        contains('unloading script slot 0 (SCR_000) failed'),
+      );
+      expect(result.failures.single, contains('still loaded'));
+    },
+  );
 
-  test('an unchanged script in Error is reloaded, and one that is paused is not', () async {
-    final scripts = [_script(1, 'Fan curve'), _script(2, 'Selector')];
-    final fake = _FakeCore(loaded: {1: 1, 2: 2});
-    // Both files are exactly what the archive carries: nothing changed, so nothing but a fault
-    // justifies disturbing the slot.
-    fake.files['SCR_001'] = _image(scripts[0]);
-    fake.files['SCR_002'] = _image(scripts[1]);
-    fake.states
-      ..[1] = ScriptState.error
-      ..[2] = ScriptState.paused;
-    install(fake);
-    final device = _device(scripts);
-    final plan = _plan(device, _live());
+  test(
+    'an unchanged script in Error is reloaded, and one that is paused is not',
+    () async {
+      final scripts = [_script(1, 'Fan curve'), _script(2, 'Selector')];
+      final fake = _FakeCore(loaded: {1: 1, 2: 2});
+      // Both files are exactly what the archive carries: nothing changed, so nothing but a fault
+      // justifies disturbing the slot.
+      fake.files['SCR_001'] = _image(scripts[0]);
+      fake.files['SCR_002'] = _image(scripts[1]);
+      fake.states
+        ..[1] = ScriptState.error
+        ..[2] = ScriptState.paused;
+      install(fake);
+      final device = _device(scripts);
+      final plan = _plan(device, _live());
 
-    final result = await applyRestorePlan(plan);
+      final result = await applyRestorePlan(plan);
 
-    final reload = result.scriptReload.single;
-    print('error + paused slots -> ${_reloadLine(reload)}');
-    expect(reload.changed, isEmpty);
-    expect(reload.reloaded.keys, [1], reason: 'the faulted script is started again');
-    expect(reload.reloaded[1]!.why, contains('Error'));
-    expect(reload.leftAlone, {2: 2}, reason: 'the paused one is left alone');
-    expect(fake.loads, [1]);
-    expect(
-      fake.actions,
-      [(1, ScriptAction.start)],
-      reason: 'a faulted script is started again, which is what clears the error',
-    );
-    expect(result.failed, 0, reason: result.failures.toString());
-  });
+      final reload = result.scriptReload.single;
+      print('error + paused slots -> ${_reloadLine(reload)}');
+      expect(reload.changed, isEmpty);
+      expect(reload.reloaded.keys, [
+        1,
+      ], reason: 'the faulted script is started again');
+      expect(reload.reloaded[1]!.why, contains('Error'));
+      expect(reload.leftAlone, {2: 2}, reason: 'the paused one is left alone');
+      expect(fake.loads, [1]);
+      expect(
+        fake.actions,
+        [(1, ScriptAction.start)],
+        reason:
+            'a faulted script is started again, which is what clears the error',
+      );
+      expect(result.failed, 0, reason: result.failures.toString());
+    },
+  );
 
   test('a changed library does not disturb a script that links nothing', () async {
     // The library changed, but neither user script carries a function-reservation record, so
@@ -623,7 +658,11 @@ void main() {
     final fake = _FakeCore(loaded: {1: 1, 2: 2});
     fake.files['SCR_001'] = _image(scripts[0]);
     fake.files['SCR_002'] = _image(scripts[1]);
-    fake.files['SCR_00A'] = const [1, 2, 3]; // the library differs, so it changed
+    fake.files['SCR_00A'] = const [
+      1,
+      2,
+      3,
+    ]; // the library differs, so it changed
     install(fake);
     final device = _device(scripts);
     final plan = _plan(device, _live());
@@ -648,37 +687,48 @@ void main() {
     expect(result.failed, 0, reason: result.failures.toString());
   });
 
-  test('a changed library reloads exactly the script whose file references it', () async {
-    // Slot 1 calls a global function in the library; slot 2 does not. Both images are byte-identical
-    // to what the device holds, so the ONLY thing that can justify a reload is the measured link.
-    final caller = _libraryCaller(1, 'Beacon', 10);
-    final plain = _script(2, 'Selector');
-    final library = _script(10, 'ForceBlink', properties: ['Function library']);
-    final fake = _FakeCore(loaded: {1: 1, 2: 2});
-    fake.files['SCR_001'] = _image(caller);
-    fake.files['SCR_002'] = _image(plain);
-    fake.files['SCR_00A'] = const [1, 2, 3];
-    install(fake);
-    final device = _device([caller, plain, library]);
-    final plan = _plan(device, _live());
+  test(
+    'a changed library reloads exactly the script whose file references it',
+    () async {
+      // Slot 1 calls a global function in the library; slot 2 does not. Both images are byte-identical
+      // to what the device holds, so the ONLY thing that can justify a reload is the measured link.
+      final caller = _libraryCaller(1, 'Beacon', 10);
+      final plain = _script(2, 'Selector');
+      final library = _script(
+        10,
+        'ForceBlink',
+        properties: ['Function library'],
+      );
+      final fake = _FakeCore(loaded: {1: 1, 2: 2});
+      fake.files['SCR_001'] = _image(caller);
+      fake.files['SCR_002'] = _image(plain);
+      fake.files['SCR_00A'] = const [1, 2, 3];
+      install(fake);
+      final device = _device([caller, plain, library]);
+      final plan = _plan(device, _live());
 
-    final result = await applyRestorePlan(plan);
+      final result = await applyRestorePlan(plan);
 
-    final reload = result.scriptReload.single;
-    print('linked library -> ${_reloadLine(reload)}');
-    expect(reload.changed.keys, [10]);
-    expect(reload.reloaded.keys, [1], reason: 'only the script that references it');
-    expect(reload.reloaded[1]!.why, contains('SCR_00A'));
-    expect(
-      reload.reloaded[1]!.why,
-      contains('function reservation'),
-      reason: 'the reason quotes the record it was decided from',
-    );
-    expect(reload.leftAlone, {2: 2}, reason: 'the script that links nothing is not disturbed');
-    expect(fake.unloads, [1]);
-    expect(fake.loads, [1]);
-    expect(result.failed, 0, reason: result.failures.toString());
-  });
+      final reload = result.scriptReload.single;
+      print('linked library -> ${_reloadLine(reload)}');
+      expect(reload.changed.keys, [10]);
+      expect(reload.reloaded.keys, [
+        1,
+      ], reason: 'only the script that references it');
+      expect(reload.reloaded[1]!.why, contains('SCR_00A'));
+      expect(
+        reload.reloaded[1]!.why,
+        contains('function reservation'),
+        reason: 'the reason quotes the record it was decided from',
+      );
+      expect(reload.leftAlone, {
+        2: 2,
+      }, reason: 'the script that links nothing is not disturbed');
+      expect(fake.unloads, [1]);
+      expect(fake.loads, [1]);
+      expect(result.failed, 0, reason: result.failures.toString());
+    },
+  );
 
   test('a second copy of an archive script is unloaded and named', () async {
     // `scripts_page.dart` loads into the lowest FREE slot, so SCR_004 can be running in slot 0
@@ -697,15 +747,17 @@ void main() {
     print('duplicate copy -> unloads=${fake.unloads} loads=${fake.loads}');
     print('duplicate copy -> ${_reportLine(prune)}');
     print('duplicate copy -> ${_reloadLine(reload)}');
-    expect(fake.loads, [4], reason: 'the archive names slot 4, so the bring-up fills it');
-    expect(
-      fake.loaded,
-      {4: 4},
-      reason: 'exactly one slot holds SCR_004 after the restore',
-    );
+    expect(fake.loads, [
+      4,
+    ], reason: 'the archive names slot 4, so the bring-up fills it');
+    expect(fake.loaded, {
+      4: 4,
+    }, reason: 'exactly one slot holds SCR_004 after the restore');
     expect(prune.duplicates, {(0): (fileId: 4, canonical: 4)});
     expect(prune.duplicatesText, 'slot 0 (SCR_004, also loaded at slot 4)');
-    expect(prune.unloaded, {0: 4}, reason: 'the extra copy is an unload like any other');
+    expect(prune.unloaded, {
+      0: 4,
+    }, reason: 'the extra copy is an unload like any other');
     expect(prune.remaining, {4: 4});
     expect(prune.offSlot, isEmpty);
     // The copy in the wrong slot is the sweep's to settle, not the reload phase's to restart.
@@ -714,37 +766,41 @@ void main() {
     expect(result.failed, 0, reason: result.failures.toString());
   });
 
-  test('an archive script only loaded in the wrong slot is kept, and said so', () async {
-    // The archive names slot 4 and the load into it failed, so slot 0 is the ONLY running copy.
-    // Unloading it would delete the script; passing over it silently would report a clean device.
-    final scripts = [_script(4, 'Beacon')];
-    final fake = _FakeCore(loaded: {0: 4});
-    fake.files['SCR_004'] = _image(scripts[0]);
-    fake.refuseLoad.add(4);
-    install(fake);
-    final device = _device(scripts);
-    final plan = _plan(device, _live());
+  test(
+    'an archive script only loaded in the wrong slot is kept, and said so',
+    () async {
+      // The archive names slot 4 and the load into it failed, so slot 0 is the ONLY running copy.
+      // Unloading it would delete the script; passing over it silently would report a clean device.
+      final scripts = [_script(4, 'Beacon')];
+      final fake = _FakeCore(loaded: {0: 4});
+      fake.files['SCR_004'] = _image(scripts[0]);
+      fake.refuseLoad.add(4);
+      install(fake);
+      final device = _device(scripts);
+      final plan = _plan(device, _live());
 
-    final result = await applyRestorePlan(plan);
+      final result = await applyRestorePlan(plan);
 
-    final prune = result.scriptSlots.single;
-    print('off-slot copy -> ${_reportLine(prune)}');
-    expect(fake.loaded, {0: 4}, reason: 'the surviving copy is not deleted');
-    expect(prune.duplicates, isEmpty);
-    expect(prune.offSlot, {0: 4});
-    expect(
-      prune.offSlotText,
-      'slot 0 (SCR_004, the archive names slot 4)',
-      reason: 'the report names the slot the archive wanted and the one that still runs it',
-    );
-    expect(prune.unloaded, isEmpty);
-    expect(
-      result.failed,
-      1,
-      reason: 'the refused load is the failure, not the kept copy',
-    );
-    expect(result.failures.single, contains('script 4 would not load'));
-  });
+      final prune = result.scriptSlots.single;
+      print('off-slot copy -> ${_reportLine(prune)}');
+      expect(fake.loaded, {0: 4}, reason: 'the surviving copy is not deleted');
+      expect(prune.duplicates, isEmpty);
+      expect(prune.offSlot, {0: 4});
+      expect(
+        prune.offSlotText,
+        'slot 0 (SCR_004, the archive names slot 4)',
+        reason:
+            'the report names the slot the archive wanted and the one that still runs it',
+      );
+      expect(prune.unloaded, isEmpty);
+      expect(
+        result.failed,
+        1,
+        reason: 'the refused load is the failure, not the kept copy',
+      );
+      expect(result.failures.single, contains('script 4 would not load'));
+    },
+  );
 
   test('a DELETE row the plan leaves unticked keeps the loaded slot', () async {
     // The restore plan page shows the leftover slot as a DELETE and the user turns the row off.
@@ -772,17 +828,16 @@ void main() {
     print('unticked DELETE -> ${_reportLine(prune)}');
     expect(prune.unloaded, isEmpty, reason: 'nothing was deleted');
     expect(prune.refused, isEmpty);
-    expect(
-      prune.keptBySelection,
-      {0: 0},
-      reason: 'the slot is named as kept by selection',
-    );
+    expect(prune.keptBySelection, {
+      0: 0,
+    }, reason: 'the slot is named as kept by selection');
     expect(core.loaded.containsKey(0), isTrue);
     expect(core.unloads, isNot(contains(0)));
     expect(
       result.failed,
       0,
-      reason: 'keeping a slot the user kept is not a failure: '
+      reason:
+          'keeping a slot the user kept is not a failure: '
           '${result.failures}',
     );
   });
