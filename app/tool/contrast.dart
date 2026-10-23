@@ -692,6 +692,112 @@ const List<Group> auditGroups = [
       exempt: true,
     ),
   ]),
+  // The restore plan's diff classes (backup_page.dart `_classTone`/`_classInk`, and the filter
+  // bar's chips): add = success, replace = warning, delete = error, same = the plain tag. The
+  // class is carried by these tokens only - the page invents no colour of its own - so each ink
+  // is measured on both surfaces it lands on: a card (the device sections' rows) and the page
+  // (the filter bar above them).
+  Group('Restore plan diff classes (add / replace / delete)', [
+    Pair(
+      'add chip ink on a card',
+      'kSuccess',
+      Wash('kSubtleTint', 'kSurfaceAlt'),
+      4.5,
+      'backup_page.dart _classTone(add) = ChipTone.success',
+    ),
+    Pair(
+      'add chip ink on the page',
+      'kSuccess',
+      Wash('kSubtleTint', 'kSurface'),
+      4.5,
+      'the filter bar sits on the page, above the device cards',
+    ),
+    Pair(
+      'replace chip ink on a card',
+      'kWarning',
+      Wash('kSubtleTint', 'kSurfaceAlt'),
+      4.5,
+      'backup_page.dart _classTone(change) = ChipTone.warning',
+    ),
+    Pair(
+      'replace chip ink on the page',
+      'kWarning',
+      Wash('kSubtleTint', 'kSurface'),
+      4.5,
+      'the same chip in the filter bar',
+    ),
+    Pair(
+      'delete chip ink on a card',
+      'kError',
+      Wash('kSubtleTint', 'kSurfaceAlt'),
+      4.5,
+      'backup_page.dart _classTone(remove) = ChipTone.error',
+    ),
+    Pair(
+      'delete chip ink on the page',
+      'kError',
+      Wash('kSubtleTint', 'kSurface'),
+      4.5,
+      'the same chip in the filter bar',
+    ),
+    Pair(
+      'diff row icon (add) on a card',
+      'kSuccess',
+      'kSurfaceAlt',
+      3.0,
+      'a non-text state indicator: 3:1 is the bar it has to clear',
+    ),
+    Pair(
+      'diff row icon (replace) on a card',
+      'kWarning',
+      'kSurfaceAlt',
+      3.0,
+      'backup_page.dart _classInk(change)',
+    ),
+    Pair(
+      'diff row icon (delete) on a card',
+      'kError',
+      'kSurfaceAlt',
+      3.0,
+      'backup_page.dart _classInk(remove)',
+    ),
+    Pair(
+      'delete row heading (titleSmall) on a card',
+      'kError',
+      'kSurfaceAlt',
+      4.5,
+      '"Delete from the device" is 15 px, so body text',
+    ),
+    Pair(
+      'delete row detail (bodySmall) on a card',
+      'kError',
+      'kSurfaceAlt',
+      4.5,
+      'the row\'s second line under a deletion',
+    ),
+    Pair(
+      'delete count in the footer (bodySmall) on the page',
+      'kError',
+      'kSurface',
+      4.5,
+      'the destructive count, which must not be missed',
+    ),
+    Pair(
+      'same chip ink on a card',
+      'kTextSecondary',
+      Wash('kSubtleTint', 'kSurfaceAlt'),
+      4.5,
+      'the plain tag: an untouched row is not a state',
+    ),
+    Pair(
+      'unplaceable row icon (kTextDisabled) on a card',
+      'kTextDisabled',
+      'kSurfaceAlt',
+      3.0,
+      'an inactive marker, WCAG-exempt but still measured',
+      exempt: true,
+    ),
+  ]),
   Group('Sorting: Switch / Checkbox / Radio / progress', [
     Pair(
       'checkbox/radio boundary (kLine)',

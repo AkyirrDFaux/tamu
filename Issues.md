@@ -81,6 +81,16 @@ are hardware-only.
   fail the device capture rather than storing an empty table. Not done here: the archive's JSON
   contents are a Docs-governed decision (`Docs/App/Backup.md`).
 
+- **E33** **`Docs/App/Backup.md`'s restore-plan section describes the page as it was, not the diff
+  viewer it now is.** Lines 13-19 still say "per block/script/subscription/SNDB/file entries as
+  checkboxes" with a footer of "selected / unavailable counts"; since card `t_6ffa42c6`
+  (owner-directed, 2026-10-23) the page classifies every row against the device
+  (Add / Replace / Same / Delete, compared per kind), lists the deletions a restore would apply as
+  rows of their own, filters by class with Diff as the default, and counts the deletions apart in
+  the footer. The code is the deliberate side of the divergence; the wording in
+  `Docs/App/Backup.md` is the owner's to change. Proposed replacement text is in that card's
+  handoff.
+
 ## Valu v2.0 app (2026-10-06) - parked (owner: not now)
 
 - **E27** **Resistive measurement reference resistor is undefined.** `Docs/Devices.md` gives three ADC

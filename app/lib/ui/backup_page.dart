@@ -9,6 +9,8 @@ import '../core/host_files.dart';
 import '../core/notifications.dart';
 import '../core/script_file.dart';
 import '../core/types.dart';
+import 'theme.dart';
+import 'viewer_kit.dart';
 import 'widgets.dart';
 
 /// Backup page (Docs/App/Backup.md): unified whole-network backup and restore
@@ -225,6 +227,10 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
   RestorePlan get plan => widget.plan;
   bool _busy = false;
 
+  /// The view filter. [PlanFilter.diff] by default: a restore plan exists to show what it would
+  /// change, not the hundred rows it would rewrite with the same value.
+  PlanFilter _filter = PlanFilter.diff;
+
   void _reselectDevice(int sourceId, LiveDevice device) {
     setState(() {
       plan.deviceTargets[sourceId] = device;
@@ -254,6 +260,11 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
       ];
       final keptSlots = [
         for (final prune in result.scriptSlots) ...prune.keptBySelection.keys,
+      ];
+      // An entry the page listed as a DELETE and the user turned off is kept, so it is counted
+      // with the others the run deliberately left alone rather than vanishing from the report.
+      final keptTrids = [
+        for (final prune in result.requesterPrune) ...prune.kept,
       ];
       // A duplicate is what made the same script run twice, so it is named with the slot the
       // archive actually names for it rather than folded into the plain unload count.
@@ -291,6 +302,10 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
           '${keptSlots.isEmpty ? '' : ', left ${keptSlots.length} '
                     'unselected script slot${keptSlots.length == 1 ? '' : 's'} '
                     'loaded'}'
+          '${keptTrids.isEmpty ? '' : ', left ${keptTrids.length} '
+                    'unselected requester '
+                    'entr${keptTrids.length == 1 ? 'y' : 'ies'} '
+                    '(${keptTrids.map((t) => '0x${t.toRadixString(16)}').join(', ')})'}'
           // A reloaded slot is running the code this restore wrote; saying so separates "the file
           // is new" from "the device runs it".
           '${reloadedSlots.isEmpty ? '' : ', reloaded ${reloadedSlots.length} '
@@ -309,49 +324,153 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
 
   @override
   Widget build(BuildContext context) {
-    final devices = plan.devices;
+    final view = plan.view(_filter);
     return Scaffold(
       appBar: AppBar(title: const Text('Restore plan')),
-      body: ListView(
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text(
-              'Select the items to restore. Items are matched by name; remap a '
-              'device or block to sync into a different target when compatible.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+          RestoreFilterBar(
+            plan: plan,
+            filter: _filter,
+            onFilter: (filter) => setState(() => _filter = filter),
+            onClass: (kind, selected) =>
+                setState(() => plan.setClassSelected(kind, selected)),
           ),
-          for (final device in devices) _deviceSection(device),
+          const Divider(height: 1),
+          Expanded(child: _body(view)),
         ],
       ),
-      bottomNavigationBar: SafeArea(
+      bottomNavigationBar: _footer(view),
+    );
+  }
+
+  /// The plan, filtered: one section per source device, then the rows it shows.
+  ///
+  /// A device with nothing to show keeps its section under `all` and `diff` and says why (it is
+  /// the answer the user came for: this device already matches), and is dropped under a
+  /// single-class filter, where an empty section would only be noise.
+  Widget _body(PlanView view) {
+    if (view.isEmpty) return _emptyState();
+    final sections = <Widget>[];
+    for (final device in plan.devices) {
+      final items = [
+        for (final item in view.items)
+          if (item.device.id == device.id) item,
+      ];
+      final removals = [
+        for (final removal in view.removals)
+          if (removal.device.id == device.id) removal,
+      ];
+      if (items.isEmpty &&
+          removals.isEmpty &&
+          _filter != PlanFilter.all &&
+          _filter != PlanFilter.diff) {
+        continue;
+      }
+      sections.add(_deviceSection(device, items, removals));
+    }
+    return ListView(children: sections);
+  }
+
+  /// What the page says when the filter shows nothing.
+  ///
+  /// The default view of an archive that already matches is empty by definition, so it offers the
+  /// way out instead of leaving the user on a blank page: `all` is where the untouched rows live.
+  Widget _emptyState() {
+    final matches = plan.items.isNotEmpty || plan.removals.isNotEmpty;
+    if (_filter == PlanFilter.diff && matches) {
+      return Center(
         child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
+          padding: Insets.page,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
-                child: Text(
-                  '${plan.selectedCount} selected'
-                  '${plan.issueCount > 0 ? '\n${plan.issueCount} unavailable' : ''}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
+              const Icon(
+                Icons.check_circle_outline,
+                size: IconSize.xl,
+                color: kSuccess,
               ),
-              FilledButton.icon(
-                onPressed: _busy || plan.selectedCount == 0 ? null : _apply,
-                icon: const Icon(Icons.restore),
-                label: const Text('Restore'),
+              const SizedBox(height: Spacing.md),
+              Text(
+                'No differences',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: Spacing.xs),
+              Text(
+                'Every item in this archive already matches the device.',
+                style: Theme.of(context).textTheme.bodySmall,
+                textAlign: TextAlign.center,
+              ),
+              TextButton(
+                onPressed: () => setState(() => _filter = PlanFilter.all),
+                child: const Text('Show all items'),
               ),
             ],
           ),
+        ),
+      );
+    }
+    return StateMessage.empty(
+      message: 'Nothing under ${_filter.label.toLowerCase()}',
+      details: 'Switch the filter to see what the plan carries.',
+    );
+  }
+
+  /// The footer: the counts of the FILTERED view, the deletions counted apart, and the commit.
+  Widget _footer(PlanView view) {
+    final theme = Theme.of(context);
+    // What the Restore button commits is the whole plan, not only the rows on screen - the filter
+    // is a view, so switching it must never change what the run would write.
+    final deletions = plan.removals.where((r) => r.selected).length;
+    final total = plan.selectedCount + deletions;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(Spacing.lg),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${view.selected} of ${view.shown} shown selected',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  if (view.deletes > 0)
+                    Text(
+                      '${view.deletesSelected} of ${view.deletes} to delete',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: kError,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  if (view.unavailable > 0)
+                    Text(
+                      '${view.unavailable} unavailable',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                ],
+              ),
+            ),
+            FilledButton.icon(
+              onPressed: _busy || total == 0 ? null : _apply,
+              icon: const Icon(Icons.restore),
+              label: const Text('Restore'),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _deviceSection(BackupDevice device) {
+  Widget _deviceSection(
+    BackupDevice device,
+    List<RestoreItem> items,
+    List<RestoreRemoval> removals,
+  ) {
     final target = plan.deviceTargets[device.id];
-    final items = plan.items.where((i) => i.device.id == device.id).toList();
     final entries = items.where((i) => i.kind == RestoreKind.entry).toList();
     final blocks = <BackupBlock>{for (final i in entries) i.block!}.toList();
     final scripts = items.where((i) => i.kind == RestoreKind.script).toList();
@@ -361,24 +480,82 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
     final sndb = items.where((i) => i.kind == RestoreKind.sndb).toList();
     final files = items.where((i) => i.kind == RestoreKind.file).toList();
     return Card(
-      margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      margin: const EdgeInsets.fromLTRB(
+        Spacing.lg,
+        Spacing.xs,
+        Spacing.lg,
+        Spacing.md,
+      ),
       child: ExpansionTile(
         initiallyExpanded: true,
         title: Text('${device.name} (${device.type})'),
         subtitle: Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: _deviceTargetPicker(device, target),
+          padding: const EdgeInsets.only(top: Spacing.xs),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _deviceTargetPicker(device, target),
+              Padding(
+                padding: const EdgeInsets.only(top: Spacing.xs),
+                child: Text(
+                  _deviceAmounts(device),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ),
         ),
         children: [
-          for (final block in blocks) _blockSection(device, block),
+          if (items.isEmpty && removals.isEmpty)
+            Padding(
+              padding: Insets.row,
+              child: Text(
+                _filter == PlanFilter.diff
+                    ? 'No differences: this device already matches the archive.'
+                    : 'Nothing under ${_filter.label.toLowerCase()} for this device.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          for (final block in blocks) _blockSection(device, block, entries),
           if (scripts.isNotEmpty) _group('Scripts', scripts),
-          if (subs.isNotEmpty) _group('Subscriptions', subs),
           if (sndb.isNotEmpty) _group('SNDB', sndb),
           if (files.isNotEmpty) _group('Files', files),
+          if (subs.isNotEmpty) _group('Subscriptions', subs),
+          // The deletions last and named as such: what the device would STOP doing, kept apart
+          // from what it would be given.
+          if (removals.isNotEmpty) _removalGroup(removals),
         ],
       ),
     );
   }
+
+  /// The device's diff, counted by class: `3 add · 1 replace · 2 delete · 5 same`.
+  ///
+  /// Counted over the WHOLE plan for this device, not over the filtered rows, so the line says
+  /// what the device is like even while a filter hides most of it.
+  String _deviceAmounts(BackupDevice device) {
+    final counts = <DiffKind, int>{};
+    for (final item in plan.items) {
+      if (item.device.id != device.id || item.diff == null) continue;
+      counts[item.diff!] = (counts[item.diff!] ?? 0) + 1;
+    }
+    final deletes = plan.removals.where((r) => r.device.id == device.id).length;
+    if (deletes > 0) counts[DiffKind.remove] = deletes;
+    final parts = [
+      for (final kind in DiffKind.values)
+        if ((counts[kind] ?? 0) > 0) '${counts[kind]} ${_amountWord(kind)}',
+    ];
+    return parts.isEmpty ? 'nothing to compare' : parts.join(' · ');
+  }
+
+  /// How a class reads in the device line: an action for the three that change something, and
+  /// "unchanged" for the one that does not.
+  static String _amountWord(DiffKind kind) => switch (kind) {
+    DiffKind.add => 'to add',
+    DiffKind.change => 'to replace',
+    DiffKind.remove => 'to delete',
+    DiffKind.same => 'unchanged',
+  };
 
   Widget _deviceTargetPicker(BackupDevice device, LiveDevice? target) {
     return DropdownButton<int>(
@@ -404,12 +581,15 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
 
   Widget _group(String title, List<RestoreItem> items) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: Spacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.only(top: 8, bottom: 2),
+            padding: const EdgeInsets.only(
+              top: Spacing.md,
+              bottom: Spacing.hairline,
+            ),
             child: Text(title, style: Theme.of(context).textTheme.titleSmall),
           ),
           for (final item in items) _itemTile(item),
@@ -418,22 +598,46 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
     );
   }
 
-  Widget _blockSection(BackupDevice device, BackupBlock block) {
-    final items = plan.items
-        .where(
-          (i) =>
-              i.device.id == device.id &&
-              i.kind == RestoreKind.entry &&
-              identical(i.block, block),
-        )
-        .toList();
+  /// The deletion rows of one device, under their own heading and in the failure colour: an
+  /// unload or a cancel stops something the rig is doing, so it is never listed among the writes
+  /// without a word.
+  Widget _removalGroup(List<RestoreRemoval> removals) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: Spacing.lg),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(
+              top: Spacing.md,
+              bottom: Spacing.hairline,
+            ),
+            child: Text(
+              'Delete from the device',
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(color: kError),
+            ),
+          ),
+          for (final removal in removals) _removalTile(removal),
+        ],
+      ),
+    );
+  }
+
+  Widget _blockSection(
+    BackupDevice device,
+    BackupBlock block,
+    List<RestoreItem> entries,
+  ) {
+    final items = entries.where((i) => identical(i.block, block)).toList();
     final head = items.isNotEmpty ? items.first : null;
     final targetDevice = plan.deviceTargets[device.id];
     final options = targetDevice == null
         ? <LiveBlock>[]
         : plan.compatibleBlocks(targetDevice, block);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: Spacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -471,23 +675,96 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
     );
   }
 
+  /// One archive row: its class in the action word the box commits to (`ADD`, `REPLACE`,
+  /// `SAME`), the icon and ink of that class, then the row's title and its detail.
+  ///
+  /// The row stays the page's own [CheckboxListTile] - the shared row for a plan - and the class
+  /// is carried by tokens ([TamuChip]'s measured tones, the status inks), not by a colour of its
+  /// own: a ticked `change` row says REPLACE, a ticked `add` row says ADD.
   Widget _itemTile(RestoreItem item) {
+    final kind = item.diff;
     return CheckboxListTile(
       dense: true,
       value: item.selected,
       onChanged: item.ready
           ? (v) => setState(() => item.selected = v == true)
           : null,
-      title: Text(_title(item), overflow: TextOverflow.ellipsis),
+      secondary: Icon(
+        _classIcon(kind),
+        size: IconSize.md,
+        color: _classInk(kind),
+      ),
+      title: Row(
+        children: [
+          if (kind != null) ...[
+            TamuChip(kind.word.toUpperCase(), tone: _classTone(kind)),
+            const SizedBox(width: Spacing.sm),
+          ],
+          Expanded(child: Text(_title(item), overflow: TextOverflow.ellipsis)),
+        ],
+      ),
       subtitle: Text(
         _subtitle(item),
         overflow: TextOverflow.ellipsis,
         style: item.issue != null
-            ? const TextStyle(color: Colors.orangeAccent)
+            ? Theme.of(context).textTheme.bodySmall?.copyWith(color: kWarning)
             : null,
       ),
     );
   }
+
+  /// One deletion row: what the device holds and the archive does not. Unticking it keeps it.
+  Widget _removalTile(RestoreRemoval removal) {
+    return CheckboxListTile(
+      dense: true,
+      value: removal.selected,
+      onChanged: (v) => setState(() => removal.selected = v == true),
+      secondary: const Icon(
+        Icons.delete_outline,
+        size: IconSize.md,
+        color: kError,
+      ),
+      title: Row(
+        children: [
+          TamuChip(removal.diff.word.toUpperCase(), tone: ChipTone.error),
+          const SizedBox(width: Spacing.sm),
+          Expanded(child: Text(removal.label, overflow: TextOverflow.ellipsis)),
+        ],
+      ),
+      subtitle: Text(
+        removal.detail,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: kError),
+      ),
+    );
+  }
+
+  /// The icon of a class: a plus, a swap, a tick or a bin.
+  IconData _classIcon(DiffKind? kind) => switch (kind) {
+    DiffKind.add => Icons.add_circle_outline,
+    DiffKind.change => Icons.sync_alt,
+    DiffKind.same => Icons.check_circle_outline,
+    DiffKind.remove => Icons.delete_outline,
+    null => Icons.help_outline,
+  };
+
+  /// The ink of a class, from the status tokens.
+  Color _classInk(DiffKind? kind) => switch (kind) {
+    DiffKind.add => kSuccess,
+    DiffKind.change => kWarning,
+    DiffKind.same => kTextMuted,
+    DiffKind.remove => kError,
+    null => kTextDisabled,
+  };
+
+  /// The chip tone of a class: success, warning, subtle or error - the tones [TamuChip] already
+  /// carries and the contrast audit already measures.
+  ChipTone _classTone(DiffKind kind) => switch (kind) {
+    DiffKind.add => ChipTone.success,
+    DiffKind.change => ChipTone.warning,
+    DiffKind.same => ChipTone.subtle,
+    DiffKind.remove => ChipTone.error,
+  };
 
   String _title(RestoreItem item) {
     switch (item.kind) {
@@ -505,8 +782,19 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
     }
   }
 
+  /// The row's second line: why it is a difference, then the value it carries.
+  ///
+  /// For a `change` the note comes first ("the device holds a different value"), because that is
+  /// the decision the box commits to; the archived value follows so the row still says what would
+  /// be written.
   String _subtitle(RestoreItem item) {
     if (item.issue != null) return item.issue!;
+    final detail = _detail(item);
+    final note = item.diffNote;
+    return note == null ? detail : '$note - $detail';
+  }
+
+  String _detail(RestoreItem item) {
     switch (item.kind) {
       case RestoreKind.entry:
         final e = item.entry!;
@@ -529,4 +817,121 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
     final text = value?.toString() ?? 'null';
     return text.length > 50 ? '${text.substring(0, 47)}...' : text;
   }
+}
+
+/// The restore plan's filter bar: the five view modes (each with its own count) and the class
+/// toggles that tick or untick a whole class in one gesture.
+///
+/// Layout rule (the responsive policy, `Docs/App/General Info.md`): both groups are [Wrap]s, so
+/// they take one line when the window is wide and move onto the next line when it is not - the bar
+/// never stretches a row past the width it was given, and it is measured at 360x640 and 800x360.
+/// The measurements are the evidence, not the rule: nothing here tests a pixel width.
+class RestoreFilterBar extends StatelessWidget {
+  const RestoreFilterBar({
+    super.key,
+    required this.plan,
+    required this.filter,
+    required this.onFilter,
+    required this.onClass,
+  });
+
+  final RestorePlan plan;
+  final PlanFilter filter;
+
+  /// A view mode was chosen.
+  final ValueChanged<PlanFilter> onFilter;
+
+  /// A whole class was ticked ([selected] true) or unticked.
+  final void Function(DiffKind kind, bool selected) onClass;
+
+  /// The classes the bar can toggle: the three actionable ones. `same` rows are left ticked and
+  /// are unticked one row at a time - a restore always writes them, so a class switch over them
+  /// would be a control with no effect on the device.
+  static const List<DiffKind> toggledKinds = [
+    DiffKind.add,
+    DiffKind.change,
+    DiffKind.remove,
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        Spacing.lg,
+        Spacing.md,
+        Spacing.lg,
+        Spacing.sm,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: Spacing.sm,
+            runSpacing: Spacing.xs,
+            children: [
+              for (final mode in PlanFilter.values)
+                ChoiceChip(
+                  label: Text('${mode.label} ${plan.view(mode).shown}'),
+                  selected: mode == filter,
+                  onSelected: (_) => onFilter(mode),
+                  // Compact so the bar does not eat a short window: the chips stack when the
+                  // width runs out, and a 48 px tap target per line would make that stack taller
+                  // than the rows it filters.
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: const EdgeInsets.symmetric(horizontal: Spacing.sm),
+                ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: Spacing.sm),
+            child: Wrap(
+              spacing: Spacing.sm,
+              runSpacing: Spacing.xs,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text('Include', style: theme.textTheme.bodySmall),
+                for (final kind in toggledKinds)
+                  FilterChip(
+                    avatar: Icon(
+                      _icon(kind),
+                      size: IconSize.sm,
+                      color: _ink(kind),
+                    ),
+                    // Plural on purpose: the bar also carries a filter MODE per class, and two
+                    // controls reading `Add 3` would be two different things wearing one name.
+                    label: Text(
+                      '${kind.word}s ${plan.classCount(kind)}',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: _ink(kind),
+                      ),
+                    ),
+                    selected: plan.classSelected(kind),
+                    onSelected: (value) => onClass(kind, value),
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: const EdgeInsets.symmetric(horizontal: Spacing.sm),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static IconData _icon(DiffKind kind) => switch (kind) {
+    DiffKind.add => Icons.add_circle_outline,
+    DiffKind.change => Icons.sync_alt,
+    DiffKind.remove => Icons.delete_outline,
+    DiffKind.same => Icons.check_circle_outline,
+  };
+
+  static Color _ink(DiffKind kind) => switch (kind) {
+    DiffKind.add => kSuccess,
+    DiffKind.change => kWarning,
+    DiffKind.remove => kError,
+    DiffKind.same => kTextMuted,
+  };
 }

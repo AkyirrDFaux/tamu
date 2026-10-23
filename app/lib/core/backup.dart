@@ -318,6 +318,9 @@ LiveBlock liveBlockFromVisited(VisitedBlock b) => LiveBlock(
         keyName: f.keyName,
         meta: f.meta,
         info: f.info,
+        // The value the walk read with the metadata: what a plan compares an archive entry
+        // against, so it costs no second request.
+        value: f.value,
       ),
   ],
 );

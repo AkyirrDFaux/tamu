@@ -745,4 +745,45 @@ void main() {
     );
     expect(result.failures.single, contains('script 4 would not load'));
   });
+
+  test('a DELETE row the plan leaves unticked keeps the loaded slot', () async {
+    // The restore plan page shows the leftover slot as a DELETE and the user turns the row off.
+    // The sweep then keeps it and names it - an unticked row is "not selected", not a row that
+    // quietly vanished from the page the moment the restore started.
+    install(_FakeCore(loaded: _akyirrSlots()));
+    final device = _device(_bambiScripts());
+    final plan = _plan(device, _live());
+    final target = plan.deviceTargets[device.id]!;
+    // Slot 0 holds SCR_000, which the archive does not carry: the deletion the page shows.
+    plan.removals.add(
+      RestoreRemoval(
+        kind: RestoreKind.script,
+        device: device,
+        target: target,
+        slot: 0,
+        fileId: 0,
+        selected: false,
+      ),
+    );
+
+    final result = await applyRestorePlan(plan);
+
+    final prune = result.scriptSlots.single;
+    print('unticked DELETE -> ${_reportLine(prune)}');
+    expect(prune.unloaded, isEmpty, reason: 'nothing was deleted');
+    expect(prune.refused, isEmpty);
+    expect(
+      prune.keptBySelection,
+      {0: 0},
+      reason: 'the slot is named as kept by selection',
+    );
+    expect(core.loaded.containsKey(0), isTrue);
+    expect(core.unloads, isNot(contains(0)));
+    expect(
+      result.failed,
+      0,
+      reason: 'keeping a slot the user kept is not a failure: '
+          '${result.failures}',
+    );
+  });
 }

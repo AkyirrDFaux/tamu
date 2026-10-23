@@ -677,4 +677,48 @@ void main() {
       );
     },
   );
+
+  test('a DELETE row the plan leaves unticked is not cancelled', () async {
+    // The page lists the two stale entries as DELETEs; the user turns ONE of them off. The prune
+    // must cancel only the other, and report the kept one - a delete the user turned down is not
+    // a delete that happened quietly.
+    device = _FakeTable(_sixEntries());
+    installRequestChannel(device);
+    final archive = _archive();
+    final live = [_liveRequester(), _liveProvider()];
+    final plan = _plan(archive, live);
+    final target = plan.deviceTargets[archive.id]!;
+    // Field 5 is the second stale entry (the archive names fields 0..3).
+    final keptKey = requesterKey(_providerId, _sourceReg(), _targetReg(5));
+    plan.removals.add(
+      RestoreRemoval(
+        kind: RestoreKind.subscription,
+        device: archive,
+        target: target,
+        trid: 0x1005,
+        key: keptKey,
+        selected: false,
+      ),
+    );
+
+    final result = await applyRestorePlan(plan);
+
+    final prune = result.requesterPrune.single;
+    print(
+      'unticked DELETE: before=${_hex(prune.before)} '
+      'cancelled=${_hex(prune.cancelled)} kept=${_hex(prune.kept)} '
+      'remaining=${_hex(prune.remaining)}',
+    );
+    expect(_hex(prune.cancelled), ['0x1004'], reason: 'only the ticked delete');
+    expect(_hex(prune.kept), ['0x1005'], reason: 'the unticked one is named');
+    expect(_hex(prune.remaining), [
+      '0x1000',
+      '0x1001',
+      '0x1002',
+      '0x1003',
+      '0x1005',
+    ], reason: 'the kept entry is still in the table');
+    expect(device.cancelTrids, [0x1004]);
+    expect(result.failed, 0, reason: result.failures.toString());
+  });
 }

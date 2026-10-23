@@ -8,6 +8,15 @@ class LiveEntry {
   final ValueInfo meta;
   final FieldInfo? info;
 
+  /// The value bytes as the walk read them. A field read answers meta AND value
+  /// (`RegisterClient.readField`/`readBlockField`/`readDynamicField`), so carrying it costs no
+  /// extra bus request - and it is what a restore plan compares an archive entry against
+  /// ([RestorePlan.classify]).
+  ///
+  /// Empty when an entry was built by hand without bytes; such an entry cannot compare equal to
+  /// a value-carrying write, so it reads as a difference rather than as "identical".
+  final List<int> value;
+
   LiveEntry({
     required this.field,
     required this.key,
@@ -15,6 +24,7 @@ class LiveEntry {
     required this.keyName,
     required this.meta,
     this.info,
+    this.value = const [],
   });
 
   bool get readOnly => meta.readOnly;
@@ -287,6 +297,240 @@ List<int>? resolveEntryBytes(BackupEntry source, LiveEntry target) {
 
 enum RestoreKind { entry, script, subscription, sndb, file }
 
+// ---------------------------------------------------------------------------
+// Diff classification
+// ---------------------------------------------------------------------------
+
+/// What a restore would do to one row, measured against the live device.
+///
+/// The archive and the device are two snapshots of the same state, and this is the difference
+/// between them (Akyirr, 2026-10-23: the plan page is a diff viewer, not a checkbox list):
+///
+///  * [add] - the archive carries it and the device does not;
+///  * [change] - both carry it and its value differs (the restore REPLACES it);
+///  * [same] - both carry it and its value is identical (nothing to do);
+///  * [remove] - the device carries it and the archive does not (the restore DELETEs it).
+///
+/// A row that cannot be PLACED at all (no target device, no compatible block, an undecodable
+/// value) is not classified: there is nothing to compare it against, and its issue says so.
+enum DiffKind {
+  add('Add'),
+  change('Replace'),
+  same('Same'),
+  remove('Delete');
+
+  const DiffKind(this.word);
+
+  /// The action word a row prints, so a ticked `change` row reads as REPLACE and a ticked
+  /// `remove` row reads as DELETE rather than as a nameless checkbox.
+  final String word;
+}
+
+/// A view filter over a plan: [diff] is everything that is not [DiffKind.same], and is the
+/// default - a restore plan exists to show what it would change.
+enum PlanFilter {
+  all('All'),
+  diff('Diff'),
+  add('Add'),
+  remove('Delete'),
+  change('Replace');
+
+  const PlanFilter(this.label);
+
+  final String label;
+
+  /// Whether a row of [kind] is shown by this filter. A row with NO classification (one the plan
+  /// cannot place at all) is shown by [all] and by [diff] and by neither of the single-class
+  /// modes: it is not "the same", so a diff view that hid it would hide a problem - and it is not
+  /// one of the four classes either, so an `Add`-only view must not claim it.
+  bool shows(DiffKind? kind) => switch (this) {
+    // `all` is every row, the untouched ones included - it is the way to see what a restore
+    // would leave alone.
+    PlanFilter.all => true,
+    PlanFilter.diff => kind != DiffKind.same,
+    PlanFilter.add => kind == DiffKind.add,
+    PlanFilter.remove => kind == DiffKind.remove,
+    PlanFilter.change => kind == DiffKind.change,
+  };
+}
+
+/// What a live device holds beyond the metadata walk, for classifying a plan against it: the
+/// files it stores, the script slots it runs, the requester entries it carries and the SNDB
+/// roster the core names.
+///
+/// The walk itself ([readLiveDevice]) is unchanged and already reads every entry's value with
+/// its metadata, so a register entry costs no extra request. The tables here cost one request
+/// each, and a file's bytes are read only when this device's table names a file the plan writes
+/// ([_readInventories]).
+///
+/// A NULL table means the device did not return it. "Could not look" is not "holds nothing", so
+/// an item that needs an unread table is classified [DiffKind.change] with its reason in
+/// [RestoreItem.diffNote] - never [DiffKind.add], which would claim the device is missing
+/// something nobody checked - and never [DiffKind.same], which would hide a real difference.
+class LiveInventory {
+  /// The names the device's file table lists, normalized and upper-cased; null when the table
+  /// could not be read.
+  final Set<String>? fileNames;
+
+  /// The size each listed file records, by normalized upper-case name. The table settles a
+  /// differing size without reading the file at all.
+  final Map<String, int> fileSizes;
+
+  /// The bytes of the files this plan writes, by normalized upper-case name. A name the table
+  /// lists but that is absent from here is one whose bytes were not read (it is larger than
+  /// [diffReadLimit], or the read failed) - the row's note says which.
+  final Map<String, List<int>> files;
+
+  /// The loaded script slots as slot -> `SCR_XXX` file id; null when the device did not return
+  /// its slot map.
+  final Map<int, int>? loadedSlots;
+
+  /// The requester entries the device carries; null when it did not return its table.
+  final List<RequesterSubscription>? requesters;
+
+  /// The SNDB roster, or null when the core could not be read.
+  final List<({int id, String serial})>? sndb;
+
+  const LiveInventory({
+    this.fileNames,
+    this.fileSizes = const {},
+    this.files = const {},
+    this.loadedSlots,
+    this.requesters,
+    this.sndb,
+  });
+
+  /// True when the device's file table names [name].
+  bool holds(String name) => fileNames?.contains(name.toUpperCase()) ?? false;
+
+  /// The size the table records for [name], or null when the table does not list it.
+  int? sizeOf(String name) => fileSizes[name.toUpperCase()];
+
+  /// The bytes of [name], or null when the device does not carry it or they were not read.
+  List<int>? bytesOf(String name) => files[name.toUpperCase()];
+}
+
+/// The largest file a plan reads back to compare byte for byte. A bigger one is compared by the
+/// size its file table records: a plan is built before the user has decided anything, and reading
+/// a 128 KiB file over the 64-byte Storage fragments would cost ~2000 requests to answer one row.
+const int diffReadLimit = 16 * 1024;
+
+/// A live row a restore would DELETE because the archive does not carry it: a loaded script slot,
+/// or a requester entry.
+///
+/// The two mirrors a restore applies (`pruneScriptSlots`, `pruneRequesterTable`) are deletions,
+/// so a plan carries them as rows of their own instead of leaving them to the apply: the viewer
+/// shows them, counts them apart from the writes, and an unticked one is KEPT - by the apply and
+/// by its report, not silently dropped from the page.
+///
+/// [identity] is what the apply matches on (a slot number, or [requesterKey]), not the object, so
+/// a selection survives the table being re-read at apply time.
+class RestoreRemoval {
+  /// [RestoreKind.script] (a loaded slot) or [RestoreKind.subscription] (a requester entry).
+  final RestoreKind kind;
+
+  /// The source device section this row belongs to.
+  final BackupDevice device;
+
+  /// The live node that holds the row.
+  final LiveDevice target;
+
+  /// The loaded slot, for a script removal.
+  final int? slot;
+
+  /// The `SCR_XXX` file id that slot holds, for a script removal.
+  final int? fileId;
+
+  /// The TRID of the entry, for a requester removal.
+  final int? trid;
+
+  /// The requester identity ([requesterKey]), for a requester removal.
+  final String? key;
+
+  /// The fact that makes this row a deletion, when it is not the plain "the archive does not
+  /// carry it" case - a second copy of an archive script, say.
+  final String? why;
+
+  bool selected;
+
+  RestoreRemoval({
+    required this.kind,
+    required this.device,
+    required this.target,
+    this.slot,
+    this.fileId,
+    this.trid,
+    this.key,
+    this.why,
+    this.selected = true,
+  });
+
+  DiffKind get diff => DiffKind.remove;
+
+  /// What the apply matches this row on: the slot, or the requester identity.
+  String get identity => switch (kind) {
+    RestoreKind.script => 'script:${target.id}:$slot',
+    _ => 'requester:${target.id}:$key',
+  };
+
+  /// The row's title: what the device would stop running or serving.
+  String get label => switch (kind) {
+    RestoreKind.script => 'Script slot $slot (${scriptFileName(fileId!)})',
+    _ => 'Requester entry 0x${(trid ?? 0).toRadixString(16)}',
+  };
+
+  /// The row's detail: the fact that makes it a deletion.
+  String get detail => switch (kind) {
+    RestoreKind.script => why ?? 'loaded on the device, not in the archive',
+    _ => why ?? 'in the device table, not named by the archive ($key)',
+  };
+}
+
+/// One filter's view of a plan: the rows it shows and the counts its footer prints.
+///
+/// The plan owns this (not the widget) so a tool, a test and the page all read the same numbers,
+/// and so "the footer follows the filter and the selection" is one rule in one place.
+class PlanView {
+  const PlanView({
+    required this.filter,
+    required this.items,
+    required this.removals,
+  });
+
+  final PlanFilter filter;
+
+  /// The archive rows this filter shows.
+  final List<RestoreItem> items;
+
+  /// The deletions this filter shows.
+  final List<RestoreRemoval> removals;
+
+  /// Rows on screen: writes plus deletions.
+  int get shown => items.length + removals.length;
+
+  /// Rows on screen that the restore will act on.
+  int get selected =>
+      items.where((i) => i.selected && i.ready).length +
+      removals.where((r) => r.selected).length;
+
+  /// Deletions on screen, and how many of them are ticked - the destructive half, counted apart
+  /// from the writes so a default that deletes cannot be mistaken for a restore that only adds.
+  int get deletes => removals.length;
+  int get deletesSelected => removals.where((r) => r.selected).length;
+
+  /// Archive rows on screen that cannot be written (no target, no compatible block, an
+  /// undecodable value).
+  int get unavailable => items.where((i) => i.issue != null).length;
+
+  /// The rows of [kind] on screen.
+  int countOf(DiffKind kind) => kind == DiffKind.remove
+      ? removals.length
+      : items.where((i) => i.diff == kind).length;
+
+  /// True when nothing is shown.
+  bool get isEmpty => shown == 0;
+}
+
 /// True when a backup file has no semantic form and must be written back from its raw bytes.
 ///
 /// The requester-subscription table has its own semantic form (`RestoreKind.subscription`), a
@@ -312,6 +556,17 @@ bool _sameFile(String a, String b) =>
 /// (its identity, its live readings). It is informational, not a lost item, so the apply never
 /// counts it as a failure; every other issue means an item the restore was asked to write.
 const readOnlyIssue = 'Read Only';
+
+/// The issue text for an archive entry whose address the target does not carry at all. Under the
+/// diff model this is an ADD ("the archive has it, the device does not"), but it stays unready:
+/// `prepareDynamicBlocks` creates a dynamic block's missing structure while the restore runs, so
+/// the row is written at apply time - and an item the apply could not write must not be tickable
+/// before it starts.
+const noEntryIssue = 'No matching entry';
+
+/// The issue text for an archive entry whose whole block the target does not carry. An add for
+/// the same reason as [noEntryIssue], and unready for the same reason.
+const noBlockIssue = 'No compatible block';
 
 /// True when a captured entry is a row the restore PLANS a value write for.
 ///
@@ -341,6 +596,15 @@ class RestoreItem {
   LiveBlock? targetBlock;
   LiveEntry? targetEntry;
   String? issue;
+
+  /// What the restore would do to this row, measured against the live device
+  /// ([RestorePlan.classify]); null when the row cannot be placed and there is nothing to
+  /// compare it against.
+  DiffKind? diff;
+
+  /// Why this row is a difference, in the words the page prints under it: the value that differs,
+  /// or the read that could not be made.
+  String? diffNote;
 
   /// The validated write payload computed during [RestorePlan.resolve] and reused at write
   /// time; cleared whenever the plan re-resolves. The computation is deterministic, so caching
@@ -378,6 +642,20 @@ class RestorePlan {
   /// that rather than let the missing target read as the wrong device shape.
   final Map<int, UnreadNode> unreadDevices;
 
+  /// What each live device holds beyond its block walk (its files, the slots it runs, its
+  /// requester entries), by live node id. The classification compares against this; a device
+  /// with no entry here is one the plan could not look at ([RestoreItem.diffNote] says so).
+  final Map<int, LiveInventory> inventories;
+
+  /// The DELETIONS the plan carries: a loaded script slot and a requester entry the archive does
+  /// not name. Rebuilt by [classify] on every [resolve], keeping the user's per-row choice.
+  final List<RestoreRemoval> removals;
+
+  /// The selection each removal had before the last [classify], by [RestoreRemoval.identity], so
+  /// re-pointing a source device at another target does not silently re-tick a delete the user
+  /// turned off.
+  final Map<String, bool> _removalChoices = {};
+
   RestorePlan({
     required this.devices,
     required this.liveDevices,
@@ -385,7 +663,9 @@ class RestorePlan {
     required this.deviceTargets,
     required this.blockTargets,
     this.unreadDevices = const {},
-  });
+    this.inventories = const {},
+    List<RestoreRemoval>? removals,
+  }) : removals = removals ?? [];
 
   /// Why [source]'s live node did not answer its block list, or null when no node that answered
   /// its identity is [source].
@@ -422,7 +702,13 @@ class RestorePlan {
   int get selectedCount => items.where((i) => i.selected && i.ready).length;
   int get issueCount => items.where((i) => i.issue != null).length;
 
-  /// Re-resolves every item against the current [deviceTargets].
+  /// Re-resolves every item against the current [deviceTargets], then re-classifies the whole
+  /// plan against what those targets hold ([classify]).
+  ///
+  /// Classification is part of resolving on purpose: the two device dropdowns re-point a source
+  /// device (or one block) at another live node, and a plan that read "same" against the old
+  /// target would be lying about the new one. It re-reads nothing from the bus - the live
+  /// snapshot and the inventories are the plan's own facts - so re-pointing stays instant.
   void resolve() {
     for (final item in items) {
       item.targetDevice = deviceTargets[item.device.id];
@@ -445,12 +731,12 @@ class RestorePlan {
           final override = blockTargets[blockKey(item.device.id, item.block!)];
           item.targetBlock = override ?? target.findBlock(item.block!);
           if (item.targetBlock == null) {
-            item.issue = 'No compatible block';
+            item.issue = noBlockIssue;
             break;
           }
           item.targetEntry = _matchEntry(entry, item.targetBlock!);
           if (item.targetEntry == null) {
-            item.issue = 'No matching entry';
+            item.issue = noEntryIssue;
           } else if (item.targetEntry!.readOnly) {
             item.issue = readOnlyIssue;
           } else {
@@ -495,6 +781,9 @@ class RestorePlan {
           break;
       }
     }
+    // The rows are placed; what they would DO is a comparison against the target, and it belongs
+    // to the same pass (see [classify]).
+    classify();
   }
 
   LiveEntry? _matchEntry(BackupEntry entry, LiveBlock block) => _matchLiveEntry(
@@ -504,6 +793,433 @@ class RestorePlan {
     field: entry.fieldIndex,
     key: entry.keyIndex,
   );
+
+  // -------------------------------------------------------------------------
+  // Diff classification and the view filters
+  // -------------------------------------------------------------------------
+
+  /// Classifies every row against the live device it is pointed at, and re-derives the plan's
+  /// deletions ([removals]).
+  ///
+  /// Called from [resolve], so a device or block remap re-classifies without touching the bus:
+  /// the live snapshot and the inventories are the plan's own facts.
+  void classify() {
+    for (final item in items) {
+      item.diff = null;
+      item.diffNote = null;
+      _classifyItem(item);
+    }
+    _buildRemovals();
+  }
+
+  /// This plan seen through [filter]: the rows it shows and the counts its footer prints.
+  ///
+  /// The filter is a VIEW: it never changes what is selected, so switching from `diff` to `all`
+  /// and back leaves every tick where the user put it.
+  PlanView view([PlanFilter filter = PlanFilter.diff]) => PlanView(
+    filter: filter,
+    items: [
+      for (final item in items)
+        if (_shows(item, filter)) item,
+    ],
+    removals: [
+      for (final removal in removals)
+        if (filter.shows(removal.diff)) removal,
+    ],
+  );
+
+  /// Whether [item] belongs in [filter]'s view.
+  ///
+  /// One row is not a difference even though it is not the same either: a READ-ONLY entry, which
+  /// the device owns and a restore never writes ([readOnlyIssue]). It is shown by `all` - where
+  /// the point is to see everything - and kept out of `diff`, which would otherwise put rows
+  /// nothing can be done about in front of every plan.
+  bool _shows(RestoreItem item, PlanFilter filter) =>
+      filter == PlanFilter.diff && item.issue == readOnlyIssue
+      ? false
+      : filter.shows(item.diff);
+
+  /// The rows of [kind] the plan carries, deletion rows included under [DiffKind.remove].
+  int classCount(DiffKind kind) => kind == DiffKind.remove
+      ? removals.length
+      : items.where((i) => i.diff == kind).length;
+
+  /// True when every tickable row of [kind] is ticked - the class toggle's on state.
+  bool classSelected(DiffKind kind) {
+    if (kind == DiffKind.remove) {
+      return removals.isNotEmpty && removals.every((r) => r.selected);
+    }
+    final rows = items.where((i) => i.diff == kind && i.ready).toList();
+    return rows.isNotEmpty && rows.every((i) => i.selected);
+  }
+
+  /// Ticks or unticks every row of [kind] - the class toggle in the filter bar.
+  ///
+  /// Unticking a class is not a hidden preference: the rows stay on the page with their boxes
+  /// clear, and the apply acts on what is ticked - a script slot or a requester entry whose
+  /// delete is unticked is kept, and reported as kept by selection.
+  void setClassSelected(DiffKind kind, bool selected) {
+    if (kind == DiffKind.remove) {
+      for (final removal in removals) {
+        removal.selected = selected;
+      }
+      return;
+    }
+    for (final item in items) {
+      if (item.diff != kind) continue;
+      item.selected = selected && item.ready;
+    }
+  }
+
+  /// The loaded slots of [targetId] whose deletion the plan says to KEEP (the row is unticked),
+  /// which is what `pruneScriptSlots` reads: an unticked delete is the user keeping a running
+  /// script, not a row that quietly vanished.
+  Set<int> untickedScriptSlots(int targetId) => {
+    for (final r in removals)
+      if (r.kind == RestoreKind.script &&
+          r.target.id == targetId &&
+          !r.selected)
+        r.slot!,
+  };
+
+  /// The requester identities of [targetId] whose deletion the plan says to KEEP, which is what
+  /// `pruneRequesterTable` reads.
+  Set<String> untickedRequesterKeys(int targetId) => {
+    for (final r in removals)
+      if (r.kind == RestoreKind.subscription &&
+          r.target.id == targetId &&
+          !r.selected)
+        r.key!,
+  };
+
+  /// Classifies one row against its target (see [DiffKind] for what the four classes mean).
+  ///
+  /// The comparison per kind, stated once:
+  ///
+  ///  * an ENTRY compares the VALUE BYTES the restore would write ([RestoreItem.resolvedBytes])
+  ///    against the bytes the walk read for that address - no extra request;
+  ///  * a SEMANTIC SCRIPT compares the IMAGE the archive rebuilds to against the image the
+  ///    device's `SCR_XXX` rebuilds to, so stored padding is not a difference while a changed
+  ///    instruction is;
+  ///  * a RAW FILE compares its bytes against the device's;
+  ///  * a SUBSCRIPTION compares its identity ([requesterKey]) and then its trigger and timing;
+  ///  * an SNDB entry compares the serial's address in the roster.
+  void _classifyItem(RestoreItem item) {
+    final target = item.targetDevice;
+    if (target == null) return;
+    final inventory = inventories[target.id];
+    switch (item.kind) {
+      case RestoreKind.entry:
+        // "The device does not carry this address" is an ADD - the archive has it and the device
+        // does not. It stays unready (`prepareDynamicBlocks` creates a dynamic block's missing
+        // structure while the restore runs), so it is shown and counted, not ticked.
+        if (item.issue == noEntryIssue || item.issue == noBlockIssue) {
+          item.diff = DiffKind.add;
+          item.diffNote = 'the device carries no such entry';
+          return;
+        }
+        if (item.issue != null) return;
+        final bytes = item.resolvedBytes;
+        final live = item.targetEntry;
+        if (bytes == null || live == null) return;
+        if (sameBytes(bytes, live.value)) {
+          item.diff = DiffKind.same;
+          return;
+        }
+        item.diff = DiffKind.change;
+        item.diffNote = live.value.isEmpty
+            ? "the device did not return this entry's value, so it cannot "
+                  'compare as the same'
+            : 'the device holds a different value';
+      case RestoreKind.script:
+        if (item.issue != null) return;
+        final script = item.script!;
+        // A script with no slot has no file to compare with (it is written but never loaded).
+        if (script.slot < 0) return;
+        final name = scriptFileName(script.slot);
+        if (inventory == null || inventory.fileNames == null) {
+          item.diff = DiffKind.change;
+          item.diffNote =
+              'the device did not return its file table, so $name cannot be '
+              'compared';
+          return;
+        }
+        if (!inventory.holds(name)) {
+          item.diff = DiffKind.add;
+          item.diffNote = 'the device holds no $name';
+          return;
+        }
+        final held = inventory.bytesOf(name);
+        if (held == null) {
+          item.diff = DiffKind.change;
+          item.diffNote = 'the bytes of $name could not be read back';
+          return;
+        }
+        final same = sameScript(script, held);
+        if (same == null) return; // the archive's own script cannot be rebuilt
+        if (same) {
+          item.diff = DiffKind.same;
+          return;
+        }
+        item.diff = DiffKind.change;
+        item.diffNote = 'the device holds a different $name';
+      case RestoreKind.subscription:
+        if (item.issue != null) return;
+        final requesters = inventory?.requesters;
+        if (requesters == null) {
+          item.diff = DiffKind.change;
+          item.diffNote =
+              'the device did not return its requester table, so this entry '
+              'cannot be compared';
+          return;
+        }
+        final identity = archiveRequesterIdentity(item);
+        if (identity == null) return; // an address does not resolve here
+        final live = requesters
+            .where(
+              (e) =>
+                  requesterKey(e.providerAddr, e.sourceReg, e.targetReg) ==
+                  identity,
+            )
+            .firstOrNull;
+        if (live == null) {
+          item.diff = DiffKind.add;
+          item.diffNote = 'the device carries no entry for this subscription';
+          return;
+        }
+        if (sameSubscription(item.subscription!, live)) {
+          item.diff = DiffKind.same;
+          return;
+        }
+        item.diff = DiffKind.change;
+        item.diffNote =
+            'the device carries the entry with a different trigger or timing';
+      case RestoreKind.sndb:
+        if (item.issue != null) return;
+        final entry = item.sndbEntry!;
+        final roster = inventory?.sndb;
+        if (roster == null) {
+          item.diff = DiffKind.change;
+          item.diffNote =
+              'the SNDB roster could not be read, so this record cannot be '
+              'compared';
+          return;
+        }
+        final id = idFromString(entry.address);
+        final record = roster
+            .where((r) => r.serial == entry.serial)
+            .firstOrNull;
+        if (record == null) {
+          item.diff = DiffKind.add;
+          item.diffNote = 'the SNDB carries no record for this serial';
+          return;
+        }
+        if (id != null && record.id == id) {
+          item.diff = DiffKind.same;
+          return;
+        }
+        item.diff = DiffKind.change;
+        item.diffNote =
+            'the SNDB names this serial at ${idToString(record.id)}';
+      case RestoreKind.file:
+        final file = item.file!;
+        // The apply skips the file table itself, so it is not a difference to show.
+        if (file.name == '.TABLE') return;
+        if (inventory == null || inventory.fileNames == null) {
+          item.diff = DiffKind.change;
+          item.diffNote =
+              'the device did not return its file table, so ${file.name} cannot '
+              'be compared';
+          return;
+        }
+        if (!inventory.holds(file.name)) {
+          item.diff = DiffKind.add;
+          item.diffNote = 'the device holds no ${file.name}';
+          return;
+        }
+        final held = inventory.bytesOf(file.name);
+        if (held == null) {
+          // The bytes were not read back (the file is larger than [diffReadLimit], or the read
+          // failed), so the size its table records is the fact there is - and it is a real
+          // comparison when it differs.
+          final size = inventory.sizeOf(file.name);
+          if (size == null) {
+            item.diff = DiffKind.change;
+            item.diffNote =
+                'the file table records no size for ${file.name}, so it cannot '
+                'be compared';
+            return;
+          }
+          if (size != file.bytes.length) {
+            item.diff = DiffKind.change;
+            item.diffNote =
+                'the device holds $size B, the archive '
+                '${file.bytes.length} B';
+            return;
+          }
+          item.diff = DiffKind.same;
+          item.diffNote =
+              'compared by size ($size B on both): it is larger than '
+              '${diffReadLimit ~/ 1024} KiB, so a plan does not read it back';
+          return;
+        }
+        if (sameBytes(held, file.bytes)) {
+          item.diff = DiffKind.same;
+          return;
+        }
+        item.diff = DiffKind.change;
+        item.diffNote =
+            'the device holds a different ${file.name} '
+            '(${held.length} B on the device, ${file.bytes.length} B in the '
+            'archive)';
+    }
+  }
+
+  /// The identity ([requesterKey]) the archive names for a subscription item, resolved exactly as
+  /// the apply resolves it, or null when one of its addresses does not resolve here.
+  String? archiveRequesterIdentity(RestoreItem item) {
+    final s = item.subscription!;
+    final target = item.targetDevice;
+    if (target == null) return null;
+    final provider = resolveArchiveAddress(this, s.provider);
+    final providerDev = providerDeviceFor(liveDevices, s.provider);
+    final source = providerDev?.resolveRef(s.source);
+    final targetReg =
+        target.resolveRef(s.target) ?? archiveRefReg(item.device, s.target);
+    if (provider == null || source == null || targetReg == null) return null;
+    return requesterKey(provider, source, targetReg);
+  }
+
+  /// Re-derives the plan's deletions: the loaded script slots and the requester entries a target
+  /// holds that the archive does not name.
+  ///
+  /// The predicates are the ones the apply's two sweeps act on (`pruneScriptSlots`,
+  /// `pruneRequesterTable`), stated against the plan's own read so the page shows what the apply
+  /// would do - a loaded slot is settled only when it holds the archive's script in the slot the
+  /// archive names for it, and a requester entry is settled only when the archive names its
+  /// identity.
+  ///
+  /// This is a SNAPSHOT taken before the restore runs: the sweep re-reads both tables and decides
+  /// again (a sole off-slot copy of an archive script is kept, and named), so this list is what
+  /// the plan expects to delete and the run's report is what it did.
+  void _buildRemovals() {
+    for (final removal in removals) {
+      _removalChoices[removal.identity] = removal.selected;
+    }
+    removals.clear();
+    final seen = <String>{};
+    for (final source in devices) {
+      final target = deviceTargets[source.id];
+      if (target == null) continue;
+      final inventory = inventories[target.id];
+      _buildScriptRemovals(source, target, inventory, seen);
+      _buildRequesterRemovals(source, target, inventory, seen);
+    }
+  }
+
+  /// The loaded slots of one source's target the sweep would unload.
+  ///
+  /// A slot is NOT a deletion when it holds the archive's script in the slot the archive names
+  /// for it (the shape the restore is after), when the archive names the file but the archive's
+  /// own slot does not hold it (the sweep keeps the sole surviving copy, and names it), or when
+  /// the slot belongs to a row the user unticked.
+  void _buildScriptRemovals(
+    BackupDevice source,
+    LiveDevice target,
+    LiveInventory? inventory,
+    Set<String> seen,
+  ) {
+    if (target.capabilities & Capability.scripts == 0) return;
+    final loaded = inventory?.loadedSlots;
+    // The slot map was not read: nothing may be claimed about what the target runs.
+    if (loaded == null) return;
+    final named = <int>{};
+    final leftOut = <int>{};
+    for (final item in items) {
+      if (item.device.id != source.id) continue;
+      final slot = switch (item.kind) {
+        RestoreKind.script => item.script!.slot >= 0 ? item.script!.slot : null,
+        RestoreKind.file => scriptFileId(item.file!.name),
+        _ => null,
+      };
+      if (slot == null) continue;
+      named.add(slot);
+      if (!item.selected || !item.ready) leftOut.add(slot);
+    }
+    for (final e in loaded.entries) {
+      final slot = e.key;
+      final fileId = e.value;
+      // The archive's script, in the slot the archive names for it.
+      if (slot == fileId && named.contains(fileId)) continue;
+      // "Not selected", not "not in the archive".
+      if (leftOut.contains(slot) || leftOut.contains(fileId)) continue;
+      String? why;
+      if (named.contains(fileId)) {
+        // The archive names this file, so the slot is a second copy of it - unless the archive's
+        // own slot does not hold it, in which case this is the sole surviving copy and the sweep
+        // keeps it rather than delete the script.
+        if (loaded[fileId] != fileId) continue;
+        why =
+            'a second copy of ${scriptFileName(fileId)} (the archive names '
+            'slot $fileId)';
+      }
+      _addRemoval(
+        RestoreRemoval(
+          kind: RestoreKind.script,
+          device: source,
+          target: target,
+          slot: slot,
+          fileId: fileId,
+          why: why,
+        ),
+        seen,
+      );
+    }
+  }
+
+  /// The requester entries one source's target holds that the archive does not name.
+  void _buildRequesterRemovals(
+    BackupDevice source,
+    LiveDevice target,
+    LiveInventory? inventory,
+    Set<String> seen,
+  ) {
+    if (target.capabilities & Capability.subscriptionRequest == 0) return;
+    final held = inventory?.requesters;
+    // The table was not read (or the archive names an entry that does not resolve here, which is
+    // the case the prune declines on): nothing to say about what the target carries.
+    if (held == null) return;
+    final archive = archiveRequesterKeys(this, source);
+    final wanted = archive.wanted;
+    if (wanted == null) return;
+    for (final entry in held) {
+      final key = requesterKey(
+        entry.providerAddr,
+        entry.sourceReg,
+        entry.targetReg,
+      );
+      if (wanted.contains(key)) continue;
+      _addRemoval(
+        RestoreRemoval(
+          kind: RestoreKind.subscription,
+          device: source,
+          target: target,
+          trid: entry.trid,
+          key: key,
+        ),
+        seen,
+      );
+    }
+  }
+
+  /// Adds [removal], restoring the choice the user made before the last classification re-derived
+  /// the list, and never listing the same live row twice (two source devices can share a target).
+  void _addRemoval(RestoreRemoval removal, Set<String> seen) {
+    if (!seen.add(removal.identity)) return;
+    final choice = _removalChoices[removal.identity];
+    if (choice != null) removal.selected = choice;
+    removals.add(removal);
+  }
 }
 
 /// The live device a source device restores into: serial first (exact identity), then the
@@ -563,11 +1279,36 @@ _readLiveDevices() async {
   return (live: live, unread: unread);
 }
 
-/// Builds a restore plan for [devices] against the currently known devices.
+/// Builds a restore plan for [devices] against the currently known devices: the live snapshot,
+/// then what each device holds beyond it, then [planFromSnapshot].
+///
+/// The extra reads this costs (one file table, one slot map and one requester table per live
+/// device, plus one file read per archive file the table names) are what let the plan classify
+/// every row as add / replace / same / delete. A register entry costs nothing extra: the walk
+/// already read its value with its metadata.
 Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
   final read = await _readLiveDevices();
-  final live = read.live;
+  final inventories = await _readInventories(read.live, devices);
+  return planFromSnapshot(
+    devices: devices,
+    live: read.live,
+    unread: read.unread,
+    inventories: inventories,
+  );
+}
 
+/// Builds a plan from a snapshot the caller already holds.
+///
+/// This is the shape [buildRestorePlan] ends in, and the one a test or a `dart run` tool uses to
+/// classify an archive against a synthetic device without a rig. [inventories] is what the live
+/// devices hold beyond their block walk; a device without one is classified as "could not
+/// compare" rather than as an empty device.
+RestorePlan planFromSnapshot({
+  required List<BackupDevice> devices,
+  required List<LiveDevice> live,
+  Map<int, UnreadNode> unread = const {},
+  Map<int, LiveInventory> inventories = const {},
+}) {
   final targets = <int, LiveDevice>{};
   for (final source in devices) {
     final match = matchLiveDevice(source, live);
@@ -664,14 +1405,103 @@ Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
     items: items,
     deviceTargets: targets,
     blockTargets: {},
-    unreadDevices: read.unread,
+    unreadDevices: unread,
+    inventories: inventories,
   );
   plan.resolve();
-  // Default selection: restorable items; read-only entries stay informational.
+  // Default selection: restorable items - adds, replaces AND deletes, because a restore makes the
+  // device match the archive - while read-only entries and rows that cannot be placed stay
+  // informational. Untouched rows are ticked too: writing an identical value is a no-op, and the
+  // load a script needs to run comes from the bring-up, which only walks the rows this run writes.
+  // What is ticked is therefore unchanged from before the diff view existed.
   for (final item in plan.items) {
     item.selected = item.ready;
   }
   return plan;
+}
+
+/// Reads what each live device holds beyond its block walk, for the plan's diff: its file table
+/// and the bytes of the files the archive writes, the script slots it runs, and the requester
+/// entries it carries. The SNDB roster is read once - it is the core's, not a node's.
+///
+/// At most four requests per device (table, file bytes per archive file the table names, slot map,
+/// requester table), and only the ones its roles call for: a device without the script role has no
+/// slot map to read and one without the requester role has no table.
+///
+/// A read that does not answer leaves its entry NULL - "could not look" is not "holds nothing",
+/// and the classification says so in the row's note instead of claiming the device is empty.
+Future<Map<int, LiveInventory>> _readInventories(
+  List<LiveDevice> live,
+  List<BackupDevice> devices,
+) async {
+  final sndb = await readSndbEntries();
+  final wanted = _filesThePlanWrites(devices);
+  final out = <int, LiveInventory>{};
+  for (final device in live) {
+    final storage = StorageClient(deviceId: device.id);
+    final table = await storage.readFileTable();
+    Set<String>? names;
+    final sizes = <String, int>{};
+    final files = <String, List<int>>{};
+    if (table != null) {
+      names = <String>{};
+      for (final record in table) {
+        // The table's own record (index 0) names the table, not a file.
+        if (record.isFiletable) continue;
+        final name = normalizeFileName(record.name);
+        if (name.isEmpty) continue;
+        names.add(name.toUpperCase());
+        sizes[name.toUpperCase()] = record.size;
+      }
+      for (final name in wanted) {
+        if (!names.contains(name.toUpperCase())) continue;
+        // Only a file this plan would write, and only one small enough to compare byte for byte
+        // without turning the plan into a long read.
+        if ((sizes[name.toUpperCase()] ?? 0) > diffReadLimit) continue;
+        final bytes = await storage.readFile(name);
+        if (bytes != null) files[name.toUpperCase()] = bytes;
+      }
+    }
+    Map<int, int>? loaded;
+    if (device.capabilities & Capability.scripts != 0) {
+      loaded = await ScriptClient(deviceId: device.id).readLoadedSlotMap();
+    }
+    List<RequesterSubscription>? requesters;
+    if (device.capabilities & Capability.subscriptionRequest != 0) {
+      requesters = await SubscriptionClient(
+        deviceId: device.id,
+      ).readRequesterSubscriptions();
+    }
+    out[device.id] = LiveInventory(
+      fileNames: names,
+      fileSizes: sizes,
+      files: files,
+      loadedSlots: loaded,
+      requesters: requesters,
+      sndb: sndb,
+    );
+  }
+  return out;
+}
+
+/// The storage file names the archive writes: every semantic script's `SCR_XXX`, every layout's
+/// file, and every file with no semantic form (which travels as raw bytes). A file that has a
+/// semantic form is named too - its rebuild is what the plan compares against the bytes the device
+/// holds - while `.SUBREQ` is not: it is restored through the requester table, never as a file.
+Set<String> _filesThePlanWrites(List<BackupDevice> devices) {
+  final names = <String>{};
+  for (final device in devices) {
+    for (final script in device.scripts) {
+      if (script.slot >= 0) names.add(scriptFileName(script.slot));
+    }
+    for (final layout in device.layouts) {
+      names.add(layout.file);
+    }
+    for (final file in device.files) {
+      if (restoresAsRawFile(device, file)) names.add(file.name);
+    }
+  }
+  return names;
 }
 
 /// Creates the dynamic structure a plan's targets are missing - the blocks when absent, and the
@@ -989,11 +1819,8 @@ class ScriptChanges {
       .putIfAbsent(fileId, () => why);
 
   /// Records what the image this run wrote for script file [fileId] on [targetId] links against.
-  void noteLinks(
-    int targetId,
-    int fileId,
-    List<ScriptLibraryLink>? links,
-  ) => _links.putIfAbsent(targetId, () => {})[fileId] = links;
+  void noteLinks(int targetId, int fileId, List<ScriptLibraryLink>? links) =>
+      _links.putIfAbsent(targetId, () => {})[fileId] = links;
 
   /// The changed script file ids of [targetId], as file id -> why.
   Map<int, String> forTarget(int targetId) => _changed[targetId] ?? const {};
@@ -1005,13 +1832,60 @@ class ScriptChanges {
       _links[targetId] ?? const {};
 }
 
-/// Whether two script images are byte-identical - the comparison [ScriptChanges] rests on.
-bool sameImage(List<int> a, List<int> b) {
+/// Whether two byte lists are identical - the comparison [ScriptChanges] and the diff
+/// classification both rest on, so there is one byte comparison in the tree.
+bool sameBytes(List<int> a, List<int> b) {
   if (a.length != b.length) return false;
   for (var i = 0; i < a.length; i++) {
     if (a[i] != b[i]) return false;
   }
   return true;
+}
+
+/// Whether two script images are byte-identical.
+bool sameImage(List<int> a, List<int> b) => sameBytes(a, b);
+
+/// Whether the archive's semantic script and the script file the device holds describe the same
+/// script; null when the archive's own script cannot be rebuilt into an image at all (the apply
+/// reports that, so there is nothing to classify).
+///
+/// The two are compared as the IMAGE each semantic form REBUILDS to - the archive's script, and
+/// the device's `SCR_XXX` decoded and encoded again - not as raw bytes. A stored file may carry
+/// padding, or a header detail its encoder regenerates, and neither is a difference the restore
+/// would leave behind; a changed instruction or operand is one, and it survives the re-encode. A
+/// file that does not decode has no semantic form to compare, so its bytes are the only fact
+/// there is and they are compared directly.
+bool? sameScript(BackupScript script, List<int> held) {
+  final List<int> archive;
+  try {
+    archive = script.toDraft().toImage();
+  } on FormatException {
+    return null;
+  }
+  try {
+    final onDevice = BackupScript.fromImage(
+      script.slot,
+      held,
+    ).toDraft().toImage();
+    return sameBytes(onDevice, archive);
+  } on FormatException {
+    return sameBytes(held, archive);
+  }
+}
+
+/// Whether a live requester entry carries the trigger and timing the archive names.
+///
+/// The identity (provider node, source register, target register) is what makes it the SAME
+/// subscription - [requesterKey] - and these are the values that make it a different one.
+bool sameSubscription(
+  BackupRequesterSubscription archived,
+  RequesterSubscription live,
+) {
+  final trigger = TriggerType.fromWord(archived.trigger);
+  return live.trigger == trigger &&
+      live.periodMs == archived.periodMs &&
+      live.minTimeMs == archived.minTimeMs &&
+      (live.deadzone - archived.deadzone).abs() < 1e-6;
 }
 
 /// One target's loaded script slots as a restore leaves them, when the question is not "which
@@ -1068,7 +1942,10 @@ class ScriptReloadReport {
   String get reloadedText => reloaded.isEmpty
       ? '-'
       : reloaded.entries
-            .map((e) => 'slot ${e.key} (${scriptFileName(e.value.fileId)}): ${e.value.why}')
+            .map(
+              (e) =>
+                  'slot ${e.key} (${scriptFileName(e.value.fileId)}): ${e.value.why}',
+            )
             .join(', ');
 
   String get leftAloneText => ScriptSlotPrune.slotText(leftAlone);
@@ -1157,7 +2034,9 @@ reloadChangedScripts(RestorePlan plan, ScriptChanges changes) async {
             continue;
           }
           restoring.add(slot);
-          if (item.script!.properties.contains('Run on load')) runOnLoad.add(slot);
+          if (item.script!.properties.contains('Run on load')) {
+            runOnLoad.add(slot);
+          }
         } else if (item.kind == RestoreKind.file) {
           // A script whose image did not parse is written back as bytes; its file id is the slot
           // its name names, so it is part of the archive's script set like any other.
@@ -1216,7 +2095,8 @@ reloadChangedScripts(RestorePlan plan, ScriptChanges changes) async {
       if (why == null && !restoring.contains(fileId)) continue;
       // What the slot was doing, read before the reload; null when the device will not say.
       final state = (await client.readState(slot))?.state;
-      final faulted = state == ScriptState.error || state == ScriptState.loadFailed;
+      final faulted =
+          state == ScriptState.error || state == ScriptState.loadFailed;
       // The links THIS image carries into a library that changed - measured from the file's
       // function-reservation records, not inferred from the script being part of the run. A script
       // with no such record links nothing, so no library change can invalidate it.
@@ -1343,8 +2223,9 @@ class ScriptSlotPrune {
   final Map<int, int> refused;
 
   /// The slots left loaded because this run was not asked to restore their script (its item is
-  /// unticked in the plan, or could not be placed). Those slots are "not selected", NOT "not in
-  /// the archive", so the sweep names them instead of unloading them.
+  /// unticked in the plan, or could not be placed), or because the plan's DELETE row for the slot
+  /// was unticked. Those slots are "not selected", NOT "not in the archive", so the sweep names
+  /// them instead of unloading them.
   final Map<int, int> keptBySelection;
 
   /// The slots the target still held loaded after the unloads - read back from the device, not
@@ -1571,7 +2452,9 @@ pruneScriptSlots(RestorePlan plan) async {
     }
 
     // What each loaded entry is, by the predicate above: the archive's script in the archive's slot
-    // (nothing to do), a copy in the wrong slot, an unticked script the user kept, or a leftover.
+    // (nothing to do), a copy in the wrong slot, an unticked script the user kept, a slot whose
+    // DELETE row the user unticked, or a leftover.
+    final unticked = plan.untickedScriptSlots(target.id);
     final kept = <int, int>{};
     final doomed = <int, int>{};
     final duplicates = <int, ({int fileId, int canonical})>{};
@@ -1587,6 +2470,12 @@ pruneScriptSlots(RestorePlan plan) async {
       // A slot the user left out (or one holding a file they left out) is "not selected", not
       // "not in the archive": naming it is all this phase may do.
       if (leavingOut.contains(slot) || leavingOut.contains(fileId)) {
+        kept[slot] = fileId;
+        continue;
+      }
+      // The plan showed this slot as a DELETE and the user turned it off, so it is kept and
+      // named - the same rule as an unticked item, one step further out.
+      if (unticked.contains(slot)) {
         kept[slot] = fileId;
         continue;
       }
@@ -1697,6 +2586,11 @@ class RequesterPrune {
   /// Empty when [confirmed] is false, which means the table could not be read back at all.
   final List<int> remaining;
 
+  /// The TRIDs KEPT because the plan's delete row for them was unticked: the user was shown the
+  /// deletion and turned it off, so it is named here rather than left to look like an entry the
+  /// archive names.
+  final List<int> kept;
+
   /// True when [remaining] is a real read of the target. False means the read-back itself failed,
   /// so what the target now holds is unknown: the prune is reported as unconfirmed rather than as
   /// a clean table.
@@ -1712,6 +2606,7 @@ class RequesterPrune {
     this.before = const [],
     this.cancelled = const [],
     this.remaining = const [],
+    this.kept = const [],
     this.confirmed = true,
     this.skipped = false,
     this.reason,
@@ -1727,9 +2622,39 @@ class RequesterPrune {
   /// back - never an empty list standing in for "I could not look".
   String get remainingText => confirmed ? _tridText(remaining) : 'unconfirmed';
 
+  /// The TRIDs kept because their delete was unticked, as a report reads them.
+  String get keptText => _tridText(kept);
+
   static String _tridText(List<int> trids) => trids.isEmpty
       ? '-'
       : trids.map((t) => '0x${t.toRadixString(16)}').join(', ');
+}
+
+/// The requester identities ([requesterKey]) the archive names for [source], resolved exactly as
+/// a restore resolves them, or the address that does not resolve here.
+///
+/// One function for both readers - the plan's diff (`_buildRequesterRemovals`) and the apply's
+/// prune - so "the archive names this entry" cannot mean two different things. A null [wanted]
+/// means the archive names a subscription that does not resolve on this rig, which is the case
+/// the prune declines on: without that identity a live entry cannot be told from a stale one.
+({Set<String>? wanted, String? unresolved}) archiveRequesterKeys(
+  RestorePlan plan,
+  BackupDevice source,
+) {
+  final wanted = <String>{};
+  for (final sub in source.requesterSubscriptions) {
+    final provider = resolveArchiveAddress(plan, sub.provider);
+    final providerDev = providerDeviceFor(plan.liveDevices, sub.provider);
+    final sourceReg = providerDev?.resolveRef(sub.source);
+    final target = plan.deviceTargets[source.id];
+    final targetReg =
+        target?.resolveRef(sub.target) ?? archiveRefReg(source, sub.target);
+    if (provider == null || sourceReg == null || targetReg == null) {
+      return (wanted: null, unresolved: 'from ${sub.provider}');
+    }
+    wanted.add(requesterKey(provider, sourceReg, targetReg));
+  }
+  return (wanted: wanted, unresolved: null);
 }
 
 /// Cancels every requester entry the plan's targets hold that the archive does not name, then makes
@@ -1772,21 +2697,10 @@ pruneRequesterTable(RestorePlan plan) async {
     // already reported as unsupported.
     if (target.capabilities & Capability.subscriptionRequest == 0) continue;
 
-    final wanted = <String>{};
-    String? unresolved;
-    for (final sub in source.requesterSubscriptions) {
-      final provider = resolveArchiveAddress(plan, sub.provider);
-      final providerDev = providerDeviceFor(plan.liveDevices, sub.provider);
-      final sourceReg = providerDev?.resolveRef(sub.source);
-      final targetReg =
-          target.resolveRef(sub.target) ?? archiveRefReg(source, sub.target);
-      if (provider == null || sourceReg == null || targetReg == null) {
-        unresolved = 'from ${sub.provider}';
-        break;
-      }
-      wanted.add(requesterKey(provider, sourceReg, targetReg));
-    }
-    if (unresolved != null) {
+    final archive = archiveRequesterKeys(plan, source);
+    final wanted = archive.wanted;
+    final unresolved = archive.unresolved;
+    if (wanted == null) {
       prunes.add(
         RequesterPrune(
           deviceId: target.id,
@@ -1828,13 +2742,21 @@ pruneRequesterTable(RestorePlan plan) async {
       continue;
     }
     final before = [for (final e in held) e.trid];
-    final doomed = [
-      for (final e in held)
-        if (!wanted.contains(
-          requesterKey(e.providerAddr, e.sourceReg, e.targetReg),
-        ))
-          e,
-    ];
+    // The deletions the page showed the user, minus the ones they turned off: an unticked row is
+    // "not selected", not "not in the archive", and cancelling it anyway would be the silent
+    // deletion the plan page exists to make visible.
+    final unticked = plan.untickedRequesterKeys(target.id);
+    final kept = <int>[];
+    final doomed = <RequesterSubscription>[];
+    for (final e in held) {
+      final key = requesterKey(e.providerAddr, e.sourceReg, e.targetReg);
+      if (wanted.contains(key)) continue;
+      if (unticked.contains(key)) {
+        kept.add(e.trid);
+        continue;
+      }
+      doomed.add(e);
+    }
     if (doomed.isEmpty) {
       // Nothing to cancel, so nothing to save: a second restore of the same archive is a no-op.
       prunes.add(
@@ -1842,6 +2764,7 @@ pruneRequesterTable(RestorePlan plan) async {
           deviceId: target.id,
           deviceName: target.name,
           before: before,
+          kept: kept,
           remaining: before,
         ),
       );
@@ -1900,6 +2823,7 @@ pruneRequesterTable(RestorePlan plan) async {
         before: before,
         cancelled: cancelled,
         remaining: remaining,
+        kept: kept,
         confirmed: after != null,
       ),
     );
@@ -2092,7 +3016,7 @@ applyRestorePlan(RestorePlan plan) async {
                 target.id,
                 slot,
                 'the device held ${held.length} byte(s), this run wrote '
-                    '${image.length}',
+                '${image.length}',
               );
             }
           }
@@ -2208,7 +3132,10 @@ applyRestorePlan(RestorePlan plan) async {
           final held = fileId == null
               ? null
               : await store.readFile(item.file!.name);
-          final wrote = await store.writeFile(item.file!.name, item.file!.bytes);
+          final wrote = await store.writeFile(
+            item.file!.name,
+            item.file!.bytes,
+          );
           if (wrote && fileId != null) {
             // The bytes are the image: read its links the same way the semantic path does, so a
             // raw `SCR_XXX` that does reference a library is reloaded on a library change too.
@@ -2222,14 +3149,14 @@ applyRestorePlan(RestorePlan plan) async {
                 target.id,
                 fileId,
                 'the device did not return ${item.file!.name}, so its old '
-                    'image is unknown',
+                'image is unknown',
               );
             } else if (!sameImage(held, item.file!.bytes)) {
               changes.note(
                 target.id,
                 fileId,
                 'the device held ${held.length} byte(s), this run wrote '
-                    '${item.file!.bytes.length}',
+                '${item.file!.bytes.length}',
               );
             }
           }

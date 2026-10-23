@@ -11,7 +11,16 @@ import 'types.dart';
 
 /// The SNDB roster as `[id, serial hex]` records, including id 0 (the unassigned marker -
 /// callers filter it). Empty when the core does not answer.
-Future<List<({int id, String serial})>> sndbEntries() async {
+Future<List<({int id, String serial})>> sndbEntries() async =>
+    await readSndbEntries() ?? const [];
+
+/// The SNDB roster, or null when the core does not answer.
+///
+/// [sndbEntries] flattens a lost reply to an empty roster, which is right for a caller that only
+/// wants to know what the roster names. A caller that has to tell "the roster holds nothing" from
+/// "the roster could not be read" - a restore plan's diff, which must not report a device as
+/// missing from a roster nobody managed to look at - reads this instead.
+Future<List<({int id, String serial})>?> readSndbEntries() async {
   final reply = await serviceRequest(
     coreId,
     ServiceType.device,
@@ -19,7 +28,7 @@ Future<List<({int id, String serial})>> sndbEntries() async {
     timeout: const Duration(seconds: 5),
     tag: 'sndb',
   );
-  if (reply == null) return const [];
+  if (reply == null) return null;
   return parseSndb(reply);
 }
 
