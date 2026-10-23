@@ -1161,20 +1161,27 @@ class RestorePlan {
     removals.clear();
     final seen = <String>{};
     final slotsByTarget = _scriptSlotsByTarget();
+    // Pass 1: the slot rows for EVERY source. A file row asks whether the slot holding that file
+    // still holds it after this run's slot phase, so it must be built against the finished set -
+    // two sources restored onto one node share one slot table and one file table.
+    for (final source in devices) {
+      final target = deviceTargets[source.id];
+      if (target == null) continue;
+      _buildScriptRemovals(
+        source,
+        target,
+        inventories[target.id],
+        slotsByTarget[target.id],
+        seen,
+      );
+    }
+    // Pass 2: the file-table mirror of the slot sweep - a stored `SCR_XXX` no script of the
+    // archive needs is stale, and stays loadable until it is deleted (that is how `SCR_000`
+    // survived bambi's restore) - and the requester entries, which depend on neither.
     for (final source in devices) {
       final target = deviceTargets[source.id];
       if (target == null) continue;
       final inventory = inventories[target.id];
-      _buildScriptRemovals(
-        source,
-        target,
-        inventory,
-        slotsByTarget[target.id],
-        seen,
-      );
-      // The file-table mirror of the slot sweep: a stored `SCR_XXX` no script of the archive
-      // needs is stale, and stays loadable until it is deleted (that is how `SCR_000` survived
-      // bambi's restore). Built from the same shared predicate the sweep acts on.
       _buildScriptFileRemovals(source, target, inventory, seen);
       _buildRequesterRemovals(source, target, inventory, seen);
     }
@@ -1272,8 +1279,11 @@ class RestorePlan {
   ///
   /// A file is NOT a deletion when the archive's scripts need it, when its row is unticked in the
   /// archive ([archiveScriptFiles.leftOut] - unselected, not stale), when its DELETE row is
-  /// unticked on the page, or when a slot still holds it (the slot sweep owns that row). The
-  /// sweep's report is the evidence of what it actually deleted.
+  /// unticked on the page, or when a slot that THIS RUN LEAVES LOADED still holds it
+  /// ([_filesStillHeldByASlot]) - the slot sweep owns that row. A slot this run unloads is not
+  /// protection: `pruneScriptSlots` runs first, so by the time the file sweep reads the slot map
+  /// the slot no longer holds the file, and a stale `SCR_000` behind an unloaded slot is exactly
+  /// the file that survived bambi's restore. The sweep's own post-phase read is the safety net.
   void _buildScriptFileRemovals(
     BackupDevice source,
     LiveDevice target,
@@ -1288,7 +1298,7 @@ class RestorePlan {
     // This run is not the whole of the target's scripts, so nothing can be told from stale.
     if (archive.uncovered.isNotEmpty) return;
     final unticked = untickedScriptFiles(target.id);
-    final loaded = inventory?.loadedSlots;
+    final held = _filesStillHeldByASlot(target.id, inventory?.loadedSlots);
     final sorted = names.toList()..sort();
     for (final name in sorted) {
       final id = scriptFileId(name);
@@ -1296,7 +1306,7 @@ class RestorePlan {
       if (archive.needed.contains(id)) continue;
       if (archive.leftOut.contains(id)) continue;
       if (unticked.contains(id)) continue;
-      if (loaded != null && loaded.values.contains(id)) continue;
+      if (held.contains(id)) continue;
       _addRemoval(
         RestoreRemoval(
           kind: RestoreKind.file,
@@ -1308,6 +1318,29 @@ class RestorePlan {
         seen,
       );
     }
+  }
+
+  /// The `SCR_XXX` file ids a loaded slot still holds AFTER this run's slot phase.
+  ///
+  /// A loaded slot is released by the slot sweep unless the plan keeps it: a slot with no DELETE
+  /// row (the archive's own script in the archive's slot, or a sole off-slot copy the sweep
+  /// declines to unload) and a slot whose row the user unticked both survive, and the file behind
+  /// them is the slot sweep's business, not the file sweep's. A slot with a SELECTED DELETE row is
+  /// unloaded before [pruneScriptFiles] reads the map, so its file is stale and must be planned -
+  /// the plan-time mirror of the sweep's live read.
+  Set<int> _filesStillHeldByASlot(int targetId, Map<int, int>? loaded) {
+    if (loaded == null || loaded.isEmpty) return const {};
+    final unloading = <int>{
+      for (final r in removals)
+        if (r.kind == RestoreKind.script &&
+            r.target.id == targetId &&
+            r.selected)
+          r.slot!,
+    };
+    return {
+      for (final e in loaded.entries)
+        if (!unloading.contains(e.key)) e.value,
+    };
   }
 
   /// The requester entries one source's target holds that the archive does not name.

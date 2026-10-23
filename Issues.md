@@ -127,8 +127,12 @@ are hardware-only.
   `t_df26eda4` the sweep runs a second phase over the file table: when a device's scripts are being
   restored as a whole, every `SCR_XXX` file no script of the archive needs is deleted and reported
   (name, size, the slot it backed), a file behind an unticked script is kept and named, a file a
-  loaded slot still holds or that a restored script references as a function library is never
-  deleted, and the plan shows each as a DELETE row (pinned by a test: plan rows == sweep deletes).
+  slot THIS RUN LEAVES LOADED still holds or that a restored script references as a function
+  library is never deleted, and the plan shows each as a DELETE row. A slot the run unloads is no
+  protection - the slot phase runs first, so the file behind it is stale and is planned too, which
+  is why the plan's rows and the sweep's deletes are equal in that state as well (pinned by
+  `backup_restore_script_files_test.dart`: plan rows == sweep deletes, both with the stale slot
+  unloaded and with it still loaded at plan time).
   Without it a stale script stayed loadable after being unloaded - `SCR_000` survived bambi's
   restore. Proposed addition after `Backup.md:40`: "A script the archive does not carry is removed
   from the device in full: its slot is unloaded and its stored file deleted, both reported, so it

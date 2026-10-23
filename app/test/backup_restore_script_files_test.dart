@@ -358,8 +358,13 @@ void main() {
   test('the plan\'s delete rows are exactly the files the sweep deletes', () async {
     // The invariant `efe71c3` established for slots, carried to the file table: the diff view and
     // the apply read one predicate, so the page cannot print a delete the run keeps.
+    //
+    // [loaded] is the rig's OWN state (`t_b89ffb07`: bambi still runs akyirr-era slot 0): SCR_000
+    // sits in slot 0 at plan time. The slot phase unloads that slot before the file sweep reads
+    // the map, so the file IS deleted - and therefore has to be a row. Reading the plan-time map
+    // instead (the defect this pins) printed no row for SCR_000 while the apply deleted it.
     final table = {'SCR_000': 4, 'SCR_005': 8, 'SCR_001': 0};
-    final loaded = {1: 1};
+    final loaded = {0: 0, 1: 1};
     final device = _device([_script(1, 'Fan curve')]);
     install(_FakeCore(loaded: loaded, table: table));
     final plan = _plan(device, _live(), table, loaded);
@@ -367,12 +372,94 @@ void main() {
     final planRows = _planFileRows(plan);
     final result = await applyRestorePlan(plan);
     final swept = result.scriptFiles.single;
+    final slots = result.scriptSlots.single;
 
+    print('slot phase unloaded: ${slots.unloaded}');
     print('delete rows: $planRows');
     print('delete commands: ${core.scriptDeletes}');
+    expect(slots.unloaded, {
+      0: 0,
+    }, reason: 'the stale slot goes before the file is read');
     expect(planRows.toSet(), {'SCR_000', 'SCR_005'});
     expect(swept.deleted.keys.toSet(), planRows.toSet());
     expect(core.scriptDeletes.toSet(), planRows.toSet());
+    expect(result.failed, 0, reason: result.failures.toString());
+  });
+
+  test('a stale file still loaded in its slot is planned and deleted', () async {
+    // The state the plan used to miss: loaded={0: 0, 1: 1}, archive carrying slot 1 only. The
+    // file is released by this run's own slot phase, so it is stale afterwards - the plan says so,
+    // the sweep agrees, and the deletion is a row the user can turn off.
+    final table = {'SCR_000': 4, 'SCR_001': 0};
+    final loaded = {0: 0, 1: 1};
+    final device = _device([_script(1, 'Fan curve')]);
+    install(_FakeCore(loaded: loaded, table: table));
+    final plan = _plan(device, _live(), table, loaded);
+
+    final planRows = _planFileRows(plan);
+    final result = await applyRestorePlan(plan);
+    final prune = result.scriptFiles.single;
+
+    print('loaded-stale plan FILE rows: $planRows');
+    print('loaded-stale -> ${_fileReport(prune)}');
+    expect(planRows, ['SCR_000']);
+    expect(prune.deleted.keys, ['SCR_000']);
+    expect(prune.keptLoaded, isEmpty, reason: 'its slot was unloaded first');
+    expect(core.scriptDeletes, ['SCR_000']);
+    expect(core.table.containsKey('SCR_000'), isFalse);
+    expect(core.table.containsKey('SCR_001'), isTrue);
+    expect(result.failed, 0, reason: result.failures.toString());
+  });
+
+  test('an archive carrying no scripts plans every stored script file', () async {
+    // `needed` and `uncovered` are both empty, so this run IS the whole of the target's scripts
+    // (there are none): every stored SCR_XXX is stale, including the one still in a loaded slot
+    // that the slot phase unloads. The plan must list both, or the diff view under-reports.
+    final table = {'SCR_000': 4, 'SCR_001': 0};
+    final loaded = {0: 0};
+    final device = _device([]);
+    install(_FakeCore(loaded: loaded, table: table));
+    final plan = _plan(device, _live(), table, loaded);
+
+    final planRows = _planFileRows(plan);
+    final result = await applyRestorePlan(plan);
+    final prune = result.scriptFiles.single;
+
+    print('no-script archive plan FILE rows: $planRows');
+    print('no-script archive -> ${_fileReport(prune)}');
+    expect(planRows.toSet(), {'SCR_000', 'SCR_001'});
+    expect(prune.deleted.keys.toSet(), planRows.toSet());
+    expect(core.table.keys.where((n) => scriptFileId(n) != null), isEmpty);
+    expect(prune.remaining, isEmpty);
+    expect(result.failed, 0, reason: result.failures.toString());
+  });
+
+  test('a slot row the user unticked keeps the file behind it', () async {
+    // Unticking the slot DELETE is "keep this script running", so the file behind it is not stale
+    // either: the slot has no selected row, the file is still held after the slot phase, and the
+    // plan drops the file row with it (and the sweep keeps the file, naming it kept-loaded).
+    final table = {'SCR_000': 4, 'SCR_001': 0};
+    final loaded = {0: 0, 1: 1};
+    final device = _device([_script(1, 'Fan curve')]);
+    install(_FakeCore(loaded: loaded, table: table));
+    final plan = _plan(device, _live(), table, loaded);
+    plan.removals
+            .firstWhere((r) => r.kind == RestoreKind.script && r.slot == 0)
+            .selected =
+        false;
+    plan.classify();
+
+    final planRows = _planFileRows(plan);
+    final result = await applyRestorePlan(plan);
+    final prune = result.scriptFiles.single;
+
+    print('slot row unticked -> FILE rows: $planRows');
+    print('slot row unticked -> ${_fileReport(prune)}');
+    expect(planRows, isEmpty);
+    expect(prune.deleted, isEmpty);
+    expect(prune.keptLoaded, {'SCR_000': 4});
+    expect(core.scriptDeletes, isEmpty);
+    expect(core.table.containsKey('SCR_000'), isTrue);
     expect(result.failed, 0, reason: result.failures.toString());
   });
 
@@ -451,29 +538,35 @@ void main() {
     expect(result.failed, 0, reason: result.failures.toString());
   });
 
-  test(
-    'a file a slot still holds is kept, so a running script is not broken',
-    () async {
-      // The slot sweep could not unload slot 0 (the device refused), so SCR_000 is still RUNNING:
-      // deleting the file under it would be worse than leaving a stale script stored.
-      final table = {'SCR_000': 4, 'SCR_001': 0};
-      final loaded = {0: 0, 1: 1};
-      final device = _device([_script(1, 'Fan curve')]);
-      final fake = _FakeCore(loaded: loaded, table: table);
-      fake.refuseUnload.add(0);
-      install(fake);
-      final plan = _plan(device, _live(), table, loaded);
+  test('a file a slot still holds is kept, so a running script is not broken', () async {
+    // The slot sweep could not unload slot 0 (the device refused), so SCR_000 is still RUNNING:
+    // deleting the file under it would be worse than leaving a stale script stored.
+    final table = {'SCR_000': 4, 'SCR_001': 0};
+    final loaded = {0: 0, 1: 1};
+    final device = _device([_script(1, 'Fan curve')]);
+    final fake = _FakeCore(loaded: loaded, table: table);
+    fake.refuseUnload.add(0);
+    install(fake);
+    final plan = _plan(device, _live(), table, loaded);
 
-      final result = await applyRestorePlan(plan);
+    final result = await applyRestorePlan(plan);
 
-      final prune = result.scriptFiles.single;
-      print('stuck slot -> ${_fileReport(prune)}');
-      expect(core.table.containsKey('SCR_000'), isTrue);
-      expect(prune.deleted, isEmpty);
-      expect(prune.keptLoaded, {'SCR_000': 4});
-      expect(core.scriptDeletes, isEmpty);
-    },
-  );
+    final prune = result.scriptFiles.single;
+    print('stuck slot -> plan FILE rows: ${_planFileRows(plan)}');
+    print('stuck slot -> ${_fileReport(prune)}');
+    // The plan DID list the file, and that is deliberate: at plan time this device is
+    // indistinguishable from a cooperative one (same table, same slot map), so a rule that
+    // printed no row here would also print none in the state the sweep does delete - the
+    // under-report this whole change exists to remove. The refusal is a device-time fact, so the
+    // sweep's live read keeps the file and names it kept-loaded: the plan over-reports a delete
+    // the run did not make, never the reverse. The row also gives the user the control the
+    // missing row used to take away - untick it and the file is kept by row instead.
+    expect(_planFileRows(plan), ['SCR_000']);
+    expect(core.table.containsKey('SCR_000'), isTrue);
+    expect(prune.deleted, isEmpty);
+    expect(prune.keptLoaded, {'SCR_000': 4});
+    expect(core.scriptDeletes, isEmpty);
+  });
 
   test(
     'a delete the device refuses is reported as a failure, not swallowed',
