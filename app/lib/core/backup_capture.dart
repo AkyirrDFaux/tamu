@@ -26,6 +26,51 @@ bool dropCapturedFile(
     isDevicePersistence(name) ||
     (!includeFiles && !hasSemanticForm(backupFileKind(name)));
 
+/// True when [entry] is the device's record of ITSELF, which an archive must never carry.
+///
+/// The SNDB maps serials to addresses on the bus, so a core does not address itself: a row naming
+/// its own address can never be meaningful. `bambi/bambi_setup.zip`'s `1_Tamu_v2.0A.json` carried
+/// three rows where the first was `0.1` - the core describing itself - because the capture copied
+/// every roster row unconditionally.
+///
+/// Two conditions, because either one alone is a real shape on the wire: the address is the
+/// device's own bus address ([deviceId]), OR the serial is the device's own serial (a
+/// re-addressed core can hold its old record under another address, and the row is still the
+/// device describing itself). The serial compares as the 28-hex-character string both
+/// [serialNumberToHex] and [DeviceIdentity.serial] already use, so the two cannot disagree about
+/// what "the same serial" is.
+bool isSelfSndbEntry(
+  int deviceId,
+  String? deviceSerial,
+  BackupSndbEntry entry,
+) {
+  final address = idFromString(entry.address);
+  if (address != null && address == deviceId) return true;
+  final own = deviceSerial?.trim().toUpperCase();
+  if (own == null || own.isEmpty) return false;
+  return entry.serial.trim().toUpperCase() == own;
+}
+
+/// The SNDB rows an archive carries for the device at [deviceId]: the core's roster without the
+/// core's own record(s), as [isSelfSndbEntry] settles "its own".
+///
+/// A device whose roster holds only itself therefore archives no SNDB rows at all
+/// (`BackupDevice.toJson` writes `"sndb": []`), and the rest of the roster is copied exactly as
+/// read - no address or serial is rewritten here.
+List<BackupSndbEntry> archiveSndbEntries(
+  int deviceId,
+  List<({int id, String serial})> roster, {
+  String? serial,
+}) => [
+  for (final entry in roster)
+    if (!isSelfSndbEntry(
+      deviceId,
+      serial,
+      BackupSndbEntry(serial: entry.serial, address: idToString(entry.id)),
+    ))
+      BackupSndbEntry(serial: entry.serial, address: idToString(entry.id)),
+];
+
 Future<BackupDevice?> captureDevice(
   int deviceId, {
   bool includeFiles = true,
@@ -131,18 +176,19 @@ Future<BackupDevice?> captureDevice(
     AppDiagnostics.log('backup', 'requester subscriptions read failed: $error');
   }
 
-  // SNDB lives on cores.
-  final sndb = <BackupSndbEntry>[];
+  // SNDB lives on cores - and never carries the core's own record: the roster maps serials to
+  // addresses on the bus, and a core does not address itself (see [isSelfSndbEntry]). The DAS
+  // devices have no roster at all, so this branch is theirs to skip.
   final isCore =
       deviceId == coreId ||
       (identity?.capabilities ?? 0) & Capability.core != 0;
-  if (isCore) {
-    for (final entry in await sndbEntries()) {
-      sndb.add(
-        BackupSndbEntry(serial: entry.serial, address: idToString(entry.id)),
-      );
-    }
-  }
+  final sndb = isCore
+      ? archiveSndbEntries(
+          deviceId,
+          await sndbEntries(),
+          serial: identity?.serial,
+        )
+      : const <BackupSndbEntry>[];
 
   if (captured.isEmpty &&
       files.isEmpty &&

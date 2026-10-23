@@ -426,7 +426,8 @@ const int diffReadLimit = 16 * 1024;
 /// [identity] is what the apply matches on (a slot number, or [requesterKey]), not the object, so
 /// a selection survives the table being re-read at apply time.
 class RestoreRemoval {
-  /// [RestoreKind.script] (a loaded slot) or [RestoreKind.subscription] (a requester entry).
+  /// [RestoreKind.script] (a loaded slot), [RestoreKind.subscription] (a requester entry) or
+  /// [RestoreKind.file] (a stored `SCR_XXX` file no script in the archive needs).
   final RestoreKind kind;
 
   /// The source device section this row belongs to.
@@ -440,6 +441,12 @@ class RestoreRemoval {
 
   /// The `SCR_XXX` file id that slot holds, for a script removal.
   final int? fileId;
+
+  /// The storage file name, for a file removal.
+  final String? fileName;
+
+  /// The size the device's file table records for [fileName], for a file removal.
+  final int? fileSize;
 
   /// The TRID of the entry, for a requester removal.
   final int? trid;
@@ -459,6 +466,8 @@ class RestoreRemoval {
     required this.target,
     this.slot,
     this.fileId,
+    this.fileName,
+    this.fileSize,
     this.trid,
     this.key,
     this.why,
@@ -467,21 +476,24 @@ class RestoreRemoval {
 
   DiffKind get diff => DiffKind.remove;
 
-  /// What the apply matches this row on: the slot, or the requester identity.
+  /// What the apply matches this row on: the slot, the requester identity, or the file name.
   String get identity => switch (kind) {
     RestoreKind.script => 'script:${target.id}:$slot',
+    RestoreKind.file => 'file:${target.id}:${fileName!.toUpperCase()}',
     _ => 'requester:${target.id}:$key',
   };
 
-  /// The row's title: what the device would stop running or serving.
+  /// The row's title: what the device would stop running, serving or holding.
   String get label => switch (kind) {
     RestoreKind.script => 'Script slot $slot (${scriptFileName(fileId!)})',
+    RestoreKind.file => 'Script file $fileName (${fileSize ?? 0} B)',
     _ => 'Requester entry 0x${(trid ?? 0).toRadixString(16)}',
   };
 
   /// The row's detail: the fact that makes it a deletion.
   String get detail => switch (kind) {
     RestoreKind.script => why ?? 'loaded on the device, not in the archive',
+    RestoreKind.file => why ?? 'stored on the device, not in the archive',
     _ => why ?? 'in the device table, not named by the archive ($key)',
   };
 }
@@ -710,6 +722,9 @@ class RestorePlan {
   /// target would be lying about the new one. It re-reads nothing from the bus - the live
   /// snapshot and the inventories are the plan's own facts - so re-pointing stays instant.
   void resolve() {
+    // A row the archive carries for the device it describes is not a row at all: it is dropped
+    // before anything is placed or classified (see [_dropSelfSndb]).
+    _dropSelfSndb();
     for (final item in items) {
       item.targetDevice = deviceTargets[item.device.id];
       item.targetBlock = null;
@@ -784,6 +799,34 @@ class RestorePlan {
     // The rows are placed; what they would DO is a comparison against the target, and it belongs
     // to the same pass (see [classify]).
     classify();
+  }
+
+  /// Drops the archive's SNDB row(s) for the device it describes, and for the device it is being
+  /// restored onto: the SNDB maps serials to addresses on the BUS, so a core does not address
+  /// itself and a checkbox that writes a device's own address back into its own table can never
+  /// be right.
+  ///
+  /// An archive captured before 2026-10-23 still carries such a row (`bambi/bambi_setup.zip`'s
+  /// first row is `0.1`, the core describing itself), and the archive on disk is NOT rewritten:
+  /// this reader tolerates it by dropping the row before the plan is built, so an old archive
+  /// plans the same rows a fresh capture would. The row is dropped from `items` outright rather
+  /// than shown unready: a row nothing can write is not a row to put in front of a user.
+  void _dropSelfSndb() {
+    if (items.isEmpty) return;
+    bool isSelf(RestoreItem item) {
+      if (item.kind != RestoreKind.sndb) return false;
+      final entry = item.sndbEntry!;
+      if (isSelfSndbEntry(item.device.id, item.device.serial, entry)) {
+        return true;
+      }
+      // Re-pointed at a node that is the row's own address: writing it would put the target's own
+      // address in its table, which the firmware refuses.
+      final target = deviceTargets[item.device.id];
+      return target != null && isSelfSndbEntry(target.id, target.serial, entry);
+    }
+
+    if (!items.any(isSelf)) return;
+    items.removeWhere(isSelf);
   }
 
   LiveEntry? _matchEntry(BackupEntry entry, LiveBlock block) => _matchLiveEntry(
@@ -890,6 +933,15 @@ class RestorePlan {
           r.target.id == targetId &&
           !r.selected)
         r.key!,
+  };
+
+  /// The `SCR_XXX` file ids of [targetId] whose deletion the plan says to KEEP (the row is
+  /// unticked), which is what `pruneScriptFiles` reads - the file-table mirror of
+  /// [untickedScriptSlots].
+  Set<int> untickedScriptFiles(int targetId) => {
+    for (final r in removals)
+      if (r.kind == RestoreKind.file && r.target.id == targetId && !r.selected)
+        if (scriptFileId(r.fileName!) != null) scriptFileId(r.fileName!)!,
   };
 
   /// Classifies one row against its target (see [DiffKind] for what the four classes mean).
@@ -1120,6 +1172,10 @@ class RestorePlan {
         slotsByTarget[target.id],
         seen,
       );
+      // The file-table mirror of the slot sweep: a stored `SCR_XXX` no script of the archive
+      // needs is stale, and stays loadable until it is deleted (that is how `SCR_000` survived
+      // bambi's restore). Built from the same shared predicate the sweep acts on.
+      _buildScriptFileRemovals(source, target, inventory, seen);
       _buildRequesterRemovals(source, target, inventory, seen);
     }
   }
@@ -1210,6 +1266,50 @@ class RestorePlan {
     }
   }
 
+  /// The stored `SCR_XXX` files of one source's target that no script the archive for that target
+  /// needs - the file-table mirror of [_buildScriptRemovals], built from the same predicate the
+  /// sweep acts on ([archiveScriptFiles]) so the page and the apply cannot disagree.
+  ///
+  /// A file is NOT a deletion when the archive's scripts need it, when its row is unticked in the
+  /// archive ([archiveScriptFiles.leftOut] - unselected, not stale), when its DELETE row is
+  /// unticked on the page, or when a slot still holds it (the slot sweep owns that row). The
+  /// sweep's report is the evidence of what it actually deleted.
+  void _buildScriptFileRemovals(
+    BackupDevice source,
+    LiveDevice target,
+    LiveInventory? inventory,
+    Set<String> seen,
+  ) {
+    if (target.capabilities & Capability.scripts == 0) return;
+    final names = inventory?.fileNames;
+    // The table was not read: nothing may be claimed about what the target holds.
+    if (names == null) return;
+    final archive = archiveScriptFiles(this, target.id);
+    // This run is not the whole of the target's scripts, so nothing can be told from stale.
+    if (archive.uncovered.isNotEmpty) return;
+    final unticked = untickedScriptFiles(target.id);
+    final loaded = inventory?.loadedSlots;
+    final sorted = names.toList()..sort();
+    for (final name in sorted) {
+      final id = scriptFileId(name);
+      if (id == null) continue;
+      if (archive.needed.contains(id)) continue;
+      if (archive.leftOut.contains(id)) continue;
+      if (unticked.contains(id)) continue;
+      if (loaded != null && loaded.values.contains(id)) continue;
+      _addRemoval(
+        RestoreRemoval(
+          kind: RestoreKind.file,
+          device: source,
+          target: target,
+          fileName: name,
+          fileSize: inventory?.sizeOf(name),
+        ),
+        seen,
+      );
+    }
+  }
+
   /// The requester entries one source's target holds that the archive does not name.
   void _buildRequesterRemovals(
     BackupDevice source,
@@ -1254,6 +1354,84 @@ class RestorePlan {
     removals.add(removal);
   }
 }
+
+/// The script FILES a run needs on live node [targetId], the ones it was told to leave out, and
+/// the archive scripts no item of this run accounts for.
+///
+/// One function for both readers - the plan's deletion rows (`_buildScriptFileRemovals`) and the
+/// apply's file sweep (`pruneScriptFiles`) - so "the archive needs this file" cannot mean two
+/// different things. The file-table mirror of the slot sweep's predicate: a `SCR_XXX` file's id IS
+/// the slot it backs (`SCR_004` -> slot 4), so the archive's scripts and the file ids are one set.
+///
+/// * [needed] - the ids this run restores: every archive script whose item is selected and ready,
+///   plus every FUNCTION LIBRARY such a script's image references. A library the archive carries
+///   is one of those scripts; a library it does not carry is still needed, because deleting the
+///   file a restored script calls into would break the script this run just installed.
+/// * [leftOut] - the ids of archive scripts whose item is unticked or unplaceable. Not selected,
+///   so not stale: the file stays and the report names it as kept by selection.
+/// * [uncovered] - archive script ids with NO item at all. Non-empty means this run is not the
+///   whole of the target's scripts, and both readers decline: nothing can be told from stale.
+///
+/// Per TARGET, not per source: files belong to the node, so two archive devices remapped onto one
+/// target share one file table and their sets are unioned.
+({Set<int> needed, Set<int> leftOut, Set<int> uncovered}) archiveScriptFiles(
+  RestorePlan plan,
+  int targetId,
+) {
+  final needed = <int>{};
+  final leftOut = <int>{};
+  final uncovered = <int>{};
+  for (final source in plan.devices) {
+    if (plan.deviceTargets[source.id]?.id != targetId) continue;
+    final covered = <int>{};
+    for (final item in plan.items) {
+      if (item.device.id != source.id) continue;
+      final id = switch (item.kind) {
+        RestoreKind.script => item.script!.slot >= 0 ? item.script!.slot : null,
+        RestoreKind.file => scriptFileId(item.file!.name),
+        _ => null,
+      };
+      if (id == null) continue;
+      covered.add(id);
+      if (item.selected && item.ready) {
+        needed.add(id);
+        needed.addAll(scriptLibrariesOf(item));
+      } else {
+        leftOut.add(id);
+      }
+    }
+    for (final script in source.scripts) {
+      if (script.slot >= 0 && !covered.contains(script.slot)) {
+        uncovered.add(script.slot);
+      }
+    }
+    for (final file in source.files) {
+      final id = scriptFileId(file.name);
+      if (id != null && !covered.contains(id)) uncovered.add(id);
+    }
+  }
+  return (needed: needed, leftOut: leftOut, uncovered: uncovered);
+}
+
+/// The `SCR_XXX` file ids a script item's image references as a function library - the files a
+/// restore must not delete, because a script this run installs calls into them.
+///
+/// A semantic script carries its function reservations (`BackupFunction.library`, the global
+/// ones); a raw `SCR_XXX` carries them in its bytes, which is the same read the reload phase
+/// makes (`linkedLibraries`). No image is rebuilt here: the plan must not pay for encoding every
+/// script to answer a file-table question.
+Set<int> scriptLibrariesOf(RestoreItem item) => switch (item.kind) {
+  RestoreKind.script => {
+    for (final f in item.script!.functions)
+      if (f.isGlobal && f.library != 0) f.library,
+  },
+  RestoreKind.file => {
+    for (final link
+        in linkedLibraries(item.file!.bytes) ?? const <ScriptLibraryLink>[])
+      if (link.library != 0) link.library,
+  },
+  _ => const <int>{},
+};
 
 /// The live device a source device restores into: serial first (exact identity), then the
 /// id, the name, a device carrying the source's first block type, and finally any live device.
@@ -2597,6 +2775,297 @@ pruneScriptSlots(RestorePlan plan) async {
   return (prunes: prunes, failures: failures);
 }
 
+/// One target's script FILES as a restore leaves them: the stored `SCR_XXX` files it deleted,
+/// what it kept, and why.
+///
+/// [pruneScriptSlots] settles the SLOTS a target runs; this is the file table behind them. A
+/// stale script is not gone until its FILE is gone: `SCR_000` stayed stored after bambi's restore
+/// (Akyirr, 2026-10-23), so the slot was unloaded, the file stayed loadable, and any later "load
+/// all" brought the script back. A deletion is reported with the file name, its size and the slot
+/// it backed (`SCR_000 (4 B, slot 0)`), the way the slot sweep reports slots.
+class ScriptFilePrune {
+  /// The live node id of the target that was swept.
+  final int deviceId;
+
+  /// The target's name, for a report a person reads.
+  final String deviceName;
+
+  /// The `SCR_XXX` files the target held when the sweep read it, as upper-case name -> size.
+  final Map<String, int> before;
+
+  /// The files deleted, in the order they went, as name -> size.
+  final Map<String, int> deleted;
+
+  /// The files left because an item of the archive for them is unticked or unplaceable: "not
+  /// selected", not "not in the archive", so they are named rather than deleted.
+  final Map<String, int> keptBySelection;
+
+  /// The files left because the DELETE row for them was unticked on the plan page.
+  final Map<String, int> keptByRow;
+
+  /// The files left because a slot still holds them (the slot sweep could not unload it, or it
+  /// was kept by selection): deleting the file behind a running script would break the script.
+  final Map<String, int> keptLoaded;
+
+  /// The files the target would not delete: the command answered FAIL or nothing, so the file is
+  /// STILL stored. Reported as a failure rather than counted as done.
+  final Map<String, int> refused;
+
+  /// The `SCR_XXX` files the target still holds after the deletes - read back from the device,
+  /// not assumed. Empty when [confirmed] is false, which means the table could not be read back.
+  final Set<String> remaining;
+
+  /// True when [remaining] is a real read of the target. False means what the target now stores
+  /// is unknown, which is reported rather than passed off as a clean table.
+  final bool confirmed;
+
+  /// True when no file sweep ran; [reason] says why.
+  final bool skipped;
+  final String? reason;
+
+  const ScriptFilePrune({
+    required this.deviceId,
+    required this.deviceName,
+    this.before = const {},
+    this.deleted = const {},
+    this.keptBySelection = const {},
+    this.keptByRow = const {},
+    this.keptLoaded = const {},
+    this.refused = const {},
+    this.remaining = const {},
+    this.confirmed = true,
+    this.skipped = false,
+    this.reason,
+  });
+
+  /// The files as a report reads them: `SCR_000 (4 B, slot 0), SCR_007 (96 B, slot 7)`, or `-`.
+  static String fileText(Map<String, int> files) => files.isEmpty
+      ? '-'
+      : [
+          for (final e in files.entries)
+            '${e.key} (${e.value} B, slot ${scriptFileId(e.key)})',
+        ].join(', ');
+
+  static String _nameText(Set<String> names) =>
+      names.isEmpty ? '-' : (names.toList()..sort()).join(', ');
+
+  String get beforeText => fileText(before);
+  String get deletedText => fileText(deleted);
+  String get refusedText => fileText(refused);
+  String get keptText => fileText(keptBySelection);
+  String get keptRowText => fileText(keptByRow);
+  String get keptLoadedText => fileText(keptLoaded);
+
+  /// The names still stored, or `unconfirmed` when the table could not be read back - never an
+  /// empty set standing in for "I could not look".
+  String get remainingText => confirmed ? _nameText(remaining) : 'unconfirmed';
+}
+
+/// Deletes every stored `SCR_XXX` file the archive for that target does not need, then reports
+/// each one, so a script the archive does not carry cannot be loaded back onto the device.
+///
+/// The predicate is [archiveScriptFiles], the one the plan's DELETE rows are built from, and the
+/// scope is the slot sweep's: the sweep runs only when this run is the WHOLE of the target's
+/// scripts ([archiveScriptFiles.uncovered] empty), a file whose item is unticked is "not
+/// selected" and is named instead of deleted, and a file a slot still holds is kept. That last
+/// rule matters because this phase runs AFTER [pruneScriptSlots]: a slot the target refused to
+/// unload is still running that file, and deleting the file under it would be worse than leaving
+/// a stale one.
+///
+/// The read this rests on is the target's own file table: a table that does not answer is a
+/// skipped sweep and a reported failure, not a clean device - "could not look" is never "holds
+/// nothing".
+Future<({List<ScriptFilePrune> prunes, List<String> failures})>
+pruneScriptFiles(RestorePlan plan) async {
+  final prunes = <ScriptFilePrune>[];
+  final failures = <String>[];
+
+  // The live target each source device is restored onto, grouped by that target: files belong to
+  // the node, so two archive devices on one target share one file table and their needs union.
+  final sourcesByTarget = <int, List<BackupDevice>>{};
+  final targets = <int, LiveDevice>{};
+  for (final source in plan.devices) {
+    final target = plan.deviceTargets[source.id];
+    if (target == null) continue;
+    // A device without the script role has no script files, and its script items were already
+    // reported as unsupported by the plan.
+    if (target.capabilities & Capability.scripts == 0) continue;
+    targets[target.id] = target;
+    sourcesByTarget.putIfAbsent(target.id, () => []).add(source);
+  }
+
+  for (final group in sourcesByTarget.entries) {
+    final target = targets[group.key]!;
+    final archive = archiveScriptFiles(plan, target.id);
+    if (archive.uncovered.isNotEmpty) {
+      final missing = archive.uncovered.toList()..sort();
+      prunes.add(
+        ScriptFilePrune(
+          deviceId: target.id,
+          deviceName: target.name,
+          skipped: true,
+          reason:
+              'the plan carries no item for script file(s) '
+              '${missing.map(scriptFileName).join(', ')} the archive holds, so this run '
+              "is not the whole of the target's scripts",
+        ),
+      );
+      continue;
+    }
+
+    final storage = StorageClient(deviceId: target.id);
+    final table = await storage.readFileTable();
+    if (table == null) {
+      prunes.add(
+        ScriptFilePrune(
+          deviceId: target.id,
+          deviceName: target.name,
+          confirmed: false,
+          skipped: true,
+          reason: 'the target did not return its file table',
+        ),
+      );
+      failures.add(
+        '${target.name}: script files not swept: the target did not return its file '
+        'table (no reply or FAIL), so a stored script the archive does not carry may '
+        'still be loadable',
+      );
+      continue;
+    }
+
+    // The script files the target holds, by the name the table records (normalized and
+    // upper-cased, as a `SCR_XXX` always is).
+    final before = <String, int>{};
+    for (final record in table) {
+      if (record.isFiletable) continue;
+      final name = normalizeFileName(record.name).toUpperCase();
+      if (scriptFileId(name) == null) continue;
+      before[name] = record.size;
+    }
+
+    // What the target still runs: the file behind a loaded slot is never a candidate, whatever
+    // this run thinks of it. A slot map that does not answer is a skipped sweep, not a guess.
+    final loaded = await ScriptClient(deviceId: target.id).readLoadedSlotMap();
+    if (loaded == null) {
+      prunes.add(
+        ScriptFilePrune(
+          deviceId: target.id,
+          deviceName: target.name,
+          before: before,
+          confirmed: false,
+          skipped: true,
+          reason: 'the target did not return its slot map',
+        ),
+      );
+      failures.add(
+        '${target.name}: script files not swept: the target did not return its slot '
+        'map, so a file a slot still holds cannot be told from a stale one',
+      );
+      continue;
+    }
+
+    final unticked = plan.untickedScriptFiles(target.id);
+    final kept = <String, int>{};
+    final keptRow = <String, int>{};
+    final keptLoaded = <String, int>{};
+    final doomed = <String, int>{};
+    for (final e in before.entries) {
+      final id = scriptFileId(e.key)!;
+      // A script this run restores: its file is the archive's, not a leftover.
+      if (archive.needed.contains(id)) continue;
+      // An unticked item: "not selected", not "not in the archive".
+      if (archive.leftOut.contains(id)) {
+        kept[e.key] = e.value;
+        continue;
+      }
+      // The plan showed this file as a DELETE and the user turned it off.
+      if (unticked.contains(id)) {
+        keptRow[e.key] = e.value;
+        continue;
+      }
+      // A slot still holds it: deleting the file would break a running script.
+      if (loaded.values.contains(id)) {
+        keptLoaded[e.key] = e.value;
+        continue;
+      }
+      doomed[e.key] = e.value;
+    }
+
+    if (doomed.isEmpty) {
+      prunes.add(
+        ScriptFilePrune(
+          deviceId: target.id,
+          deviceName: target.name,
+          before: before,
+          keptBySelection: kept,
+          keptByRow: keptRow,
+          keptLoaded: keptLoaded,
+          remaining: before.keys.toSet(),
+        ),
+      );
+      continue;
+    }
+
+    final deleted = <String, int>{};
+    final refused = <String, int>{};
+    for (final e in doomed.entries) {
+      if (await storage.deleteFile(e.key)) {
+        deleted[e.key] = e.value;
+      } else {
+        refused[e.key] = e.value;
+        failures.add(
+          '${target.name}: deleting script file ${e.key} (${e.value} B, slot '
+          '${scriptFileId(e.key)}) failed (the device refused it or did not answer), '
+          'so that script is still stored and still loadable',
+        );
+      }
+    }
+
+    // Read back rather than assume: a delete the device did not apply is exactly what a report
+    // exists to catch.
+    final after = await storage.readFileTable();
+    Set<String> remaining;
+    if (after == null) {
+      failures.add(
+        '${target.name}: could not confirm the script file sweep: the file table could '
+        'not be read back after ${deleted.length} delete(s), so what the target now '
+        'stores is unknown',
+      );
+      remaining = const {};
+    } else {
+      remaining = {
+        for (final record in after)
+          if (!record.isFiletable)
+            if (scriptFileId(normalizeFileName(record.name).toUpperCase()) !=
+                null)
+              normalizeFileName(record.name).toUpperCase(),
+      };
+      for (final name in deleted.keys) {
+        if (remaining.contains(name)) {
+          failures.add(
+            '${target.name}: script file $name is still stored after the delete',
+          );
+        }
+      }
+    }
+    prunes.add(
+      ScriptFilePrune(
+        deviceId: target.id,
+        deviceName: target.name,
+        before: before,
+        deleted: deleted,
+        keptBySelection: kept,
+        keptByRow: keptRow,
+        keptLoaded: keptLoaded,
+        refused: refused,
+        remaining: remaining,
+        confirmed: after != null,
+      ),
+    );
+  }
+  return (prunes: prunes, failures: failures);
+}
+
 /// One target's requester table as a restore leaves it: the entries it cancelled, what the target
 /// held before and after, and why the table was left alone when it was.
 ///
@@ -2873,6 +3342,7 @@ Future<
     List<String> failures,
     List<RequesterPrune> requesterPrune,
     List<ScriptSlotPrune> scriptSlots,
+    List<ScriptFilePrune> scriptFiles,
     List<ScriptReloadReport> scriptReload,
   })
 >
@@ -3244,12 +3714,22 @@ applyRestorePlan(RestorePlan plan) async {
     failed++;
     if (failures.length < 100) failures.add(failure);
   }
+  // Then the file table behind those slots: a stale script is not gone while its FILE is stored,
+  // so `SCR_000` stayed loadable after bambi's restore even though its slot had been unloaded.
+  // It runs after the slot sweep on purpose - a slot the target refused to unload still runs its
+  // file, and the file sweep keeps that file rather than break a running script.
+  final sweptFiles = await pruneScriptFiles(plan);
+  for (final failure in sweptFiles.failures) {
+    failed++;
+    if (failures.length < 100) failures.add(failure);
+  }
   return (
     written: written,
     failed: failed,
     failures: failures,
     requesterPrune: pruned.prunes,
     scriptSlots: swept.prunes,
+    scriptFiles: sweptFiles.prunes,
     scriptReload: reloadedScripts.reports,
   );
 }

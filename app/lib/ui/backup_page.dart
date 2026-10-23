@@ -261,6 +261,13 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
       final keptSlots = [
         for (final prune in result.scriptSlots) ...prune.keptBySelection.keys,
       ];
+      // A deleted script FILE is what makes an unloaded stale script stay loadable, so it is
+      // reported with its name and the slot it backed, the way a slot is reported by number.
+      final deletedFiles = [
+        for (final prune in result.scriptFiles)
+          for (final e in prune.deleted.entries)
+            '${e.key} (slot ${scriptFileId(e.key)})',
+      ];
       // An entry the page listed as a DELETE and the user turned off is kept, so it is counted
       // with the others the run deliberately left alone rather than vanishing from the report.
       final keptTrids = [
@@ -297,6 +304,11 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
           '${duplicateSlots.isEmpty ? '' : ', unloaded ${duplicateSlots.length} '
                     'duplicate script slot${duplicateSlots.length == 1 ? '' : 's'} '
                     '(${duplicateSlots.join(', ')})'}'
+          // A deleted file is the other half of an unload: without it the script is gone from the
+          // slots but still stored, and a later "load all" brings it back.
+          '${deletedFiles.isEmpty ? '' : ', deleted ${deletedFiles.length} '
+                    'stale script file${deletedFiles.length == 1 ? '' : 's'} '
+                    '(${deletedFiles.join(', ')})'}'
           // ... and a slot left alone because it was not part of this run says so, so it cannot be
           // mistaken for one the archive carries.
           '${keptSlots.isEmpty ? '' : ', left ${keptSlots.length} '

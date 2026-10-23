@@ -111,6 +111,29 @@ are hardware-only.
   target and union `archiveRequesterKeys` over that group, as the script sweep unions slots; then
   the plan's requester removals must be derived per target too.
 
+- **E35** **Two capture/restore rules now differ from `Docs/App/Backup.md`; the owner has to approve
+  the wording (code is the deliberate side, per card `t_df26eda4`, 2026-10-23).** Both concern state
+  the device DERIVES rather than owns:
+  (1) *The archive no longer carries the core's own SNDB row.* `Docs/App/Backup.md:34` lists "the
+  SNDB of a core" as archived content without an exclusion, and the format is unchanged, but the
+  capture now drops the row whose address is the device's own bus address (or whose serial is its
+  own serial) - a core does not address itself, and `bambi/bambi_setup.zip`'s first row was `0.1`,
+  the core describing itself. The child rows are archived exactly as before, and an existing
+  archive is not rewritten: the plan drops a self row on read (`_dropSelfSndb`). Proposed addition
+  to `Backup.md:34`: "... the SNDB of a core (never the core's own record: a core does not address
+  itself) and the device's files."
+  (2) *The restore prunes stale script FILES, not only loaded slots.* `Backup.md:38-40` describes
+  how a `SCR_XXX` travels but not what a restore does with one the archive does not carry. Since
+  `t_df26eda4` the sweep runs a second phase over the file table: when a device's scripts are being
+  restored as a whole, every `SCR_XXX` file no script of the archive needs is deleted and reported
+  (name, size, the slot it backed), a file behind an unticked script is kept and named, a file a
+  loaded slot still holds or that a restored script references as a function library is never
+  deleted, and the plan shows each as a DELETE row (pinned by a test: plan rows == sweep deletes).
+  Without it a stale script stayed loadable after being unloaded - `SCR_000` survived bambi's
+  restore. Proposed addition after `Backup.md:40`: "A script the archive does not carry is removed
+  from the device in full: its slot is unloaded and its stored file deleted, both reported, so it
+  cannot be loaded again."
+
 ## Valu v2.0 app (2026-10-06) - parked (owner: not now)
 
 - **E27** **Resistive measurement reference resistor is undefined.** `Docs/Devices.md` gives three ADC

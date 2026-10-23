@@ -108,6 +108,7 @@ class _FakeCore implements RequestChannel {
       // A file read: answer it the way the device does - per-fragment name echoes - or FAIL it
       // when no such file exists, which is what "the device would not return it" looks like.
       final name = StorageClient.unpadName(payload.sublist(0, 8));
+      if (name == '.TABLE') return _tableReply();
       final content = files[name];
       if (content == null) throw StateError('no such file');
       final out = <int>[];
@@ -120,6 +121,39 @@ class _FakeCore implements RequestChannel {
       return out;
     }
     return const [];
+  }
+
+  /// The `.TABLE` reply a device gives for the files it holds: `.TABLE` itself first (record 0),
+  /// then one 16-byte record per file, chunked the way the Storage service fragments a read (an
+  /// 8-byte name echo per 64 content bytes). The file sweep reads this table, so a fake that does
+  /// not answer it looks like a device that would not say what it stores.
+  List<int> _tableReply() {
+    final names = files.keys.toList()..sort();
+    final content = <int>[];
+    void record(String name, int size) {
+      content
+        ..addAll([0x40, 0, 0, 0])
+        ..addAll([
+          size & 0xFF,
+          (size >> 8) & 0xFF,
+          (size >> 16) & 0xFF,
+          (size >> 24) & 0xFF,
+        ])
+        ..addAll(StorageClient.padName(name));
+    }
+
+    record('.TABLE', (names.length + 1) * 16);
+    for (final name in names) {
+      record(name, files[name]!.length);
+    }
+    final out = <int>[];
+    for (var off = 0; off < content.length; off += 64) {
+      final end = off + 64 > content.length ? content.length : off + 64;
+      out
+        ..addAll(StorageClient.padName('.TABLE'))
+        ..addAll(content.sublist(off, end));
+    }
+    return out;
   }
 
   @override
@@ -392,13 +426,23 @@ void main() {
     expect(reload.skipped, isTrue);
     expect(reload.reloaded, isEmpty);
     expect(reload.leftAlone, isEmpty);
-    expect(result.failed, 2);
+    // ...and so does the file sweep behind the slots: a file a slot still holds cannot be told
+    // from a stale one, so nothing is deleted on a guess.
+    final files = result.scriptFiles.single;
+    expect(files.skipped, isTrue);
+    expect(files.confirmed, isFalse);
+    expect(files.deleted, isEmpty);
+    expect(result.failed, 3);
     expect(
       result.failures.any((f) => f.contains('scripts not reloaded')),
       isTrue,
     );
     expect(
       result.failures.any((f) => f.contains('script slots not swept')),
+      isTrue,
+    );
+    expect(
+      result.failures.any((f) => f.contains('script files not swept')),
       isTrue,
     );
     expect(fake.unloads, isEmpty);

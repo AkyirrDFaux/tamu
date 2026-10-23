@@ -66,7 +66,46 @@ class _FakeCore implements RequestChannel {
       files.putIfAbsent(name, () => []).addAll(payload.sublist(12));
       return const [0, 0]; // the sequence the device accepted
     }
+    if (service == ServiceType.storage && functionCid == 5) {
+      // The file sweep reads the file table; a device that does not answer it looks like one
+      // nobody can tell a stale script file from.
+      if (StorageClient.unpadName(payload.sublist(0, 8)) == '.TABLE') {
+        return _tableReply();
+      }
+      throw StateError('no such file');
+    }
     return const [];
+  }
+
+  /// The `.TABLE` reply for the files this device holds (`.TABLE` first, then one record per
+  /// file, chunked with the per-fragment 8-byte name echo).
+  List<int> _tableReply() {
+    final names = files.keys.toList()..sort();
+    final content = <int>[];
+    void record(String name, int size) {
+      content
+        ..addAll([0x40, 0, 0, 0])
+        ..addAll([
+          size & 0xFF,
+          (size >> 8) & 0xFF,
+          (size >> 16) & 0xFF,
+          (size >> 24) & 0xFF,
+        ])
+        ..addAll(StorageClient.padName(name));
+    }
+
+    record('.TABLE', (names.length + 1) * 16);
+    for (final name in names) {
+      record(name, files[name]!.length);
+    }
+    final out = <int>[];
+    for (var off = 0; off < content.length; off += 64) {
+      final end = off + 64 > content.length ? content.length : off + 64;
+      out
+        ..addAll(StorageClient.padName('.TABLE'))
+        ..addAll(content.sublist(off, end));
+    }
+    return out;
   }
 
   @override
@@ -183,7 +222,10 @@ void main() {
     core.loaded.addAll({0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 10: 10});
     final plan = _plan([
       _item(device, _script(2, 'Selector', properties: ['Load on boot'])),
-      _item(device, _script(10, 'ForceBlink', properties: ['Function library'])),
+      _item(
+        device,
+        _script(10, 'ForceBlink', properties: ['Function library']),
+      ),
     ], live);
     expect(plan.items.every((i) => i.ready), isTrue);
 
@@ -200,7 +242,8 @@ void main() {
     expect(
       core.loads,
       [2],
-      reason: 'only the user script is loaded; slot 10 is never named by a load',
+      reason:
+          'only the user script is loaded; slot 10 is never named by a load',
     );
     // The slot the library was left in is released, so the run converges on "file, not slot".
     expect(
@@ -208,20 +251,20 @@ void main() {
       isNot(contains(10)),
       reason: 'no slot holds the library after the restore',
     );
-    expect(
-      [
-        for (final entry in core.loaded.entries)
-          if (entry.value == 10) entry.key,
-      ],
-      isEmpty,
-    );
+    expect([
+      for (final entry in core.loaded.entries)
+        if (entry.value == 10) entry.key,
+    ], isEmpty);
     // The library travels in the FILE table, and every load happens after the writes, so the link
     // reads the library as it now stands. What must NOT happen is a load naming the library's file
     // id: a library is never loaded (a slot it holds is released instead).
     expect(
       [
         for (final c in core.sent)
-          if (c.service == ServiceType.script && c.cid == 1 && c.payload[0] == 10) c,
+          if (c.service == ServiceType.script &&
+              c.cid == 1 &&
+              c.payload[0] == 10)
+            c,
       ],
       isEmpty,
       reason: 'the library file id is never named by a load',
@@ -246,14 +289,20 @@ void main() {
     final live = _live();
     core.loaded.addAll({0: 0, 1: 1, 2: 2, 3: 3, 4: 4});
     final plan = _plan([
-      _item(device, _script(10, 'ForceBlink', properties: ['Function library'])),
+      _item(
+        device,
+        _script(10, 'ForceBlink', properties: ['Function library']),
+      ),
     ], live);
 
     final result = await applyRestorePlan(plan);
 
     expect(core.files.keys, contains('SCR_00A'));
     expect(
-      [for (final c in core.scriptCommands) if (c.first == 1) c],
+      [
+        for (final c in core.scriptCommands)
+          if (c.first == 1) c,
+      ],
       isEmpty,
       reason: 'the library itself is never loaded',
     );
@@ -270,14 +319,20 @@ void main() {
     // Nothing says the file id and the slot it occupies match.
     core.loaded.addAll({0: 0, 2: 10});
     final plan = _plan([
-      _item(device, _script(10, 'ForceBlink', properties: ['Function library'])),
+      _item(
+        device,
+        _script(10, 'ForceBlink', properties: ['Function library']),
+      ),
     ], live);
 
     await applyRestorePlan(plan);
 
     expect(core.scriptCommands, [
       [2, 2], // the library's slot is released ...
-      [2, 0], // ... and the sweep releases the akyirr-era slot this archive does not carry
+      [
+        2,
+        0,
+      ], // ... and the sweep releases the akyirr-era slot this archive does not carry
     ]);
     expect(core.loaded, isEmpty);
   });
