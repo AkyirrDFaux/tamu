@@ -14,7 +14,7 @@ Main interaction layer.
 #### Main View (List Variant)
 - List all filtered devices in selected order
 	- Use icons for rough device types
-	- Display name (a stale entry is marked " (stale)")
+	- Display name (a stale entry is marked " · stale", dimmed)
 	- A smaller subtext displays the ID and Device type in text
 	- Cores carry a star marker
 	- Tap on entry opens [[Device View]]
