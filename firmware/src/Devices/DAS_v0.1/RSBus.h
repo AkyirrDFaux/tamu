@@ -21,8 +21,12 @@ extern "C" {
         if (USART1->STATR & USART_FLAG_RXNE) {
             uint8_t Data = (uint8_t)USART1->DATAR;
 
-            // Calculate next position
-            uint16_t NextHead = (Head + 1) % BUFFER_SIZE;
+            // Next position, wrapped by a compare instead of a modulo: the CH32V003 core has
+            // no integer divide, so a modulo by 260 is a call into a software divide helper
+            // (about 100 cycles of ISR latency per received byte), which the 1 MBaud
+            // experiment cannot afford at 10 us per byte.
+            uint16_t NextHead = (uint16_t)(Head + 1);
+            if (NextHead >= BUFFER_SIZE) NextHead = 0;
 
             // Only write if buffer is not full
             if (NextHead != Tail) {
@@ -48,7 +52,9 @@ bool UARTAvailable() {
 uint8_t UARTReadByte() {
     __disable_irq();
     uint8_t Data = RxBuffer[Tail];
-    Tail = (Tail + 1) % BUFFER_SIZE;
+    uint16_t Next = (uint16_t)(Tail + 1);
+    if (Next >= BUFFER_SIZE) Next = 0;
+    Tail = Next;
     __enable_irq();
     return Data;
 }
