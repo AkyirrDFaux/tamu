@@ -8,6 +8,7 @@ import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/script_client.dart';
 import 'package:tamuapp/core/script_file.dart';
+import 'package:tamuapp/core/script_instructions.dart';
 import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/types.dart';
 
@@ -216,6 +217,35 @@ BackupScript _script(
 /// different ones (changed).
 List<int> _image(BackupScript script) => script.toDraft().toImage();
 
+/// A script that CALLS one global function living in [library], so the image it writes carries a
+/// function-reservation record naming that library - the measurement a library change has to act on
+/// (and that a script which merely belongs to the same run does not have).
+BackupScript _libraryCaller(
+  int slot,
+  String name,
+  int library, {
+  int memoryOffset = 0x20,
+  int instructionOffset = 0x40,
+}) => BackupScript(
+  slot: slot,
+  functionName: name,
+  properties: const [],
+  inputs: const [],
+  outputs: const [],
+  variables: const [],
+  constants: const [],
+  lines: [BackupLine.of(ScriptLine.callTo(0))],
+  functions: [
+    BackupFunction(
+      name: 'Blink',
+      kind: 'Global',
+      library: library,
+      memoryOffset: memoryOffset,
+      instructionOffset: instructionOffset,
+    ),
+  ],
+);
+
 RestorePlan _plan(
   BackupDevice device,
   LiveDevice live, {
@@ -260,6 +290,7 @@ List<BackupScript> _bambiScripts() => [
 String _reportLine(ScriptSlotPrune p) =>
     'SCRIPTS ${idToString(p.deviceId)} "${p.deviceName}": '
     'before=[${p.beforeText}] unloaded=[${p.unloadedText}] '
+    'duplicates=[${p.duplicatesText}] off-slot=[${p.offSlotText}] '
     'refused=[${p.refusedText}] kept-by-selection=[${p.keptText}] '
     'remaining=[${p.remainingText}]'
     '${p.skipped ? ' SKIPPED: ${p.reason}' : ''}';
@@ -578,5 +609,140 @@ void main() {
       reason: 'a faulted script is started again, which is what clears the error',
     );
     expect(result.failed, 0, reason: result.failures.toString());
+  });
+
+  test('a changed library does not disturb a script that links nothing', () async {
+    // The library changed, but neither user script carries a function-reservation record, so
+    // neither can reference it: reloading them would be a disturbance nothing justifies - and the
+    // report must not claim a link it never measured.
+    final scripts = [
+      _script(1, 'Fan curve'),
+      _script(2, 'Selector'),
+      _script(10, 'ForceBlink', properties: ['Function library']),
+    ];
+    final fake = _FakeCore(loaded: {1: 1, 2: 2});
+    fake.files['SCR_001'] = _image(scripts[0]);
+    fake.files['SCR_002'] = _image(scripts[1]);
+    fake.files['SCR_00A'] = const [1, 2, 3]; // the library differs, so it changed
+    install(fake);
+    final device = _device(scripts);
+    final plan = _plan(device, _live());
+
+    final result = await applyRestorePlan(plan);
+
+    final reload = result.scriptReload.single;
+    print('library only -> ${_reloadLine(reload)}');
+    expect(reload.changed.keys, [10], reason: 'only the library changed');
+    expect(
+      reload.reloaded,
+      isEmpty,
+      reason: 'no loaded script references the library, so none is restarted',
+    );
+    expect(
+      reload.leftAlone,
+      {1: 1, 2: 2},
+      reason: 'both running scripts are reported as not disturbed',
+    );
+    expect(fake.unloads, isEmpty);
+    expect(fake.loads, isEmpty);
+    expect(result.failed, 0, reason: result.failures.toString());
+  });
+
+  test('a changed library reloads exactly the script whose file references it', () async {
+    // Slot 1 calls a global function in the library; slot 2 does not. Both images are byte-identical
+    // to what the device holds, so the ONLY thing that can justify a reload is the measured link.
+    final caller = _libraryCaller(1, 'Beacon', 10);
+    final plain = _script(2, 'Selector');
+    final library = _script(10, 'ForceBlink', properties: ['Function library']);
+    final fake = _FakeCore(loaded: {1: 1, 2: 2});
+    fake.files['SCR_001'] = _image(caller);
+    fake.files['SCR_002'] = _image(plain);
+    fake.files['SCR_00A'] = const [1, 2, 3];
+    install(fake);
+    final device = _device([caller, plain, library]);
+    final plan = _plan(device, _live());
+
+    final result = await applyRestorePlan(plan);
+
+    final reload = result.scriptReload.single;
+    print('linked library -> ${_reloadLine(reload)}');
+    expect(reload.changed.keys, [10]);
+    expect(reload.reloaded.keys, [1], reason: 'only the script that references it');
+    expect(reload.reloaded[1]!.why, contains('SCR_00A'));
+    expect(
+      reload.reloaded[1]!.why,
+      contains('function reservation'),
+      reason: 'the reason quotes the record it was decided from',
+    );
+    expect(reload.leftAlone, {2: 2}, reason: 'the script that links nothing is not disturbed');
+    expect(fake.unloads, [1]);
+    expect(fake.loads, [1]);
+    expect(result.failed, 0, reason: result.failures.toString());
+  });
+
+  test('a second copy of an archive script is unloaded and named', () async {
+    // `scripts_page.dart` loads into the lowest FREE slot, so SCR_004 can be running in slot 0
+    // while the archive names slot 4. Loading slot 4 as well would run the same script twice.
+    final scripts = [_script(4, 'Beacon')];
+    final fake = _FakeCore(loaded: {0: 4});
+    fake.files['SCR_004'] = _image(scripts[0]); // identical: nothing to reload
+    install(fake);
+    final device = _device(scripts);
+    final plan = _plan(device, _live());
+
+    final result = await applyRestorePlan(plan);
+
+    final prune = result.scriptSlots.single;
+    final reload = result.scriptReload.single;
+    print('duplicate copy -> unloads=${fake.unloads} loads=${fake.loads}');
+    print('duplicate copy -> ${_reportLine(prune)}');
+    print('duplicate copy -> ${_reloadLine(reload)}');
+    expect(fake.loads, [4], reason: 'the archive names slot 4, so the bring-up fills it');
+    expect(
+      fake.loaded,
+      {4: 4},
+      reason: 'exactly one slot holds SCR_004 after the restore',
+    );
+    expect(prune.duplicates, {(0): (fileId: 4, canonical: 4)});
+    expect(prune.duplicatesText, 'slot 0 (SCR_004, also loaded at slot 4)');
+    expect(prune.unloaded, {0: 4}, reason: 'the extra copy is an unload like any other');
+    expect(prune.remaining, {4: 4});
+    expect(prune.offSlot, isEmpty);
+    // The copy in the wrong slot is the sweep's to settle, not the reload phase's to restart.
+    expect(reload.reloaded, isEmpty);
+    expect(reload.leftAlone, isEmpty);
+    expect(result.failed, 0, reason: result.failures.toString());
+  });
+
+  test('an archive script only loaded in the wrong slot is kept, and said so', () async {
+    // The archive names slot 4 and the load into it failed, so slot 0 is the ONLY running copy.
+    // Unloading it would delete the script; passing over it silently would report a clean device.
+    final scripts = [_script(4, 'Beacon')];
+    final fake = _FakeCore(loaded: {0: 4});
+    fake.files['SCR_004'] = _image(scripts[0]);
+    fake.refuseLoad.add(4);
+    install(fake);
+    final device = _device(scripts);
+    final plan = _plan(device, _live());
+
+    final result = await applyRestorePlan(plan);
+
+    final prune = result.scriptSlots.single;
+    print('off-slot copy -> ${_reportLine(prune)}');
+    expect(fake.loaded, {0: 4}, reason: 'the surviving copy is not deleted');
+    expect(prune.duplicates, isEmpty);
+    expect(prune.offSlot, {0: 4});
+    expect(
+      prune.offSlotText,
+      'slot 0 (SCR_004, the archive names slot 4)',
+      reason: 'the report names the slot the archive wanted and the one that still runs it',
+    );
+    expect(prune.unloaded, isEmpty);
+    expect(
+      result.failed,
+      1,
+      reason: 'the refused load is the failure, not the kept copy',
+    );
+    expect(result.failures.single, contains('script 4 would not load'));
   });
 }

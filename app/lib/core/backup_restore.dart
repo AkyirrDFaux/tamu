@@ -827,9 +827,16 @@ bool _isFunctionLibrary(RestoreItem item) =>
 /// A restored script is only a stored file: the device runs what it loads, not what it holds. The
 /// load-on-boot scripts come back at the next boot, and a script that faulted earlier STAYS in
 /// Error until it is explicitly started - a restore does not reboot, so without this a restored
-/// rig sits with its automation dead while the restore reports success. So the non-library items
-/// are unloaded and reloaded (which is what re-links them against the library as it now stands),
-/// after the libraries are written, and the ones marked to run on load are started.
+/// rig sits with its automation dead while the restore reports success. So a script this run wrote
+/// that the target does NOT already hold in its own slot is loaded, after the libraries are
+/// written, and the ones marked to run on load are started.
+///
+/// A slot that already holds THIS file is left alone: [reloadChangedScripts] has already reloaded
+/// it when the image this run wrote differs from the one the device held, and when it does not, the
+/// running script is exactly what the archive asks for - a restore must not stop an animation
+/// nothing in it changed. That is also why this phase is not a blanket "unload and reload every
+/// script": an unchanged loaded script keeps its slot, its state and its place in a running
+/// sequence.
 ///
 /// A function library is not loaded at all: it is used through its FILE (see
 /// [_isFunctionLibrary]), so it is written and left as a file, and a slot one occupies - put
@@ -904,6 +911,56 @@ Future<List<({RestoreItem item, String? reason})>> _bringUpScripts(
   return results;
 }
 
+/// One linked global function as a script FILE records it: the library's file id, and the offsets
+/// inside that library the function was assembled into.
+typedef ScriptLibraryLink = ({
+  int library,
+  int memoryOffset,
+  int instructionOffset,
+});
+
+/// The links a script IMAGE carries into function libraries, read from its function-reservation
+/// records - one 16-byte record per referenced global function, whose first `u16` is the library's
+/// file id ([BackupFunctionReservation.of]).
+///
+/// `null` means the bytes could not be read as a script file at all (a raw `SCR_XXX` whose image
+/// never parsed, which is why it travels as bytes). That is a different answer from "carries no
+/// link", and the reload phase words its report from the difference rather than claiming a link it
+/// never saw.
+List<ScriptLibraryLink>? linkedLibraries(List<int> image) {
+  final ScriptFileData data;
+  try {
+    data = ScriptFileData.parse(image);
+  } on FormatException {
+    return null;
+  }
+  final records = data.functionReservations;
+  return [
+    for (
+      var offset = 0;
+      offset + scriptFunctionReservationSize <= records.length;
+      offset += scriptFunctionReservationSize
+    )
+      _linkOf(records.sublist(offset, offset + scriptFunctionReservationSize)),
+  ];
+}
+
+ScriptLibraryLink _linkOf(List<int> record) {
+  final reservation = BackupFunctionReservation.of(record);
+  return (
+    library: reservation.library,
+    memoryOffset: reservation.memoryOffset,
+    instructionOffset: reservation.instructionOffset,
+  );
+}
+
+/// One measured link as a report reads it: the library's file name and the offsets the reservation
+/// record carries, so the claim names the bytes it came from.
+String _linkText(ScriptLibraryLink link) =>
+    '${scriptFileName(link.library)} (memory 0x'
+    '${link.memoryOffset.toRadixString(16)}, instruction 0x'
+    '${link.instructionOffset.toRadixString(16)})';
+
 /// What a restore MEASURED about the script files it wrote: per target, the script file ids whose
 /// stored image differs from the image this run wrote, and why it judged them different.
 ///
@@ -916,14 +973,36 @@ Future<List<({RestoreItem item, String? reason})>> _bringUpScripts(
 class ScriptChanges {
   final Map<int, Map<int, String>> _changed = {};
 
+  /// The links each written script IMAGE carried, per target: file id -> [linkedLibraries] of the
+  /// bytes the write put there (`null` when those bytes are not readable as a script file).
+  ///
+  /// Recorded for every script file written, not only the changed ones: a script that did not
+  /// change can still be running a stale link into a library that did, and that link is exactly
+  /// what this measurement has to see. Nothing here is inferred from the archive's semantic form -
+  /// it is read back out of the image, which is what the device will load.
+  final Map<int, Map<int, List<ScriptLibraryLink>?>> _links = {};
+
   /// Notes that script file [fileId] on [targetId] is about to hold different bytes than it did,
   /// with [why] as the evidence the report quotes.
   void note(int targetId, int fileId, String why) => _changed
       .putIfAbsent(targetId, () => <int, String>{})
       .putIfAbsent(fileId, () => why);
 
+  /// Records what the image this run wrote for script file [fileId] on [targetId] links against.
+  void noteLinks(
+    int targetId,
+    int fileId,
+    List<ScriptLibraryLink>? links,
+  ) => _links.putIfAbsent(targetId, () => {})[fileId] = links;
+
   /// The changed script file ids of [targetId], as file id -> why.
   Map<int, String> forTarget(int targetId) => _changed[targetId] ?? const {};
+
+  /// The measured links of the script images this run wrote on [targetId], as file id -> links
+  /// (`null` when that image cannot be read as a script file). A file id that is absent was not
+  /// written by this run, so its links are not this run's to judge.
+  Map<int, List<ScriptLibraryLink>?> linksForTarget(int targetId) =>
+      _links[targetId] ?? const {};
 }
 
 /// Whether two script images are byte-identical - the comparison [ScriptChanges] rests on.
@@ -957,8 +1036,9 @@ class ScriptReloadReport {
   /// what forced the reload.
   final Map<int, ({int fileId, String why})> reloaded;
 
-  /// The loaded slots left untouched, with the file each holds: the archive carries that script,
-  /// this run did not change it, so the device keeps running it.
+  /// The loaded slots left untouched, with the file each holds: the archive carries that script in
+  /// that slot, this run did not change it, so the device keeps the state it is in - running,
+  /// paused or stopped, exactly as the user left it, which is the point of not disturbing it.
   final Map<int, int> leftAlone;
 
   /// The slots the device would not unload or would not load again, with the file each held.
@@ -1008,9 +1088,14 @@ class ScriptReloadReport {
 ///
 /// The rule this phase acts on, stated once: it reloads a loaded slot only when the script that
 /// slot holds CHANGED in this restore ([ScriptChanges], measured before the write), or - the same
-/// fact one step removed - when a function library it links against changed, because a global call
-/// is resolved by reading the library FILE when the using script loads, so an untouched script
-/// still holds calls into the old library. Anything else is left running, and reported as left
+/// fact one step removed - when the script's own file carries a function-reservation record naming
+/// a function library that changed, because a global call is resolved by reading the library FILE
+/// when the using script loads, so an untouched script still holds calls into the old library.
+/// That link is MEASURED, not assumed: [linkedLibraries] parses the image this run wrote, and one
+/// reservation record per global call names the library's file id, so a script that references
+/// nothing (or a library that did not change) is not disturbed by another script's library
+/// changing. When the image cannot be read as a script file at all, the report says the link could
+/// not be determined instead of claiming one. Anything else is left running, and reported as left
 /// alone rather than silently skipped: stopping an animation nothing changed would be a
 /// disturbance of its own.
 ///
@@ -1024,6 +1109,11 @@ class ScriptReloadReport {
 /// disturbed further - and a script the archive marks `Run on load` is started regardless, which is
 /// the rule [_bringUpScripts] already applies to every script it loads. A library is never loaded
 /// (see [_isFunctionLibrary]), so a slot holding one is left to the bring-up, which releases it.
+///
+/// A slot that holds its script in a slot the archive does not name for it is left to the other two
+/// phases as well: the bring-up loads the archive's own slot and [pruneScriptSlots] releases the
+/// extra copy, so reloading it here would restart a script that is about to go - or leave the same
+/// script running twice.
 ///
 /// Runs BEFORE [_bringUpScripts] on purpose: that phase loads the scripts a target does not hold,
 /// so a slot it is about to load is not in the loaded map here and cannot be loaded twice. A target
@@ -1099,11 +1189,14 @@ reloadChangedScripts(RestorePlan plan, ScriptChanges changes) async {
     }
 
     // A changed library invalidates every link into it (see above), so its file ids are quoted in
-    // the reason the other slots were reloaded.
+    // the reason the other slots were reloaded. Which scripts actually hold such a link is not
+    // assumed from "this is one of the archive's scripts" - it is read out of the image this run
+    // wrote ([linkedLibraries], recorded in [changes]), one reservation record per global call.
     final librariesChanged = [
       for (final id in changed.keys)
         if (libraries.contains(id)) id,
     ]..sort();
+    final links = changes.linksForTarget(target.id);
 
     final reloaded = <int, ({int fileId, String why})>{};
     final leftAlone = <int, int>{};
@@ -1115,19 +1208,39 @@ reloadChangedScripts(RestorePlan plan, ScriptChanges changes) async {
       // A library's slot is the bring-up's to release, never this phase's to load.
       if (libraries.contains(fileId)) continue;
       final why = changed[fileId];
+      // A slot that is not the one the archive names for the file it holds is somebody else's to
+      // settle: the bring-up loads the archive's slot, and the sweep releases the extra copy. A
+      // reload here would either duplicate the script or restart one that is about to go.
+      if (slot != fileId) continue;
       // Not one of the archive's scripts and not changed: a leftover, and the sweep owns it.
       if (why == null && !restoring.contains(fileId)) continue;
       // What the slot was doing, read before the reload; null when the device will not say.
       final state = (await client.readState(slot))?.state;
       final faulted = state == ScriptState.error || state == ScriptState.loadFailed;
+      // The links THIS image carries into a library that changed - measured from the file's
+      // function-reservation records, not inferred from the script being part of the run. A script
+      // with no such record links nothing, so no library change can invalidate it.
+      final measured = links[fileId];
+      final staleLinks = measured == null
+          ? const <ScriptLibraryLink>[]
+          : [
+              for (final link in measured)
+                if (librariesChanged.contains(link.library)) link,
+            ];
       String? reason;
       if (why != null) {
         reason = 'its image changed ($why)';
-      } else if (librariesChanged.isNotEmpty) {
+      } else if (staleLinks.isNotEmpty) {
         reason =
-            'it links against '
+            'its file holds a function reservation naming '
+            '${staleLinks.map(_linkText).join(', ')}, whose image changed';
+      } else if (measured == null && librariesChanged.isNotEmpty) {
+        // The image cannot be read as a script file, so its reservations cannot be inspected. Run
+        // nothing stale rather than claim a link that was never seen - and say why.
+        reason =
+            'its file cannot be read as a script file, so whether it references '
             '${librariesChanged.map(scriptFileName).join(', ')}, whose image '
-            'changed';
+            'changed, cannot be determined; reloaded rather than risk a stale link';
       } else if (faulted) {
         reason =
             'it is in ${ScriptState.label(state!)}, and a faulted script '
@@ -1211,6 +1324,20 @@ class ScriptSlotPrune {
   /// The slots unloaded, in the order they were unloaded, with the file id each held.
   final Map<int, int> unloaded;
 
+  /// The slots unloaded because they held a SECOND copy of one of the archive's scripts, in a slot
+  /// the archive does not name for that script, while the archive's own slot held it too: slot ->
+  /// the file, and the slot the archive actually names for it (`slot 0 -> SCR_004 at slot 4`).
+  ///
+  /// The same script loaded twice runs twice - an animation loop or a fan curve twice over - so a
+  /// duplicate is a deletion too, and is named here instead of hiding inside [unloaded].
+  final Map<int, ({int fileId, int canonical})> duplicates;
+
+  /// The loaded slots that hold an archive script in a slot the archive does not name for it, kept
+  /// because the archive's own slot does NOT hold that script (this run's load of it failed).
+  /// Deleting the sole surviving copy would delete the script, so it is reported and kept - never
+  /// passed off as a clean device, and never unloaded on a guess.
+  final Map<int, int> offSlot;
+
   /// The slots the target would not unload: the command answered FAIL or nothing, so that script
   /// is STILL loaded. Reported as a failure rather than counted as done.
   final Map<int, int> refused;
@@ -1238,6 +1365,8 @@ class ScriptSlotPrune {
     required this.deviceName,
     this.before = const {},
     this.unloaded = const {},
+    this.duplicates = const {},
+    this.offSlot = const {},
     this.refused = const {},
     this.keptBySelection = const {},
     this.remaining = const {},
@@ -1259,6 +1388,26 @@ class ScriptSlotPrune {
   String get refusedText => slotText(refused);
   String get keptText => slotText(keptBySelection);
 
+  /// The duplicates as a report reads them, naming the slot the archive actually names for the
+  /// script as well as the copy that went: `slot 0 (SCR_004, also loaded at slot 4)`.
+  String get duplicatesText => duplicates.isEmpty
+      ? '-'
+      : [
+          for (final e in duplicates.entries)
+            'slot ${e.key} (${scriptFileName(e.value.fileId)}, also loaded at '
+                'slot ${e.value.canonical})',
+        ].join(', ');
+
+  /// The kept off-slot copies, with the slot the archive names for each: they are still loaded and
+  /// the device is not in the archive's shape, so the report says so rather than looking clean.
+  String get offSlotText => offSlot.isEmpty
+      ? '-'
+      : [
+          for (final e in offSlot.entries)
+            'slot ${e.key} (${scriptFileName(e.value)}, the archive names slot '
+                '${e.value})',
+        ].join(', ');
+
   /// The still-loaded slots as a report reads them, or `unconfirmed` when the device could not be
   /// read back - never an empty map standing in for "I could not look".
   String get remainingText => confirmed ? slotText(remaining) : 'unconfirmed';
@@ -1277,18 +1426,35 @@ class ScriptSlotPrune {
 /// What the archive NAMES is a slot: a stored script's identity on the device is its `SCR_XXX`
 /// file id and the restore loads file N into slot N, so the archive names a slot for every script
 /// it carries - as a semantic script, and as a raw `SCR_XXX` file whose image did not parse and is
-/// written back as bytes. Either the slot or the file id matching that set counts: unloading a
-/// script the archive does carry would be a wrong deletion, and a wrong deletion is worse than a
-/// duplicate.
+/// written back as bytes. A loaded copy of an archive script in some OTHER slot is therefore not
+/// the archive's shape either: it is a duplicate of the copy this run just loaded, and the sweep
+/// settles it (see the predicate below) rather than leave one script running from two slots.
 ///
-/// The predicate this phase acts on, stated once: it unloads a loaded slot only when that slot is
-/// NOT one of the archive's scripts this run restores, and NOT one the run was told to leave out.
-/// A slot behind an unticked checkbox is "not selected", not "not in the archive", so it is left
-/// loaded and reported as [ScriptSlotPrune.keptBySelection] - otherwise unticking one script box
-/// would unload the very script the user meant to keep, which is precisely the kind of silent
-/// deletion this reporting exists to rule out. The phase also declines outright, with a reason, on
-/// a target whose plan carries no item for an archive script: then this run is not the whole of
-/// that device's scripts and there is nothing to compare against.
+/// The predicate this phase acts on, stated once: it unloads a loaded slot unless that slot holds
+/// the archive's script IN THE SLOT THE ARCHIVE NAMES FOR IT - i.e. the slot number equals the
+/// `SCR_XXX` file id sitting in it, and that file id is one this run restores. Everything else the
+/// target holds is either
+///
+/// * a leftover from an earlier setup (neither the slot nor the file is in the archive's set), or
+/// * a SECOND copy of one of the archive's scripts, in a slot the archive does not name for it
+///   (`scripts_page.dart` loads into the lowest FREE slot, so SCR_004 can sit in slot 0), which
+///   the archive's own slot may also hold - and two slots running one script run it twice, so the
+///   extra copy goes and is named in [ScriptSlotPrune.duplicates].
+///
+/// Two loaded states are kept instead, and each is named in the report:
+///
+/// * a slot behind an unticked checkbox - "not selected", not "not in the archive"
+///   ([ScriptSlotPrune.keptBySelection]) - otherwise unticking one script box would unload the
+///   very script the user meant to keep, which is precisely the kind of silent deletion this
+///   reporting exists to rule out;
+/// * the only loaded copy of an archive script in a slot the archive does not name for it, when
+///   the archive's own slot does not hold it either (this run's load failed): deleting the
+///   surviving copy would delete the script, so it is reported
+///   ([ScriptSlotPrune.offSlot]) rather than unloaded on a guess.
+///
+/// The phase also declines outright, with a reason, on a target whose plan carries no item for an
+/// archive script: then this run is not the whole of that device's scripts and there is nothing to
+/// compare against.
 ///
 /// The sweep is per TARGET NODE, not per archive device: slots belong to the node, so two archive
 /// devices remapped onto one target share one slot table and their sets are unioned - sweeping per
@@ -1404,23 +1570,41 @@ pruneScriptSlots(RestorePlan plan) async {
       continue;
     }
 
-    // A loaded entry the archive's restored slots name is the script the bring-up just put there.
-    // One a LEFT-OUT script names is the script the user kept, so it is reported instead of
-    // unloaded. Everything else is a leftover from an earlier setup and goes.
-    bool isRestored(MapEntry<int, int> e) =>
-        restoring.contains(e.key) || restoring.contains(e.value);
-    bool isLeftOut(MapEntry<int, int> e) =>
-        leavingOut.contains(e.key) || leavingOut.contains(e.value);
-
+    // What each loaded entry is, by the predicate above: the archive's script in the archive's slot
+    // (nothing to do), a copy in the wrong slot, an unticked script the user kept, or a leftover.
     final kept = <int, int>{};
     final doomed = <int, int>{};
+    final duplicates = <int, ({int fileId, int canonical})>{};
+    final offSlot = <int, int>{};
     for (final e in before.entries) {
-      if (isRestored(e)) continue;
-      if (isLeftOut(e)) {
-        kept[e.key] = e.value;
-      } else {
-        doomed[e.key] = e.value;
+      final slot = e.key;
+      final fileId = e.value;
+      // The slot the archive names for this file, or null when the archive does not carry it.
+      final namedSlot = restoring.contains(fileId) ? fileId : null;
+      // The archive's script, in the slot the archive names for it: that is the shape this run is
+      // after, so there is nothing to settle.
+      if (namedSlot == slot) continue;
+      // A slot the user left out (or one holding a file they left out) is "not selected", not
+      // "not in the archive": naming it is all this phase may do.
+      if (leavingOut.contains(slot) || leavingOut.contains(fileId)) {
+        kept[slot] = fileId;
+        continue;
       }
+      if (namedSlot != null) {
+        if (before[namedSlot] == namedSlot) {
+          // The archive's own slot holds this script too: this one is a duplicate, and two slots
+          // running one script run it twice.
+          duplicates[slot] = (fileId: fileId, canonical: namedSlot);
+          doomed[slot] = fileId;
+        } else {
+          // The archive's slot does NOT hold it (this run's load of that slot failed), so this is
+          // the only copy running: keep it and say so, never delete the script on a guess.
+          offSlot[slot] = fileId;
+        }
+        continue;
+      }
+      // Neither the slot nor the file is one this run restores: an earlier setup's leftover.
+      doomed[slot] = fileId;
     }
     if (doomed.isEmpty) {
       // Nothing to unload, so nothing to read back: a second restore of the same archive is a
@@ -1431,6 +1615,7 @@ pruneScriptSlots(RestorePlan plan) async {
           deviceName: target.name,
           before: before,
           keptBySelection: kept,
+          offSlot: offSlot,
           remaining: before,
         ),
       );
@@ -1478,6 +1663,8 @@ pruneScriptSlots(RestorePlan plan) async {
         deviceName: target.name,
         before: before,
         unloaded: unloaded,
+        duplicates: duplicates,
+        offSlot: offSlot,
         refused: refused,
         keptBySelection: kept,
         remaining: after ?? const {},
@@ -1891,6 +2078,9 @@ applyRestorePlan(RestorePlan plan) async {
             break;
           }
           if (slot >= 0) {
+            // Measured from the bytes this write put there, for EVERY script (changed or not): a
+            // loaded script that did not change can still hold a link into a library that did.
+            changes.noteLinks(target.id, slot, linkedLibraries(image));
             if (held == null) {
               changes.note(
                 target.id,
@@ -2020,6 +2210,13 @@ applyRestorePlan(RestorePlan plan) async {
               : await store.readFile(item.file!.name);
           final wrote = await store.writeFile(item.file!.name, item.file!.bytes);
           if (wrote && fileId != null) {
+            // The bytes are the image: read its links the same way the semantic path does, so a
+            // raw `SCR_XXX` that does reference a library is reloaded on a library change too.
+            changes.noteLinks(
+              target.id,
+              fileId,
+              linkedLibraries(item.file!.bytes),
+            );
             if (held == null) {
               changes.note(
                 target.id,

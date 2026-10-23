@@ -255,6 +255,14 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
       final keptSlots = [
         for (final prune in result.scriptSlots) ...prune.keptBySelection.keys,
       ];
+      // A duplicate is what made the same script run twice, so it is named with the slot the
+      // archive actually names for it rather than folded into the plain unload count.
+      final duplicateSlots = [
+        for (final prune in result.scriptSlots)
+          for (final e in prune.duplicates.entries)
+            'slot ${e.key} (duplicate of ${scriptFileName(e.value.fileId)} at '
+                'slot ${e.value.canonical})',
+      ];
       // A reload is what makes a changed script actually run, so the slots it touched are part of
       // the run's outcome - and so is the count it left alone, which is the evidence that unchanged
       // running scripts were not disturbed.
@@ -274,6 +282,10 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
           '${unloadedSlots.isEmpty ? '' : ', unloaded ${unloadedSlots.length} '
                     'script slot${unloadedSlots.length == 1 ? '' : 's'} the archive '
                     'does not carry (${unloadedSlots.map((s) => 'slot $s').join(', ')})'}'
+          // A duplicate ran one script twice; the slot the archive names for it is named too.
+          '${duplicateSlots.isEmpty ? '' : ', unloaded ${duplicateSlots.length} '
+                    'duplicate script slot${duplicateSlots.length == 1 ? '' : 's'} '
+                    '(${duplicateSlots.join(', ')})'}'
           // ... and a slot left alone because it was not part of this run says so, so it cannot be
           // mistaken for one the archive carries.
           '${keptSlots.isEmpty ? '' : ', left ${keptSlots.length} '

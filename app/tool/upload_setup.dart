@@ -231,6 +231,7 @@ Future<int> runUpload(List<String> args, {RigOpener? openRig}) async {
     stdout.writeln(
       '  SCRIPTS ${idToString(prune.deviceId)} "${prune.deviceName}": '
       'before=[${prune.beforeText}] unloaded=[${prune.unloadedText}] '
+      'duplicates=[${prune.duplicatesText}] off-slot=[${prune.offSlotText}] '
       'refused=[${prune.refusedText}] kept-by-selection=[${prune.keptText}] '
       'remaining=[${prune.remainingText}]'
       '${prune.skipped ? ' SKIPPED: ${prune.reason}' : ''}',
