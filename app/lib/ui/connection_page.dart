@@ -9,6 +9,11 @@ import '../core/settings.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
+/// Size of the BLE signal icon inside a device row. A declared size, not a
+/// spacing step: the row gives the icon this slot, and the gap beside it is
+/// [Spacing.xs].
+const double _signalIconSize = 18;
+
 /// Connection page (Docs/App/Connection.md).
 class ConnectionPage extends StatefulWidget {
   const ConnectionPage({super.key});
@@ -132,11 +137,15 @@ class _ConnectionPageState extends State<ConnectionPage>
     _onTabChanged();
   }
 
+  /// Signal strength colour for the RSSI readout. The tokens are the ones that
+  /// read as text at 13-14 px (TODO.md's contrast audit: `white38` measured 3.41
+  /// and `redAccent` 3.58 on the page), so a weak link is [kError] rather than
+  /// Material's `redAccent`.
   Color _rssiColor(int? rssi) {
-    if (rssi == null) return Colors.white38;
-    if (rssi >= -60) return Colors.greenAccent;
+    if (rssi == null) return kTextMuted;
+    if (rssi >= -60) return kSuccess;
     if (rssi >= -75) return kOrange;
-    return Colors.redAccent;
+    return kError;
   }
 
   /// Source selector. USB is a desktop-only link (Docs/App/General info.md), so
@@ -297,23 +306,28 @@ class _ConnectionPageState extends State<ConnectionPage>
     );
   }
 
+  /// One discovered link as a [DeviceTile]: the connection type drives the icon,
+  /// the link's own id is the subtext (a MAC for BLE), and the trailing content
+  /// is the BLE signal readout plus the autoconnect star.
   Widget _buildTile(BuildContext context, DiscoveredLink link) {
     final isBle = link.type == LinkType.ble;
-    return ListTile(
-      leading: Icon(isBle ? Icons.bluetooth : Icons.usb),
-      title: Text(link.name),
-      subtitle: Text(isBle ? 'MAC ${link.id}' : link.id),
+    final rssi = link.rssi;
+    return DeviceTile(
+      icon: isBle ? Icons.bluetooth : Icons.usb,
+      name: link.name,
+      subtitle: isBle ? 'MAC ${link.id}' : link.id,
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (isBle && link.rssi != null) ...[
+          // BLE only: a USB link reports no signal strength.
+          if (isBle && rssi != null) ...[
             Icon(
               Icons.signal_cellular_alt,
-              size: 18,
-              color: _rssiColor(link.rssi),
+              size: _signalIconSize,
+              color: _rssiColor(rssi),
             ),
-            const SizedBox(width: 4),
-            Text('${link.rssi} dBm'),
+            const SizedBox(width: Spacing.xs),
+            Text('$rssi dBm'),
           ],
           IconButton(
             icon: Icon(_isAutoTarget(link) ? Icons.star : Icons.star_border),
@@ -365,7 +379,7 @@ class _Banner extends StatelessWidget {
       child: Row(
         children: [
           Icon(icon, size: 18, color: kOrange),
-          const SizedBox(width: 8),
+          const SizedBox(width: Spacing.md),
           Expanded(child: Text(text)),
           if (actionLabel != null && onAction != null)
             TextButton(onPressed: onAction, child: Text(actionLabel!)),

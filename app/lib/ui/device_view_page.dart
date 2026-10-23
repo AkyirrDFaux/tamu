@@ -9,7 +9,13 @@ import 'scripts_page.dart';
 import 'sndb_page.dart';
 import 'storage_page.dart';
 import 'subscriptions_page.dart';
+import 'theme.dart';
 import 'widgets.dart';
+
+/// Declared size of the rename mark in the app-bar title row: an affordance, not
+/// text, so it keeps this slot whatever the text scale. The gap before it is
+/// [Spacing.sm].
+const double _editIconSize = 16;
 
 /// Device view (Docs/App/Device view.md): known facts about one device.
 class DeviceViewPage extends StatefulWidget {
@@ -61,16 +67,12 @@ class _DeviceViewPageState extends State<DeviceViewPage>
       listenable: _db,
       builder: (context, _) => Scaffold(
         appBar: AppBar(
-          title: InkWell(
+          // The name takes the width the bar has and ellipsizes; the edit mark
+          // beside it keeps its own slot, so a 16-byte (the docs' limit) device
+          // name cannot push the title row past the bar.
+          title: DeviceTitle(
+            name: entry?.displayName ?? 'Device',
             onTap: () => setState(() => _renaming = true),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(entry?.displayName ?? 'Device'),
-                const SizedBox(width: 6),
-                const Icon(Icons.edit, size: 16),
-              ],
-            ),
           ),
           actions: [
             IconButton(
@@ -96,7 +98,7 @@ class _DeviceViewPageState extends State<DeviceViewPage>
         body: entry == null
             ? const Center(child: CircularProgressIndicator())
             : ListView(
-                padding: const EdgeInsets.all(12),
+                padding: Insets.page,
                 children: [
                   if (_renaming) ...[
                     RenameField(
@@ -109,7 +111,7 @@ class _DeviceViewPageState extends State<DeviceViewPage>
                         }
                       },
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: Spacing.lg),
                   ],
                   InfoCard(
                     title: 'Device info',
@@ -144,7 +146,7 @@ class _DeviceViewPageState extends State<DeviceViewPage>
                       ),
                     ],
                   ),
-                  const Divider(height: 24),
+                  const Divider(height: Spacing.xxl),
                   InfoCard(
                     title: 'Services',
                     children: [
@@ -234,6 +236,36 @@ class _DeviceViewPageState extends State<DeviceViewPage>
   }
 }
 
+/// The Device view's app-bar title (Docs/App/Device view.md): the device's
+/// reported name with the rename mark beside it, the whole thing tappable.
+///
+/// The name is the part that gives way: it takes whatever width the bar has left
+/// and ellipsizes, and the mark keeps its [_editIconSize] slot, so a long name
+/// ellipsizes instead of overflowing the title row.
+class DeviceTitle extends StatelessWidget {
+  const DeviceTitle({super.key, required this.name, this.onTap});
+
+  final String name;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
+          const SizedBox(width: Spacing.sm),
+          const Icon(Icons.edit, size: _editIconSize),
+        ],
+      ),
+    );
+  }
+}
+
 class RenameField extends StatefulWidget {
   final String currentName;
   final ValueChanged<String?> onDone;
@@ -267,11 +299,11 @@ class _RenameFieldState extends State<RenameField> {
           ),
         ),
         IconButton(
-          icon: const Icon(Icons.check, color: Colors.greenAccent),
+          icon: const Icon(Icons.check, color: kSuccess),
           onPressed: () => widget.onDone(_controller.text.trim()),
         ),
         IconButton(
-          icon: const Icon(Icons.close, color: Colors.redAccent),
+          icon: const Icon(Icons.close, color: kError),
           onPressed: () => widget.onDone(null),
         ),
       ],

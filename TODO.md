@@ -200,6 +200,48 @@ No visible change where the diff only swapped a literal for its own token: the l
 (`kSurfaceAlt` is the theme's card colour), its 20 px icon, the 12 px page padding, the 6/2 chip gaps
 and the 2 px card margins all keep their old values.
 
+**1c.5 (Connection / Devices / Device view).** The two device lists are `DeviceTile` rows (one row shape on
+both pages, its trailing content the page's own: the Connection row's signal readout plus autoconnect star,
+the Devices row's core star), and Device view's app-bar title is `DeviceTitle` - a row whose name
+ellipsizes inside a `Flexible` while the rename mark keeps its declared 16 px slot. The three fixed-pixel
+rows this batch owned are gone: the Devices filter bar's `SizedBox(height: 56)` + `Row` is a `Wrap`
+(measured with its longest real labels - "Net 255" and "Type: Tamu v2.0A" - the three controls want
+140 + 176 + 48 px plus two `Spacing.md` gaps = 380 px, so a 360 px window moved the sort menu to its own
+line; the wrapped bar is 324 px wide and two lines at 360, one line at 800), and the graph's 160 px block
+is derived from the width the canvas is given - the even share of `width - 2 * Spacing.xxl` across the
+blocks that fit, floored at 128 px and capped at 200 px - with rows of three kept as the *wide* arrangement
+only (360x640 gives 150 px blocks, two per line; 800x360 gives 200 px blocks, three per line).
+`Docs/App/Devices.md:24`'s "rows of three" stays unresolved in the spec, so the canvas stays pannable and
+zoomable instead of gaining a fixed grid. Tokenised while there: the graph's 24/32/12/6 px insets and the
+Device view's 12/24 px ones (`Spacing.*`, `Insets.page`), the RSSI gap (`Spacing.xs`), and the three fixed
+icon slots are now declared constants (`_signalIconSize` 18, `_coreStarSize` 18, `_editIconSize` 16).
+Pinned by `test/devices_layout_test.dart` (16 cases: the filter bar, both pages, the device row, the graph
+and the Device view title at 360x640 **and** 800x360, all `takeException() == null`, the title also at a 2x
+text scale); the title row fails on the pre-fix shape with `A RenderFlex overflowed by 116 pixels on the
+right.` at 360x640, and 243 px at 2x.
+**Visible changes of 1c.5 to veto:**
+- Devices: a stale entry's marker is now `  ·  stale` in `labelSmall`/`kTextMuted` after the name - it was
+  `' (stale)'` in the title's own style, same word, dimmer and smaller; the sort menu no longer sits at the
+  right edge (it follows the type chip in the wrap, and moves to the next line when the width does not hold
+  all three); the bar no longer pins 56 px of height - a line is the 48 px chip, so two lines measure 100
+  with the `Spacing.xs` run gap (measured: 324x100 at 360 wide, 380x48 at 800).
+- Connection: the row order, star button and tooltips are unchanged; the readout's icon ink is `kSuccess`
+  (the value `greenAccent` had), `kError` `#FF8A80` where it was `redAccent` `#FF5252` and `kTextMuted`
+  (white54) where `white38` for a missing reading - *brighter*, deliberately (3.58 to 5.01, 3.41 to 5.26).
+- Device view: the rename mark's gap 6 to `Spacing.sm` (the same 6); the rename-cancel mark
+  `Colors.redAccent` to `kError` (`#FF8A80`, *lighter*), the confirm mark `Colors.greenAccent` to
+  `kSuccess` (same value); the section divider's 24 px and the list's 12 px are the same as `Spacing.xxl` /
+  `Insets.page`.
+- Graph: the block is a derived 150 px at 360 wide and 200 px at 800 (it was a constant 160); the card's
+  own 4 px margin is gone (the wrap's `Spacing.lg` gutter replaces it); the subtext is one ellipsized line
+  where it wrapped freely; rows are centred as a group where they spread with `spaceEvenly`.
+No visible change where the diff only swapped a literal for its own token: the `DeviceTile` row itself (a
+plain `ListTile`), the Connected/Connecting session rows (untouched `ListTile`s - session status, not list
+entries), the graph's icon, card colour and 12 px block padding, and the Device view's `InfoCard` /
+`InfoRow` sections (already folded onto `InfoRow` at `9729800`, so this batch only had the title row to
+fix). Deliberately out of this batch: the shell/`ShellLayout` two-axis fix (b1), which belongs to the
+parked responsive lane, and any `Docs/` edit.
+
 Same behaviour per page; one batch per cluster, stopped for Akyirr's review after each. Per batch:
 `dart format`, then `dart fix --apply --code=curly_braces_in_flow_control_structures`, then
 `dart format` again; `flutter analyze` clean; `flutter test --exclude-tags hil` green; `version.json`
@@ -315,10 +357,12 @@ new tokens, measured with `tool/contrast.dart --pair`):
   on `kSurface` 5.26 / on `kSurfaceAlt` 4.61, `kError` on `kSurfaceAlt` 5.01, `kTextDisabled` on
   `kSurfaceAlt` 3.12, `kOrange` on `kSurface` 6.00. `dart run tool/contrast.dart` still prints
   `73 pairs: 57 ok, 7 close, 0 FAIL, 9 exempt` - the 7 close and 9 exempt rows did not grow.
-- **Batch 5 (Connection / Devices / Device View).** `connection_page.dart:136-139` (RSSI readout:
-  `white38` 3.41 as text, `redAccent` 3.58), `:363` (`kOrange.withAlpha(38)` fill - a second accent
-  alpha the token layer should own); `device_view_page.dart:274` (`Colors.redAccent` icon).
-  `devices_page.dart:156`, `:288` (`kOrange` icons on a card) now pass at 4.85.
+- **Batch 5 (Connection / Devices / Device View) - closed by 1c.5.** The RSSI readout's "no reading" ink
+  took `kTextMuted` (white38 3.41 to 5.26 on the page) and a weak link `kError` where it was `redAccent`
+  (3.58 to 5.01); `device_view_page.dart`'s rename-cancel mark took `kError` (3.58 to 5.01 on a card) and
+  its confirm mark `kSuccess` (the value `greenAccent` already carried). Left as recorded, not fixed: the
+  banner's `kOrange.withAlpha(38)` fill - a second accent alpha the token layer should own; the
+  `devices_page.dart` graph/filter `kOrange` icons already pass at 4.85 on a card.
 - **Batch 3 (value editors).** Only the wire-data swatches (`Color.fromARGB` from a device colour,
   `value_editor_visual.dart:16`, `:170`) - deliberate, not a design colour.
 - **Batch 6 (Update / Backup / Settings).** `update_page.dart:358-359` (`redAccent` 3.58 on a card);
