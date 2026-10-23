@@ -841,4 +841,86 @@ void main() {
           '${result.failures}',
     );
   });
+
+  test('two sources on one target: the plan deletes what the sweep deletes', () async {
+    // Slots belong to the NODE, so two archive devices remapped onto one target (the page's
+    // per-device dropdown allows it) share one slot table. Decided per SOURCE, each archive read
+    // the other archive's script as a leftover, and the page printed two DELETE rows for scripts
+    // the run keeps - the destructive claim this viewer exists to make truthfully. The archive's
+    // slots are unioned per target, as `pruneScriptSlots` unions them.
+    BackupDevice source(String address, List<BackupScript> scripts) =>
+        BackupDevice(
+          type: 'Tamu v2.0A',
+          typeId: 1,
+          id: idFromString(address)!,
+          name: 'Tamu $address',
+          blocks: const [],
+          scripts: scripts,
+          files: const [],
+        );
+    final a = source('39.1', [_script(1, 'Fan curve')]);
+    final b = source('39.2', [_script(2, 'Selector')]);
+    final live = _live();
+
+    // The plan for both archives onto [live], classified against a device that runs [loaded] -
+    // the same snapshot the fake core answers the sweep with.
+    RestorePlan planFor(Map<int, int> loaded) {
+      final plan = RestorePlan(
+        devices: [a, b],
+        liveDevices: [live],
+        items: [
+          for (final device in [a, b])
+            for (final script in device.scripts)
+              RestoreItem(
+                kind: RestoreKind.script,
+                device: device,
+                script: script,
+              ),
+        ],
+        deviceTargets: {a.id: live, b.id: live},
+        blockTargets: const {},
+        inventories: {live.id: LiveInventory(loadedSlots: loaded)},
+      );
+      plan.resolve();
+      return plan;
+    }
+
+    // The plan's deletion rows as the page lists them.
+    String planDeletes(RestorePlan plan) => plan.removals.isEmpty
+        ? '-'
+        : [
+            for (final r in plan.removals)
+              '${r.device.name}: slot ${r.slot} (${scriptFileName(r.fileId!)})',
+          ].join(', ');
+
+    // Both archives' scripts are loaded where their archive names them: nothing to delete.
+    install(_FakeCore(loaded: {1: 1, 2: 2}));
+    var plan = planFor({1: 1, 2: 2});
+    var swept = await pruneScriptSlots(plan);
+    print('two sources, nothing stale -> plan deletes: ${planDeletes(plan)}');
+    print(
+      'two sources, nothing stale -> sweep: ${_reportLine(swept.prunes.single)}',
+    );
+    expect(
+      plan.removals,
+      isEmpty,
+      reason: 'each archive names the other archive\'s script too',
+    );
+    expect(swept.prunes.single.unloaded, isEmpty);
+    expect(swept.failures, isEmpty);
+    expect(core.unloads, isEmpty);
+
+    // ...and one stale slot is deleted by both, so the agreement is not vacuous.
+    install(_FakeCore(loaded: {1: 1, 2: 2, 9: 9}));
+    plan = planFor({1: 1, 2: 2, 9: 9});
+    swept = await pruneScriptSlots(plan);
+    print('two sources, a stale slot -> plan deletes: ${planDeletes(plan)}');
+    print(
+      'two sources, a stale slot -> sweep: ${_reportLine(swept.prunes.single)}',
+    );
+    expect({for (final r in plan.removals) r.slot}, {9});
+    expect(swept.prunes.single.unloaded, {9: 9});
+    expect(swept.failures, isEmpty);
+    expect(core.unloads, [9]);
+  });
 }

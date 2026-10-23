@@ -1108,44 +1108,77 @@ class RestorePlan {
     }
     removals.clear();
     final seen = <String>{};
+    final slotsByTarget = _scriptSlotsByTarget();
     for (final source in devices) {
       final target = deviceTargets[source.id];
       if (target == null) continue;
       final inventory = inventories[target.id];
-      _buildScriptRemovals(source, target, inventory, seen);
+      _buildScriptRemovals(
+        source,
+        target,
+        inventory,
+        slotsByTarget[target.id],
+        seen,
+      );
       _buildRequesterRemovals(source, target, inventory, seen);
     }
   }
 
-  /// The loaded slots of one source's target the sweep would unload.
+  /// The archive's script slots per live TARGET: the slots the archive names ([named]) and the
+  /// ones it names but this run does not restore ([leftOut] - an unticked, or unplaceable, row).
   ///
-  /// A slot is NOT a deletion when it holds the archive's script in the slot the archive names
-  /// for it (the shape the restore is after), when the archive names the file but the archive's
-  /// own slot does not hold it (the sweep keeps the sole surviving copy, and names it), or when
-  /// the slot belongs to a row the user unticked.
-  void _buildScriptRemovals(
-    BackupDevice source,
-    LiveDevice target,
-    LiveInventory? inventory,
-    Set<String> seen,
-  ) {
-    if (target.capabilities & Capability.scripts == 0) return;
-    final loaded = inventory?.loadedSlots;
-    // The slot map was not read: nothing may be claimed about what the target runs.
-    if (loaded == null) return;
-    final named = <int>{};
-    final leftOut = <int>{};
+  /// Per target, not per source: slots belong to the node, so two archive devices remapped onto
+  /// one node share one slot table and their sets are unioned - exactly as `pruneScriptSlots`
+  /// unions them. Decided per source instead, each archive would read the other archive's script
+  /// as a leftover, and the page would print DELETE rows for scripts the run keeps: the one claim
+  /// this viewer exists to make truthfully.
+  Map<int, ({Set<int> named, Set<int> leftOut})> _scriptSlotsByTarget() {
+    final named = <int, Set<int>>{};
+    final leftOut = <int, Set<int>>{};
     for (final item in items) {
-      if (item.device.id != source.id) continue;
+      final target = deviceTargets[item.device.id];
+      if (target == null) continue;
       final slot = switch (item.kind) {
         RestoreKind.script => item.script!.slot >= 0 ? item.script!.slot : null,
         RestoreKind.file => scriptFileId(item.file!.name),
         _ => null,
       };
       if (slot == null) continue;
-      named.add(slot);
-      if (!item.selected || !item.ready) leftOut.add(slot);
+      named.putIfAbsent(target.id, () => <int>{}).add(slot);
+      if (!item.selected || !item.ready) {
+        leftOut.putIfAbsent(target.id, () => <int>{}).add(slot);
+      }
     }
+    return {
+      for (final MapEntry(key: id, value: slots) in named.entries)
+        id: (named: slots, leftOut: leftOut[id] ?? const <int>{}),
+    };
+  }
+
+  /// The loaded slots of a target the sweep would unload, read against the archive's slots for
+  /// that TARGET ([archiveSlots], unioned over every source restored onto it).
+  ///
+  /// A slot is NOT a deletion when it holds the archive's script in the slot the archive names
+  /// for it (the shape the restore is after), when the archive names the file but the archive's
+  /// own slot does not hold it (the sweep keeps the sole surviving copy, and names it), or when
+  /// the slot belongs to a row the user unticked.
+  ///
+  /// The section the row is listed under is the first source restored onto the target; the row
+  /// itself belongs to the NODE, so [_addRemoval] keeps it to one row however many sources share
+  /// the target.
+  void _buildScriptRemovals(
+    BackupDevice source,
+    LiveDevice target,
+    LiveInventory? inventory,
+    ({Set<int> named, Set<int> leftOut})? archiveSlots,
+    Set<String> seen,
+  ) {
+    if (target.capabilities & Capability.scripts == 0) return;
+    final loaded = inventory?.loadedSlots;
+    // The slot map was not read: nothing may be claimed about what the target runs.
+    if (loaded == null) return;
+    final named = archiveSlots?.named ?? const <int>{};
+    final leftOut = archiveSlots?.leftOut ?? const <int>{};
     for (final e in loaded.entries) {
       final slot = e.key;
       final fileId = e.value;
