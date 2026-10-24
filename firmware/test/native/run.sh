@@ -95,5 +95,9 @@ echo
 
 echo "### native value-update tests (a 0-length value is refused; the dynamic target keeps its value)"
 build_run "valueupdate" "value_update_test.cpp"
+echo
+
+echo "### native reset-cause tests (the DAS boot report's flag byte)"
+build_run "resetcause" "reset_test.cpp"
 
 exit $fail

@@ -10,6 +10,7 @@
 void LoadAllBackups();
 
 #include "Base.h"
+#include "ResetCause.h"
 #include "RSBus.h"
 #include "Log.h"
 #include "Storage.h"
@@ -18,6 +19,13 @@ void LoadAllBackups();
 #include "Blocks/LED.h"
 #include "Core/Functions/Device.h"
 #include "Core/Services/StaticMemory.h"
+
+// ResetCause.h is host-clean, so it cannot include the chip header: tie its constants to the
+// real RSTSCKR definitions here instead. If the SPL ever renumbers a flag, this build stops.
+static_assert(DAS_RST_PIN == RCC_PINRSTF && DAS_RST_POR == RCC_PORRSTF &&
+                  DAS_RST_SW == RCC_SFTRSTF && DAS_RST_IWDG == RCC_IWDGRSTF &&
+                  DAS_RST_WWDG == RCC_WWDGRSTF && DAS_RST_LPWR == RCC_LPWRRSTF,
+              "ResetCause.h must match ch32v00x.h's RSTSCKR flags");
 
 #define CHIP_ID_ADDR  0x1FFFF7E8 // Fixed memory-mapped location of the chip's unique ID
 
@@ -124,6 +132,16 @@ static inline uint32_t SampleIntervalMs(uint8_t Channel)
 // Device entry point: initialises hardware, discovers its short address over RS485, then blinks the status LED.
 int main(void)
 {
+    // Reset cause, latched first - before anything else can touch RCC. RSTSCKR describes the
+    // LAST reset: the bootloader only jumps here (it never writes this register), so the flags
+    // are still the original cause. Cleared straight after the read (RMVF is write-1-to-clear;
+    // |= and not = so LSION in bit 0 survives - the SPL's RCC_ClearFlag does the same) so the
+    // NEXT boot reports its own cause instead of an accumulation of every reset so far.
+    // Reported once per boot below, as a log code: the flag byte, bit 0 = RSTSCKR bit 26
+    // (see ResetCause.h).
+    uint8_t ResetCause = DasResetCauseFlags(RCC->RSTSCKR);
+    RCC->RSTSCKR |= RCC_RMVF;
+
     // Initialize system
     SystemCoreClockUpdate();
     Delay_Init();
@@ -216,10 +234,28 @@ int main(void)
     uint32_t LastSampleMs[2] = {0, 0};
     static const uint8_t MeasAdcCh[2] = {MEAS1_ADC_CH, MEAS2_ADC_CH};
 
+    // The reset-cause report goes out once, on the first main-loop pass: ReportLog stamps
+    // DeviceStatus.UptimeMs, which is 0 until the first TimeUpdate() and only means absolute
+    // time once the TimeSync reply sent above has been applied by ProcessBus() - so this is
+    // the earliest point where the log carries a synced timestamp. A stack local, not a
+    // static: the DAS has no spare RAM (statics + stack are exactly the 2 KB).
+    // The code is the reset-cause flag byte (ResetCause.h). The core's log database counts
+    // repeats of the same (device, source, code) in its Count field (LogHandler.h), so that
+    // Count is the boot count for this cause - the CH32V003 has no retained RAM to keep one
+    // locally. After the first pass this costs the loop one always-false test.
+    bool BootReported = false;
+
     while (1)
     {
         TimeUpdate();
         ProcessBus();
+
+        if (!BootReported)
+        {
+            BootReported = true;
+            ReportLog(MakeLog(false, (uint16_t)ServiceType::Device, ResetCause, 0), PRIORITY_LOG);
+        }
+
         Subscriptions.Tick(DeviceStatus.UptimeMs); // periodic provider triggers (main loop)
 
         // Re-sync to the core every ~60-75 s (synchronized-device initiated, jittered so
