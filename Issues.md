@@ -141,6 +141,50 @@ are hardware-only.
   from the device in full: its slot is unloaded and its stored file deleted, both reported, so it
   cannot be loaded again."
 
+- **E36** **The spec's line shape allows a constant as a destination; the app's validator refuses one.**
+  `Docs/Services/Script.md:90` says a line takes "any number of destination symbols (outputs, variables or
+  constants)", but `validateScriptLines` (`app/lib/core/script_instructions.dart:757-758`) rejects every
+  destination whose type is not a variable or an output ("destination must be a variable or output"). The
+  documentation is the source of behaviour, so either the validator drops a permitted case or the line
+  shape is a leftover from when a constant had a writable slot; the owner settles which.
+
+- **E37** **Register read/write are documented as fault-free with an app-supplied scratch destination;
+  neither half holds.** `Docs/Services/Script.md:198` says the external-facing register instructions never
+  fault and carry their code into a result destination, "a scratch destination when the script ignores
+  it". No scratch destination exists in `app/lib` (the editor requires a real variable or output,
+  `app/lib/core/script_instructions.dart:757-758`), and a failed local read faults `SCRIPT_ERR_REGISTER`
+  (`firmware/src/Core/Services/ScriptExec.h:411`) rather than reporting it in a destination.
+
+- **E38** **The editor says unloading an unloaded script "does nothing"; the firmware reports
+  `SCRIPT_ERR_BOUNDS`.** Comment at `app/lib/core/script_instructions.dart:459-460`. `ScriptExec.h:516` sets
+  the code for a slot that is out of range or not active and stores it in the line's result destination
+  (`StoreResultCode`), so the line still succeeds but a script that checks the code sees a failure; the
+  comment is the misleading side.
+
+- **E39** **The editor's line numbers are 1-based and every flow target is a 0-based instruction index.**
+  The gutter prints `${index + 1}` (`app/lib/ui/script_editor_line.dart:120`), while Jump/Call bound their
+  target as `Target < LineCount` and assign `Ic = Target` (`firmware/src/Core/Services/ScriptExec.h:251-252`
+  and `:259-262`), i.e. an instruction index. The debug page's Move to line field passes the typed number
+  to `moveToInstruction` unmodified (`app/lib/ui/script_editor_view.dart:92-111`), and no conversion exists
+  anywhere in `app/lib`, so the gutter's "line 5" is target 4.
+
+- **E40** **`Log` accepts up to four operands in the editor and the engine reads only the first.**
+  `maxOperands: 4` at `app/lib/core/script_instructions.dart:403`; `ScriptExec.h:364-367` takes operand 1 as
+  the log code and ignores the rest, so operands 2-4 are accepted, carried in the line and silently dropped.
+
+- **E41** **A comment says Modulo is "not offered"; it is in both math-op tables.**
+  `app/lib/core/script_instructions.dart:157` ("Shifts (10/11) and Modulo (4) are not offered"), while
+  Modulo is in `scriptPredefineMathOps` and `expressionOps` in the same file and is documented at
+  `Docs/Services/Script.md:69`. Comment only, no behaviour.
+
+- **E42** **Power with exponent exactly 0.5 on a negative base returns 0 and succeeds, where the spec calls
+  it a domain failure.** `Docs/Services/Script.md:70` and `:201`. The exact-0.5 fast path `Exp.Value == 1<<15`
+  (`firmware/src/Core/Services/ScriptExpr.h:89`) returns `sqrt(Base)` before the fractional-negative domain
+  check at `ScriptExpr.h:96`, and `sqrt` clamps a non-positive input to 0
+  (`firmware/src/Core/Types/Number.h:241` and `:254`), so (-4)^0.5 = 0 with no detail. Reproduced with a
+  compiled probe on card `t_3f79ad3b`: exp 1.5 and -0.5 fail as documented, only 0.5 escapes. Fix: move the
+  domain check ahead of the fast path, or make the fast path reject a negative base.
+
 ## Valu v2.0 app (2026-10-06) - parked (owner: not now)
 
 - **E27** **Resistive measurement reference resistor is undefined.** `Docs/Devices.md` gives three ADC
