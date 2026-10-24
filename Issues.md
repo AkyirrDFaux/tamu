@@ -141,13 +141,6 @@ are hardware-only.
   from the device in full: its slot is unloaded and its stored file deleted, both reported, so it
   cannot be loaded again."
 
-- **E36** **The spec's line shape allows a constant as a destination; the app's validator refuses one.**
-  `Docs/Services/Script.md:90` says a line takes "any number of destination symbols (outputs, variables or
-  constants)", but `validateScriptLines` (`app/lib/core/script_instructions.dart:757-758`) rejects every
-  destination whose type is not a variable or an output ("destination must be a variable or output"). The
-  documentation is the source of behaviour, so either the validator drops a permitted case or the line
-  shape is a leftover from when a constant had a writable slot; the owner settles which.
-
 - **E37** **Register read/write are documented as fault-free with an app-supplied scratch destination;
   neither half holds.** `Docs/Services/Script.md:198` says the external-facing register instructions never
   fault and carry their code into a result destination, "a scratch destination when the script ignores
