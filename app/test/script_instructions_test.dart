@@ -218,6 +218,47 @@ void main() {
     expect(regWriteForeign.minOperands, 3);
   });
 
+  test('Log takes exactly one operand: its log code', () {
+    final log = scriptInstructions.firstWhere(
+      (d) => d.category == catService && d.op == 0,
+    );
+    // A log entry, not a math log: the single operand is the custom log's code.
+    expect(log.minOperands, 1);
+    expect(log.maxOperands, 1);
+    expect(log.destination, isFalse);
+
+    ScriptLine logLine(List<ScriptSymbol> ops) => ScriptLine(
+      instruction: ScriptSymbol.instruction(catService, 0),
+      operands: ops,
+    );
+    const ctx = ScriptValidationContext();
+
+    // One code validates.
+    expect(
+      validateScriptLines([
+        logLine([ScriptSymbol.predefine(preIndex, 7)]),
+      ], ctx),
+      isEmpty,
+    );
+    // A second operand is refused: the engine reads only the first.
+    expect(
+      validateScriptLines([
+        logLine([
+          ScriptSymbol.predefine(preIndex, 7),
+          ScriptSymbol.predefine(preIndex, 8),
+        ]),
+      ], ctx).single,
+      contains('expects 1..1 operands'),
+    );
+    // No operand at all is refused too.
+    expect(
+      validateScriptLines([
+        logLine(const []),
+      ], ctx).single,
+      contains('expects 1..1 operands'),
+    );
+  });
+
   test('all predefine subtypes and math ops are available', () {
     expect(scriptPredefineSubtypes.map((e) => e.$1).toSet(), {
       preState,
@@ -356,6 +397,38 @@ void main() {
       validateScriptBlocks([end]).single,
       contains('no matching If/While'),
     );
+  });
+
+  test('validation messages name lines by 0-based instruction index', () {
+    final end = ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 2));
+    final nop = ScriptLine(instruction: ScriptSymbol.instruction(catService, 4));
+
+    // The first line is line 0, not line 1: the messages use the same index space as a
+    // flow target and the instruction counter.
+    expect(validateScriptBlocks([end]).single, startsWith('Line 0 ('));
+    // A stray End block is named by its own index.
+    expect(validateScriptBlocks([nop, end]).single, startsWith('Line 1 ('));
+
+    // An unclosed If is named by the index it opened on.
+    final ifLine = ScriptLine(
+      instruction: ScriptSymbol.instruction(catFlow, 0),
+      operands: [ScriptSymbol.predefine(preBool, 1)],
+    );
+    expect(
+      validateScriptBlocks([nop, ifLine]).single,
+      startsWith('Line 1 (If)'),
+    );
+
+    // The per-line validator uses the same 0-based index.
+    final wrongArity = ScriptLine(
+      instruction: ScriptSymbol.instruction(catService, 4), // Nop: no operands
+      operands: [ScriptSymbol.predefine(preIndex, 1)],
+    );
+    final errors = validateScriptLines(
+      [nop, wrongArity],
+      const ScriptValidationContext(),
+    );
+    expect(errors.single, startsWith('Line 1 (Nop): expects 0..0 operands'));
   });
 
   test(

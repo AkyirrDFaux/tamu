@@ -117,7 +117,9 @@ extension on _ScriptEditorPageState {
               crossAxisAlignment: WrapCrossAlignment.end,
               children: [
                 Text(
-                  '${index + 1}',
+                  // The line's 0-based instruction index: the same number a flow target and
+                  // the debug page's "move to line" take, with no conversion.
+                  '$index',
                   style: Theme.of(
                     context,
                   ).textTheme.labelSmall?.copyWith(color: kTextDisabled),

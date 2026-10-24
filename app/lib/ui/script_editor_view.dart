@@ -98,7 +98,7 @@ extension on _ScriptEditorPageState {
         controller: controller,
         autofocus: true,
         keyboardType: TextInputType.number,
-        decoration: const InputDecoration(labelText: 'Line index'),
+        decoration: const InputDecoration(labelText: 'Line index (0-based)'),
       ),
       actions: tamuDialogActions(
         onCancel: () => Navigator.pop(context),

@@ -154,7 +154,6 @@ class ScriptInstructionDef {
 
 /// Predefine "Math op." values (Docs/Services/Script.md predefine subtypes). Values 0..17
 /// are the operator enum; 18/19 are the expression parentheses (inline in a `Set` line).
-/// Shifts (10/11) and Modulo (4) are not offered (no shift support; Modulo is an instruction).
 const List<(int, String)> scriptPredefineMathOps = [
   (0, 'Add'),
   (1, 'Subtract'),
@@ -395,12 +394,14 @@ const List<ScriptInstructionDef> scriptInstructions = [
     destinationRole: 'time',
   ),
   // Service
+  // Log carries a single operand: the log code (a uint16 of the Log Handler's custom log).
+  // It is a log entry, not a math log, so a second operand has nowhere to go.
   ScriptInstructionDef(
     op: 0,
     category: catService,
     label: 'Log',
     minOperands: 1,
-    maxOperands: 4,
+    maxOperands: 1,
     operandRoles: ['code'],
   ),
   ScriptInstructionDef(
@@ -456,8 +457,10 @@ const List<ScriptInstructionDef> scriptInstructions = [
   // Script (un)loading from within a script (Docs/Services/Script.md functions list). Same
   // operations as management CIDs 1/2: the caller picks the loaded slot, so load takes
   // (file id, loaded id). Both are external-facing, so their result code (0 = success) goes
-  // to a destination, as the spec requires; unloading a script that is not loaded does
-  // nothing. A script cannot (un)load itself.
+  // to a destination, as the spec requires. Unloading a slot that is out of range or not
+  // active does not "do nothing": the firmware stores `SCRIPT_ERR_BOUNDS` in the line's
+  // result, so the line advances but a script that checks the code sees the failure. A
+  // script cannot (un)load itself.
   ScriptInstructionDef(
     op: 7,
     category: catService,
@@ -707,7 +710,8 @@ bool scriptTypeIsNumeric(int type) => const {
 
 /// Block-end matching (Docs/Services/Script.md "Validation"): every Flow `If`/`While` must be
 /// closed by a Flow `End block`, and an `End block` with no opener is an error too. Returns the
-/// problems found (empty when the blocks balance).
+/// problems found (empty when the blocks balance). A message names its line by the 0-based
+/// instruction index - the same space a flow target and the instruction counter use.
 List<String> validateScriptBlocks(List<ScriptLine> lines) {
   final errors = <String>[];
   final open = <int>[]; // line indices of the open If/While blocks
@@ -718,7 +722,7 @@ List<String> validateScriptBlocks(List<ScriptLine> lines) {
       open.add(i); // If / While
     } else if (def.op == 2) {
       if (open.isEmpty) {
-        errors.add('Line ${i + 1} (End block): no matching If/While');
+        errors.add('Line $i (End block): no matching If/While');
       } else {
         open.removeLast();
       }
@@ -726,7 +730,7 @@ List<String> validateScriptBlocks(List<ScriptLine> lines) {
   }
   for (final start in open) {
     final label = lines[start].def?.label ?? 'If';
-    errors.add('Line ${start + 1} ($label): missing End block');
+    errors.add('Line $start ($label): missing End block');
   }
   return errors;
 }
@@ -742,7 +746,7 @@ List<String> validateScriptLines(
   for (var i = 0; i < lines.length; i++) {
     final line = lines[i];
     final def = line.def;
-    final where = 'Line ${i + 1}';
+    final where = 'Line $i';
     if (def == null) {
       errors.add('$where: unknown instruction');
       continue;
@@ -822,7 +826,7 @@ List<String> validateScriptLines(
 List<String> _validateExpression(ScriptLine line, int lineIndex) {
   final toks = line.operands;
   final n = toks.length;
-  final where = 'Line ${lineIndex + 1}';
+  final where = 'Line $lineIndex';
   var i = 0;
 
   bool isMathOpAt(int idx) =>
