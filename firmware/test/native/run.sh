@@ -5,8 +5,9 @@
 #
 #   numeric_test.cpp  Number.h + Vector/Matrix/Colour, in the three shapes the targets select
 #   stride_test.cpp   the script VM's prefix-sum symbol offsets (Core/Functions/StrideOffsets.h)
-#   script_test.cpp   the script file header, Service opcode set (Core/Services/ScriptDefs.h) and
-#                     Power's domain/fast paths (Core/Services/ScriptPow.h)
+#   script_test.cpp   the script file header, Service opcode set (Core/Services/ScriptDefs.h),
+#                     the custom log's 32-bit code and Power's domain/fast paths
+#                     (Core/Services/ScriptPow.h)
 #   crc_test.cpp      Crc8 (Core/Functions/Packet.h), both OPTIMIZE_SPEED shapes
 #
 # The numeric core is built in three shapes: the core (64-bit) and the DAS (32-bit, no

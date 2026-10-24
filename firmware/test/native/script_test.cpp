@@ -10,7 +10,9 @@
 // No device dependency: built with -DUSE_SCRIPTS -DSCRIPT_HOST_TEST (see run.sh), which keeps
 // ScriptDefs.h on the host-clean includes (MemoryTypes/StrideOffsets/Enums/Number). It also pins
 // Power's domain rule through ScriptPow.h, the function the VM's `^` operator calls, so the
-// fractional power of a negative base is checked end to end without the device layer.
+// fractional power of a negative base is checked end to end without the device layer, and the
+// custom log's code width through ScriptLogCode (Core/Services/ScriptDefs.h) into the Log Handler's
+// 32-bit field (Core/Types/Log.h).
 
 #include <cstdint>
 #include <cstdio>
@@ -18,6 +20,7 @@
 
 #include "Core/Services/ScriptDefs.h"
 #include "Core/Services/ScriptPow.h"
+#include "Core/Types/Log.h"
 
 static int checks = 0, failures = 0;
 
@@ -153,6 +156,31 @@ int main() {
     CHECK_EQ(SCRIPT_OP_SERVICE_RESUME, 12);
     CHECK_EQ(SCRIPT_OP_SERVICE_ERROR, 13);
     CHECK_EQ(SCRIPT_OP_SERVICE_REPORT_INFO, 14);
+
+    // --- The custom log's code is 32 bits wide (Service op 0) ---
+    // Docs/Services/Script.md "Service": "its code a source-specific 32 bits";
+    // Docs/Services/Log Handler.md "Log code": uint32. The engine used to carry the code in a
+    // uint16_t and mask it, so a script logging 0x12345678 produced 0x5678 on the wire.
+    {
+        const LogMessage Above = MakeLog(false, 0x05 /* Script */, ScriptLogCode(3, true, 0x12345678), 0);
+        CHECK_EQ(LogCode(Above), (long long)0x12345678);
+        CHECK_EQ(LogSourceInstance(Above), 0x05); // still the Script service's log
+        CHECK(!LogIsBlock(Above));
+        CHECK_EQ(sizeof(Above.Code), 4);
+
+        // The whole 32-bit range survives, the top bit included (the operand is the VM's int32).
+        CHECK_EQ(ScriptLogCode(0, true, 0x7FFFFFFF), (long long)0x7FFFFFFF);
+        CHECK_EQ(ScriptLogCode(0, true, -1), (long long)0xFFFFFFFF);
+        CHECK_EQ(ScriptLogCode(0, true, 0x00010000), (long long)0x00010000); // just past the old cut
+        CHECK_EQ(ScriptLogCode(0, true, 0), (long long)0); // an explicit 0 code is a code, not the default
+
+        // With no operand the slot's low byte is the code - the one place a mask belongs
+        // (Slot is a uint16, the documented default is its low byte).
+        CHECK_EQ(ScriptLogCode(0, false, 0), 0);
+        CHECK_EQ(ScriptLogCode(3, false, 0), 3);
+        CHECK_EQ(ScriptLogCode(3, false, 0x12345678), 3); // a stale operand does not leak in
+        CHECK_EQ(ScriptLogCode(0x1234, false, 0), 0x34);
+    }
 
     // --- Compose pair and the reserved math-op holes (sanity) ---
     CHECK_EQ(SCRIPT_OP_COMPOSE, 0);

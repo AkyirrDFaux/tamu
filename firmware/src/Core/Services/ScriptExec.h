@@ -373,14 +373,14 @@ inline uint8_t ScriptService::ExecService(LoadedScript *Script, const ScriptLine
             return SCRIPT_ERR_NONE;
         case SCRIPT_OP_SERVICE_LOG: {
             // Custom log (docs "Custom logs"): the first operand's value becomes the
-            // log code; the source is the Script service tagged with the instance.
-            uint16_t Code = (uint16_t)(Script->Slot & 0xFF);
-            if (Ln.OpCount >= 1) {
-                int32_t Value = 0;
-                if (ResolveOperandInt(Script, Opbase, Value)) Code = (uint16_t)(Value & 0xFFFF);
-            }
+            // log code; the source is the Script service tagged with the instance. The code is
+            // the Log Handler's 32-bit one, so the operand is carried whole (ScriptLogCode).
+            bool HasCode = false;
+            int32_t Value = 0;
+            if (Ln.OpCount >= 1 && ResolveOperandInt(Script, Opbase, Value)) HasCode = true;
             // A custom log is an informational message, not an error report.
-            ReportLog(MakeLog(false, (uint16_t)ServiceType::Script, Code, 0), PRIORITY_LOG);
+            ReportLog(MakeLog(false, (uint16_t)ServiceType::Script,
+                              ScriptLogCode(Script->Slot, HasCode, Value), 0), PRIORITY_LOG);
             Script->Ic++;
             return SCRIPT_ERR_NONE;
         }

@@ -354,6 +354,15 @@ inline uint16_t ScriptLowestFreeBit(uint64_t Occupied) {
     return (uint16_t)__builtin_ctzll(Free);
 }
 
+// The custom log's code (Service op 0) (Docs/Services/Script.md "Service": "its code a
+// source-specific 32 bits"; Docs/Services/Log Handler.md "Log code" - uint32). The line's first
+// operand, when it resolves to an integer, is the code in full; a line without one logs the
+// script's slot (its low byte, the documented default) instead. Nothing is masked to 16 bits:
+// an earlier shape stored the code in a uint16_t and cut anything above 0xFFFF.
+inline uint32_t ScriptLogCode(uint16_t Slot, bool HasOperand, int32_t Operand) {
+    return HasOperand ? (uint32_t)Operand : (uint32_t)(Slot & 0xFF);
+}
+
 // 4-byte stride alignment lives in Core/Functions/StrideOffsets.h (shared with the offset
 // tables below).
 
