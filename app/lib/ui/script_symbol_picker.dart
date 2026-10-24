@@ -59,6 +59,13 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
   bool get _integerDestination =>
       widget.destination && widget.def?.integerDestination == true;
 
+  /// True when the operand being picked must be an integer (Index/Uint32), e.g. `Log`'s
+  /// log code.
+  bool get _integerOperand {
+    final idx = widget.def?.integerOperandIndex ?? -1;
+    return !widget.destination && idx >= 0 && idx == widget.operandIndex;
+  }
+
   /// Filters a candidate symbol by the current instruction's expectations.
   bool _allowed(ScriptDraft draft, ScriptSymbol s) {
     if (widget.destination) {
@@ -77,6 +84,11 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
           t == DataType.uint32 ||
           t == DataType.integer ||
           t == DataType.number;
+    }
+    if (_integerOperand) {
+      final t = draft.valueTypeOf(s);
+      if (t == null) return s.type == symPredefine && s.subtype == preIndex;
+      return integerOperandTypes.contains(t.value);
     }
     final def = widget.def;
     if (def == null || !def.numeric) return true;
@@ -189,6 +201,12 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
       addInputsWhere(isBool);
       candidates.add(ScriptSymbol.predefine(preBool, 1));
       candidates.add(ScriptSymbol.predefine(preBool, 0));
+    } else if (_integerOperand) {
+      addVarsWhere(isInteger);
+      addConstsWhere(isInteger);
+      addInputsWhere(isInteger);
+      candidates.add(ScriptSymbol.predefine(preIndex, 0));
+      candidates.add(ScriptSymbol.predefine(preIndex, 1));
     } else if (_numericOperand) {
       addConstsWhere(numeric);
       addVarsWhere(numeric);
@@ -225,6 +243,7 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
       return 'Expression: values and operators (+ − × ÷ % ^, AND OR XOR NOT, comparisons, parentheses)';
     }
     if (_conditionOperand) return 'Boolean condition';
+    if (_integerOperand) return 'Log code: an integer (Index/Uint32)';
     if (_numericOperand) return 'Numeric value';
     return null;
   }
@@ -312,6 +331,10 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
   /// Predefine subtypes allowed by the current instruction.
   List<(int, String)> get _predefineSubtypes {
     final def = widget.def;
+    if (_integerOperand) {
+      // The whole-integer slot takes an Index literal; Number/Char/Bool are not codes.
+      return scriptPredefineSubtypes.where((e) => e.$1 == preIndex).toList();
+    }
     if (def != null && def.numeric) {
       return scriptPredefineSubtypes
           .where(
@@ -414,6 +437,11 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
     );
   }
 
+  /// Type a value created from this picker gets: an integer operand slot must not hand
+  /// back a Q16.16 Number (see Log's log code), so it creates an Uint32 value instead.
+  DataType get _createdValueType =>
+      _integerOperand ? DataType.uint32 : DataType.number;
+
   List<Widget> _creationTiles(ScriptDraft draft) => [
     if (!_constantOnly)
       ListTile(
@@ -421,7 +449,7 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
         leading: const Icon(Icons.add, size: IconSize.md),
         title: const Text('New variable'),
         onTap: () {
-          draft.variables.add(ScriptDraftValue(type: DataType.number));
+          draft.variables.add(ScriptDraftValue(type: _createdValueType));
           Navigator.pop(
             context,
             ScriptSymbol.variable(draft.variables.length - 1),
@@ -459,7 +487,7 @@ class _ScriptSymbolPickerState extends State<ScriptSymbolPicker> {
         leading: const Icon(Icons.add, size: IconSize.md),
         title: const Text('New constant'),
         onTap: () {
-          draft.constants.add(ScriptDraftValue(type: DataType.number));
+          draft.constants.add(ScriptDraftValue(type: _createdValueType));
           Navigator.pop(
             context,
             ScriptSymbol.constant(draft.constants.length - 1),

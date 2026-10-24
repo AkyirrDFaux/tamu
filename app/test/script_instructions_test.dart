@@ -252,10 +252,74 @@ void main() {
     );
     // No operand at all is refused too.
     expect(
-      validateScriptLines([
-        logLine(const []),
-      ], ctx).single,
+      validateScriptLines([logLine(const [])], ctx).single,
       contains('expects 1..1 operands'),
+    );
+  });
+
+  test("Log's code operand must be an integer (Index/Uint32)", () {
+    final log = scriptInstructions.firstWhere(
+      (d) => d.category == catService && d.op == 0,
+    );
+    // The card's ruling: the log code is a uint32, typed on operand 0.
+    expect(log.integerOperandIndex, 0);
+    for (final d in scriptInstructions) {
+      if (d.category == catService && d.op == 0) continue;
+      expect(d.integerOperandIndex, -1, reason: d.label);
+    }
+    expect(integerOperandTypes, {
+      DataType.integer.value,
+      DataType.uint32.value,
+    });
+
+    ScriptLine logCode(ScriptSymbol code) => ScriptLine(
+      instruction: ScriptSymbol.instruction(catService, 0),
+      operands: [code],
+    );
+    List<String> check(
+      ScriptSymbol code, {
+      DataType variableType = DataType.uint32,
+    }) => validateScriptLines([
+      logCode(code),
+    ], ScriptValidationContext(variableTypes: [variableType.value]));
+
+    // A whole 32-bit integer code is accepted, as an Index literal or a typed symbol.
+    for (final t in [DataType.integer, DataType.uint32]) {
+      expect(
+        check(ScriptSymbol.variable(0), variableType: t),
+        isEmpty,
+        reason: '${t.name} should be a valid log code',
+      );
+    }
+    expect(check(ScriptSymbol.predefine(preIndex, 7)), isEmpty);
+
+    // A Number is a Q16.16 fixed-point value: its bits would become the code (1.5 sends
+    // 0x18000, not 1). A String/Vector has no integer at all and the engine's
+    // ResolveOperandInt would fault on it. Both are refused before they reach the wire.
+    for (final t in [DataType.number, DataType.text, DataType.vector]) {
+      expect(
+        check(ScriptSymbol.variable(0), variableType: t).single,
+        contains('must be an integer (Index/Uint32)'),
+        reason: '${t.name} should be refused as a log code',
+      );
+    }
+    // So is a Number literal (Q8.8) and a Number-typed constant.
+    expect(
+      check(ScriptSymbol.predefine(preNumber, 128)).single,
+      contains('must be an integer (Index/Uint32)'),
+    );
+    expect(
+      validateScriptLines([
+        logCode(ScriptSymbol.constant(0)),
+      ], const ScriptValidationContext(constantTypes: [0x0E /*Uint32*/])),
+      isEmpty,
+    );
+    expect(
+      validateScriptLines(
+        [logCode(ScriptSymbol.constant(0))],
+        const ScriptValidationContext(constantTypes: [0x06 /*Number*/]),
+      ).single,
+      contains('must be an integer (Index/Uint32)'),
     );
   });
 
@@ -401,7 +465,9 @@ void main() {
 
   test('validation messages name lines by 0-based instruction index', () {
     final end = ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 2));
-    final nop = ScriptLine(instruction: ScriptSymbol.instruction(catService, 4));
+    final nop = ScriptLine(
+      instruction: ScriptSymbol.instruction(catService, 4),
+    );
 
     // The first line is line 0, not line 1: the messages use the same index space as a
     // flow target and the instruction counter.
@@ -424,10 +490,10 @@ void main() {
       instruction: ScriptSymbol.instruction(catService, 4), // Nop: no operands
       operands: [ScriptSymbol.predefine(preIndex, 1)],
     );
-    final errors = validateScriptLines(
-      [nop, wrongArity],
-      const ScriptValidationContext(),
-    );
+    final errors = validateScriptLines([
+      nop,
+      wrongArity,
+    ], const ScriptValidationContext());
     expect(errors.single, startsWith('Line 1 (Nop): expects 0..0 operands'));
   });
 

@@ -102,6 +102,13 @@ class ScriptInstructionDef {
   /// Operand index that is a device address (Id), or -1.
   final int addressIndex;
 
+  /// Operand index that must be an integer-typed value (Index/Uint32), or -1.
+  ///
+  /// A Q16.16 Number is a fixed-point value, not an integer: in an integer slot its
+  /// raw fixed-point bits go on the wire (e.g. `Log`'s log code, a 32-bit code), and a
+  /// String/Vector has no integer at all.
+  final int integerOperandIndex;
+
   /// True when the operands form an infix expression (`Set`): values interleaved with
   /// `Math op` predefines and parentheses.
   final bool expression;
@@ -126,6 +133,7 @@ class ScriptInstructionDef {
     this.numeric = false,
     this.constantIndex = -1,
     this.addressIndex = -1,
+    this.integerOperandIndex = -1,
     this.expression = false,
     this.operandRoles = const [],
     this.destinationRole,
@@ -200,6 +208,11 @@ const Map<int, int> expressionFunctions = {20: 2, 21: 2, 22: 1, 23: 1};
 /// whose result cannot be represented in a Q16.16 Number (see [ScriptInstructionDef
 /// .integerDestination], e.g. `Get time`).
 const Set<int> integerDestinationTypes = {0x05 /*Index*/, 0x0E /*Uint32*/};
+
+/// Data types an integer-typed operand must have (see [ScriptInstructionDef
+/// .integerOperandIndex], e.g. `Log`'s uint32 log code): the same whole-integer set as
+/// [integerDestinationTypes].
+const Set<int> integerOperandTypes = integerDestinationTypes;
 
 /// `Transform` instruction op (a 2x3 matrix from rot, ox, oy, sx, sy[, skew]).
 const int mathTransformOp = 11;
@@ -394,14 +407,19 @@ const List<ScriptInstructionDef> scriptInstructions = [
     destinationRole: 'time',
   ),
   // Service
-  // Log carries a single operand: the log code (a uint16 of the Log Handler's custom log).
-  // It is a log entry, not a math log, so a second operand has nowhere to go.
+  // Log is a log entry, not a math log: its single operand is the log code, a 32-bit
+  // unsigned value (the Log Handler's `Log code` field is a uint32 and `MakeLog` takes it
+  // as uint32_t; Script.md: "its code a source-specific 32 bits"). A Q16.16 Number would
+  // put its fixed-point bits on the wire and a String/Vector has no integer at all, so the
+  // operand is typed to the whole-integer set (Index/Uint32): an inline Index literal
+  // carries the low 16 bits of the code, a Uint32 variable or constant the whole 32.
   ScriptInstructionDef(
     op: 0,
     category: catService,
     label: 'Log',
     minOperands: 1,
     maxOperands: 1,
+    integerOperandIndex: 0,
     operandRoles: ['code'],
   ),
   ScriptInstructionDef(
@@ -803,6 +821,22 @@ List<String> validateScriptLines(
         errors.add(
           '$where (${def.label}): operand ${def.addressIndex + 1} must be a device '
           'address (Id)',
+        );
+      }
+    }
+    if (def.integerOperandIndex >= 0 &&
+        line.operands.length > def.integerOperandIndex) {
+      final o = line.operands[def.integerOperandIndex];
+      final t = context.typeOf(o);
+      // An Index predefine carries its code as a plain integer literal; any other
+      // predefine (Number/Char/Bool/...) or a non-integer typed symbol is refused.
+      final ok = t == null
+          ? o.type == symPredefine && o.subtype == preIndex
+          : integerOperandTypes.contains(t);
+      if (!ok) {
+        errors.add(
+          '$where (${def.label}): operand ${def.integerOperandIndex + 1} must be an '
+          'integer (Index/Uint32)',
         );
       }
     }
