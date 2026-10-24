@@ -154,18 +154,20 @@ are hardware-only.
   (foreign)` declare no destination at all, so a failed write's code has nowhere to land.
 
 - **E43** **A foreign register reply that arrives after the 500 ms deadline can be read as the next
-  request's.** A script's TRID is fixed per slot (`TRID_SCRIPT_BASE + Slot`,
-  `firmware/src/Core/Services/ScriptProgram.h:190`), so every foreign request it sends carries the
-  same one; `HandleResponse` matches a reply on that TRID alone
+  request's.** *(Closed 2026-10-24 - **not a defect**. Owner ruling (Akyirr): "500 ms is long, that is
+  not a defect." The window needs a remote that answers later than the deadline, and by that ruling
+  such a peer is the problem, not the deadline.)* A script's TRID is fixed per slot
+  (`TRID_SCRIPT_BASE + Slot`, `firmware/src/Core/Services/ScriptProgram.h:190`), so every foreign
+  request it sends carries the same one; `HandleResponse` matches a reply on that TRID alone
   (`firmware/src/Core/Services/ScriptRuntime.h:96`). A timed-out request used to stop the script in
   `Error`, which made the window unreachable. It is reachable now: the script carries
   `SCRIPT_ERR_TIMEOUT` into its destination and runs on (`CarryPendingResultCode`, `t_2e856b86`),
   so the next foreign op is in flight on the same TRID when the abandoned reply arrives - the stale
   value lands in the new line's destination, or confirms a write that was never confirmed. Needs a
-  remote answering slower than 500 ms plus a second foreign op in the same script. Fix: one TRID per
-  request inside the slot's range (e.g. `TRID_SCRIPT_BASE + Slot * 64 + Seq`, which keeps the
-  DISPATCHER's routing by range, `firmware/src/Core/Functions/Dispatcher.h:91`), or drop a reply
-  whose TRID was abandoned. Not urgent, but it is a wrong-value path, not a cosmetic one.
+  remote answering slower than 500 ms plus a second foreign op in the same script.
+  **Footnote, for anyone who ever shortens the deadline:** the fix is one TRID per request inside the
+  slot's range (e.g. `TRID_SCRIPT_BASE + Slot * 64 + Seq`, which keeps the DISPATCHER's routing by
+  range, `firmware/src/Core/Functions/Dispatcher.h:91`), or dropping a reply whose TRID was abandoned.
 
 ## Valu v2.0 app (2026-10-06) - parked (owner: not now)
 
