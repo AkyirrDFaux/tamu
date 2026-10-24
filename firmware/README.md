@@ -45,12 +45,15 @@ From the repo root:
 
 ## Memory ceilings
 
-`board_upload.maximum_size` in `platformio.ini`. A build that grows past its
-window fails to link instead of overrunning its neighbour.
+Where the windows come from: `board_upload.maximum_size` in `platformio.ini`
+for the CH32V entries below, and the partition table for the ESP32 ones —
+`board_build.partitions` loads `partitions.csv`, and `app_partition_name`
+points the app env at `ota_0` while the bootloader keeps `factory`. A CH32V
+build that outgrows its region fails to link instead of overrunning the next.
 
 | Environment | Window | Notes |
 | --- | --- | --- |
-| `Tamu_v2_0A` | 2688 KiB (`ota_0`) | ~2.5 MB unused, so this target trades size for speed |
+| `Tamu_v2_0A` | 2688 KiB (`ota_0`) | `pio run` reports 24 % of the window used (~2.0 MB unused), so this target trades size for speed |
 | `Tamu_bootloader` | 384 KiB (`factory`) | serves bootloader frames into `ota_0` |
 | `DAS_v0_1` | 14336 B; code space to `0x3E00` = 13824 B | the tight one: RAM exactly full; a couple of hundred bytes of code space spare |
 | `DAS_bootloader` | 2048 B | deliberately link-fails above 2 KB |
@@ -61,7 +64,8 @@ From the repo root:
 
     ./test.sh
 
-It compiles the native numeric-core tests on the host twice — once as the core
-build, once as the DAS build — then runs the app's suites and analyzer. Tests
-that need the physical rig are the `hil` tag; `test/README.md` at the repo root
-describes them.
+It builds and runs the host-side native tests — the numeric core in its three
+shapes, and the crc and geometry suites, each in both `OPTIMIZE_SPEED` states,
+plus the alignment, stride, script, bootloader, TRID and log suites — then the
+app's suites and analyzer. Tests that need the physical rig are the `hil` tag;
+`test/README.md` at the repo root describes them.
