@@ -2,7 +2,7 @@
 
 Flutter companion app for the Tamu device network.
 
-Complementary firmware: https://github.com/AkyirrDFaux/tamu
+Firmware: [`../firmware/`](../firmware/README.md)
 
 The app speaks the App Interface protocol to the core device it is connected to,
 over USB or BLE, discovers the rest of the network through the core's SN
@@ -56,7 +56,8 @@ the logs.
                       backup, scripts, settings
     lib/ui/           One file per documented page, plus shared pickers and widgets
     test/             Host suites; test/hil/ the rig suites
-    tool/             Developer helpers (fixtures, contrast, rig link, bench)
+    tool/             Developer helpers (fixtures, contrast, rig link, bench,
+                      setup upload)
 
 `lib/core/` holds the protocol, the state and the service clients; `lib/ui/`
 holds the widgets.
@@ -71,6 +72,5 @@ holds the widgets.
   (`applicationIdSuffix = ".beta"` in `android/app/build.gradle.kts`) so they
   install alongside a release build; debug and release share `tamu.app`, so
   installing one replaces the other.
-- `permission_handler` stays pinned to `^11.3.1`: 13.x needs `compileSdk 37`,
-  which this SDK ships as `android-37.0` (unresolvable by AGP 8.11). See
-  `Issues.md`.
+- Runtime BLE permissions come from `permission_handler` `^13.0.2`
+  (`pubspec.yaml`), resolved to 13.0.2 in `pubspec.lock`.

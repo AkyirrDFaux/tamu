@@ -2,7 +2,7 @@
 
 Firmware / micro-OS for 32-bit microcontroller boards.
 
-Complementary app: https://github.com/AkyirrDFaux/tamu
+Companion app: [`../app/`](../app/README.md)
 
 One codebase and one packet protocol (the spec is `Docs/RSBus and Packets.md`);
 the parts that must differ per chip — GPIO, flash, startup code, storage geometry
@@ -15,11 +15,10 @@ services are specified in `Docs/Services/`, the devices in `Docs/Devices.md`.
 | --- | --- | --- |
 | `Tamu_v2_0A` | Tamu v2.0A (ESP32-C3) | Core board: RSBus, IMU, two fan PWM outputs, LED display, LED-button, App Interface over USB and BLE. Dynamic memory and scripts enabled. |
 | `DAS_v0_1` | DAS v0.1 (CH32V003) | Dual analog sensor node: two resistive measurement channels with switchable range selectors, a button, a red and a white LED. RSBus only, no allocator, no scripts. |
-| `Valu_v2_0` | Valu v2.0 (CH32V203G8R6) | Standalone legacy node: USB CDC App Interface only (no RSBus), fan PWM, three buttons, three resistive inputs, LED strip and OLED pins. Dynamic memory and scripts enabled. |
 
-Each application has a bootloader environment beside it: `[env:Tamu_bootloader]`,
-`[env:DAS_bootloader]`, `[env:Valu_bootloader]`. They run first, own the bottom
-of flash, and hand over to the application unless a button is held at reset.
+Each application has a bootloader environment beside it: `[env:Tamu_bootloader]`
+and `[env:DAS_bootloader]`. They run first, own the bottom of flash, and hand
+over to the application unless a button is held at reset.
 
 ## Build
 
@@ -29,8 +28,8 @@ From `firmware/`:
     pio run -e Tamu_v2_0A -e DAS_v0_1
 
 Build only, no upload. Platform and framework versions are pinned in
-`platformio.ini` — the DAS and Valu toolchains to a commit, the ESP32 platform to
-`7.0.1` — so a fresh clone builds the same image.
+`platformio.ini` — the DAS toolchain to a commit, the ESP32 platform to `7.0.1`
+— so a fresh clone builds the same image.
 
 ## Flash
 
@@ -41,10 +40,8 @@ From the repo root:
     ./upload.sh all [tamu|das|valu]      # bootloaders, then applications
     ./upload.sh bin das [file] [offset]  # raw image through minichlink
 
-`./upload.sh` is Akyirr's to run. The Valu's first bootloader goes in over the
-WCH-Link probe with `firmware/scripts/valu_upload.py`. The PlatformIO targets
-work directly too: `pio run -e DAS_bootloader -t upload`, then
-`pio run -e DAS_v0_1 -t upload`.
+`./upload.sh` is Akyirr's to run. The PlatformIO targets work directly too:
+`pio run -e DAS_bootloader -t upload`, then `pio run -e DAS_v0_1 -t upload`.
 
 ## Memory ceilings
 
@@ -57,8 +54,6 @@ window fails to link instead of overrunning its neighbour.
 | `Tamu_bootloader` | 384 KiB (`factory`) | serves bootloader frames into `ota_0` |
 | `DAS_v0_1` | 14336 B; code space to `0x3E00` = 13824 B | the tight one: 100 % RAM, 99.5 % of its code space |
 | `DAS_bootloader` | 2048 B | deliberately link-fails above 2 KB |
-| `Valu_v2_0` | 45056 B, `[0x3000, 0xE000)` | the top 8 KiB of flash stays storage |
-| `Valu_bootloader` | 12288 B | 12 KB rather than 8 KB, for TinyUSB |
 
 ## Tests
 

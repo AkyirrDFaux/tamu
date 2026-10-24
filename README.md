@@ -5,8 +5,7 @@ Flutter app that drives a network of them. Every device runs the same command
 interface — a system block, a register file with static and dynamic memory,
 storage, logging, and an optional scripting engine — and speaks the same packet
 protocol, so one app reaches the core (Tamu v2.0A) and the nodes on its RSBus
-(DAS v0.1), or talks to a standalone Valu v2.0 over USB, without
-device-specific code.
+(DAS v0.1) without device-specific code.
 
 `Docs/` is the specification. It defines the services, the packets, the data
 formats and the device behaviour; the firmware and the app are built against it,
