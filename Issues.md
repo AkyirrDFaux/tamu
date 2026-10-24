@@ -44,20 +44,23 @@ are hardware-only.
   `13440 = 16384 - 2048 - 512 - 384` subtracts the storage's 384 B data payload a second time (it is
   already inside the 512 B), and its arithmetic merely coincides with the 2026-10-08 Phase-0 build
   (`6c3d210:TODO.md:34`, `13440/14336 = 93.75 %`) that the criterion was copied from. **The image is
-  not over budget and nothing needs to be trimmed.** Clean rebuilds (2026-10-17, `3e6f505`):
-  `RAM 100.0% (2048/2048)` / `Flash 95.9% (13748/14336)`; the image spans 13752 B and ends at
-  `0x3DB8`, leaving **72 B of headroom** with no overlap of the storage at `0x3E00`. Platformio's
-  14336 B denominator is the storage-inclusive App size, so 95.9 % is not a fullness figure — the
-  image is **~99.5 % of code space** (13752 of 13824 B, 99.48 %; platformio's 13748 B is 99.45 %).
+  not over budget and nothing needs to be trimmed.** Clean rebuild (2026-10-24, `0c55523`):
+  `RAM 100.0% (2048/2048)` / `Flash 95.6% (13708/14336)`; the image ends at `0x3D20` (`_etext`
+  `0x3D1C` plus the 4 B `.init_array`), so it spans 13600 B of the 13824 B code space with **224 B
+  of headroom** and no overlap of the storage at `0x3E00`. Platformio's 14336 B denominator is the
+  storage-inclusive App size, so 95.6 % is not a fullness figure — the image occupies **98.4 % of
+  code space** (13600 of 13824 B, 98.38 %); platformio's 13708 B differs by counting the 112 B
+  `.data` initialiser image and skipping the 4 B `.init_array`.
   The 100 % RAM figure is by design: statics (1048 B) + stack (1000 B) fill the 2 KB exactly, the
   state `firmware/platformio.ini` documents, and the linker errors if statics grow into the stack.
   The 2028 B RAM gate could never have been met.
-  **Still a real warning:** `.text` grew 13160 -> 13444 (+284 B) and statics +20 B between `fc964e5`
-  (2026-10-13) and `3e6f505` across the storage/discovery/subscription work. With 72 B left, further
-  code growth fails the link rather than warning — measure before adding a DAS feature. Size lines
-  are only trustworthy after `pio run -e DAS_v0_1 -t clean`; a stale `.pio/build/DAS_v0_1` can still
-  report "up to date". Figures corrected in `TODO.md` (acceptance criteria and Phase 5) and
-  `firmware/platformio.ini`; `AGENTS.md:54` still needs the owner (protected file, see E31).
+  **Still a real warning:** `.text` grew 13160 -> 13404 (+244 B) and statics 1028 -> 1048 B (+20 B)
+  between `fc964e5` (2026-10-13) and this image across the storage/discovery/subscription work. With
+  224 B left, further code growth fails the link rather than warning — measure before adding a DAS
+  feature. Size lines are only trustworthy after `pio run -e DAS_v0_1 -t clean`; a stale
+  `.pio/build/DAS_v0_1` can still report "up to date". Figures corrected in `TODO.md` (acceptance
+  criteria and Phase 5) and `firmware/platformio.ini`; `AGENTS.md:54` still needs the owner
+  (protected file, see E31).
 - **E31** **The DAS flash layout is not fully documented.** `Docs/Devices.md:43-70` gives the DAS
   storage (512 B) and bootloader (2 kB) sizes but never states the 16 KB chip total or the
   `0x800`/`0x3E00` bases, so the code space cannot be derived from the docs alone — it has to be
