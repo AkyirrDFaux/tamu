@@ -52,7 +52,7 @@ window fails to link instead of overrunning its neighbour.
 | --- | --- | --- |
 | `Tamu_v2_0A` | 2688 KiB (`ota_0`) | ~2.5 MB unused, so this target trades size for speed |
 | `Tamu_bootloader` | 384 KiB (`factory`) | serves bootloader frames into `ota_0` |
-| `DAS_v0_1` | 14336 B; code space to `0x3E00` = 13824 B | the tight one: 100 % RAM, 99.5 % of its code space |
+| `DAS_v0_1` | 14336 B; code space to `0x3E00` = 13824 B | the tight one: RAM exactly full; a couple of hundred bytes of code space spare |
 | `DAS_bootloader` | 2048 B | deliberately link-fails above 2 KB |
 
 ## Tests

@@ -64,8 +64,9 @@ holds the widgets.
 
 ## Android notes
 
-- BLE only, with runtime permissions requested on the first scan; settings live
-  in the app support directory.
+- BLE only, with runtime permissions requested on the first scan. Settings
+  persist to `settings.json` in the app's private temp/cache directory on
+  Android and in `~/.config/tamuapp/` on desktop.
 - Gradle 8.14 and the Kotlin tooling reject JDKs newer than 24 (Java 25/26 fail
   inside Kotlin's `JavaVersion.parse`), so build with a JDK 17–24.
 - Beta builds carry the application id `tamu.app.beta`
