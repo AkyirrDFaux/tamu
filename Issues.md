@@ -151,28 +151,6 @@ are hardware-only.
   output, `app/lib/core/script_instructions.dart:757-758`), and `Register write` / `Register write
   (foreign)` declare no destination at all, so a failed write's code has nowhere to land.
 
-- **E38** **The editor says unloading an unloaded script "does nothing"; the firmware reports
-  `SCRIPT_ERR_BOUNDS`.** Comment at `app/lib/core/script_instructions.dart:459-460`. `ScriptExec.h:516` sets
-  the code for a slot that is out of range or not active and stores it in the line's result destination
-  (`StoreResultCode`), so the line still succeeds but a script that checks the code sees a failure; the
-  comment is the misleading side.
-
-- **E39** **The editor's line numbers are 1-based and every flow target is a 0-based instruction index.**
-  The gutter prints `${index + 1}` (`app/lib/ui/script_editor_line.dart:120`), while Jump/Call bound their
-  target as `Target < LineCount` and assign `Ic = Target` (`firmware/src/Core/Services/ScriptExec.h:251-252`
-  and `:259-262`), i.e. an instruction index. The debug page's Move to line field passes the typed number
-  to `moveToInstruction` unmodified (`app/lib/ui/script_editor_view.dart:92-111`), and no conversion exists
-  anywhere in `app/lib`, so the gutter's "line 5" is target 4.
-
-- **E40** **`Log` accepts up to four operands in the editor and the engine reads only the first.**
-  `maxOperands: 4` at `app/lib/core/script_instructions.dart:403`; `ScriptExec.h:364-367` takes operand 1 as
-  the log code and ignores the rest, so operands 2-4 are accepted, carried in the line and silently dropped.
-
-- **E41** **A comment says Modulo is "not offered"; it is in both math-op tables.**
-  `app/lib/core/script_instructions.dart:157` ("Shifts (10/11) and Modulo (4) are not offered"), while
-  Modulo is in `scriptPredefineMathOps` and `expressionOps` in the same file and is documented at
-  `Docs/Services/Script.md:69`. Comment only, no behaviour.
-
 ## Valu v2.0 app (2026-10-06) - parked (owner: not now)
 
 - **E27** **Resistive measurement reference resistor is undefined.** `Docs/Devices.md` gives three ADC
