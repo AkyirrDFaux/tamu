@@ -141,12 +141,15 @@ are hardware-only.
   from the device in full: its slot is unloaded and its stored file deleted, both reported, so it
   cannot be loaded again."
 
-- **E37** **Register read/write are documented as fault-free with an app-supplied scratch destination;
-  neither half holds.** `Docs/Services/Script.md:198` says the external-facing register instructions never
-  fault and carry their code into a result destination, "a scratch destination when the script ignores
-  it". No scratch destination exists in `app/lib` (the editor requires a real variable or output,
-  `app/lib/core/script_instructions.dart:757-758`), and a failed local read faults `SCRIPT_ERR_REGISTER`
-  (`firmware/src/Core/Services/ScriptExec.h:411`) rather than reporting it in a destination.
+- **E37** **A scratch destination for the external-facing instructions exists in the spec only; the
+  firmware half now carries the code, the app half does not.** `Docs/Services/Script.md:198` says the
+  register instructions never fault and carry their code into a result destination, "a scratch
+  destination when the script ignores it". The firmware does that now: a failed local read/write
+  stores `SCRIPT_ERR_REGISTER` in the line's destination and advances (`CarryResultCode`,
+  `firmware/src/Core/Services/ScriptExec.h`); only malformed operands still fault. What is left is
+  app-side: no scratch destination exists in `app/lib` (the editor requires a real variable or
+  output, `app/lib/core/script_instructions.dart:757-758`), and `Register write` / `Register write
+  (foreign)` declare no destination at all, so a failed write's code has nowhere to land.
 
 - **E38** **The editor says unloading an unloaded script "does nothing"; the firmware reports
   `SCRIPT_ERR_BOUNDS`.** Comment at `app/lib/core/script_instructions.dart:459-460`. `ScriptExec.h:516` sets
@@ -169,14 +172,6 @@ are hardware-only.
   `app/lib/core/script_instructions.dart:157` ("Shifts (10/11) and Modulo (4) are not offered"), while
   Modulo is in `scriptPredefineMathOps` and `expressionOps` in the same file and is documented at
   `Docs/Services/Script.md:69`. Comment only, no behaviour.
-
-- **E42** **Power with exponent exactly 0.5 on a negative base returns 0 and succeeds, where the spec calls
-  it a domain failure.** `Docs/Services/Script.md:70` and `:201`. The exact-0.5 fast path `Exp.Value == 1<<15`
-  (`firmware/src/Core/Services/ScriptExpr.h:89`) returns `sqrt(Base)` before the fractional-negative domain
-  check at `ScriptExpr.h:96`, and `sqrt` clamps a non-positive input to 0
-  (`firmware/src/Core/Types/Number.h:241` and `:254`), so (-4)^0.5 = 0 with no detail. Reproduced with a
-  compiled probe on card `t_3f79ad3b`: exp 1.5 and -0.5 fail as documented, only 0.5 escapes. Fix: move the
-  domain check ahead of the fast path, or make the fast path reject a negative base.
 
 ## Valu v2.0 app (2026-10-06) - parked (owner: not now)
 

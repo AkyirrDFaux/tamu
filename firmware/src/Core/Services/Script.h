@@ -15,6 +15,7 @@
 //   ScriptProgram.h SCR_XXX parsing, program compilation, registry/entry access
 //   ScriptVm.h      symbol resolution, values, assignment
 //   ScriptExpr.h    infix expression evaluation (Set)
+//   ScriptPow.h     base ^ exp, and its domain rule (free functions, host-testable)
 //   ScriptExec.h    per-line instruction execution
 //   ScriptRuntime.h tick, boot load, management commands
 
@@ -99,7 +100,6 @@ private:
     // ===== ScriptExpr.h: infix expression evaluation =====
     bool ExprResolve(ExprParser *Parser, const uint8_t *Sym, ExprValue &Out);
     uint8_t ExprPeekOp(ExprParser *Parser);
-    bool ExprPow(Number Base, Number Exp, Number &Out);
     bool ExprIsBoolOp(uint8_t Op);
     bool ExprApply(ExprValue &Lhs, const ExprValue &Rhs, uint8_t Op);
     bool ExprPrimary(ExprParser *Parser, ExprValue &Out);
@@ -127,6 +127,7 @@ private:
     uint8_t ExecService(LoadedScript *Script, const ScriptLineInfo &Ln, const uint8_t *Opbase,
                         uint8_t Op, uint32_t NowMs, bool &Yield);
     uint8_t StoreResultCode(LoadedScript *Script, const uint8_t *DestSym, uint8_t Code);
+    uint8_t CarryResultCode(LoadedScript *Script, const ScriptLineInfo &Ln, uint8_t Code);
     bool ContainerElement(LoadedScript *Script, const uint8_t *Sym, int32_t Index,
                           uint8_t *Scratch, const uint8_t **Elem, uint8_t *ElemSize, uint16_t *ElemType);
     uint8_t ExecCompose(LoadedScript *Script, const ScriptLineInfo &Ln, const uint8_t *Opbase, uint8_t Op);

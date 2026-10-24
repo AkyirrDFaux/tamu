@@ -8,13 +8,16 @@
 // mistake there fails here too.
 //
 // No device dependency: built with -DUSE_SCRIPTS -DSCRIPT_HOST_TEST (see run.sh), which keeps
-// ScriptDefs.h on the host-clean includes (MemoryTypes/StrideOffsets/Enums/Number).
+// ScriptDefs.h on the host-clean includes (MemoryTypes/StrideOffsets/Enums/Number). It also pins
+// Power's domain rule through ScriptPow.h, the function the VM's `^` operator calls, so the
+// fractional power of a negative base is checked end to end without the device layer.
 
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 
 #include "Core/Services/ScriptDefs.h"
+#include "Core/Services/ScriptPow.h"
 
 static int checks = 0, failures = 0;
 
@@ -156,6 +159,64 @@ int main() {
     CHECK_EQ(SCRIPT_OP_EXTRACT, 1);
     // Shift math ops (10/11) are dropped; the next operator keeps its number.
     CHECK_EQ(SCRIPT_MATHOP_EQ, 12);
+
+    // --- Power: no fractional power of a negative base (Docs/Services/Script.md "Math op",
+    //     Issues.md E42) ---
+    // The domain check runs ahead of the 0.5 fast path on purpose: sqrt() clamps a non-positive
+    // input to 0, so (-4)^0.5 used to return 0 and report success. All three fractional forms
+    // must fail, and 0.5 must not be special-cased past the check.
+    {
+        const Number Q05 = Number::FromRaw(0x8000);   // 0.5
+        const Number Q15 = Number::FromRaw(0x18000);  // 1.5
+        const Number NQ05 = Number::FromRaw(-0x8000); // -0.5
+        CHECK(!ScriptPowDomainOk(Number(-4), Q05));
+        CHECK(!ScriptPowDomainOk(Number(-4), Q15));
+        CHECK(!ScriptPowDomainOk(Number(-4), NQ05));
+        // A negative integer exponent is a real value, so the domain still admits it.
+        CHECK(ScriptPowDomainOk(Number(-4), Number(2)));
+        CHECK(ScriptPowDomainOk(Number(-4), Number(-3)));
+        CHECK(ScriptPowDomainOk(Number(4), Q05));
+
+        Number Out = Number::FromRaw(0x1234); // untouched by a domain failure
+        CHECK(!ScriptPow(Number(-4), Q05, Out));
+        CHECK_EQ(Out.Value, 0x1234);
+        CHECK(!ScriptPow(Number(-4), Q15, Out));
+        CHECK_EQ(Out.Value, 0x1234);
+        CHECK(!ScriptPow(Number(-4), NQ05, Out));
+        CHECK_EQ(Out.Value, 0x1234);
+
+        // The behaviour that was already right stays right.
+        CHECK(ScriptPow(Number(-4), Number(2), Out));
+        CHECK_EQ(Out.Value, 16 << 16);
+        CHECK(ScriptPow(Number(-4), Number(3), Out));
+        CHECK_EQ(Out.Value, -(64 << 16));
+        CHECK(ScriptPow(Number(-4), Number(-1), Out));
+        CHECK_EQ(Out.Value, -0x4000); // -0.25
+        CHECK(ScriptPow(Number(-4), Number(-3), Out));
+        CHECK_EQ(Out.Value, -0x400); // -1/64 = -0.015625
+    }
+
+    // A positive base keeps both fast paths: 0.5 -> sqrt, -0.5 -> its reciprocal.
+    {
+        Number Out;
+        CHECK(ScriptPow(Number(4), Number::FromRaw(0x8000), Out));
+        CHECK_EQ(Out.Value, 2 << 16);
+        CHECK(ScriptPow(Number(4), Number::FromRaw(-0x8000), Out));
+        CHECK_EQ(Out.Value, 0x8000); // 0.5
+        CHECK(ScriptPow(Number(16), Number::FromRaw(0x18000), Out));
+        CHECK_EQ(Out.Value, 64 << 16);
+        CHECK(ScriptPow(Number(0), Number::FromRaw(0x8000), Out));
+        CHECK_EQ(Out.Value, 0);
+    }
+
+    // Pow's other documented failures: an integer part above 64 and a zero reciprocal.
+    {
+        Number Out = Number::FromRaw(0x1234);
+        CHECK(!ScriptPow(Number(4), Number(65), Out));
+        CHECK_EQ(Out.Value, 0x1234);
+        CHECK(!ScriptPow(Number(0), Number(-1), Out)); // zero reciprocal
+        CHECK_EQ(Out.Value, 0x1234);
+    }
 
     // --- CID 3 report record layout (Docs/Services/Script.md "Report Record") ---
     CHECK_EQ(SCRIPT_REPORT_OFF_STATE, 0);

@@ -351,6 +351,20 @@ inline uint8_t ScriptService::StoreResultCode(LoadedScript *Script, const uint8_
     return Assign(Script, DestSym, Buf, 4, (uint16_t)DataType::Uint32);
 }
 
+// An external-facing instruction's result code, carried into the line's result destination and
+// then on to the next line (Docs/Services/Script.md "Error Model": register read/write, the
+// foreign variants included, never fault). A line that carries no destination - the app's
+// register-write shape has none - still advances: the code has nowhere to land, and faulting
+// the line is exactly what the spec forbids.
+inline uint8_t ScriptService::CarryResultCode(LoadedScript *Script, const ScriptLineInfo &Ln, uint8_t Code) {
+    if (Ln.DestCount >= 1) {
+        uint8_t Err = StoreResultCode(Script, Script->Instr + (size_t)Ln.Start * 4, Code);
+        if (Err) return Err;
+    }
+    Script->Ic++;
+    return SCRIPT_ERR_NONE;
+}
+
 inline uint8_t ScriptService::ExecService(LoadedScript *Script, const ScriptLineInfo &Ln, const uint8_t *Opbase,
                                  uint8_t Op, uint32_t NowMs, bool &Yield) {
     switch (Op) {
@@ -402,13 +416,16 @@ inline uint8_t ScriptService::ExecService(LoadedScript *Script, const ScriptLine
             Script->Ic++;
             return SCRIPT_ERR_NONE;
         case SCRIPT_OP_SERVICE_REG_READ: { // dest = register[BlockInfo]
+            // External-facing: a register that cannot be read is a result code in the
+            // destination, not a fault (only a malformed line is a fault).
             if (Ln.DestCount < 1 || Ln.OpCount < 1) return SCRIPT_ERR_OPERAND;
             uint32_t Bi = 0;
             if (!OperandBlockInfo(Script, Opbase, Bi)) return SCRIPT_ERR_OPERAND;
             ValueInfo Rm;
             uint8_t Rbuf[256]; // a register value can be up to the u8 size limit
             uint8_t Rsz = 0;
-            if (!RegisterGetByBlockInfo(Bi, Rm, Rbuf, Rsz)) return SCRIPT_ERR_REGISTER;
+            if (!RegisterGetByBlockInfo(Bi, Rm, Rbuf, Rsz))
+                return CarryResultCode(Script, Ln, SCRIPT_ERR_REGISTER);
             uint8_t Err = Assign(Script, Script->Instr + (size_t)Ln.Start * 4, Rbuf, Rsz,
                                        ValueInfoType(Rm.Type));
             if (Err) return Err;
@@ -416,13 +433,16 @@ inline uint8_t ScriptService::ExecService(LoadedScript *Script, const ScriptLine
             return SCRIPT_ERR_NONE;
         }
         case SCRIPT_OP_SERVICE_REG_WRITE: { // register[BlockInfo] = operand2
+            // External-facing too: an absent or unwritable register is a result code (into the
+            // line's destination when it carries one), never a fault.
             if (Ln.OpCount < 2) return SCRIPT_ERR_OPERAND;
             uint32_t Bi = 0;
             if (!OperandBlockInfo(Script, Opbase, Bi)) return SCRIPT_ERR_OPERAND;
             // Only the descriptor is needed here, so resolve without copying the current value
             // into a stack buffer (the read path still needs the copy).
             FieldResult Rf;
-            if (!RegisterResolveByBlockInfo(Bi, Rf)) return SCRIPT_ERR_REGISTER;
+            if (!RegisterResolveByBlockInfo(Bi, Rf))
+                return CarryResultCode(Script, Ln, SCRIPT_ERR_REGISTER);
             const ValueInfo Rm = Rf.Descriptor;
             uint8_t Scratch[4];
             const uint8_t *Val = nullptr;
@@ -434,7 +454,8 @@ inline uint8_t ScriptService::ExecService(LoadedScript *Script, const ScriptLine
             uint8_t Err = AssignResolved(ValueInfoType(Rm.Type), Wbuf, Rm.Size, Val, Vsize, Vtype);
             if (Err) return Err;
             ValueInfo Wm = Rm;
-            if (!RegisterSetByBlockInfo(Bi, Wm, Wbuf, Rm.Size)) return SCRIPT_ERR_REGISTER;
+            if (!RegisterSetByBlockInfo(Bi, Wm, Wbuf, Rm.Size))
+                return CarryResultCode(Script, Ln, SCRIPT_ERR_REGISTER);
             Script->Ic++;
             return SCRIPT_ERR_NONE;
         }
