@@ -170,7 +170,7 @@ runs one of them acts on itself; they are not a remote control for another slot.
 
 | Operation | Operands | Output | What it does |
 | --- | --- | --- | --- |
-| Compose | 1. index, 2. value, up to three more values | Destination: a variable or output container | Writes the values into the container's elements starting at the index. The container is a `Vector`, `Matrix`, `Colour` or `Text`, and each value converts to the element's type: a `Number` element, a `Uint32` byte of a `Colour`, a `Char` of a `Text`. |
+| Compose | 1. index, 2. value, 3. to 4. further values | Destination: a variable or output container | Writes the values into the container's elements starting at the index, up to four operands in all. The container is a `Vector`, `Matrix`, `Colour` or `Text`, and each value converts to the element's type: a `Number` element, a `Uint32` byte of a `Colour`, a `Char` of a `Text`. |
 | Extract | 1. container, 2. index | Destination: one element | Reads one element back in the container's element type. |
 
 An index outside the container's bounds is an error on the line.
@@ -182,7 +182,7 @@ operators and parentheses, read left to right.
 
 | Operator | Form | Note |
 | --- | --- | --- |
-| Add (`+`), Subtract (`-`), Multiply (`*`), Divide (`/`), Modulo (`%`), Power (`^`) | Between two values | Arithmetic, element-wise, a scalar broadcasts. Division by zero fails, Modulo takes whole numbers, and Power takes an exponent whose integer part is at most 64. |
+| Add (`+`), Subtract (`-`), Multiply (`*`), Divide (`/`), Modulo (`%`), Power (`^`) | Between two values | Arithmetic, element-wise, a scalar broadcasts. Division by zero fails, Modulo takes whole numbers, and Power takes an exponent whose integer part is at most 64 and fails on a negative base with a fractional exponent. |
 | Subtract (`-`) | Before a value | Negation. |
 | AND, OR, XOR | Between two values | Logic, scalar operands only, result `Bool`. |
 | NOT | Before a value | Logic, one scalar operand, result `Bool`. |
