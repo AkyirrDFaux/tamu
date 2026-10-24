@@ -9,6 +9,8 @@
 #                     the custom log's 32-bit code and Power's domain/fast paths
 #                     (Core/Services/ScriptPow.h)
 #   crc_test.cpp      Crc8 (Core/Functions/Packet.h), both OPTIMIZE_SPEED shapes
+#   value_update_test.cpp  a 0-length value write is refused at the dynamic block
+#                     (Core/Functions/MemoryBlocks.h), so the target keeps its value
 #
 # The numeric core is built in three shapes: the core (64-bit) and the DAS (32-bit, no
 # Vector/Matrix) are the real targets; the third - 32-bit *with* Vector/Matrix - is a
@@ -89,5 +91,9 @@ echo
 
 echo "### native log layout tests (LogMessage source/code/timestamp)"
 build_run "log" "log_test.cpp"
+echo
+
+echo "### native value-update tests (a 0-length value is refused; the dynamic target keeps its value)"
+build_run "valueupdate" "value_update_test.cpp"
 
 exit $fail

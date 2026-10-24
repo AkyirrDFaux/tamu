@@ -3,8 +3,12 @@
 // The runtime block descriptors and the generic registry
 //
 // Part of Memory.h, split for readability; included from there.
+//
+// Only the value model is needed here (ValueInfo/DataType, MakeFieldKey, AlignValue), so the
+// header stays free of the packet/storage layer and the native tests can drive a block directly
+// (test/native/value_update_test.cpp). Memory.h includes MemoryBackup.h before this.
 
-#include "Core/Functions/MemoryBackup.h"
+#include "Core/Functions/MemoryTypes.h"
 #include <cstdlib>
 
 // Value alignment (Docs/Services/Register.md "Memory with 32-bit alignment"): a value is
@@ -162,6 +166,12 @@ struct DynamicBlockDescriptor
 
         if (ValueInfoType(Desc) == (uint16_t)DataType::None)
             return DeleteEntry(Field, Key);
+
+        // A value with no value bytes is refused: storing it would set the entry's Size to 0 and
+        // make the key unresolvable for every later write (GetKey then hands back DataPtr =
+        // nullptr), so the target would stay dead until the block is reloaded. The entry keeps its
+        // previous value and descriptor. See ValueUpdateApplicable (MemoryTypes.h).
+        if (!ValueUpdateApplicable(Len)) return false;
 
         ValueInfo Info = Desc;
         Info.Size = Len;              // the stored length is the bytes actually present

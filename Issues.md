@@ -169,6 +169,25 @@ are hardware-only.
   slot's range (e.g. `TRID_SCRIPT_BASE + Slot * 64 + Seq`, which keeps the DISPATCHER's routing by
   range, `firmware/src/Core/Functions/Dispatcher.h:91`), or dropping a reply whose TRID was abandoned.
 
+- **E45** **A `Register write` carrying `ValueInfo.Size = 0` stores a size-0 dynamic entry, and the
+  field then never resolves again.** Measured on the rig (`iter=2`, pre-fix, 2026-10-24 21:12): one
+  Register Write to `Dynamic.0` f6 with `ValueInfo` `04 00 00 00` took its meta from `04000100` to
+  `04000000`, and the reply carried no FAIL; a real 1-byte value pushed afterwards on the
+  subscription row's TRID renewed the row's lease (+12051 ms, so `ApplyRequesterValue` ran) while the
+  field stayed size 0 - the "value arrives, never lands" signature. Only an explicit write carrying
+  Size 1 restored it (meta back to `04000100`). **Fixed in `t_b579fa77`**: `SetEntry` refuses a
+  0-length value (`ValueUpdateApplicable`, `MemoryTypes.h`) and the write now answers FAIL, and
+  `ApplyRequesterValue` refuses one before touching its target. *Correction to the bambi
+  investigation (`t_2c6631a5`): the cancel ping-pong it describes does not exist.* The dispatcher
+  routes a typed packet in the Subscriptions TRID range to the service only when it is **not** a
+  `FLAG_SUCCESS`/`FLAG_FAIL` reply (`firmware/src/Core/Functions/Dispatcher.h:69-76`), so the cancel
+  ack (`SubscriptionsControl.h:141`) and the provider table-full FAIL (`:150`) go to the app link and
+  never reach `Subscriptions.Handle`, let alone the orphan branch - measured: four cancel acks, zero
+  row-lease renewals, node 0.3's provider entry gone each time and nothing re-sent. Remaining
+  wart in that routing rule: the "source does not resolve yet" reply is a **1-byte** payload
+  (`SubscriptionsControl.h:161-164`, `Resp = 1`), which the requester applies as the target's value -
+  a Bool target reads that as a press.
+
 ## Valu v2.0 app (2026-10-06) - parked (owner: not now)
 
 - **E27** **Resistive measurement reference resistor is undefined.** `Docs/Devices.md` gives three ADC

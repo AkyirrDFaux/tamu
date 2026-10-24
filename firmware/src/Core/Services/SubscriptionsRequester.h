@@ -73,6 +73,25 @@ inline void SubscriptionsService::ApplyRequesterValue(RequesterEntry *Entry, con
     Entry->LastValueMs = DeviceStatus.UptimeMs;
     Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
 
+    // A value update that carries no value bytes is refused before it can touch the target: a
+    // 0-byte value would otherwise be written as-is, Size would become 0, the target would resolve
+    // to no data for ever and every later update would be dropped below - the bambi f6 death, and
+    // the one defect that outlived a node reboot (card t_b579fa77). Refused, the target keeps its
+    // previous value.
+    //
+    // No status ack can bring one here: the dispatcher only routes a typed packet in the
+    // Subscriptions TRID range to this service when it is NOT a FLAG_SUCCESS/FAIL reply
+    // (Dispatcher.h:69-76), and an install reply always carries at least one byte. The measured
+    // route is a provider whose own source is a size-0 entry, or a Register write that stored
+    // Size 0 before SetEntry refused them (MemoryBlocks.h).
+    //
+    // The lease above still counts: the provider is alive and answering, so the entry must not
+    // expire and cancel it. There is no result code to carry either - a value update is an
+    // unsolicited push, not a register request a script is waiting on - and the confirmation below
+    // is deliberately not sent: it states that the value landed, so withholding it leaves a
+    // confirm-required provider's hash unchanged and it retries with a real value.
+    if (!ValueUpdateApplicable(Vlen)) return;
+
     FieldResult Fr = SubscriptionsGetField(Entry->TargetReg);
     if (!Fr.Data) return;
     if (Vlen > Fr.Descriptor.Size) Vlen = Fr.Descriptor.Size;

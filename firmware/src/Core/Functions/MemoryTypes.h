@@ -42,6 +42,17 @@ inline uint16_t ValueInfoType(uint16_t Type) { return (uint16_t)(Type & 0x3FF); 
 inline bool ValueIsReadOnly(const ValueInfo &Info)   { return (Info.Flags & ValueReadOnly) != 0; }
 inline bool ValueIsPersistent(const ValueInfo &Info) { return (Info.Flags & ValuePersistent) != 0; }
 
+// Whether a value of `Len` bytes may be applied to a target at all.
+//
+// A zero-length value is not a value. Storing one sets the entry's Size to 0, and a size-0 entry
+// resolves to no data (GetKey/DynamicBlockDescriptor hands back DataPtr = nullptr), so every later
+// update to that field is dropped as unresolvable and the target stays dead until a write that
+// carries a size again comes along. Measured on the rig (bambi Dynamic.0 field 6): one register
+// write carrying Size 0 took its meta from 04000100 to 04000000, and a real 1-byte value pushed
+// afterwards on the subscription row renewed the row's lease while the field never changed. Every
+// value write is therefore gated on this: refuse a 0-length value and leave the target as it was.
+static inline bool ValueUpdateApplicable(uint8_t Len) { return Len != 0; }
+
 struct FieldResult
 {
     ValueInfo Descriptor = { (uint16_t)DataType::None, 0, 0 };
