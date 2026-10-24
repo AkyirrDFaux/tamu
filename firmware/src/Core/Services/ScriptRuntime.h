@@ -66,9 +66,11 @@ inline void ScriptService::Tick(uint32_t NowMs) {
                 if (Script->PendingForeign) {
                     if ((int32_t)(NowMs - Script->PendingDeadline) >= 0) {
                         Script->PendingForeign = false;
-                        // Engine-level fault: a foreign confirmation never arrived, so no
-                        // program instruction is behind it (instruction encoding 0).
-                        SetFault(Script, 0, SCRIPT_ERR_TIMEOUT);
+                        // External-facing: a confirmation that never arrived carries
+                        // SCRIPT_ERR_TIMEOUT into the line's destination and the script runs on
+                        // (Docs/Services/Script.md "Error Model"). The same code the engine-level
+                        // fault used, now delivered where the spec puts it.
+                        CarryPendingResultCode(Script, SCRIPT_ERR_TIMEOUT);
                     }
                     continue;
                 }
@@ -98,8 +100,11 @@ inline void ScriptService::HandleResponse(const PacketFrame &Frame) {
         if (Script->PendingRead) {
             uint16_t Pb = PayloadBytes(Frame);
             if (Pb < 8) {
-                // Engine-level: the reply is malformed, not any program instruction's doing.
-                SetFault(Script, 0, SCRIPT_ERR_REGISTER);
+                // A malformed reply carries SCRIPT_ERR_REGISTER into the line's destination and
+                // the script runs on: the external-facing family never faults, and a reply that
+                // cannot be read is a failed access, not a program error. Same code as the
+                // engine-level fault this replaces.
+                CarryPendingResultCode(Script, SCRIPT_ERR_REGISTER);
                 return;
             }
             ValueInfo Rm = *reinterpret_cast<const ValueInfo *>(Frame.Payload + 4);

@@ -144,12 +144,28 @@ are hardware-only.
 - **E37** **A scratch destination for the external-facing instructions exists in the spec only; the
   firmware half now carries the code, the app half does not.** `Docs/Services/Script.md:198` says the
   register instructions never fault and carry their code into a result destination, "a scratch
-  destination when the script ignores it". The firmware does that now: a failed local read/write
-  stores `SCRIPT_ERR_REGISTER` in the line's destination and advances (`CarryResultCode`,
-  `firmware/src/Core/Services/ScriptExec.h`); only malformed operands still fault. What is left is
+  destination when the script ignores it". The firmware does that now, the foreign variants
+  included: a failed local read/write stores `SCRIPT_ERR_REGISTER` and advances
+  (`CarryResultCode`), and a foreign request that times out or whose reply is malformed stores
+  `SCRIPT_ERR_TIMEOUT` / `SCRIPT_ERR_REGISTER` and resumes (`CarryPendingResultCode`), both in
+  `firmware/src/Core/Services/ScriptExec.h`; only malformed operands still fault. What is left is
   app-side: no scratch destination exists in `app/lib` (the editor requires a real variable or
   output, `app/lib/core/script_instructions.dart:757-758`), and `Register write` / `Register write
   (foreign)` declare no destination at all, so a failed write's code has nowhere to land.
+
+- **E43** **A foreign register reply that arrives after the 500 ms deadline can be read as the next
+  request's.** A script's TRID is fixed per slot (`TRID_SCRIPT_BASE + Slot`,
+  `firmware/src/Core/Services/ScriptProgram.h:190`), so every foreign request it sends carries the
+  same one; `HandleResponse` matches a reply on that TRID alone
+  (`firmware/src/Core/Services/ScriptRuntime.h:96`). A timed-out request used to stop the script in
+  `Error`, which made the window unreachable. It is reachable now: the script carries
+  `SCRIPT_ERR_TIMEOUT` into its destination and runs on (`CarryPendingResultCode`, `t_2e856b86`),
+  so the next foreign op is in flight on the same TRID when the abandoned reply arrives - the stale
+  value lands in the new line's destination, or confirms a write that was never confirmed. Needs a
+  remote answering slower than 500 ms plus a second foreign op in the same script. Fix: one TRID per
+  request inside the slot's range (e.g. `TRID_SCRIPT_BASE + Slot * 64 + Seq`, which keeps the
+  DISPATCHER's routing by range, `firmware/src/Core/Functions/Dispatcher.h:91`), or drop a reply
+  whose TRID was abandoned. Not urgent, but it is a wrong-value path, not a cosmetic one.
 
 ## Valu v2.0 app (2026-10-06) - parked (owner: not now)
 

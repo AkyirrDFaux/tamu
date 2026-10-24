@@ -157,6 +157,24 @@ int main() {
     CHECK_EQ(SCRIPT_OP_SERVICE_ERROR, 13);
     CHECK_EQ(SCRIPT_OP_SERVICE_REPORT_INFO, 14);
 
+    // --- The external-facing instructions' result codes (Docs/Services/Script.md "Error Model":
+    //     register read/write, "including the foreign variants", Never fault) ---
+    // A foreign request that fails in flight - the confirmation never arrives within the 500 ms
+    // deadline, or the reply is malformed - carries its code into the line's result destination
+    // (CarryPendingResultCode, Core/Services/ScriptExec.h). The codes are the ones the
+    // engine-level faults used, so this moves where a failure surfaces; it invents no meaning.
+    {
+        CHECK_EQ(SCRIPT_ERR_NONE, 0);     // the access worked - a destination holding 0 means success
+        CHECK_EQ(SCRIPT_ERR_REGISTER, 6); // the reply is malformed (the register access failed)
+        CHECK_EQ(SCRIPT_ERR_TIMEOUT, 7);  // no confirmation within the deadline
+        // A request that captured no destination leaves its 4-byte symbol zeroed, and symbol type
+        // 0 is not a destination (ResolveDest admits variables and outputs only): the code is
+        // dropped and the line still advances rather than faulting.
+        CHECK_EQ(SCRIPT_SYM_INSTRUCTION, 0);
+        CHECK(SCRIPT_SYM_VARIABLE != 0);
+        CHECK(SCRIPT_SYM_OUTPUT != 0);
+    }
+
     // --- The custom log's code is 32 bits wide (Service op 0) ---
     // Docs/Services/Script.md "Service": "its code a source-specific 32 bits";
     // Docs/Services/Log Handler.md "Log code": uint32. The engine used to carry the code in a

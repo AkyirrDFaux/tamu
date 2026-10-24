@@ -365,6 +365,31 @@ inline uint8_t ScriptService::CarryResultCode(LoadedScript *Script, const Script
     return SCRIPT_ERR_NONE;
 }
 
+// The same result code, for a foreign register request that fails while it is in flight: the
+// confirmation never arrives (the 500 ms deadline) or the reply is malformed. The destination was
+// captured when the request went out (`PendingDest`), so the code lands where a local failure's
+// would - and the script resumes instead of faulting, which is what the external-facing family
+// owes the spec (Docs/Services/Script.md "Error Model"). The request already advanced Ic, so
+// resuming is the whole advance. A request that captured no destination leaves PendingDest zeroed
+// (symbol type 0 is not a variable or an output), which stores nothing and still resumes.
+inline void ScriptService::CarryPendingResultCode(LoadedScript *Script, uint8_t Code) {
+    uint16_t Dtype = 0;
+    uint8_t *Dest = nullptr;
+    uint8_t Dsize = 0;
+    if (ResolveDest(Script, Script->PendingDest, Dtype, Dest, Dsize)) {
+        uint32_t CodeVal = Code;
+        uint8_t Buf[4];
+        memcpy(Buf, &CodeVal, 4);
+        // A code is a value like any other: a numeric destination converts it, another takes the
+        // raw bytes. There is no failure to report - the instruction is not allowed to fault.
+        (void)AssignResolved(Dtype, Dest, Dsize, Buf, 4, (uint16_t)DataType::Uint32);
+    }
+    // A pause or stop that raced the deadline already left Waiting; only a script still waiting on
+    // this confirmation resumes.
+    if (Script->State == (uint8_t)ScriptState::Waiting)
+        Script->State = (uint8_t)ScriptState::Running;
+}
+
 inline uint8_t ScriptService::ExecService(LoadedScript *Script, const ScriptLineInfo &Ln, const uint8_t *Opbase,
                                  uint8_t Op, uint32_t NowMs, bool &Yield) {
     switch (Op) {
@@ -497,6 +522,13 @@ inline uint8_t ScriptService::ExecService(LoadedScript *Script, const ScriptLine
             ValueInfo Wm = { (uint16_t)Vtype, Vsize, 0 };
             memcpy(Payload + 4, &Wm, 4);
             if (Vsize) memcpy(Payload + 8, Val, Vsize);
+            // Capture the destination the same way the read does, so a request that fails in
+            // flight can carry its code there. A write line with no destination clears it: the
+            // code then has nowhere to land and the line advances without one.
+            if (Ln.DestCount >= 1)
+                memcpy(Script->PendingDest, Script->Instr + (size_t)Ln.Start * 4, 4);
+            else
+                memset(Script->PendingDest, 0, sizeof(Script->PendingDest));
             Script->PendingRead = false;
             Script->PendingForeign = true;
             Script->PendingTrid = Script->Trid;
