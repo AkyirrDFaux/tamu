@@ -87,7 +87,7 @@ The Math op values form the operators of an inline expression. The expression ho
 | 23    | transpose         | Matrix R x C to C x R; up to 9 elements |
 ### Program
 #### Line Shape
-The program is symbol-based, with one line per instruction. A line follows the order destination, instruction, operand, end: any number of destination symbols (outputs, variables or constants), then the instruction symbol, then any number of operand symbols (inputs, variables, constants or predefines), terminated by an endline symbol. One line, for example, is Out2, InsSet, Var1, OpAdd, Var2, Const1, In3, EndLine.
+The program is symbol-based, with one line per instruction. A line follows the order destination, instruction, operand, end: any number of destination symbols (outputs and variables only), then the instruction symbol, then any number of operand symbols (inputs, variables, constants or predefines), terminated by an endline symbol. One line, for example, is Out2, InsSet, Var1, OpAdd, Var2, Const1, In3, EndLine.
 #### Execution
 The program is pre-loaded into RAM when space allows, using read-only pointers for fast access, checked at script start. Execution happens in the main loop: all instructions run until the same instruction is reached again, which is a loop, or until the script waits, and the state is checked again in the next loop update.
 #### State
