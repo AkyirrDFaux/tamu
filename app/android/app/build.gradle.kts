@@ -1,22 +1,24 @@
 plugins {
     id("com.android.application")
-    id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    // Do not apply the Kotlin Gradle Plugin (id("kotlin-android")) by hand: Flutter applies it
+    // for the app module when the app leaves it out, and applying it ourselves breaks in a
+    // future Flutter.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
 android {
     namespace = "tamu.app.tamuapp"
-    compileSdk = flutter.compileSdkVersion
+    // permission_handler_android 14.1.0 compiles against Android SDK 37, so the app compiles
+    // against it too (a higher compileSdk is backward compatible). Flutter's default
+    // (flutter.compileSdkVersion) is still 36, and the Flutter Gradle plugin warns while the
+    // app sits below a plugin's compileSdk.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
     }
 
     defaultConfig {
@@ -41,6 +43,14 @@ android {
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
         }
+    }
+}
+
+// Replaces the old `kotlinOptions { jvmTarget = ... }` block, which only exists while the
+// Kotlin Gradle Plugin is applied to this module (see Flutter's built-in-Kotlin migration).
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
 }
 

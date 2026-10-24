@@ -205,3 +205,25 @@ are hardware-only.
   scan/connect/MTU, Storage Access Framework backup save + restore and file download, and the
   compact drawer shell on a phone form factor. The app's **update flow end to end** is the other
   Android item, and it gates the beta criteria in `TODO.md`. **Owner directed: look for improvements.**
+
+## App build warnings (Android)
+
+- **E44** **`flutter_libserialport` 0.6.0 applies the Kotlin Gradle Plugin (KGP); the warning stays until
+  upstream migrates.** `flutter build apk --debug` prints
+  `WARNING: Your app uses the following plugins that apply Kotlin Gradle Plugin (KGP): flutter_libserialport`
+  followed by "Future versions of Flutter will fail to build if your app uses plugins that apply KGP" and
+  the report/migration links. The plugin's own Gradle script is the source: `apply plugin: 'kotlin-android'`
+  (`flutter_libserialport-0.6.0/android/build.gradle:25`, with `ext.kotlin_version = '2.0.0'` at :5 and a
+  `kotlinOptions` block at :50). There is no newer release to move to - `flutter pub outdated --show-all`
+  reports `flutter_libserialport  0.6.0  0.6.0  0.6.0  0.6.0` (current, upgradable, resolvable and latest
+  are all 0.6.0). **This one is upstream's to fix: do not fork or vendor the plugin here.** The app side of
+  the same class of warning is cleared (2026-10-24, `t_ce1af8e3`): `android/app/build.gradle.kts` sets
+  `compileSdk = 37` and no longer applies `id("kotlin-android")` or carries a `kotlinOptions` block, so the
+  "compile against Android SDK 36 but permission_handler_android compiles against 37" warning and the
+  "Your Android app project ... applies the Kotlin Gradle Plugin" warning are gone. This KGP warning
+  remains until `flutter_libserialport` ships a Built-in-Kotlin-compatible release; it needs no action from
+  us beyond re-checking on plugin upgrades. Filing guide:
+  https://docs.flutter.dev/release/breaking-changes/migrate-to-built-in-kotlin/for-app-developers#report-incompatible-kotlin-gradle-plugin-usage-to-plugin-authors
+  **Side effect of `compileSdk = 37`:** AGP 8.11.1 now also prints "We recommend using a newer Android
+  Gradle plugin to use compile SDK version 37.0 ... tested up to compile SDK version 36.0" (a version-range
+  notice, not a failure); it disappears with an AGP upgrade, which is a separate decision.
