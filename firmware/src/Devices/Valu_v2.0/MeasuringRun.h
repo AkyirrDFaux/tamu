@@ -106,4 +106,12 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
     }
 
     StaticVol.Meas[Index].MeasuredValue = In;
+
+    // Open/Short circuit (fields 5/6, Docs/Modules and blocks/Measurement.md): a RANGE-CHAIN
+    // property. The Valu has one fixed 10 kOhm reference and no range-selector switches, so it
+    // has neither the smallest nor the largest scale of the DAS's chain and a rail cannot be
+    // attributed to a range choice; both flags stay false (they are Bool RO fields of the shared
+    // block, so a reader still gets an answer rather than a stale byte).
+    StaticVol.Meas[Index].OpenCircuit = false;
+    StaticVol.Meas[Index].ShortCircuit = false;
 }

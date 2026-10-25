@@ -3,6 +3,8 @@
 #include "Core/Functions/MemoryTypes.h"
 #include "Core/Types/Number.h"
 #include "Core/Types/Enums.h"
+// The open/short-circuit predicate (fields 5/6), shared with the native truth-table test.
+#include "Core/Devices/MeasuringFlags.h"
 
 // The ResistiveMeasure block, identical on the DAS v0.1 and the Valu v2.0: the same
 // documented fields, offsets, write triggers and schema
@@ -24,7 +26,12 @@ enum MeasSensorType : uint8_t
 // Resistive measurement block (Docs/Modules and blocks/Measurement.md):
 //   Sampling Rate (0, P, Number), Sensor Type (1, P, Enum), Filter Coefficient
 //   (2, P, Number, EMA weight of the new raw sample, 1 = no filtering), Measured Value
-//   (3, RO), Current Range (4, RO).
+//   (3, RO), Current Range (4, RO), Open Circuit (5, RO, Bool), Short Circuit (6, RO, Bool).
+//
+// Fields 5/6 are the two electrical rails of the range that produced the sample
+// (Core/Devices/MeasuringFlags.h): Open = the largest scale at the top of the ADC window,
+// Short = the smallest scale at the bottom. Both are recomputed with every sample in each
+// device's MeasuringRun.h - never on read - so a read always describes the sample it came with.
 struct ResistiveMeasPersistent
 {
     Number SamplingRate = N(10);     // offset 0
@@ -35,6 +42,8 @@ struct ResistiveMeasVolatile
 {
     Number MeasuredValue = N(0);     // offset 0
     Number CurrentRange = N(0);      // offset 4
+    bool OpenCircuit = false;        // offset 8
+    bool ShortCircuit = false;       // offset 9
 };
 
 // Lock the layout: the schema offsets must match the natural C struct alignment (Numbers
@@ -44,6 +53,14 @@ static_assert(offsetof(ResistiveMeasPersistent, SensorType) == 4, "Meas layout")
 static_assert(offsetof(ResistiveMeasPersistent, FilterCoeff) == 8, "Meas layout");
 static_assert(offsetof(ResistiveMeasVolatile, MeasuredValue) == 0, "Meas layout");
 static_assert(offsetof(ResistiveMeasVolatile, CurrentRange) == 4, "Meas layout");
+// The two flags sit AFTER the two Numbers, so fields 3/4 keep their offsets and the new fields
+// land at 8 and 9. They are bytes, so the struct keeps Number's 4-byte alignment and grows to 12
+// bytes with 2 bytes of tail padding: that padding is the price of the locked layout, not a
+// third field (the DAS allocates two of these, so +4 B per instance, +8 B of statics in total).
+static_assert(offsetof(ResistiveMeasVolatile, OpenCircuit) == 8, "Meas layout");
+static_assert(offsetof(ResistiveMeasVolatile, ShortCircuit) == 9, "Meas layout");
+static_assert(sizeof(ResistiveMeasVolatile) == 12, "Meas layout");
+static_assert(alignof(ResistiveMeasVolatile) == alignof(Number), "Meas layout");
 
 const BlockEntry ResistiveMeasEntries[] = {
     { MakeFieldKey(0, 0), 0, {(uint16_t)DataType::Number, sizeof(Number), ValueTrigger | ValuePersistent} },
@@ -51,7 +68,15 @@ const BlockEntry ResistiveMeasEntries[] = {
     { MakeFieldKey(2, 0), 8, {(uint16_t)DataType::Number, sizeof(Number), ValueTrigger | ValuePersistent} },
     { MakeFieldKey(3, 0), 0, {(uint16_t)DataType::Number, sizeof(Number), ValueReadOnly} },
     { MakeFieldKey(4, 0), 4, {(uint16_t)DataType::Number, sizeof(Number), ValueReadOnly} },
+    // The two rail flags: one byte each, read only, written by the sample loop, never by a trigger.
+    { MakeFieldKey(5, 0), 8, {(uint16_t)DataType::Bool, sizeof(bool), ValueReadOnly} },
+    { MakeFieldKey(6, 0), 9, {(uint16_t)DataType::Bool, sizeof(bool), ValueReadOnly} },
 };
+
+// The entry table and the struct are one contract: an entry's Offset IS the wire address, so a
+// mismatch would read a different field with the right type and size. The table is walked field by
+// field against the struct in test/native/meas_rail_test.cpp (the entry's symbols are not usable in
+// a constant expression, so this cannot be a static_assert here).
 
 // Write-time clamping for the writable Meas fields, so the STORED value always equals the
 // APPLIED value (the sampling loop additionally defends in depth). Without this, an
@@ -87,6 +112,7 @@ static bool OnMeasFieldWrite(const StaticBlockDescriptor &Block, uint16_t Index,
 static bool OnMeasEnumWrite(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t Len)
 {
     auto *Persistent = static_cast<ResistiveMeasPersistent *>(Block.PersistentData);
+    (void)Index; // one enum field, so the handler is not per-field; marked for the host test's -Werror
     if (Len != sizeof(uint8_t)) return false;
     uint8_t Value = *static_cast<const uint8_t *>(Data);
     if (Value > MeasNTC100K) Value = MeasNTC100K;

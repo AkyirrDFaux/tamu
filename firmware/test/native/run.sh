@@ -223,5 +223,65 @@ echo
 
 echo "### native reset-cause tests (the DAS boot report's flag byte)"
 build_run "resetcause" "reset_test.cpp"
+echo
+
+# t_1381f097: the rail flags are computed in each device's sample loop (which pulls the chip
+# header and the block instances, so the host cannot link it). The predicate and the block layout
+# are covered by meas_rail_test.cpp; what remains is the WIRING, asserted on the source itself:
+# the DAS judges both flags from (the active range, the same filtered sample) in the pass that
+# publishes Measured Value / Current Range, and never from the range the auto-range picks later;
+# no other code writes the two fields; and the Valu (one fixed reference, no range chain) keeps
+# both false.
+echo "### source guard: the rail flags are computed per sample in the sample loops"
+DAS_RUN="src/Devices/DAS_v0.1/MeasuringRun.h"
+VALU_RUN="src/Devices/Valu_v2.0/MeasuringRun.h"
+MEAS_SRC="src/Core/Devices/Measuring.h"
+rail_fail=0
+if [ "$(grep -c 'StaticVol.Meas\[Index\].OpenCircuit = MeasOpenCircuit(Range, FilteredRaw);' "$DAS_RUN")" != 1 ]; then
+    echo "FAIL $DAS_RUN: OpenCircuit must be set once, from MeasOpenCircuit(Range, FilteredRaw)"
+    rail_fail=1
+fi
+if [ "$(grep -c 'StaticVol.Meas\[Index\].ShortCircuit = MeasShortCircuit(Range, FilteredRaw);' "$DAS_RUN")" != 1 ]; then
+    echo "FAIL $DAS_RUN: ShortCircuit must be set once, from MeasShortCircuit(Range, FilteredRaw)"
+    rail_fail=1
+fi
+# Same pass as the published value: the flags are set after Measured Value, and before the
+# auto-range block that may change the range for the NEXT sample.
+meas_line=$(grep -n 'StaticVol.Meas\[Index\].MeasuredValue = In;' "$DAS_RUN" | cut -d: -f1)
+open_line=$(grep -n 'StaticVol.Meas\[Index\].OpenCircuit = MeasOpenCircuit' "$DAS_RUN" | cut -d: -f1)
+short_line=$(grep -n 'StaticVol.Meas\[Index\].ShortCircuit = MeasShortCircuit' "$DAS_RUN" | cut -d: -f1)
+range_line=$(grep -n 'uint8_t NewRange = Range;' "$DAS_RUN" | cut -d: -f1)
+if [ -z "$meas_line" ] || [ -z "$open_line" ] || [ -z "$short_line" ] || [ -z "$range_line" ] \
+   || [ "$open_line" -le "$meas_line" ] || [ "$short_line" -le "$meas_line" ] || [ "$range_line" -le "$short_line" ]; then
+    echo "FAIL $DAS_RUN: the flags must be set after Measured Value and before the auto-range step"
+    rail_fail=1
+fi
+# No other writer of the two fields anywhere in the firmware: they are outputs of the loop.
+if [ "$(grep -rn '\.OpenCircuit =' src --include=*.h | grep -vc "$DAS_RUN")" != 1 ] \
+   || [ "$(grep -rn '\.ShortCircuit =' src --include=*.h | grep -vc "$DAS_RUN")" != 1 ]; then
+    echo "FAIL: the only writers of OpenCircuit/ShortCircuit must be DAS MeasuringRun.h and the Valu's false"
+    rail_fail=1
+fi
+if [ "$(grep -c 'StaticVol.Meas\[Index\].OpenCircuit = false;' "$VALU_RUN")" != 1 ] \
+   || [ "$(grep -c 'StaticVol.Meas\[Index\].ShortCircuit = false;' "$VALU_RUN")" != 1 ]; then
+    echo "FAIL $VALU_RUN: the Valu has no range chain, so both flags must be set false"
+    rail_fail=1
+fi
+# The flags are outputs: no trigger may be registered for fields 5/6.
+if grep -q 'MakeFieldKey(5, 0)' "$MEAS_SRC" && [ "$(grep -c 'MakeFieldKey(5, 0), On' "$MEAS_SRC")" != 0 ]; then
+    echo "FAIL $MEAS_SRC: field 5 is Read Only; no trigger may be registered for it"
+    rail_fail=1
+fi
+if [ "$(grep -c 'MakeFieldKey(6, 0), On' "$MEAS_SRC")" != 0 ]; then
+    echo "FAIL $MEAS_SRC: field 6 is Read Only; no trigger may be registered for it"
+    rail_fail=1
+fi
+[ $rail_fail = 0 ] && echo "PASS: both flags are computed per sample from the active range and the same raw sample"
+fail=$((fail + rail_fail))
+echo
+
+echo "### native measurement rail-flag tests (open/short truth table + locked offsets/entries)"
+build_run "measrail" "meas_rail_test.cpp"
+echo
 
 exit $fail

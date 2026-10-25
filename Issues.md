@@ -44,24 +44,27 @@ are hardware-only.
   `13440 = 16384 - 2048 - 512 - 384` subtracts the storage's 384 B data payload a second time (it is
   already inside the 512 B), and its arithmetic merely coincides with the 2026-10-08 Phase-0 build
   (`6c3d210:TODO.md:34`, `13440/14336 = 93.75 %`) that the criterion was copied from. **The image is
-  not over budget and nothing needs to be trimmed.** Clean rebuild (2026-10-25, `9e1378b`):
-  `RAM 100.0% (2048/2048)` / `Flash 96.1% (13772/14336)`; `.text` ends at `0x3D5C`, the 4 B
-  `.init_array` takes it to `0x3D60`, and the 112 B `.data` initialiser image is flash-resident too,
-  so the image ends at `0x3DD0`: **13776 B of the 13824 B code space (99.65 %), 48 B spare** before
-  `.fixed_data` at `0x3E00`. Platformio's 14336 B denominator is the storage-inclusive App size, so
-  96.1 % is not a fullness figure; its 13772 B counts the `.data` image and skips the `.init_array`.
-  Trend: 13600 B / 224 B spare at `0c55523` (2026-10-24), then the DAS reset-cause report
-  (`t_c20f5eca`) and the edge-counter wire change (`t_932f285f`, +20 B) took it to the figures above.
-  Those earlier headroom figures counted code only and ignored the 112 B `.data` image, so the real
-  spare was always 112 B less than stated - 48 B now, which is well under one small function.
+  not over budget and nothing needs to be trimmed.** Clean rebuild (2026-10-25, this tree, the
+  measurement rail flags `t_1381f097` on top of `6a3a953`): `RAM 100.0% (2048/2048)` /
+  `Flash 95.9% (13744/14336)`; `.text` ends at `0x3D40`, the 4 B `.init_array` takes it to `0x3D44`,
+  and the 112 B `.data` initialiser image is flash-resident too, so the image ends at `0x3DB4`:
+  **13748 B of the 13824 B code space (99.45 %), 76 B spare** before `.fixed_data` at `0x3E00`.
+  Platformio's 14336 B denominator is the storage-inclusive App size, so 95.9 % is not a fullness
+  figure; its 13744 B counts the `.data` image and skips the `.init_array`.
+  Trend: 13600 B at `0c55523` (2026-10-24), 13776 B at `9e1378b` (reset-cause report + edge counter),
+  then 13676 B at `6a3a953` (two build flags bought 100 B back), 13748 B now (the two rail flags
+  cost 72 B of image and 8 B of statics). Earlier headroom figures counted code only and ignored the
+  112 B `.data` image, so the real spare was always 112 B less than stated - 76 B now, which is
+  still under one small function.
   Carrying the edge counter on the 0401 answer too was measured at a further ~120 B and does not
   fit; that is why the answer stays value-only (`SubscriptionsEdge.h`).
-  The 100 % RAM figure is by design: statics (1048 B) + stack (1000 B) fill the 2 KB exactly, the
-  state `firmware/platformio.ini` documents, and the linker errors if statics grow into the stack.
+  The 100 % RAM figure is by design: statics (1056 B = 112 B `.data` + 944 B `.bss`) + stack (992 B)
+  fill the 2 KB exactly, the state `firmware/platformio.ini` documents, and the linker errors if
+  statics grow into the stack - which is exactly how the rail flags forced the stack down from
+  1000 B to 992 B (4 B per measurement instance: two Bools plus the struct's tail padding).
   The 2028 B RAM gate could never have been met.
-  **Still a real warning:** `.text` grew 13160 -> 13404 (+244 B) and statics 1028 -> 1048 B (+20 B)
-  between `fc964e5` (2026-10-13) and the 2026-10-24 image across the storage/discovery/subscription
-  work. With 48 B left, further code growth fails the link rather than warning — measure before
+  **Still a real warning:** measured image history 13600 -> 13776 -> 13676 -> 13748 B (see the trend
+  above); with 76 B left, further code growth fails the link rather than warning - measure before
   adding a DAS feature. Size lines are only trustworthy after `pio run -e DAS_v0_1 -t clean`; a stale
   `.pio/build/DAS_v0_1` can still report "up to date". Figures corrected in `TODO.md` (acceptance
   criteria and Phase 5) and `firmware/platformio.ini`; `AGENTS.md:54` still needs the owner
