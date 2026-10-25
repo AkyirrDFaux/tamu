@@ -231,13 +231,14 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
             Entry->ProviderAddr = NetQualifyLocal(ProviderAddr, DeviceStatus.NetId);
             Entry->Sub = Table;
             Entry->TargetReg = TargetReg;
-            Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
+            Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs); // wire field, not enforced
             Entry->Lease = SubRequesterLease{}; // unserved again: fast retry until a value arrives
-            // Persist this set's own entry, but must not rewrite the file from the live table: an
-            // entry another subscription lost to a lease expiry is not a deliberate removal, so it
-            // has to survive in `.SUBREQ` for the next boot (and an empty table must not delete the
-            // file at all). The write result decides the reply below: a failed persistence must not
-            // read as a successful set.
+            // Persist this set's own entry, but must not rewrite the file from the live table: a
+            // row that is missing from the live table is not a deliberate removal (an entry that
+            // could not be restored because the table was full still belongs to the saved setup),
+            // so it has to survive in `.SUBREQ` for the next boot - and an empty table must not
+            // delete the file at all. The write result decides the reply below: a failed
+            // persistence must not read as a successful set.
             bool Saved = SaveRequesterTable(true);
 
             // Respond first (the app waits on the transaction ID), then register the provider
@@ -314,26 +315,15 @@ inline void SubscriptionsService::Tick(uint32_t NowMs) {
     EvaluateProviderTriggers(NowMs);
 #endif
 #ifdef USE_SUB_REQUEST
-    uint16_t Expired = 0;
-    for (int i = 0; i < MAX_REQUESTER_SUBS; i++) {
-        RequesterEntry* Entry = &RequesterTable[i];
-        if (Entry->Active && Entry->Timeout != 0 && (int32_t)(NowMs - Entry->Timeout) >= 0) {
-            uint16_t Provider = Entry->ProviderAddr;
-            uint16_t Trid = Entry->Trid;
-            RequesterRemove(Entry);          // compacts the table, shifting the tail left
-            Expired++;
-            SubscriptionsCancelProvider(Provider, Trid);
-            i--;                         // re-check the entry shifted into slot i
-        }
-    }
-    // Persist deliberate changes only. An expiry is a FAILURE - no value arrived, so the lease was
-    // never renewed - and a failure must not delete anything: with the table empty the save removes
-    // .SUBREQ, destroying the setup that a later boot would have restored. The entry is dropped
-    // from the table so it stops retrying, but the file keeps the last known-good state; an
-    // explicit cancel is what persists a removal.
-    if (Expired)
-        DeviceLog("SUB", "tick: %d requester entr(ies) expired, file kept",
-                  (int)Expired);
+    // No requester-side expiry (owner ruling t_eb35360c, 2026-10-24): a row lives until an explicit
+    // cancel, an orphan announcement from the node, or a new setup. The provider keeps its 120 s
+    // timeout and drops its OWN entry - the asymmetry is deliberate, because a missing provider is a
+    // provider problem and must not destroy the requester's configuration. Dropping the row here (and
+    // cancelling the provider with it) is what made a node that was off for more than two minutes
+    // need a core reboot or a setup re-apply, since nothing re-installed the subscription when the
+    // node came back. What keeps an unanswered subscription from turning into a busy loop is the
+    // cadence, not a lifetime: SubRequesterLease retries fast, capped at SUB_FAST_ATTEMPTS, then
+    // falls back to the keepalive until an install is answered.
     RequesterInitCheck(NowMs);
     SubscriptionsReRegisterPending();
 #endif

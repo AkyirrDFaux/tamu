@@ -17,7 +17,7 @@ class SubscriptionsService
 {
 public:
     bool Handle(const PacketFrame &Frame); // CID dispatch; true if consumed
-    void Tick(uint32_t NowMs);             // main-loop trigger evaluation + expiry
+    void Tick(uint32_t NowMs);             // main-loop provider triggers/timeout + requester retries
 
 #ifdef USE_SUB_REQUEST
     // Provider-side re-registration of every (or one node's) restored requester entry.

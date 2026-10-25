@@ -11,9 +11,11 @@
 #   crc_test.cpp      Crc8 (Core/Functions/Packet.h), both OPTIMIZE_SPEED shapes
 #   value_update_test.cpp  a 0-length value write is refused at the dynamic block
 #                     (Core/Functions/MemoryBlocks.h), so the target keeps its value
-#   lease_test.cpp    the requester's install/keepalive cadence (Core/Services/
-#                     SubscriptionsLease.h): an unanswered install retries at SUB_RETRY_MS instead
-#                     of waiting the keepalive, while an answered one stays on the 60 s keepalive
+#   lease_test.cpp    the requester row's lifetime and install/keepalive cadence (Core/Services/
+#                     SubscriptionsLease.h): rows are never dropped on time, an unanswered install
+#                     retries at SUB_RETRY_MS, capped at 5, then the keepalive, and an answer
+#                     resets the counter - plus a source guard that the only removal of a row is the
+#                     explicit-cancel branch of RequesterSet
 #
 # The numeric core is built in three shapes: the core (64-bit) and the DAS (32-bit, no
 # Vector/Matrix) are the real targets; the third - 32-bit *with* Vector/Matrix - is a
@@ -100,8 +102,38 @@ echo "### native value-update tests (a 0-length value is refused; the dynamic ta
 build_run "valueupdate" "value_update_test.cpp"
 echo
 
-echo "### native subscription-keepalive tests (an unanswered install retries fast, not in 60 s)"
+echo "### native subscription-keepalive tests (rows never expire; unanswered installs retry fast, capped)"
 build_run "lease" "lease_test.cpp"
+echo
+
+# t_eb35360c, structural half: a host test cannot compile RequesterSet's cancel branch or Tick (both
+# pull the packet/register/storage layer), so the two facts the owner's ruling depends on are
+# asserted on the source itself - Tick has no time-based requester drop, and the ONLY removal of a
+# requester row is the explicit-cancel branch of RequesterSet, which also cancels the provider side.
+# A failure here is either the expiry coming back or the cancel path being lost with it.
+echo "### source guard: requester rows are dropped only by an explicit cancel"
+SUBS_SRC="src/Core/Services/SubscriptionsControl.h"
+tick_body=$(sed -n '/inline void SubscriptionsService::Tick/,$p' "$SUBS_SRC")
+cancel_body=$(sed -n '/Set subscription (requester)/,/Recall all subscriptions (requester)/p' "$SUBS_SRC")
+guard_fail=0
+if printf '%s\n' "$tick_body" | grep -n 'RequesterRemove\|SubscriptionsCancelProvider\|entr(ies) expired'; then
+    echo "FAIL $SUBS_SRC: Tick still drops requester rows (see the lines above)"
+    guard_fail=1
+fi
+if [ "$(printf '%s\n' "$cancel_body" | grep -c 'RequesterRemove')" != 1 ]; then
+    echo "FAIL $SUBS_SRC: RequesterSet's cancel branch must remove the row exactly once"
+    guard_fail=1
+fi
+if [ "$(printf '%s\n' "$cancel_body" | grep -c 'SubscriptionsCancelProvider')" != 1 ]; then
+    echo "FAIL $SUBS_SRC: the explicit cancel must also cancel the provider side"
+    guard_fail=1
+fi
+if [ "$(grep -c 'RequesterRemove' "$SUBS_SRC")" != 1 ]; then
+    echo "FAIL $SUBS_SRC: the only requester-removal call site must be the cancel branch"
+    guard_fail=1
+fi
+[ $guard_fail = 0 ] && echo "PASS: no time-based requester drop, 1 removal (explicit cancel) and no other"
+fail=$((fail + guard_fail))
 echo
 
 echo "### native reset-cause tests (the DAS boot report's flag byte)"

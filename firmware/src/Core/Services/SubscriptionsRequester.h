@@ -67,11 +67,13 @@ inline RequesterEntry* SubscriptionsService::RequesterUpsert(uint16_t Trid) {
 // Applies a received value to the requester's target register (raw bytes) and confirms with
 // the FNV-1a hash of the received bytes.
 inline void SubscriptionsService::ApplyRequesterValue(RequesterEntry *Entry, const uint8_t *Val, uint8_t Vlen, bool Confirm) {
-    // A value update renews the 120 s lease even when the target register is momentarily
-    // unresolvable; otherwise a briefly unavailable target would let the entry expire and
-    // cancel its still-live provider. It is also the answer to the install: the provider's CID 1
-    // reply carries the current value, so any value from the right provider clears the entry's
-    // unanswered count and puts its next renewal back on the slow keepalive.
+    // A value update refreshes the row's 120 s deadline even when the target register is
+    // momentarily unresolvable; the deadline is carried on the wire and read by the app, and keeping
+    // it current is what makes it mean "when this row was last served". It is also the answer to the
+    // install: the provider's CID 1 reply carries the current value, so any value from the right
+    // provider restarts the retry counter (Lease.Unanswered) and puts the next renewal back on the
+    // slow keepalive. Neither call removes the row - nothing on the requester side does (owner
+    // ruling t_eb35360c); only an explicit cancel does.
     Entry->Lease.OnAnswer(DeviceStatus.UptimeMs);
     Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
 
@@ -87,11 +89,11 @@ inline void SubscriptionsService::ApplyRequesterValue(RequesterEntry *Entry, con
     // route is a provider whose own source is a size-0 entry, or a Register write that stored
     // Size 0 before SetEntry refused them (MemoryBlocks.h).
     //
-    // The lease above still counts: the provider is alive and answering, so the entry must not
-    // expire and cancel it. There is no result code to carry either - a value update is an
-    // unsolicited push, not a register request a script is waiting on - and the confirmation below
-    // is deliberately not sent: it states that the value landed, so withholding it leaves a
-    // confirm-required provider's hash unchanged and it retries with a real value.
+    // The lease above still counts: the provider is alive and answering, so its retry counter is
+    // reset and the row stays on the slow keepalive. There is no result code to carry either - a
+    // value update is an unsolicited push, not a register request a script is waiting on - and the
+    // confirmation below is deliberately not sent: it states that the value landed, so withholding
+    // it leaves a confirm-required provider's hash unchanged and it retries with a real value.
     if (!ValueUpdateApplicable(Vlen)) return;
 
     FieldResult Fr = SubscriptionsGetField(Entry->TargetReg);

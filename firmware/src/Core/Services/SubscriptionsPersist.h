@@ -17,11 +17,12 @@
 // + targetReg(4) = 24 B, so it is copied whole.
 //
 // `KeepFileEntries` is what a save driven by an unrelated change (a set, which persists only its
-// own entry) passes: the file then keeps the entries it already holds that the live table no
-// longer does. A lease expiry drops an entry from the table but must not lose it from the saved
-// setup - the expiry is a FAILURE (no value ever arrived), not a removal - so the entry stays in
-// `.SUBREQ` and the next boot restores it. Only a deliberate cancel or Save All rewrites the file
-// from the table alone, and only those may remove the file when the table empties.
+// own entry) passes: the file then keeps the entries it already holds that the live table no longer
+// does. Nothing on the requester side drops a row on time any more (owner ruling t_eb35360c), but a
+// row can still be absent from the live table without having been removed - a restore that hit the
+// table's capacity, or a recall from a file that held more entries than fit - and that is not a
+// removal: it stays in `.SUBREQ` so the next boot restores it. Only a deliberate cancel or Save All
+// rewrites the file from the table alone, and only those may remove the file when the table empties.
 inline bool SubscriptionsService::SaveRequesterTable(bool KeepFileEntries) {
     uint8_t Buf[1 + MAX_REQUESTER_SUBS * REQUESTER_FILE_ENTRY_SIZE];
     // Count and copy in one walk (the count byte is filled in last).
@@ -53,7 +54,7 @@ inline bool SubscriptionsService::SaveRequesterTable(bool KeepFileEntries) {
             }
         } else if (Storage.FileExists(SubscriptionsRequesterFile) != 0xFFFFFFFF) {
             // A present-but-unreadable .SUBREQ is a failed read, not an absent file: the carry-over
-            // above could not run, so writing now would drop the lease-expired entries it exists to
+            // above could not run, so writing now would drop the file-only entries it exists to
             // preserve. Same absence-vs-unreadable split RegisterPersist uses for .SV - leave the
             // file as it is and report the save as failed.
             DeviceLog("SUB", "requester save: .SUBREQ unreadable, left as it is");
@@ -123,7 +124,7 @@ inline void SubscriptionsService::LoadRequesterTable() {
         memcpy((void *)Entry, Buf + Off, REQUESTER_FILE_ENTRY_SIZE);
         Off += REQUESTER_FILE_ENTRY_SIZE;
         Loaded++;
-        Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
+        Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs); // wire field, not enforced
         Entry->Lease = SubRequesterLease{};   // unserved again: fast retry until a value arrives
     }
     DeviceLog("SUB", "requester recall: %u of %u entries from %u B",
@@ -139,11 +140,12 @@ inline void SubscriptionsService::RegisterRequesterProvider(RequesterEntry* Entr
     // Re-qualified against the current net, not the net the entry was written under.
     uint16_t ProviderAddr = RequesterProviderAddr(*Entry);
 
-    // The entry's own 120 s deadline is NOT renewed here. An install only counts once the provider
-    // confirms it, so an unanswered send leaves the lease exactly where the last answer put it
-    // (ApplyRequesterValue renews it) and the entry expires if it is never confirmed - the
-    // documented "expiry is a FAILURE" path, which keeps the entry in `.SUBREQ` for the next boot.
-    // The send only moves the retry clock, and the unanswered count that decides the next attempt.
+    // The row's 120 s deadline is NOT renewed here: an install only counts once the provider
+    // confirms it, so an unanswered send leaves that deadline where the last answer put it
+    // (ApplyRequesterValue refreshes it). The deadline no longer removes the row - the requester
+    // keeps it until an explicit cancel (owner ruling t_eb35360c) - so this only moves the retry
+    // clock and the unanswered count that decides the next attempt (SubRequesterLease::Interval:
+    // fast while the installs go unanswered, capped, then the keepalive).
     Entry->Lease.OnSend(DeviceStatus.UptimeMs);
 
 #ifdef USE_SUB_PROVIDE
@@ -212,18 +214,20 @@ inline void SubscriptionsService::SubscriptionsReRegisterPending() {
         ReRegisterForNode(ReRegisterPending[i]);
 }
 
-// Keeps the provider side alive: until the first value arrives the entry re-registers on a
-// short retry interval; afterwards it renews the provider's 120 s lease on a slow keepalive
+// Keeps the provider side alive: an install the provider does not answer is re-sent on a short
+// retry interval, and an answered entry renews the provider's 120 s lease on a slow keepalive
 // (a value update only travels provider -> requester, so the requester must renew the
 // provider explicitly - Docs "Timeout 120s, renewed with new request").
 //
 // The cadence itself is SubRequesterLease::Interval (SubscriptionsLease.h), so the host test can
-// drive it: fast while the entry is unserved OR its last installs went unanswered, the slow
-// keepalive once the provider answers. An unanswered keepalive must not wait the keepalive -
-// the provider's lease runs out meanwhile and the node silently drops the entry, which is the
-// "switch dies at random, comes back after a while" failure.
+// drive it: fast while the last installs went unanswered - served before or never served, the
+// ruling makes no difference between them - capped at SUB_FAST_ATTEMPTS, then the keepalive until
+// an install is answered. An unanswered keepalive must not wait the keepalive - the provider's lease
+// runs out meanwhile and the node silently drops the entry, which is the "switch dies at random,
+// comes back after a while" failure - and the cap is what keeps a node that is simply gone from
+// being retried at 100 ms for ever, now that nothing expires the row that keeps trying.
 //
-// Nothing here is optimistic: neither lease is extended because we sent something. The entry's own
+// Nothing here is optimistic: neither lease is extended because we sent something. The row's own
 // deadline moves only when the provider answers, and the provider's only when the Change arrives.
 inline void SubscriptionsService::RequesterInitCheck(uint32_t NowMs) {
     // ONE re-registration per call, round-robin. The bus is half-duplex and a transmit is

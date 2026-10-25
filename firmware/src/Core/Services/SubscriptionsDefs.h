@@ -103,10 +103,16 @@ struct RequesterEntry {
     uint16_t Trid = 0;
     SubscriptionTable Sub;
     uint32_t TargetReg = 0;      // local write target
-    uint32_t Timeout = 0;        // local uptime deadline (not persisted)
+    // The 120 s deadline the documented entry carries: local uptime, not persisted, and refreshed by
+    // the provider's answer. It is NOT enforced on this side - the requester keeps its rows (owner
+    // ruling t_eb35360c) and only the provider expires its own entry - so it is a wire field the app
+    // can read, not a lifetime.
+    uint32_t Timeout = 0;
     bool Active = false;
     // Install/keepalive bookkeeping (transient, after the wire prefix): whether the provider last
-    // answered the install decides the retry cadence. See SubscriptionsLease.h.
+    // answered the install decides the retry cadence. See SubscriptionsLease.h. The counter is
+    // RAM-only - it is not part of the 28 B wire prefix and not part of the 24 B `.SUBREQ` entry - so
+    // every boot, recall and Set starts it at 0.
     SubRequesterLease Lease;
 };
 

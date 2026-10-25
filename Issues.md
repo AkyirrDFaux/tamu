@@ -206,6 +206,17 @@ are hardware-only.
   after its last answer, is dropped from the live table (`.SUBREQ` keeps it) and stops retrying.
   *Not covered*: presses made while the node's entry is already gone - the trigger state is
   recreated, not replayed, so the fix bounds the dead window rather than closing it.
+  **Superseded in part (`t_eb35360c`, owner ruling 2026-10-24)**: keying the requester's lifetime on
+  the answer meant a row nothing answers is destroyed 120 s after its last answer, so a node off for
+  more than two minutes needed a core reboot or a setup re-apply - the pre-fix firmware recovered by
+  itself. The requester now **never** drops a row on time (only an explicit cancel, an orphan
+  announcement from the node, or a new setup); the **provider** keeps its 120 s timeout and drops
+  its own entry, an asymmetry that is deliberate. What bounds an absent provider is the retry
+  cadence instead: fast (`SUB_RETRY_MS`) while installs go unanswered, capped at
+  `SUB_FAST_ATTEMPTS = 5`, then the 60 s keepalive until an install is answered; a confirmation or a
+  value update resets that counter (it is RAM-only, not persisted). Dropping the requester expiry is
+  also what made the cap load-bearing: without it a powered-off node would be retried at 100 ms for
+  ever.
 
 ## Valu v2.0 app (2026-10-06) - parked (owner: not now)
 
@@ -236,6 +247,16 @@ are hardware-only.
   (`MemoryBlocks.h:35-49`) has `char Name[`BLOCK_NAME_LEN`]`, `uint32_t generation` and `bool present`
   beyond the documented pointers and sizes (`Register.md:88-98`). **Under review** (owner wants a
   closer look).
+- **E47** **`Subscriptions.md` does not say which side owns the 120 s timeout, and only the provider
+  owns it now.** The opening sentence reads "A subscription times out after 120 s and is renewed by a
+  new request"; since `t_eb35360c` (owner ruling 2026-10-24) the **provider** drops its entry on that
+  deadline while the **requester** keeps its row until an explicit cancel (a node off for minutes
+  must not need a core reboot). As written, a reader would take the sentence to apply to both sides.
+  Proposed wording, for the parent to apply with Akyirr's approval (Docs are off limits to workers):
+  "A subscription times out after 120 s and is renewed by a new request. The provider expires its
+  entry on that deadline; the requester keeps its row until the subscription is cancelled." The
+  requester-table `Timeout` row ("Local uptime; ignored by Set Subscription and not persistent")
+  stays true either way.
 
 ## Android (on-device behaviour untested)
 

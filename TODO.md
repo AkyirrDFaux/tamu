@@ -574,7 +574,10 @@ Open:
 - **Addresses** are 6-bit net + 10-bit device (`MakeId`). Net 0 means the local net and is resolved
   to the local NetID at match/forward time (`NetQualifyLocal`); the core is `NetID.1`.
 - **Subscriptions**: shared 16-byte table (`sourceReg`, trigger, `minTime` uint24, period,
-  deadzone); requester 28 B / provider 32 B; 120 s lease renewed by keepalive/updates; CIDs
+  deadzone); requester 28 B / provider 32 B; the **provider** holds a 120 s lease renewed by
+  keepalive/updates, while a **requester row never expires** - it goes only on an explicit cancel,
+  an orphan announcement or a new setup (`t_eb35360c`), with the retry cadence as the bus guard
+  (fast while unanswered, capped at 5, then the 60 s keepalive); CIDs
   `0x0400/0x0401` inter-device, `0x0410-0x0413` requester, `0x0420/0x0421` provider; cancel is
   `trigger None`; `.SUBREQ` holds 24 B entries (TRID persisted, timeout regenerated).
 - **Subscription capabilities** are split: `SubscriptionRequest = 1<<7`, `SubscriptionProvide =
