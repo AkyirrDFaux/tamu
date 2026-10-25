@@ -79,6 +79,25 @@ class _DynamicDevice implements RequestChannel {
   int _fieldCount(int global) =>
       rows.keys.where((k) => k.startsWith('$global:')).length;
 
+  /// The banked enumerate entry (CID 0) for the dynamic globals this device holds: one word per
+  /// bank, `(0xF0 + bank) << 8 | the highest global index in it`. No rows means no dynamic memory.
+  List<int> _banks() {
+    final byBank = <int, int>{};
+    for (final row in rows.keys) {
+      final global = int.parse(row.split(':').first);
+      final bank = global >> 6;
+      final instance = global & 0x3F;
+      if (instance > (byBank[bank] ?? -1)) byBank[bank] = instance;
+    }
+    final words = [
+      for (final b in byBank.keys.toList()..sort())
+        ((0xF0 + b) << 8) | byBank[b]!,
+    ];
+    return [
+      for (final w in words) ...[w & 0xFF, (w >> 8) & 0xFF],
+    ];
+  }
+
   @override
   bool get isConnected => true;
 
@@ -132,6 +151,11 @@ class _DynamicDevice implements RequestChannel {
       switch (functionCid) {
         case RegisterCid.write:
           return _write(payload);
+        case RegisterCid.enumerateBlocks:
+          // The banked 8.8 enumerate entry: the high byte is 0xF0 + bank, the low byte the
+          // highest occupied global index in it. A device whose rows a run has just created
+          // answers this, which is how the structure phase's re-read finds them.
+          return PacketResponse(payload: _banks(), success: true, fail: false);
         case RegisterCid.enumerateFields:
           final packed = payload[0] | (payload[1] << 8);
           final type = packed >> 6;
@@ -806,8 +830,173 @@ void main() {
       expect(
         absent.reason,
         isNot(contains('the device carries the row')),
-        reason: 'the device does not carry it'
+        reason: 'the device does not carry it',
       );
+    },
+  );
+
+  // Card t_e3c0cb84: the structural-skip reason must not credit the device with a value it never
+  // had. `applyRestorePlan` collects the skips AFTER `prepareDynamicBlocks`, which re-reads the
+  // device - so for a volatile structural row the device did NOT carry, the row in the report exists
+  // only because the structure phase created it zero-filled moments earlier. The two cases below are
+  // the same row on two devices: absent (created this run) and present in the declared shape (kept).
+
+  /// The one volatile structural row both cases restore: a Number the capture archives without its
+  /// value (`backupBlockFromVisited`: identity, type, flags and size, no value).
+  BackupDevice volatileRowArchive() => _archive(
+    blocks: [
+      BackupBlock(
+        type: 'Dynamic',
+        typeIndex: dynamicTypeBase,
+        instance: 0,
+        name: 'Subscriptions',
+        isDynamic: true,
+        entries: [
+          BackupEntry(
+            field: 'Field 4',
+            fieldIndex: 4,
+            key: 'Key 0',
+            keyIndex: 0,
+            type: 'Number',
+            flags: const ['Volatile'],
+            value: null,
+            structural: true,
+            size: 4,
+          ),
+        ],
+      ),
+    ],
+  );
+
+  LiveBlock subscriptionsBlock(List<LiveEntry> entries) => LiveBlock(
+    type: dynamicTypeBase,
+    instance: 0,
+    name: 'Subscriptions',
+    isDynamic: true,
+    entries: entries,
+  );
+
+  test(
+    'a structural row the run created is reported as created, not as a value kept',
+    () async {
+      final archive = volatileRowArchive();
+      // The device carries the block but NOT the row: the structure phase creates it zero-filled.
+      final plan = _plan(
+        archive: archive,
+        liveBlocks: [subscriptionsBlock(const [])],
+      );
+      // Before the run the reason is the absent-row one, and it already says what will happen.
+      expect(
+        structuralSkips(plan).single.reason,
+        contains(
+          'the structure phase creates a row with a declared length zero-filled',
+        ),
+      );
+
+      final device = _DynamicDevice();
+      _install(device);
+
+      final report = await applyRestorePlan(plan);
+
+      expect(report.failed, 0, reason: report.text);
+      expect(report.counts, '0 written · 1 skipped (structural) · 0 failed');
+      final skip = report.skipped.single;
+      // WHAT HAPPENED: the run created the row. It never held a value, so the report must not say it
+      // "keeps the value it already holds" - the row did not exist before this run.
+      expect(
+        skip.reason,
+        contains(
+          'the structure phase created it zero-filled this run, and no value was '
+          'written',
+        ),
+      );
+      expect(skip.reason, isNot(contains('keeps the value it already holds')));
+      // The claim is true on the device: the row exists, at the declared length, all zeroes.
+      expect(device.rows['0:4:0'], isNotNull);
+      expect(device.rows['0:4:0']!.type, DataType.number.value);
+      expect(device.rows['0:4:0']!.value, [0, 0, 0, 0]);
+      // Exactly one write reached the bus and it is the CREATE: no value write followed it.
+      final writes = device.sent
+          .where(
+            (c) =>
+                c.service == ServiceType.register && c.cid == RegisterCid.write,
+          )
+          .toList();
+      expect(writes, hasLength(1));
+      expect(writes.single.payload.sublist(8), [0, 0, 0, 0]);
+      expect(device.zeroLengthValueWrites, 0);
+
+      // The wording is bound to THIS run: the row now exists in the declared shape, so applying the
+      // same plan again must not repeat "created this run" - it created nothing the second time.
+      final again = await applyRestorePlan(plan);
+      expect(again.failed, 0, reason: again.text);
+      expect(
+        again.skipped.single.reason,
+        contains(
+          'the device carries the row and keeps the value it already holds',
+        ),
+      );
+      expect(
+        again.skipped.single.reason,
+        isNot(contains('created it zero-filled this run')),
+      );
+
+      // ignore: avoid_print
+      print('--- created-row report ---\n${report.text}\n--- end ---');
+    },
+  );
+
+  test(
+    'a structural row already present in the declared shape is reported as kept',
+    () async {
+      final archive = volatileRowArchive();
+      final live = _live(
+        blocks: [
+          subscriptionsBlock([
+            LiveEntry(
+              field: 4,
+              key: 0,
+              fieldName: 'Field 4',
+              keyName: 'Key 0',
+              meta: ValueInfo(type: DataType.number.value, size: 4),
+              value: const [1, 2, 3, 4],
+            ),
+          ]),
+        ],
+      );
+      final device = _DynamicDevice();
+      device.rows['0:4:0'] = (
+        type: DataType.number.value,
+        value: const [1, 2, 3, 4],
+        flags: 0,
+      );
+      _install(device);
+
+      final report = await applyRestorePlan(
+        _plan(archive: archive, live: live),
+      );
+
+      expect(report.failed, 0, reason: report.text);
+      expect(report.counts, '0 written · 1 skipped (structural) · 0 failed');
+      final skip = report.skipped.single;
+      // The row was there in the declared shape, so "keeps the value it already holds" is the true
+      // sentence - and it must NOT claim the run created it.
+      expect(
+        skip.reason,
+        contains(
+          'the device carries the row and keeps the value it already holds',
+        ),
+      );
+      expect(skip.reason, isNot(contains('created it zero-filled this run')));
+      // Nothing was written: no create, no value write.
+      expect(
+        device.sent.where(
+          (c) =>
+              c.service == ServiceType.register && c.cid == RegisterCid.write,
+        ),
+        isEmpty,
+      );
+      expect(device.rows['0:4:0']!.value, [1, 2, 3, 4]);
     },
   );
 }

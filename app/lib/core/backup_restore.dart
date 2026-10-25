@@ -717,6 +717,17 @@ class RestorePlan {
   /// turned off.
   final Map<String, bool> _removalChoices = {};
 
+  /// The rows [prepareDynamicBlocks] created on a target during this run, by address identity
+  /// ([createdRowKey]).
+  ///
+  /// A report must not say the device "keeps the value it already holds" for a row the run itself
+  /// brought into existence: the structure phase creates a missing row zero-filled, so there is no
+  /// value before it and none carried over. The set is what lets [structuralSkips] tell the two
+  /// apart. It is keyed on the SOURCE device, not the live one: the create is made for a source
+  /// block, and the structure phase re-reads and re-points the plan afterwards, which can hand the
+  /// source a snapshot whose live id differs.
+  final Set<String> createdStructure = {};
+
   RestorePlan({
     required this.devices,
     required this.liveDevices,
@@ -1826,6 +1837,21 @@ Set<String> _filesThePlanWrites(List<BackupDevice> devices) {
   return names;
 }
 
+/// The identity of one archive row's ADDRESS, for [RestorePlan.createdStructure]: the source
+/// device, the block it belongs to and the field/key it names.
+///
+/// The structure phase creates rows by (block type, instance, field, key) for a source block, and
+/// [structuralSkips] asks about exactly those coordinates - so the two cannot drift about which row
+/// they mean. The source device id is part of the key because an archive can describe several
+/// devices and the same address exists on each of them.
+String createdRowKey(
+  BackupDevice source,
+  BackupBlock block,
+  BackupEntry entry,
+) =>
+    '${source.id}:${block.typeIndex}:${block.instance}:'
+    '${entry.fieldIndex}:${entry.keyIndex}';
+
 /// The plan's STRUCTURAL rows: addresses the archive carries with NO VALUE of their own, which a
 /// restore leaves as structure and never writes ([entryDeclaresNoValue]).
 ///
@@ -1841,6 +1867,10 @@ Set<String> _filesThePlanWrites(List<BackupDevice> devices) {
 /// ([_noValueSource]) and what the device state makes of it ([_noValueOutcome]): a dictionary
 /// marker is not the same fact as a volatile row the capture leaves out, and a row the archive
 /// does not carry a value for may well hold a value on the device.
+///
+/// A row THIS RUN created has no earlier value at all, so the two devices are not the same case
+/// either: [RestorePlan.createdStructure] names what the structure phase made, and such a row is
+/// reported as created rather than as a value the device kept.
 List<RestoreSkip> structuralSkips(RestorePlan plan) {
   final out = <RestoreSkip>[];
   for (final source in plan.devices) {
@@ -1868,9 +1898,14 @@ List<RestoreSkip> structuralSkips(RestorePlan plan) {
             (type == DataType.geometry ||
                 type == DataType.texture ||
                 type == DataType.unknownKeyed);
+        // A row the structure phase made during THIS run did not exist before it, so the report
+        // must not describe the device as holding a value for it ([RestorePlan.createdStructure]).
+        final created = plan.createdStructure.contains(
+          createdRowKey(source, block, entry),
+        );
         final reason =
             '${_noValueSource(entry, marker: marker)}; '
-            '${_noValueOutcome(entry, marker: marker, hasTarget: target != null, hasBlock: live != null, hasRow: row != null)}';
+            '${_noValueOutcome(entry, marker: marker, hasTarget: target != null, hasBlock: live != null, hasRow: row != null, created: created)}';
         out.add(
           RestoreSkip(
             archive: source.name,
@@ -1918,13 +1953,24 @@ String _noValueSource(BackupEntry entry, {required bool marker}) {
 /// ([prepareDynamicBlocks], which carries the declared type and size). Only a row that declares no
 /// length is one no host write can create - the firmware refuses a write with no bytes - so only
 /// that case says "cannot be created".
+///
+/// [created] is the case where the row did not exist before this run and [prepareDynamicBlocks]
+/// made it: there is no earlier value then, so the reason says what the run did instead of
+/// crediting the device with a value it never had. It is answered FIRST, because the structure
+/// phase re-reads the target after creating and that snapshot decides the rest of this function: a
+/// row the run created by definition did exist on the device once the create landed.
 String _noValueOutcome(
   BackupEntry entry, {
   required bool marker,
   required bool hasTarget,
   required bool hasBlock,
   required bool hasRow,
+  required bool created,
 }) {
+  if (created) {
+    return 'the structure phase created it zero-filled this run, and no value '
+        'was written';
+  }
   if (!hasTarget) {
     return 'this rig carries no target device for the archive, so nothing was '
         'sent to it';
@@ -1967,7 +2013,15 @@ String _noValueOutcome(
 /// Re-reads the live devices and re-points the plan afterwards, so it resolves against the
 /// structure that now exists; newly restorable items join the default selection. A structure that
 /// cannot be created is left alone (its entries stay unready). Returns how many were created.
+///
+/// Every row it does create is recorded in [RestorePlan.createdStructure]: a structural row then
+/// exists only because this phase made it, and the report must say that instead of describing the
+/// device as keeping a value the row never held.
 Future<int> prepareDynamicBlocks(RestorePlan plan) async {
+  // The set describes what THIS run's structure phase created: a plan applied a second time must
+  // not carry the previous run's creations into the new report, where the row is now one the
+  // device holds.
+  plan.createdStructure.clear();
   var created = 0;
   for (final source in plan.devices) {
     final target = plan.deviceTargets[source.id];
@@ -2070,6 +2124,9 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
           continue;
         }
         created++;
+        // Bookkeeping only: the report must say this row was CREATED this run rather than that
+        // the device kept a value it never held ([RestorePlan.createdStructure]).
+        plan.createdStructure.add(createdRowKey(source, block, entry));
       }
     }
   }
