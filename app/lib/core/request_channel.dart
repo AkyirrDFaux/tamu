@@ -86,7 +86,13 @@ enum RequestFaultKind {
   /// The device answered, but with nothing the command could use: an empty or short reply where a
   /// value is echoed on success. That is how a FAIL looks on the payload-only commands, whose flag
   /// the client never sees - so it is reported as "answered nothing", not as a lost reply.
-  unusable('no usable reply');
+  unusable('no usable reply'),
+
+  /// The app refused the request itself and sent nothing: a write whose value has no bytes (see
+  /// `ValueUpdateApplicable` in the firmware - a zero-length value poisons the row it targets), or
+  /// one the client can see has nowhere to go. Separate from [noLink] because the bus was fine and
+  /// separate from [unusable] because nothing was ever sent.
+  notSent('not sent');
 
   const RequestFaultKind(this.word);
 
@@ -191,6 +197,18 @@ class RequestTrace {
       service: service,
       cid: cid,
       payload: payload,
+      detail: detail,
+    );
+  }
+
+  /// Records that the app refused the request and never sent it, with [detail] saying why.
+  void notSent(int deviceId, {ServiceType? service, int? cid, String? detail}) {
+    if (_first != null) return;
+    _first = RequestFault(
+      kind: RequestFaultKind.notSent,
+      deviceId: deviceId,
+      service: service,
+      cid: cid,
       detail: detail,
     );
   }

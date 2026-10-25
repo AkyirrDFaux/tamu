@@ -117,7 +117,10 @@ void main() {
 
       expect(tester.takeException(), isNull, reason: 'the dialog overflowed');
       // The counts first, then one section per device the rows were written to.
-      expect(find.text('240 written · 3 failed'), findsOneWidget);
+      expect(
+        find.text('240 written · 0 skipped (structural) · 3 failed'),
+        findsOneWidget,
+      );
       expect(find.textContaining('Tamu (1.1) · 2 failure'), findsOneWidget);
       expect(find.textContaining('no target (from DAS)'), findsOneWidget);
       // The item kind, the address, the code and the sentence - the four things the card asks for.
@@ -156,7 +159,7 @@ void main() {
       expect(copies, hasLength(1), reason: 'the clipboard got one report');
       final text = copies.single;
       expect(text, startsWith('Restore report 2026-10-25 19:30'));
-      expect(text, contains('240 written · 3 failed'));
+      expect(text, contains('240 written · 0 skipped (structural) · 3 failed'));
       expect(text, contains('Tamu (1.1) · 2 failures'));
       expect(text, contains('block field  PWM output "Fan" #0 / Duty [Key 0]'));
       expect(text, contains('code: FAIL (FLAG_FAIL 0x40, no reason payload)'));
@@ -199,7 +202,70 @@ void main() {
     await tester.pump();
 
     expect(tester.takeException(), isNull);
-    expect(find.text('240 written · 0 failed'), findsOneWidget);
+    expect(
+      find.text('240 written · 0 skipped (structural) · 0 failed'),
+      findsOneWidget,
+    );
     expect(find.textContaining('Every selected item landed.'), findsOneWidget);
   });
+
+  // A run whose structural rows are reported, not failed: the count line separates the three
+  // numbers and the rows get their own heading, so `0 failed` cannot read as "nothing was left
+  // out". The reason is wrapped in the copied text (a phone cannot read a 150-character line).
+  testWidgets(
+    'structural skips are counted and named, never counted as failures',
+    (tester) async {
+      tester.view.physicalSize = _portrait;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final report = RestoreReport(
+        at: DateTime(2026, 10, 25, 19, 36),
+        written: 602,
+        reasons: const [],
+        skipped: const [
+          RestoreSkip(
+            archive: 'Tamu',
+            target: 'Tamu (1.1)',
+            targetId: 1025,
+            kindWord: 'block field',
+            subject: 'Dynamic "Left Eye" #1 / Field 4 [Key 0] (field 4 key 0)',
+            reason:
+                "the device carries the row: key 0 is the field's dictionary "
+                'marker, which declares the type and holds no value of its own',
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildTheme(),
+          home: Scaffold(body: RestoreResultView(report: report)),
+        ),
+      );
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(
+        find.text('602 written · 1 skipped (structural) · 0 failed'),
+        findsOneWidget,
+      );
+      expect(find.text('Skipped as structural (1)'), findsOneWidget);
+      expect(find.textContaining('Left Eye'), findsWidgets);
+
+      final text = report.text;
+      expect(text, contains('602 written · 1 skipped (structural) · 0 failed'));
+      expect(text, contains('Skipped as structural (1)'));
+      expect(text, contains('why : the device carries the row: key 0'));
+      for (final line in text.split('\n')) {
+        expect(
+          line.length,
+          lessThan(120),
+          reason: 'too wide to read on a phone: $line',
+        );
+      }
+      // The skip's kind word is a block field, and it is NOT in the failure vocabulary: the report
+      // carries no `FAIL` code for it, because nothing was ever sent.
+      expect(text, isNot(contains('FAIL (')));
+    },
+  );
 }

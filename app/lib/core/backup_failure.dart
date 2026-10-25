@@ -22,16 +22,21 @@ String _fileKindWord(BackupFile file) {
   return 'file';
 }
 
+/// The row as the PLAN names it, for one archive entry: the block's type word, name and instance,
+/// then the field and key in both words and indexes. Shared by [restoreItemSubject] and by a
+/// structural skip, so a skipped marker and a written row are named the same way.
+String restoreEntrySubject(BackupBlock block, BackupEntry entry) =>
+    '${block.type} "${block.name}" #${block.instance} / '
+    '${entry.field} [${entry.key}] '
+    '(field ${entry.fieldIndex} key ${entry.keyIndex})';
+
 /// The row as the PLAN names it: the archive's own field/key words, the script and the slot it
 /// occupies, the two register addresses of a requester row, the name of a file.
 ///
 /// This is the same wording the plan page prints for the row, so a reason quoted on a card points
 /// at a row the owner can find on screen.
 String restoreItemSubject(RestoreItem item) => switch (item.kind) {
-  RestoreKind.entry =>
-    '${item.block!.type} "${item.block!.name}" #${item.block!.instance} / '
-        '${item.entry!.field} [${item.entry!.key}] '
-        '(field ${item.entry!.fieldIndex} key ${item.entry!.keyIndex})',
+  RestoreKind.entry => restoreEntrySubject(item.block!, item.entry!),
   RestoreKind.script =>
     '${item.script!.functionName.isEmpty ? 'Script' : item.script!.functionName} '
         '(${scriptFileName(item.script!.slot)}'
@@ -75,6 +80,9 @@ String restoreCodeText({RequestFault? fault, String? clientReason}) {
       case RequestFaultKind.unusable:
         return 'no code from the device (it answered ${f.payload.length} byte(s) '
             'where a successful write answers differently'
+            '${f.detail == null ? '' : ': ${f.detail}'})';
+      case RequestFaultKind.notSent:
+        return 'no code from the device (the app refused it and sent nothing'
             '${f.detail == null ? '' : ': ${f.detail}'})';
     }
   }
@@ -191,6 +199,69 @@ class RestoreFailure {
 String _targetLabel(LiveDevice target) =>
     '${target.name} (${idToString(target.id)})';
 
+/// One row the restore left as STRUCTURE: an address the archive carries with no value of its own,
+/// so the run created nothing and wrote nothing ([entryDeclaresNoValue]).
+///
+/// A dictionary marker is the case this exists for: `Geometry`/`Texture` at key 0 declares a field
+/// as a keyed dictionary and holds no value, and the LED display's eye blocks are nine of them per
+/// block. Writing one is a zero-length write, which the firmware refuses - and a refusal is
+/// invisible in the result screen except as a failure count. These rows are neither written nor
+/// failed: they are reported, one line each, so the count can say `skipped (structural)` and the
+/// reader can tell a marker from a write that did not land.
+///
+/// [reason] is what the device state makes of the row: already carried (nothing to do), absent
+/// (a zero-length row cannot be created by a register write), or unplaceable.
+class RestoreSkip {
+  final String archive;
+  final String target;
+  final int? targetId;
+  final String kindWord;
+  final String subject;
+  final String reason;
+
+  const RestoreSkip({
+    required this.archive,
+    required this.target,
+    this.targetId,
+    required this.kindWord,
+    required this.subject,
+    required this.reason,
+  });
+
+  bool get placed => targetId != null;
+
+  /// The one-line form: the row, then why nothing was sent to it.
+  String get line =>
+      '$target: $kindWord $subject - skipped (structural): $reason';
+
+  /// The result screen's shape: the row on its own line, the reason wrapped under it.
+  ///
+  /// The wrap happens here rather than in the screen because [RestoreReport.text] is what a reader
+  /// pastes into a card: a reason that rides out as one 150-character line cannot be read on a
+  /// phone, and the report's whole point is that its rows can. Same reason the failure blocks carry
+  /// one sentence per line.
+  String get block {
+    const head = '    why : ';
+    const width = 76;
+    final buffer = StringBuffer('  $kindWord  $subject\n$head');
+    var column = head.length;
+    for (final word in reason.split(' ')) {
+      if (column > head.length && column + word.length + 1 > width) {
+        buffer.write('\n${' ' * head.length}$word');
+        column = head.length + word.length;
+      } else {
+        if (column > head.length) {
+          buffer.write(' ');
+          column++;
+        }
+        buffer.write(word);
+        column += word.length;
+      }
+    }
+    return buffer.toString();
+  }
+}
+
 /// Everything one restore run did, with its failures carrying their reasons.
 ///
 /// This is the run's result: the counts, the structured [reasons], the four sweeps' reports, and
@@ -204,6 +275,11 @@ class RestoreReport {
   /// Every failure of the run, in the order it happened, each with its reason.
   final List<RestoreFailure> reasons;
 
+  /// The rows the run deliberately did not write because they carry no value of their own
+  /// ([RestoreSkip]): dictionary markers, structural rows. Counted apart from [written] and
+  /// [reasons], never folded into either.
+  final List<RestoreSkip> skipped;
+
   final List<RequesterPrune> requesterPrune;
   final List<ScriptSlotPrune> scriptSlots;
   final List<ScriptFilePrune> scriptFiles;
@@ -213,6 +289,7 @@ class RestoreReport {
     required this.at,
     required this.written,
     required this.reasons,
+    this.skipped = const [],
     this.requesterPrune = const [],
     this.scriptSlots = const [],
     this.scriptFiles = const [],
@@ -223,6 +300,15 @@ class RestoreReport {
 
   /// The failures as plain lines, one per reason - the shape a log line or a test reads.
   List<String> get failures => [for (final r in reasons) r.line];
+
+  /// The structural skips as plain lines, one per row.
+  List<String> get skips => [for (final s in skipped) s.line];
+
+  /// The run's counts as one line: written, skipped as structure, failed. Three numbers, because a
+  /// structural row is not a failure and a run that reported it as one hid the reason it was not
+  /// written behind a count.
+  String get counts =>
+      '$written written · ${skipped.length} skipped (structural) · $failed failed';
 
   /// The failures grouped by the device they were being written to, in first-seen order, so the
   /// result screen can show one section per node - what a person fixing a rig actually walks
@@ -293,7 +379,7 @@ class RestoreReport {
   String get text {
     final buffer = StringBuffer()
       ..writeln('Restore report ${_stamp(at)}')
-      ..writeln('$written written · $failed failed');
+      ..writeln(counts);
     if (reasons.isEmpty) {
       buffer
         ..writeln()
@@ -309,6 +395,17 @@ class RestoreReport {
         for (final failure in group.failures) {
           buffer.writeln(failure.block);
         }
+      }
+    }
+    // The rows that were never a write: named, so "0 failed" cannot be read as "nothing was left
+    // out". A structural row is a dictionary marker or a row whose value the archive does not
+    // carry, and there is nothing to send to it.
+    if (skipped.isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('Skipped as structural (${skipped.length})');
+      for (final skip in skipped) {
+        buffer.writeln(skip.block);
       }
     }
     void section(String heading, List<String> rows) {
@@ -332,6 +429,7 @@ class RestoreReport {
   Map<String, Object?> get metadata => {
     'at': at.toIso8601String(),
     'written': written,
+    'skipped': skipped.length,
     'failed': failed,
     'failures': [
       for (final r in reasons)
@@ -343,6 +441,17 @@ class RestoreReport {
           'subject': r.subject,
           'code': r.code,
           'meaning': r.meaning,
+        },
+    ],
+    'structural': [
+      for (final s in skipped)
+        {
+          'device': s.target,
+          'targetId': s.targetId,
+          'archive': s.archive,
+          'kind': s.kindWord,
+          'subject': s.subject,
+          'reason': s.reason,
         },
     ],
     'removed': removals,
@@ -368,10 +477,16 @@ abstract final class RestoreSession {
 
   /// Keeps [report] as the session's last restore and records each failure's line in the
   /// diagnostics ring, so a run can be quoted long after its dialog was closed.
+  ///
+  /// The structural skips are recorded too: "18 skipped (structural)" is a fact about the run, and
+  /// a reader who reopens it on the Logs page must be able to see WHICH rows they were.
   static void record(RestoreReport report) {
     last = report;
     for (final failure in report.reasons) {
       AppDiagnostics.log('restore', failure.line);
+    }
+    for (final skip in report.skipped) {
+      AppDiagnostics.log('restore', skip.line);
     }
   }
 

@@ -218,7 +218,17 @@ Future<int> runUpload(List<String> args, {RigOpener? openRig}) async {
     stdout.writeln('  difference before: $difference');
   }
   final result = await applyRestorePlan(plan);
-  stdout.writeln('\nAPPLIED written=${result.written} failed=${result.failed}');
+  stdout.writeln(
+    '\nAPPLIED written=${result.written} '
+    'skipped=${result.skipped.length} failed=${result.failed}',
+  );
+  // The report's own count line, in the words the app's result screen copies: written, skipped as
+  // structure, failed. A structural row is a dictionary marker or a row the archive carries with no
+  // value - it is not a write that failed, and the restore never sends one.
+  stdout.writeln('  REPORT ${result.counts}');
+  for (final skip in result.skipped) {
+    stdout.writeln('  SKIPPED-STRUCTURAL ${skip.line}');
+  }
   for (final prune in result.requesterPrune) {
     stdout.writeln(
       '  REQUESTER ${idToString(prune.deviceId)} "${prune.deviceName}": '

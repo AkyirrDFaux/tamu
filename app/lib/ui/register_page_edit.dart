@@ -145,24 +145,16 @@ extension on _RegisterPageState {
       _snack('Field $field already exists');
       return;
     }
-    // A dictionary field is created as an empty key-0 marker (no value).
+    // A dictionary field's key 0 is a MARKER: it declares the field's type and carries no value of
+    // its own (firmware `Blocks/Render.h`; Docs "Data Formats.md" "Dictionaries"). The firmware
+    // refuses every write with no value bytes, so the app cannot create one from the host - say so
+    // instead of sending a write that can only come back FAIL.
     if (dataType == DataType.geometry || dataType == DataType.texture) {
-      final seed = <int>[];
-      final dynBlock = DynBlock(
-        index: block.inst,
-        meta: block.meta,
-        name: block.name,
+      _snack(
+        'A dictionary field is a key-0 marker with no value, and the firmware '
+        'refuses a write with no value bytes - the field has to be created on '
+        'the device itself',
       );
-      final meta = ValueInfo(type: dataType.value, key: 0, size: 0);
-      final confirmed = await _client.writeDynamicEntry(
-        dynBlock,
-        field,
-        0,
-        meta,
-        seed,
-      );
-      _snack(confirmed != null ? 'Field added' : 'Add failed');
-      await _refreshAll();
       return;
     }
     final seed = await showValueEditor(context, dataType, []);

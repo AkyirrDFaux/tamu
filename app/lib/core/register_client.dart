@@ -701,12 +701,43 @@ class RegisterClient {
     );
   }
 
+  /// True when [entries] hold a row with NO value of its own: a keyed dictionary's MARKER
+  /// (`Geometry`/`Texture` at key 0 - see `Blocks/Render.h`) or any other zero-length row.
+  ///
+  /// The one rule behind both the write guard ([_writeDynamicValue]) and the reorder refusals: a
+  /// zero-length row is structure the firmware owns, and no host write can create it or carry it
+  /// across a rebuild.
+  static bool _holdsMarkers(
+    Iterable<({int field, int key, ValueInfo meta, List<int> value})> entries,
+  ) =>
+      entries.any((e) => e.value.isEmpty && e.meta.type != DataType.none.value);
+
   Future<List<int>?> _writeDynamicValue(
     Uint8List bi,
     ValueInfo meta,
     List<int> value, {
     Duration? timeout,
   }) async {
+    // A write carrying NO value bytes is never sent. The firmware refuses one (`ValueUpdateApplicable`
+    // in `Core/Functions/MemoryTypes.h`) because storing it would set the row's Size to 0, and a
+    // size-0 row resolves to no data - every later write to that address is dropped until a write
+    // that carries a size comes along. A refused write answers FLAG_FAIL with no payload, so a
+    // caller can only ever report "FAIL", and the app spent 18 of those per restore on the eye
+    // blocks' dictionary MARKERS, which have no value by design (`Blocks/Render.h`: key 0 "has no
+    // value of its own"; `Docs/Data Formats.md` "Dictionaries": "a length of 0 ... which makes it a
+    // marker"). Deleting is the one zero-length request that means something, and it travels as type
+    // None, which the firmware handles before the length gate.
+    if (value.isEmpty && meta.type != DataType.none.value) {
+      trace.notSent(
+        deviceId,
+        service: ServiceType.register,
+        cid: RegisterCid.write,
+        detail:
+            'a write with no value bytes is not a value: storing it would set the '
+            'row\'s size to 0 and every later write to it would be refused',
+      );
+      return null;
+    }
     // Asked WITH the packet flags on purpose: a register write answers FAIL - and carries no payload
     // at all when it does (`RespondStatus(Frame, false)` in the firmware) - so the flag is the only
     // place the refusal is visible. `request` is this same call minus the flags, so nothing about the
@@ -823,6 +854,12 @@ class RegisterClient {
   /// block indexes) using position ops: reads every block's content, tombstones all
   /// dynamic positions, then recreates them at positions 0..L-1 in the new order
   /// (tombstone slots are filled; leftover tombstones stay at the end).
+  ///
+  /// Refuses (returns false) when any block holds a row with no value of its own - a keyed
+  /// dictionary's MARKER, `Geometry`/`Texture` at key 0. Tombstoning and recreating the block
+  /// destroys such a row and no write can put it back: the firmware refuses every write with no
+  /// value bytes, so the display would silently stop reading that field as a dictionary. A refusal
+  /// is the honest answer; a reorder that quietly loses the structure is not.
   Future<bool> reorderDynamicBlocks(List<int> newOrder) async {
     final live =
         <
@@ -848,6 +885,18 @@ class RegisterClient {
         }
       }
       live.add((name: meta.name, type: meta.meta.blockType, entries: entries));
+    }
+    // A marker row cannot survive a rebuild (see the doc comment), so nothing is tombstoned yet.
+    if (live.any((b) => _holdsMarkers(b.entries))) {
+      trace.notSent(
+        deviceId,
+        service: ServiceType.register,
+        cid: DynamicCid.create,
+        detail:
+            'the reorder would rebuild a block that holds rows with no value '
+            '(dictionary markers), and they cannot be written back',
+      );
+      return false;
     }
     final count = (await enumerateDynamicIndices())?.length ?? 0;
     for (var i = 0; i < count; i++) {
@@ -876,6 +925,9 @@ class RegisterClient {
   /// Reorders a block's FIELDS: [newOrder] is the desired field order (old field
   /// indexes). Reads every entry, deletes all fields, then rewrites each entry under
   /// the remapped field index (position in newOrder).
+  ///
+  /// Refuses when the block holds a marker row (`Geometry`/`Texture` at key 0): deleting the
+  /// fields destroys it and a zero-length write cannot recreate it (see [reorderDynamicBlocks]).
   Future<bool> reorderDynamicFields(DynBlock block, List<int> newOrder) async {
     final all = <({int field, int key, ValueInfo meta, List<int> value})>[];
     for (final f in await getDynamicFields(block.index) ?? <int>[]) {
@@ -885,6 +937,17 @@ class RegisterClient {
           all.add((field: f, key: k, meta: e.meta, value: e.value));
         }
       }
+    }
+    if (_holdsMarkers(all)) {
+      trace.notSent(
+        deviceId,
+        service: ServiceType.register,
+        cid: DynamicCid.create,
+        detail:
+            'the reorder would rebuild a field that holds rows with no value '
+            '(dictionary markers), and they cannot be written back',
+      );
+      return false;
     }
     for (final f in await getDynamicFields(block.index) ?? <int>[]) {
       await deleteDynamic(block: block.index, field: f);
@@ -918,7 +981,9 @@ class RegisterClient {
   }
 
   /// Re-numbers a field from [oldField] to [newField] (rewrites every entry at the new
-  /// index and removes the old). Returns false when newField collides.
+  /// index and removes the old). Returns false when newField collides, and when the field holds a
+  /// marker row - a zero-length row cannot be rewritten, so re-numbering it would drop it (see
+  /// [reorderDynamicBlocks]).
   Future<bool> setDynamicFieldIndex(
     DynBlock block,
     int oldField,
@@ -927,10 +992,23 @@ class RegisterClient {
     if (oldField == newField) return true;
     final existing = await getDynamicFields(block.index) ?? <int>[];
     if (existing.contains(newField)) return false;
-    final all = <({int key, ValueInfo meta, List<int> value})>[];
+    final all = <({int field, int key, ValueInfo meta, List<int> value})>[];
     for (final k in await getDynamicKeys(block.index, oldField) ?? <int>[]) {
       final e = await readDynamicField(block, oldField, k);
-      if (e != null) all.add((key: k, meta: e.meta, value: e.value));
+      if (e != null) {
+        all.add((field: oldField, key: k, meta: e.meta, value: e.value));
+      }
+    }
+    if (_holdsMarkers(all)) {
+      trace.notSent(
+        deviceId,
+        service: ServiceType.register,
+        cid: DynamicCid.create,
+        detail:
+            'the field holds a row with no value (a dictionary marker), which '
+            'cannot be written under the new index',
+      );
+      return false;
     }
     for (final e in all) {
       if (await writeDynamicEntry(block, newField, e.key, e.meta, e.value) ==

@@ -271,7 +271,19 @@ Future<LiveRead> readLiveDevice(int deviceId) async {
 
 /// Resolves the bytes to write for a source entry against a live target entry,
 /// or null when the target is incompatible (wrong type, unknown enum name, ...).
-List<int>? resolveEntryBytes(BackupEntry source, LiveEntry target) {
+///
+/// [allowTypeChange] is for a DYNAMIC block's row: its type and length are the row's own (a
+/// dynamic block has no compile-time schema, unlike a static one), so an archive row whose type
+/// differs from the live row's RE-CREATES the row in the archive's type. That is the repair path
+/// for a row an earlier zero-length write poisoned - the write sets the row's Size to 0, a scalar
+/// read of it then lands as `SCRIPT_ERR_TYPE` (`ScriptService::AssignResolved`), and a restore that
+/// skipped the row because its type no longer matched would leave the address dead. A STATIC
+/// block's type comes from the firmware's schema, so a different type there is still refused.
+List<int>? resolveEntryBytes(
+  BackupEntry source,
+  LiveEntry target, {
+  bool allowTypeChange = false,
+}) {
   final sourceType = dataTypeFromWord(source.type);
   if (sourceType == null) return null;
   final targetType = target.meta.dataType;
@@ -282,12 +294,32 @@ List<int>? resolveEntryBytes(BackupEntry source, LiveEntry target) {
       (targetType == DataType.text ||
           targetType == DataType.name ||
           targetType == DataType.filename);
-  if (!text && sourceType != targetType) return null;
+  final retype = !text && sourceType != targetType;
+  if (retype && !allowTypeChange) return null;
+  // The length hint decides how many bytes the write carries, and the two sides own it for
+  // different reasons:
+  //
+  //  * a CHARACTER field's width is the DEVICE's: the firmware's fixed-width string is padded or
+  //    truncated to the live row's size (B10), so a short `hello` reaches an 8-byte Filename as
+  //    eight bytes and never shrinks the field;
+  //  * every other type's width is its OWN, so a live row whose size is not the declared one is
+  //    the damaged row this has to give a size back to - measured on the rig 2026-10-25,
+  //    `Dynamic[0]` field 4 key 0 holds `Number` at size 1 where a Number is 4, and the emote
+  //    selector's read of it lands as SCRIPT_ERR_TYPE. Repairing with the live width (1) would
+  //    write the same damage back.
+  final int hint;
+  if (text) {
+    hint = target.meta.size > 0 ? target.meta.size : source.size;
+  } else if (retype) {
+    hint = source.size;
+  } else {
+    hint = source.size > 0 ? source.size : target.meta.size;
+  }
   return decodeSemantic(
-    targetType,
+    retype ? sourceType : targetType,
     source.value,
     info: target.info,
-    size: target.meta.size,
+    size: hint > 0 ? hint : null,
   );
 }
 
@@ -580,16 +612,33 @@ const noEntryIssue = 'No matching entry';
 /// the same reason as [noEntryIssue], and unready for the same reason.
 const noBlockIssue = 'No compatible block';
 
+/// True when a captured entry declares NO VALUE of its own: a STRUCTURAL row (the archive carries
+/// no `value` key at all) or one whose declared `size` is 0.
+///
+/// Such a row is not a value the device can be given, and the correct behaviour is to send
+/// NOTHING to it. The firmware refuses every write whose value has no bytes
+/// (`ValueUpdateApplicable`, `Core/Functions/MemoryTypes.h`): storing one would set the entry's
+/// Size to 0 and every later write to that address would be dropped until a write carrying a size
+/// comes along. A zero-length write is therefore not a refusal the app may collect and report as
+/// one failure among the rest - it is a write the app must never send.
+///
+/// The rows this covers are real and common: a keyed dictionary's key 0 is a MARKER - "its entry
+/// has DataType::Geometry and no value of its own, so a reader can tell this field is a geometry
+/// dictionary" (`Blocks/Render.h`; `Docs/Data Formats.md` "Dictionaries": "a length of 0 ... which
+/// makes it a marker"). The LED display's eye blocks are a row of such markers per field, so a
+/// restore that wrote them sent nine poisoning writes per eye and reported them as failures.
+bool entryDeclaresNoValue(BackupEntry entry) =>
+    entry.structural || entry.size == 0;
+
 /// True when a captured entry is a row the restore PLANS a value write for.
 ///
-/// Two kinds of row are not: a STRUCTURAL row (a dynamic block's non-persistent entry - see
-/// [BackupEntry.structural]) carries no value to write, and a reserved placeholder carries neither
-/// a type nor a value. Neither is a restore item: a structural row exists so the block's structure
-/// can be rebuilt by [prepareDynamicBlocks] from the same rows, and the firmware resets its value
-/// to the default at boot anyway. Shared with the tools that reproduce the plan's item list, so a
-/// tool cannot drift from the plan.
+/// Two kinds of row are not: a row that declares no value ([entryDeclaresNoValue]) - a structural
+/// row or a zero-length marker - and a reserved placeholder, which carries neither a type nor a
+/// value. Neither is a restore item: such a row is STRUCTURE, and the ledgers of what the restore
+/// did carry it as a structural skip ([RestoreSkip]) rather than as a failure. Shared with the
+/// tools that reproduce the plan's item list, so a tool cannot drift from the plan.
 bool restoresEntryValue(BackupEntry entry) =>
-    !entry.structural &&
+    !entryDeclaresNoValue(entry) &&
     !(entry.value == null && dataTypeFromWord(entry.type) == DataType.none);
 
 /// A resolved restore target for one source item.
@@ -757,7 +806,11 @@ class RestorePlan {
           } else {
             // Validate the value now and keep the bytes for the write, so `applyRestorePlan`
             // does not recompute the same decode.
-            final bytes = resolveEntryBytes(entry, item.targetEntry!);
+            final bytes = resolveEntryBytes(
+              entry,
+              item.targetEntry!,
+              allowTypeChange: item.block!.isDynamic,
+            );
             if (bytes == null) {
               item.issue = 'Incompatible value';
             } else {
@@ -974,6 +1027,31 @@ class RestorePlan {
         final bytes = item.resolvedBytes;
         final live = item.targetEntry;
         if (bytes == null || live == null) return;
+        // A row the device holds with NO value (Size 0), a length the archive does not declare, or
+        // another type, is a row an earlier write left in the WRONG SHAPE - a dynamic row carries
+        // its own type and length, so the write re-creates it in the archive's shape
+        // (`resolveEntryBytes`). Such a row is never "same": measured on the rig 2026-10-25,
+        // `Dynamic[0]` field 4 key 0 holds `Number` at size 1 where a Number is 4 bytes, and the
+        // emote selector's read of it lands as SCRIPT_ERR_TYPE until a write gives it the right size.
+        final declared = dataTypeFromWord(item.entry!.type);
+        if (bytes.isNotEmpty && live.meta.size != bytes.length) {
+          item.diff = DiffKind.change;
+          item.diffNote =
+              "the device's row holds ${live.meta.size} byte(s) where this "
+              'write carries ${bytes.length}: the write gives the address the '
+              'size its type needs';
+          return;
+        }
+        if (item.block!.isDynamic &&
+            declared != null &&
+            declared != live.meta.dataType) {
+          item.diff = DiffKind.change;
+          item.diffNote =
+              'the device holds ${dataTypeWord(live.meta.dataType)} where the '
+              'archive declares ${dataTypeWord(declared)}: the write re-creates '
+              'the row in the archive\'s type';
+          return;
+        }
         if (sameBytes(bytes, live.value)) {
           item.diff = DiffKind.same;
           return;
@@ -1748,6 +1826,81 @@ Set<String> _filesThePlanWrites(List<BackupDevice> devices) {
   return names;
 }
 
+/// The plan's STRUCTURAL rows: addresses the archive carries with NO VALUE of their own, which a
+/// restore leaves as structure and never writes ([entryDeclaresNoValue]).
+///
+/// They are not plan items (see [restoresEntryValue]) and they are not failures. A keyed
+/// dictionary's key 0 is the case: it declares a field as a `Geometry` or `Texture` dictionary and
+/// "has no value of its own" (`Blocks/Render.h`), and every eye block carries nine of them. The
+/// firmware refuses every write with no value bytes, so a restore that wrote them turned the
+/// archive's own structure into a page of FAIL lines - 18 of them, none of which was a write that
+/// could ever have landed. The run reports them one line each instead, with what the device state
+/// makes of the row, so `0 failed` cannot be read as "nothing was left out".
+List<RestoreSkip> structuralSkips(RestorePlan plan) {
+  final out = <RestoreSkip>[];
+  for (final source in plan.devices) {
+    final target = plan.deviceTargets[source.id];
+    for (final block in source.blocks) {
+      for (final entry in block.entries) {
+        if (!entryDeclaresNoValue(entry)) continue;
+        final type = dataTypeFromWord(entry.type);
+        // A reserved placeholder carries neither a type nor a value: it is not a row at all.
+        if (type == null || type == DataType.none) continue;
+        final live = target?.findBlock(block);
+        final row = live == null
+            ? null
+            : _matchLiveEntry(
+                live.entries,
+                fieldName: entry.field,
+                keyName: entry.key,
+                field: entry.fieldIndex,
+                key: entry.keyIndex,
+              );
+        final dictionary =
+            type == DataType.geometry ||
+            type == DataType.texture ||
+            type == DataType.unknownKeyed;
+        final String reason;
+        if (target == null) {
+          reason =
+              'the archive device has no target on this rig, and the row '
+              'carries no value of its own';
+        } else if (live == null) {
+          reason =
+              'the device carries no such block, and a row with no value bytes '
+              'cannot be created from the host: the firmware refuses a write '
+              'with an empty value';
+        } else if (row == null) {
+          reason =
+              'the device carries no such row, and it cannot be created from the '
+              'host: the firmware refuses a write with an empty value';
+        } else if (dictionary) {
+          reason =
+              "the device carries the row: key ${entry.keyIndex} is the field's "
+              'dictionary marker, which declares the type and holds no value of '
+              'its own';
+        } else {
+          reason =
+              'the device carries the row, which holds no value of its own';
+        }
+        out.add(
+          RestoreSkip(
+            archive: source.name,
+            target: target == null
+                ? 'no target'
+                : '${target.name} (${idToString(target.id)})',
+            targetId: target?.id,
+            kindWord: 'block field',
+            subject: restoreEntrySubject(block, entry),
+            reason: reason,
+          ),
+        );
+      }
+    }
+  }
+  return out;
+}
+
 /// Creates the dynamic structure a plan's targets are missing - the blocks when absent, and the
 /// entries the backup carries that the device does not - so their values can then be restored: a
 /// restore writes entries into a structure that must already exist. A device wiped by a full
@@ -1793,9 +1946,15 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
       // match and the ordinary entry write drops it as "No matching entry" with no failure
       // recorded. Values are still written by the restore proper; this only makes the addresses
       // exist so they can be.
-      final present = <String>{
+      //
+      // The live row is keyed to its own shape as well as its address, because a row that is
+      // there in the WRONG shape is not structure this run can use: a row whose Size is 0 is one an
+      // earlier zero-length write poisoned (the address resolves to no data and a scalar read of it
+      // lands as SCRIPT_ERR_TYPE), and a row of another type holds something else entirely. Both are
+      // re-created below - `SetEntry` gives the address a size again as soon as a write carries one.
+      final present = <String, LiveEntry>{
         for (final e in existing?.entries ?? const <LiveEntry>[])
-          '${e.field}:${e.key}',
+          '${e.field}:${e.key}': e,
       };
       // Recreate the block's field/key structure. `appendDynamicEntry` writes through a
       // BlockInfo whose key is always 0, so it creates one entry per FIELD; a keyed entry
@@ -1810,10 +1969,22 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
         );
       for (final entry in entries) {
         if (!seen.add('${entry.fieldIndex}:${entry.keyIndex}')) continue;
-        // Already on the device: the ordinary value write will fill it.
-        if (present.contains('${entry.fieldIndex}:${entry.keyIndex}')) continue;
         final type = dataTypeFromWord(entry.type);
         if (type == null) continue;
+        // A row that declares NO length has nothing a create could carry: the firmware refuses
+        // every write with no value bytes (`ValueUpdateApplicable`), so attempting one is the bug
+        // this card is about - nine dictionary MARKERS per eye block, each answered FAIL. The apply
+        // reports these rows as structural skips instead. A structural row that DOES declare a
+        // length is created below like any other, with its own default (all zeroes) - that is what
+        // gives the block the field the archive describes without inventing a value for it.
+        if (entry.size == 0) continue;
+        final live = present['${entry.fieldIndex}:${entry.keyIndex}'];
+        // Already there in the declared shape: the ordinary value write will fill it.
+        if (live != null &&
+            live.meta.dataType == type &&
+            live.meta.size == entry.size) {
+          continue;
+        }
         final meta = ValueInfo(
           type: type.value,
           key: entry.keyIndex,
@@ -3545,6 +3716,9 @@ Future<RestoreReport> applyRestorePlan(RestorePlan plan) async {
   // A dynamic block's values can only be written into a block that exists.
   await prepareDynamicBlocks(plan);
 
+  // The rows that are STRUCTURE and never a write (see [structuralSkips]). Collected after the
+  // structure phase, so it reports what the device holds now rather than what the plan found.
+  final skipped = structuralSkips(plan);
   var written = 0;
   final reasons = <RestoreFailure>[];
   // The SNDB is written once per record, through a free function rather than a client: give it a
@@ -3673,6 +3847,26 @@ Future<RestoreReport> applyRestorePlan(RestorePlan plan) async {
           size: bytes.length,
         );
         final block = item.targetBlock!;
+        // A row whose value encodes to NO bytes is structure, not a write: the firmware refuses a
+        // write with an empty value, and sending it would report a FAIL for a row that was never a
+        // value to begin with. It is reported as a structural skip, like the archive's own
+        // zero-length rows (see [structuralSkips]); `resolve` already keeps those out of the items,
+        // so reaching this is an archive whose value decodes to nothing.
+        if (bytes.isEmpty) {
+          skipped.add(
+            RestoreSkip(
+              archive: item.device.name,
+              target: '${target.name} (${idToString(target.id)})',
+              targetId: target.id,
+              kindWord: 'block field',
+              subject: restoreEntrySubject(item.block!, item.entry!),
+              reason:
+                  "the archive's value encodes to no bytes, and the firmware "
+                  'refuses a write with an empty value',
+            ),
+          );
+          break;
+        }
         reg.trace.clear();
         if (block.isDynamic) {
           final dyn = DynBlock(
@@ -3993,6 +4187,7 @@ Future<RestoreReport> applyRestorePlan(RestorePlan plan) async {
     at: DateTime.now(),
     written: written,
     reasons: reasons,
+    skipped: skipped,
     requesterPrune: pruned.prunes,
     scriptSlots: swept.prunes,
     scriptFiles: sweptFiles.prunes,

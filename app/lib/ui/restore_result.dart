@@ -43,10 +43,7 @@ class RestoreResultView extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            '${report.written} written · ${report.failed} failed',
-            style: theme.textTheme.titleSmall,
-          ),
+          Text(report.counts, style: theme.textTheme.titleSmall),
           const SizedBox(height: Spacing.hairline),
           Text(
             report.reasons.isEmpty
@@ -64,6 +61,10 @@ class RestoreResultView extends StatelessWidget {
             for (final failure in group.failures)
               _failureCard(context, failure),
           ],
+          // A structural skip is neither a success nor a failure: its own heading, with the reason
+          // each row was left alone, so "0 failed" cannot read as "nothing was left out".
+          if (report.skips.isNotEmpty)
+            _listSection(context, 'Skipped as structural', report.skips),
           // A deletion is neither a success nor a failure, so it gets its own heading rather than
           // being folded into either count.
           if (removed.isNotEmpty)
