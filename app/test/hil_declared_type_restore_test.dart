@@ -14,6 +14,14 @@
 // differently, plus an eye value round-trip that is put back. It saves the device afterwards, which
 // is what keeps the repair across a power cycle. Tagged `hil`, so `./test.sh` never runs it.
 //
+// PRECONDITION: the rig must hold `Dynamic[0] f4 k0` as a 1-byte `Number` (the card's damaged
+// shape), because that is what the re-create is measured against. The test does NOT assume the rig
+// was left that way by hand - a previous run of this file leaves the row repaired, and a repaired
+// row cannot be re-created. So the row is read first, and when it is not `Number`/1 it is written
+// that way with one `writeDynamicEntry` (the same single register write as
+// `.dart_tool/hermes/set_row.py 0x0006 1`) before the archive is captured. The re-create path is
+// therefore exercised on every run, on any rig state, and `report.recreated` is never empty.
+//
 //   TAMU_HIL=/dev/ttyACM0 flutter test --tags hil test/hil_declared_type_restore_test.dart
 @Tags(['hil'])
 library;
@@ -91,8 +99,42 @@ void main() {
     final core = DeviceDatabase.instance.byId(coreId)?.id ?? coreId;
 
     // ---- read-only BEFORE -------------------------------------------------
+    final asFound = await _readRow(core, _ownerBlock, _ownerField, _ownerKey);
+    expect(asFound, isNotNull, reason: 'the device carries Dynamic[0] f4 k0');
+    // ignore: avoid_print
+    print('RIG as found: ${_metaLabel(asFound!.meta)} '
+        'value=${_hex(asFound.value)}');
+
+    // ---- the precondition: this run needs the card's damaged shape ---------
+    // A restore leaves f4 k0 repaired as `Bool`/1, so a second run of this file on the same rig
+    // would find nothing to re-create. Put the row back in the shape the card measured (a 1-byte
+    // `Number`, one register write - `set_row.py 0x0006 1`) instead of requiring a hand-prepared
+    // rig: the re-create path is then exercised on every run, on any rig state.
+    final holdsDamaged =
+        asFound.meta.type == DataType.number.value && asFound.meta.size == 1;
+    if (!holdsDamaged) {
+      final seeded = await RegisterClient(deviceId: core).writeDynamicEntry(
+        DynBlock(
+          index: _ownerBlock,
+          meta: ValueInfo(type: dynamicTypeForIndex(_ownerBlock)),
+          name: '',
+        ),
+        _ownerField,
+        _ownerKey,
+        ValueInfo(type: DataType.number.value, size: 1),
+        const [0x00],
+      );
+      expect(seeded, isNotNull, reason: 'the damaged precondition row was set');
+      final reseeded = await _readRow(core, _ownerBlock, _ownerField, _ownerKey);
+      expect(reseeded, isNotNull);
+      expect(reseeded!.meta.type, DataType.number.value);
+      expect(reseeded.meta.size, 1);
+      // ignore: avoid_print
+      print('SETUP: wrote the card\'s shape (Number, 1 byte) into f4 k0');
+    }
+
     final before = await _readRow(core, _ownerBlock, _ownerField, _ownerKey);
-    expect(before, isNotNull, reason: 'the device carries Dynamic[0] f4 k0');
+    expect(before, isNotNull);
     // ignore: avoid_print
     print(
       'BEFORE Dynamic[0].f4.k0: ${_metaLabel(before!.meta)} '
