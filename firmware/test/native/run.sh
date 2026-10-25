@@ -11,6 +11,9 @@
 #   crc_test.cpp      Crc8 (Core/Functions/Packet.h), both OPTIMIZE_SPEED shapes
 #   value_update_test.cpp  a 0-length value write is refused at the dynamic block
 #                     (Core/Functions/MemoryBlocks.h), so the target keeps its value
+#   register_read_test.cpp  a row with no bytes is unreadable - a read of it fails the access
+#                     (REGISTER), it is not an empty value whose type then complains (the read-side
+#                     ValueReadable, Core/Functions/MemoryTypes.h)
 #   lease_test.cpp    the requester row's lifetime and install/keepalive cadence (Core/Services/
 #                     SubscriptionsLease.h): rows are never dropped on time, an unanswered install
 #                     retries at SUB_RETRY_MS, capped at 5, then the keepalive, and an answer
@@ -101,6 +104,51 @@ echo
 
 echo "### native value-update tests (a 0-length value is refused; the dynamic target keeps its value)"
 build_run "valueupdate" "value_update_test.cpp"
+echo
+
+echo "### native register-read tests (a row with no bytes is unreadable, not a type mismatch)"
+build_run "registerread" "register_read_test.cpp"
+echo
+
+# t_e57a9667, structural half: RegisterGetByBlockInfo and the script read instruction both pull the
+# packet/register/device layer, so the host cannot link them. The facts the three cases depend on
+# are asserted on the source instead:
+#   - the copy accessor refuses a row with no bytes BEFORE it copies anything (asking
+#     ValueReadable, the shared read-side predicate the native test drives), so a size-0 row is a
+#     failed access - never a 0-length value handed to the reader's assignment;
+#   - the read instruction carries SCRIPT_ERR_REGISTER for that failed access, from the one
+#     RegisterGetByBlockInfo call in its block;
+#   - it still returns the assignment's own error, so a genuine type mismatch ("short Number rows"
+#     and any other decode failure) stays SCRIPT_ERR_TYPE rather than being folded into REGISTER.
+echo "### source guard: an empty row fails the access, a bad type still fails the assignment"
+DISPATCH_SRC="src/Core/Services/RegisterDispatch.h"
+EXEC_SRC="src/Core/Services/ScriptExec.h"
+read_block=$(sed -n '/case SCRIPT_OP_SERVICE_REG_READ: {/,/case SCRIPT_OP_SERVICE_REG_WRITE: {/p' "$EXEC_SRC")
+regread_fail=0
+if [ "$(grep -c 'if (!ValueReadable(Meta)) return false;' "$DISPATCH_SRC")" != 1 ]; then
+    echo "FAIL $DISPATCH_SRC: the copy accessor must refuse a size-0 row exactly once (ValueReadable)"
+    regread_fail=1
+fi
+guard_line=$(grep -n 'if (!ValueReadable(Meta)) return false;' "$DISPATCH_SRC" | cut -d: -f1)
+copy_line=$(grep -n 'memcpy(Vbuf, Fr.Data, Meta.Size);' "$DISPATCH_SRC" | cut -d: -f1)
+if [ -z "$guard_line" ] || [ -z "$copy_line" ] || [ "$guard_line" -ge "$copy_line" ]; then
+    echo "FAIL $DISPATCH_SRC: the ValueReadable guard must precede the copy, not follow it"
+    regread_fail=1
+fi
+if [ "$(printf '%s\n' "$read_block" | grep -c 'if (!RegisterGetByBlockInfo')" != 1 ]; then
+    echo "FAIL $EXEC_SRC: the read block must resolve the register exactly once"
+    regread_fail=1
+fi
+if [ "$(printf '%s\n' "$read_block" | grep -c 'SCRIPT_ERR_REGISTER')" != 1 ]; then
+    echo "FAIL $EXEC_SRC: a failed read must carry SCRIPT_ERR_REGISTER (once, and not another code)"
+    regread_fail=1
+fi
+if [ "$(printf '%s\n' "$read_block" | grep -c 'if (Err) return Err;')" != 1 ]; then
+    echo "FAIL $EXEC_SRC: the read must still return the assignment's own error (a real type mismatch is TYPE)"
+    regread_fail=1
+fi
+[ $regread_fail = 0 ] && echo "PASS: empty row => REGISTER (guarded before the copy), bad type => the assignment's error"
+fail=$((fail + regread_fail))
 echo
 
 echo "### native subscription-keepalive tests (rows never expire; unanswered installs retry fast, capped)"

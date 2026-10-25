@@ -334,3 +334,18 @@ are hardware-only.
   the code the device answered with (or that the app refused it and sent nothing) and what that means
   - and a **Copy as text** action for the whole report, so a failure can be quoted in a report
   instead of counted."
+
+- **E50** **A register read with a genuine type mismatch is not REPORTED - it is silently padded.**
+  Found while fixing `t_e57a9667` (a size-0 row read as `SCRIPT_ERR_TYPE`). `AssignResolved`
+  (`firmware/src/Core/Services/ScriptVm.h:191-204`) has two branches: numeric source and numeric
+  destination convert through `ToScalar`, everything else raw-copies `min(Ssize, Dsize)` bytes and
+  zero-fills the remainder, returning 0. So a Matrix destination taking a 1-byte Bool row writes that
+  byte plus zeros and reports success; a Matrix row into a Number destination is likewise a padded
+  copy, not a type error. The only genuine `SCRIPT_ERR_TYPE` a read could produce came from
+  `DecodeScalarInt`'s `Number` size check (fewer than 4 bytes) - which in practice meant the size-0
+  row the card above removed. Two footnotes: that `Bool` case reads `Data[0]` without consulting
+  `Size` at all, so a 0-length Bool row used to copy an uninitialized stack byte into a numeric
+  destination (unreachable through a register read now that `RegisterGetByBlockInfo` refuses an empty
+  row, but reachable from any other 0-length source); and if a mismatch really should be reported,
+  the decision belongs beside `ValueReadable`/`ValueUpdateApplicable` in `MemoryTypes.h`, not in a
+  branch of a 200-line assignment.

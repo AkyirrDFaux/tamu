@@ -55,9 +55,15 @@ inline bool RegisterService::RegisterGetByBlockInfo(uint32_t Bi, ValueInfo &Meta
     Vsz = 0;
     if (!RegisterResolveByBlockInfo(Bi, Fr)) return false;
     Meta = Fr.Descriptor;
-    uint8_t Size = Fr.Descriptor.Size;
-    if (Size) memcpy(Vbuf, Fr.Data, Size);
-    Vsz = Size;
+    // A row with no bytes is not readable, however well it resolved (ValueReadable, MemoryTypes.h):
+    // an empty dynamic entry resolves to a descriptor with Size 0 and no data. Handing it back as a
+    // 0-length value of the row's own type moves the failure into the reader's assignment - a Number
+    // too short to decode there - and a script read of this row would surface as SCRIPT_ERR_TYPE,
+    // sending the reader after a type problem in the script when the row is what is empty. Failing
+    // the access instead carries SCRIPT_ERR_REGISTER (ScriptExec.h's read instruction).
+    if (!ValueReadable(Meta)) return false;
+    memcpy(Vbuf, Fr.Data, Meta.Size);
+    Vsz = Meta.Size;
     return true;
 }
 

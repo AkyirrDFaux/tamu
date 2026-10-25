@@ -53,6 +53,20 @@ inline bool ValueIsPersistent(const ValueInfo &Info) { return (Info.Flags & Valu
 // value write is therefore gated on this: refuse a 0-length value and leave the target as it was.
 static inline bool ValueUpdateApplicable(uint8_t Len) { return Len != 0; }
 
+// Whether a row's value can be read out at all - the read side of the line above.
+//
+// A row with no bytes is a register row that has nothing behind it: a dynamic entry can exist with
+// no value (GetKey hands it back with DataPtr = nullptr and Meta.Size = 0), and a stored/recalled
+// table can still carry that shape. Copying such a row out as a 0-length value of its own type is
+// what makes a read of it fail somewhere else - the script's assignment then finds a Number too
+// short to decode and reports a *type* problem, when the row is simply empty. Every copy-out that
+// feeds a reader asks this first, so an empty row is a failed access (the register's own result
+// code), never an empty value.
+//
+// Only a size of exactly 0 is refused: a short but non-empty row stays readable, so a genuine
+// decode/type complaint about its contents is still reported as one.
+static inline bool ValueReadable(const ValueInfo &Info) { return Info.Size != 0; }
+
 struct FieldResult
 {
     ValueInfo Descriptor = { (uint16_t)DataType::None, 0, 0 };
