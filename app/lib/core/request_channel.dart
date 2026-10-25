@@ -66,6 +66,136 @@ abstract class RequestChannel {
   void setSubscriptionListener(Function(List<int>)? listener);
 }
 
+/// How a request ended, when the caller must report WHY a write did not land.
+///
+/// The service clients answer `null`/`false` for every kind of failure, which is the right answer
+/// for a page that only needs "did it work" - and useless for a restore, which reports per item and
+/// has to say what the device said (Akyirr, 2026-10-25: 17 failures with no reason). One of these is
+/// recorded on a [RequestTrace] by the layer that knows the difference.
+enum RequestFaultKind {
+  /// Nothing is installed, or the link is down: the request never reached a device.
+  noLink('no link'),
+
+  /// The request was sent and nothing came back within its timeout.
+  noReply('no reply'),
+
+  /// The device answered FAIL (packet flag `FLAG_FAIL`); [RequestFault.payload] carries the reason
+  /// bytes it sent with it, which for every command the app uses is empty.
+  refused('FAIL'),
+
+  /// The device answered, but with nothing the command could use: an empty or short reply where a
+  /// value is echoed on success. That is how a FAIL looks on the payload-only commands, whose flag
+  /// the client never sees - so it is reported as "answered nothing", not as a lost reply.
+  unusable('no usable reply');
+
+  const RequestFaultKind(this.word);
+
+  /// The word the report uses for this kind.
+  final String word;
+}
+
+/// Why one request did not produce an answer, as far as the app can see it.
+///
+/// Small and plain on purpose: it travels from the request layer to a restore's per-item reason,
+/// and the wording of that reason belongs to the restore (`RestoreFailure`), not here.
+class RequestFault {
+  final RequestFaultKind kind;
+
+  /// The device the request was addressed to.
+  final int deviceId;
+
+  /// The service and command, when the layer that recorded it knows them.
+  final ServiceType? service;
+  final int? cid;
+
+  /// The bytes the device answered with, when the fault is [RequestFaultKind.refused] or
+  /// [RequestFaultKind.unusable]: the FAIL reason payload (empty on this firmware), or the reply
+  /// that could not be used.
+  final List<int> payload;
+
+  /// The transport error behind a [RequestFaultKind.noReply], for the report to quote.
+  final String? detail;
+
+  const RequestFault({
+    required this.kind,
+    required this.deviceId,
+    this.service,
+    this.cid,
+    this.payload = const [],
+    this.detail,
+  });
+
+  /// The FAIL flag a refused request carries (protocol.dart `flagFail`), for the report.
+  static const int failFlag = 0x40;
+
+  @override
+  String toString() =>
+      'RequestFault(${kind.word}, dev $deviceId, '
+      '${service?.name}/$cid, ${payload.length} byte(s)'
+      '${detail == null ? '' : ', $detail'})';
+}
+
+/// The last failure of one client's requests, kept until the caller clears it.
+///
+/// A client instance is per device and drives one request at a time, so a trace belongs to that
+/// client: two pages reading the same device through different instances cannot overwrite each
+/// other's reason. The FIRST fault after a [clear] is the one kept - the root cause of a compound
+/// operation such as a staged file write (create, fragments, rename), not whichever step happened
+/// last.
+///
+/// Nothing here changes what a request returns: an untraced caller (every page that only needs
+/// "did it work") is untouched, and a traced one gets the same answer plus the reason.
+class RequestTrace {
+  RequestFault? _first;
+
+  /// The first fault recorded since the last [clear], or null when nothing has failed.
+  RequestFault? get fault => _first;
+
+  /// Forgets the faults recorded so far, so the next operation's reason is its own.
+  void clear() => _first = null;
+
+  /// Records [fault] unless one is already kept.
+  void record(RequestFault fault) => _first ??= fault;
+
+  /// Records that the device refused the request (FAIL), with the reason bytes it sent.
+  void refused(
+    int deviceId, {
+    ServiceType? service,
+    int? cid,
+    List<int> payload = const [],
+    String? detail,
+  }) {
+    if (_first != null) return;
+    _first = RequestFault(
+      kind: RequestFaultKind.refused,
+      deviceId: deviceId,
+      service: service,
+      cid: cid,
+      payload: payload,
+      detail: detail,
+    );
+  }
+
+  /// Records that the device answered nothing usable where the command expects a value.
+  void unusable(
+    int deviceId, {
+    ServiceType? service,
+    int? cid,
+    List<int> payload = const [],
+    String? detail,
+  }) {
+    if (_first != null) return;
+    _first = RequestFault(
+      kind: RequestFaultKind.unusable,
+      deviceId: deviceId,
+      service: service,
+      cid: cid,
+      payload: payload,
+      detail: detail,
+    );
+  }
+}
+
 /// The installed channel, or null when nothing has installed one.
 ///
 /// The app installs its connection (`connection.dart`); a CLI tool installs its own serial

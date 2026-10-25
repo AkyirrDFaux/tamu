@@ -6,6 +6,7 @@
 library;
 
 import 'protocol.dart';
+import 'request_channel.dart';
 import 'service_request.dart';
 import 'types.dart';
 
@@ -45,7 +46,11 @@ List<({int id, String serial})> parseSndb(List<int> reply) => [
 
 /// SNDB write (00.12): registers [serial] under [id]. The core answers with the updated
 /// record, so a reply of a full record is the acceptance signal.
-Future<bool> sndbWrite(List<int> serial, int id) async {
+///
+/// [trace] is for a caller that reports WHY a write did not land: a short or empty answer where the
+/// core echoes the record is recorded as a refusal, which is how the row is reported with a code
+/// instead of only as a count.
+Future<bool> sndbWrite(List<int> serial, int id, {RequestTrace? trace}) async {
   final reply = await serviceRequest(
     coreId,
     ServiceType.device,
@@ -53,8 +58,22 @@ Future<bool> sndbWrite(List<int> serial, int id) async {
     payload: [...serial, id & 0xFF, (id >> 8) & 0xFF],
     timeout: const Duration(seconds: 3),
     tag: 'sndb',
+    trace: trace,
   );
-  return reply != null && reply.length >= 16;
+  if (reply == null) return false;
+  if (reply.length < 16) {
+    trace?.unusable(
+      coreId,
+      service: ServiceType.device,
+      cid: 0x12,
+      payload: reply,
+      detail:
+          'an accepted write answers with the whole 16-byte record; this '
+          'reply has ${reply.length} byte(s)',
+    );
+    return false;
+  }
+  return true;
 }
 
 /// SNDB delete (00.12 with ID 0): drops [serial]'s record.

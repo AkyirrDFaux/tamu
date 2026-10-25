@@ -1919,14 +1919,16 @@ bool _isFunctionLibrary(RestoreItem item) =>
 /// items are the scripts THIS run wrote, so a script the user left out is never loaded over
 /// whatever the device already holds; and a load that fails is returned with its reason, so the
 /// apply can count it rather than let the file write stand for a script that never runs.
-Future<List<({RestoreItem item, String? reason})>> _bringUpScripts(
-  List<RestoreItem> items,
-) async {
+///
+/// A failed load or start also carries the [RequestFault] behind it (the FAIL flag the device set,
+/// or the lost reply), because "script 4 would not load" is a symptom and the code is the cause.
+Future<List<({RestoreItem item, String? reason, RequestFault? fault})>>
+_bringUpScripts(List<RestoreItem> items) async {
   final byDevice = <int, List<RestoreItem>>{};
   for (final item in items) {
     byDevice.putIfAbsent(item.targetDevice!.id, () => []).add(item);
   }
-  final results = <({RestoreItem item, String? reason})>[];
+  final results = <({RestoreItem item, String? reason, RequestFault? fault})>[];
   for (final group in byDevice.entries) {
     final client = ScriptClient(deviceId: group.key);
     // Libraries first, so a user script loaded afterwards links against the file as it now
@@ -1940,7 +1942,7 @@ Future<List<({RestoreItem item, String? reason})>> _bringUpScripts(
       // A script whose slot is unknown was written but cannot be loaded; there is no slot to load
       // it into, which is not a failure of the restore.
       if (slot < 0) {
-        results.add((item: item, reason: null));
+        results.add((item: item, reason: null, fault: null));
         continue;
       }
       final loaded = await client.loadedSlotMap();
@@ -1951,7 +1953,7 @@ Future<List<({RestoreItem item, String? reason})>> _bringUpScripts(
         for (final entry in loaded.entries) {
           if (entry.value == slot) await client.unload(entry.key);
         }
-        results.add((item: item, reason: null));
+        results.add((item: item, reason: null, fault: null));
         continue;
       }
       // Unload and reload so the script links against the library as it now stands. A script the
@@ -1964,7 +1966,7 @@ Future<List<({RestoreItem item, String? reason})>> _bringUpScripts(
       // it does not, the running script is exactly what the archive asks for - a restore must not
       // stop an animation nothing in it changed.
       if (loaded[slot] == slot) {
-        results.add((item: item, reason: null));
+        results.add((item: item, reason: null, fault: null));
         continue;
       }
       // The slot is held by a DIFFERENT file - an earlier setup's script the sweep has not
@@ -1972,14 +1974,27 @@ Future<List<({RestoreItem item, String? reason})>> _bringUpScripts(
       if (loaded.containsKey(slot)) {
         await client.unload(slot);
       }
+      client.trace.clear();
       if (!await client.load(slot, slot)) {
-        results.add((item: item, reason: 'script $slot would not load'));
+        results.add((
+          item: item,
+          reason: 'script $slot would not load',
+          fault: client.trace.fault,
+        ));
         continue;
       }
       if (item.script!.properties.contains('Run on load')) {
-        await client.setAction(slot, ScriptAction.start);
+        client.trace.clear();
+        if (!await client.setAction(slot, ScriptAction.start)) {
+          results.add((
+            item: item,
+            reason: 'script $slot loaded but the device would not start it',
+            fault: client.trace.fault,
+          ));
+          continue;
+        }
       }
-      results.add((item: item, reason: null));
+      results.add((item: item, reason: null, fault: null));
     }
   }
   return results;
@@ -2240,10 +2255,10 @@ class ScriptReloadReport {
 /// so a slot it is about to load is not in the loaded map here and cannot be loaded twice. A target
 /// whose slot map cannot be read is reported as a skipped phase and a failure, never as "nothing
 /// changed".
-Future<({List<ScriptReloadReport> reports, List<String> failures})>
+Future<({List<ScriptReloadReport> reports, List<RestoreFailure> failures})>
 reloadChangedScripts(RestorePlan plan, ScriptChanges changes) async {
   final reports = <ScriptReloadReport>[];
-  final failures = <String>[];
+  final failures = <RestoreFailure>[];
 
   // Per TARGET NODE, as the sweep groups them: slots belong to the node, so two source devices
   // remapped onto one target share one slot table.
@@ -2305,8 +2320,15 @@ reloadChangedScripts(RestorePlan plan, ScriptChanges changes) async {
         ),
       );
       failures.add(
-        '${target.name}: scripts not reloaded: the target did not return its '
-        'slot map, so a script this run changed may still run its old image',
+        RestoreFailure.device(
+          target,
+          kindWord: 'script slots',
+          subject: 'read',
+          fault: client.trace.fault,
+          meaning:
+              'the target did not return its slot map, so a script this run '
+              'changed may still run its old image',
+        ),
       );
       continue;
     }
@@ -2380,18 +2402,31 @@ reloadChangedScripts(RestorePlan plan, ScriptChanges changes) async {
       if (!await client.unload(slot)) {
         refused[slot] = fileId;
         failures.add(
-          '${target.name}: reloading script slot $slot '
-          '(${scriptFileName(fileId)}) failed: the device refused the unload, '
-          'so it still runs the image it held ($reason)',
+          RestoreFailure.device(
+            target,
+            kindWord: 'script slot',
+            subject: '$slot (${scriptFileName(fileId)})',
+            fault: client.trace.fault,
+            meaning:
+                'reloading failed: the device refused the unload, so it still '
+                'runs the image it held ($reason)',
+          ),
         );
         continue;
       }
+      client.trace.clear();
       if (!await client.load(fileId, slot)) {
         refused[slot] = fileId;
         failures.add(
-          '${target.name}: reloading script slot $slot '
-          '(${scriptFileName(fileId)}) failed: the file would not load again, '
-          'so the slot is now empty ($reason)',
+          RestoreFailure.device(
+            target,
+            kindWord: 'script slot',
+            subject: '$slot (${scriptFileName(fileId)})',
+            fault: client.trace.fault,
+            meaning:
+                'reloading failed: the file would not load again, so the slot '
+                'is now empty ($reason)',
+          ),
         );
         continue;
       }
@@ -2403,11 +2438,21 @@ reloadChangedScripts(RestorePlan plan, ScriptChanges changes) async {
           state == ScriptState.running || state == ScriptState.waiting;
       final start = wasActive || faulted || runOnLoad.contains(fileId);
       var outcome = start ? 'started again' : 'left stopped';
+      if (start) {
+        client.trace.clear();
+      }
       if (start && !await client.setAction(slot, ScriptAction.start)) {
         outcome = 'reloaded, but the device refused to start it';
         failures.add(
-          '${target.name}: script slot $slot (${scriptFileName(fileId)}) was '
-          'reloaded but would not start, so it is not running',
+          RestoreFailure.device(
+            target,
+            kindWord: 'script slot',
+            subject: '$slot (${scriptFileName(fileId)})',
+            fault: client.trace.fault,
+            meaning:
+                'the slot was reloaded but would not start, so the script is '
+                'not running',
+          ),
         );
       }
       reloaded[slot] = (fileId: fileId, why: '$reason; $outcome');
@@ -2590,10 +2635,10 @@ class ScriptSlotPrune {
 ///
 /// A target whose slot map cannot be read is reported as a skipped sweep, not as a clean device:
 /// "could not look" is not "holds nothing", and that is the read this whole phase rests on.
-Future<({List<ScriptSlotPrune> prunes, List<String> failures})>
+Future<({List<ScriptSlotPrune> prunes, List<RestoreFailure> failures})>
 pruneScriptSlots(RestorePlan plan) async {
   final prunes = <ScriptSlotPrune>[];
-  final failures = <String>[];
+  final failures = <RestoreFailure>[];
 
   // The archive's script slots per device, split three ways: the ones the plan carries an item for
   // at all ([covered]), the ones this run restores ([restored]) and the ones it was told to leave
@@ -2688,9 +2733,15 @@ pruneScriptSlots(RestorePlan plan) async {
         ),
       );
       failures.add(
-        '${target.name}: script slots not swept: the target did not return its '
-        'slot map (no reply or FAIL), so a script the archive does not carry may '
-        'still be loaded and running',
+        RestoreFailure.device(
+          target,
+          kindWord: 'script slots',
+          subject: 'read',
+          fault: client.trace.fault,
+          meaning:
+              'the target did not return its slot map (no reply or FAIL), so a '
+              'script the archive does not carry may still be loaded and running',
+        ),
       );
       continue;
     }
@@ -2758,14 +2809,21 @@ pruneScriptSlots(RestorePlan plan) async {
     final unloaded = <int, int>{};
     final refused = <int, int>{};
     for (final e in doomed.entries) {
+      client.trace.clear();
       if (await client.unload(e.key)) {
         unloaded[e.key] = e.value;
       } else {
         refused[e.key] = e.value;
         failures.add(
-          '${target.name}: unloading script slot ${e.key} '
-          '(${scriptFileName(e.value)}) failed (the device refused it or did not '
-          'answer), so that script is still loaded',
+          RestoreFailure.device(
+            target,
+            kindWord: 'script slot',
+            subject: '${e.key} (${scriptFileName(e.value)})',
+            fault: client.trace.fault,
+            meaning:
+                'unloading failed (the device refused it or did not answer), so '
+                'that script is still loaded and running',
+          ),
         );
       }
     }
@@ -2773,19 +2831,33 @@ pruneScriptSlots(RestorePlan plan) async {
     // Read back rather than assume: the point of reporting is to catch an unload the device did
     // not actually apply. A read-back that does not answer is a failure too - what the target now
     // runs would otherwise be reported as known when nobody managed to look.
+    client.trace.clear();
     final after = await client.readLoadedSlotMap();
     if (after == null) {
       failures.add(
-        '${target.name}: could not confirm the script sweep: the slot map could '
-        'not be read back after ${unloaded.length} unload(s), so what the target '
-        'now runs is unknown',
+        RestoreFailure.device(
+          target,
+          kindWord: 'script slots',
+          subject: 'read-back',
+          fault: client.trace.fault,
+          meaning:
+              'the slot map could not be read back after ${unloaded.length} '
+              'unload(s), so what the target now runs is unknown',
+        ),
       );
     } else {
       for (final e in unloaded.entries) {
         if (after.containsKey(e.key)) {
           failures.add(
-            '${target.name}: script slot ${e.key} (${scriptFileName(e.value)}) '
-            'is still loaded after the unload',
+            RestoreFailure.device(
+              target,
+              kindWord: 'script slot',
+              subject: '${e.key} (${scriptFileName(e.value)})',
+              clientReason: 'the slot map still names it after the unload',
+              meaning:
+                  'the slot is still loaded after the unload, so the device did '
+                  'not apply it',
+            ),
           );
         }
       }
@@ -2908,10 +2980,10 @@ class ScriptFilePrune {
 /// The read this rests on is the target's own file table: a table that does not answer is a
 /// skipped sweep and a reported failure, not a clean device - "could not look" is never "holds
 /// nothing".
-Future<({List<ScriptFilePrune> prunes, List<String> failures})>
+Future<({List<ScriptFilePrune> prunes, List<RestoreFailure> failures})>
 pruneScriptFiles(RestorePlan plan) async {
   final prunes = <ScriptFilePrune>[];
-  final failures = <String>[];
+  final failures = <RestoreFailure>[];
 
   // The live target each source device is restored onto, grouped by that target: files belong to
   // the node, so two archive devices on one target share one file table and their needs union.
@@ -2959,9 +3031,15 @@ pruneScriptFiles(RestorePlan plan) async {
         ),
       );
       failures.add(
-        '${target.name}: script files not swept: the target did not return its file '
-        'table (no reply or FAIL), so a stored script the archive does not carry may '
-        'still be loadable',
+        RestoreFailure.device(
+          target,
+          kindWord: 'script files',
+          subject: 'read',
+          fault: storage.trace.fault,
+          meaning:
+              'the target did not return its file table (no reply or FAIL), so a '
+              'stored script the archive does not carry may still be loadable',
+        ),
       );
       continue;
     }
@@ -2978,7 +3056,8 @@ pruneScriptFiles(RestorePlan plan) async {
 
     // What the target still runs: the file behind a loaded slot is never a candidate, whatever
     // this run thinks of it. A slot map that does not answer is a skipped sweep, not a guess.
-    final loaded = await ScriptClient(deviceId: target.id).readLoadedSlotMap();
+    final scripts = ScriptClient(deviceId: target.id);
+    final loaded = await scripts.readLoadedSlotMap();
     if (loaded == null) {
       prunes.add(
         ScriptFilePrune(
@@ -2991,8 +3070,15 @@ pruneScriptFiles(RestorePlan plan) async {
         ),
       );
       failures.add(
-        '${target.name}: script files not swept: the target did not return its slot '
-        'map, so a file a slot still holds cannot be told from a stale one',
+        RestoreFailure.device(
+          target,
+          kindWord: 'script files',
+          subject: 'read',
+          fault: scripts.trace.fault,
+          meaning:
+              'the target did not return its slot map, so a file a slot still '
+              'holds cannot be told from a stale one',
+        ),
       );
       continue;
     }
@@ -3042,27 +3128,41 @@ pruneScriptFiles(RestorePlan plan) async {
     final deleted = <String, int>{};
     final refused = <String, int>{};
     for (final e in doomed.entries) {
+      storage.trace.clear();
       if (await storage.deleteFile(e.key)) {
         deleted[e.key] = e.value;
       } else {
         refused[e.key] = e.value;
         failures.add(
-          '${target.name}: deleting script file ${e.key} (${e.value} B, slot '
-          '${scriptFileId(e.key)}) failed (the device refused it or did not answer), '
-          'so that script is still stored and still loadable',
+          RestoreFailure.device(
+            target,
+            kindWord: 'script file',
+            subject: '${e.key} (${e.value} B, slot ${scriptFileId(e.key)})',
+            fault: storage.trace.fault,
+            meaning:
+                'deleting failed (the device refused it or did not answer), so '
+                'that script is still stored and still loadable',
+          ),
         );
       }
     }
 
     // Read back rather than assume: a delete the device did not apply is exactly what a report
     // exists to catch.
+    storage.trace.clear();
     final after = await storage.readFileTable();
     Set<String> remaining;
     if (after == null) {
       failures.add(
-        '${target.name}: could not confirm the script file sweep: the file table could '
-        'not be read back after ${deleted.length} delete(s), so what the target now '
-        'stores is unknown',
+        RestoreFailure.device(
+          target,
+          kindWord: 'script files',
+          subject: 'read-back',
+          fault: storage.trace.fault,
+          meaning:
+              'the file table could not be read back after ${deleted.length} '
+              'delete(s), so what the target now stores is unknown',
+        ),
       );
       remaining = const {};
     } else {
@@ -3076,7 +3176,15 @@ pruneScriptFiles(RestorePlan plan) async {
       for (final name in deleted.keys) {
         if (remaining.contains(name)) {
           failures.add(
-            '${target.name}: script file $name is still stored after the delete',
+            RestoreFailure.device(
+              target,
+              kindWord: 'script file',
+              subject: '$name (${deleted[name]} B, slot ${scriptFileId(name)})',
+              clientReason: 'the file table still names it after the delete',
+              meaning:
+                  'the file is still stored after the delete, so the device did '
+                  'not apply it',
+            ),
           );
         }
       }
@@ -3220,10 +3328,10 @@ class RequesterPrune {
 /// that does not return its requester table (no link, timeout, FAIL) is reported as a skipped prune
 /// with no cancels and no save, and one whose table cannot be read back after the save is reported
 /// as unconfirmed - never as a clean, empty table.
-Future<({List<RequesterPrune> prunes, List<String> failures})>
+Future<({List<RequesterPrune> prunes, List<RestoreFailure> failures})>
 pruneRequesterTable(RestorePlan plan) async {
   final prunes = <RequesterPrune>[];
-  final failures = <String>[];
+  final failures = <RestoreFailure>[];
 
   for (final source in plan.devices) {
     final target = plan.deviceTargets[source.id];
@@ -3247,8 +3355,19 @@ pruneRequesterTable(RestorePlan plan) async {
         ),
       );
       failures.add(
-        '${target.name}: requester table not pruned: the archive names a '
-        'subscription that does not resolve ($unresolved)',
+        RestoreFailure.device(
+          target,
+          kindWord: 'requester table',
+          subject: 'archive address $unresolved',
+          clientReason:
+              'the archive names a subscription that does not resolve '
+              'on this rig, so the entries it does not name cannot be told from '
+              'the ones it does',
+          meaning:
+              'cancelling the entries the archive does not name was skipped: the '
+              'archive names a subscription that does not resolve here '
+              '($unresolved)',
+        ),
       );
       continue;
     }
@@ -3270,9 +3389,15 @@ pruneRequesterTable(RestorePlan plan) async {
         ),
       );
       failures.add(
-        '${target.name}: requester table not pruned: the target did not return '
-        'its requester table (no reply or FAIL), so the entries the archive does '
-        'not name are still there',
+        RestoreFailure.device(
+          target,
+          kindWord: 'requester table',
+          subject: 'read',
+          fault: subs.trace.fault,
+          meaning:
+              'the target did not return its requester table (no reply or '
+              'FAIL), so the entries the archive does not name are still there',
+        ),
       );
       continue;
     }
@@ -3308,34 +3433,64 @@ pruneRequesterTable(RestorePlan plan) async {
 
     final cancelled = <int>[];
     for (final entry in doomed) {
+      subs.trace.clear();
       if (await subs.cancelRequesterSubscription(entry.trid)) {
         cancelled.add(entry.trid);
       } else {
         failures.add(
-          '${target.name}: cancelling requester entry 0x'
-          '${entry.trid.toRadixString(16)} failed (the device refused it or did '
-          'not answer)',
+          RestoreFailure.device(
+            target,
+            kindWord: 'requester row',
+            subject:
+                '0x${entry.trid.toRadixString(16)} '
+                '(from ${idToString(entry.providerAddr)} '
+                '${entry.sourceReg} -> ${entry.targetReg})',
+            fault: subs.trace.fault,
+            meaning:
+                'cancelling requester entry '
+                '0x${entry.trid.toRadixString(16)} failed (the device refused it '
+                'or did not answer), so the entry the archive does not name is '
+                'still in the table',
+          ),
         );
       }
     }
     // The save comes AFTER every cancel, and only when at least one landed: it states the table as
     // it now stands, so it can never be what re-adds an entry.
-    if (cancelled.isNotEmpty && !await subs.saveRequesterSubscriptions()) {
-      failures.add(
-        '${target.name}: requester save-all after ${cancelled.length} cancel(s) '
-        'failed, so a reboot may recall them',
-      );
+    if (cancelled.isNotEmpty) {
+      subs.trace.clear();
+      if (!await subs.saveRequesterSubscriptions()) {
+        failures.add(
+          RestoreFailure.device(
+            target,
+            kindWord: 'requester table',
+            subject: 'save-all',
+            fault: subs.trace.fault,
+            meaning:
+                'the save after ${cancelled.length} cancel(s) failed, so a '
+                'reboot may recall the cancelled entries',
+          ),
+        );
+      }
     }
 
     // Read back rather than assume: the point of reporting is to catch a cancel the device did not
     // actually apply. A read-back that does not answer is a failure too - reporting `remaining=[]`
     // for a table nobody managed to read would make the "still present" check below vacuous.
+    subs.trace.clear();
     final after = await subs.readRequesterSubscriptions();
     if (after == null) {
       failures.add(
-        '${target.name}: could not confirm the requester save: the table could '
-        'not be read back after ${cancelled.length} cancel(s) (no reply or '
-        'FAIL), so what the target now holds is unknown',
+        RestoreFailure.device(
+          target,
+          kindWord: 'requester table',
+          subject: 'read-back',
+          fault: subs.trace.fault,
+          meaning:
+              'the table could not be read back after ${cancelled.length} '
+              'cancel(s) (no reply or FAIL), so what the target now holds is '
+              'unknown',
+        ),
       );
     }
     final remaining = after == null
@@ -3345,8 +3500,17 @@ pruneRequesterTable(RestorePlan plan) async {
       for (final trid in cancelled) {
         if (remaining.contains(trid)) {
           failures.add(
-            '${target.name}: requester entry 0x${trid.toRadixString(16)} is '
-            'still in the table after the cancel and the save',
+            RestoreFailure.device(
+              target,
+              kindWord: 'requester row',
+              subject: '0x${trid.toRadixString(16)}',
+              clientReason:
+                  'the requester table still names it after the '
+                  'cancel and the save',
+              meaning:
+                  'the entry is still in the table after the cancel and the '
+                  'save, so the device did not apply it',
+            ),
           );
         }
       }
@@ -3366,26 +3530,22 @@ pruneRequesterTable(RestorePlan plan) async {
   return (prunes: prunes, failures: failures);
 }
 
-/// Applies the ready + selected items of [plan]. Returns the number of written
-/// items and failures.
-Future<
-  ({
-    int written,
-    int failed,
-    List<String> failures,
-    List<RequesterPrune> requesterPrune,
-    List<ScriptSlotPrune> scriptSlots,
-    List<ScriptFilePrune> scriptFiles,
-    List<ScriptReloadReport> scriptReload,
-  })
->
-applyRestorePlan(RestorePlan plan) async {
+/// Applies the ready + selected items of [plan], and returns what the run did - the [RestoreReport],
+/// whose every failure carries the reason it failed (device, target, kind, address, the code the
+/// device answered with and what that means).
+///
+/// A run reports each failure as it happens rather than only counting them: a count without a cause
+/// is what Akyirr's card is about, and a truncated list would be the same defect wearing a smaller
+/// number. Nothing is capped, and the successes stay out of the report entirely.
+Future<RestoreReport> applyRestorePlan(RestorePlan plan) async {
   // A dynamic block's values can only be written into a block that exists.
   await prepareDynamicBlocks(plan);
 
   var written = 0;
-  var failed = 0;
-  final failures = <String>[];
+  final reasons = <RestoreFailure>[];
+  // The SNDB is written once per record, through a free function rather than a client: give it a
+  // trace of its own so a refused row is reported with its code like every other kind.
+  final sndbTrace = RequestTrace();
   // What this run measured about the script images it wrote (see [ScriptChanges]): the reload phase
   // acts on the difference between what the device HELD and what was written, not on the fact that
   // a restore wrote it.
@@ -3411,30 +3571,41 @@ applyRestorePlan(RestorePlan plan) async {
   // archived one are the same subscription to both.
   final seenSubKeys = <String>{};
 
-  // One item could not be written; record what it was so a run can be diagnosed.
-  void failItem(RestoreItem item, String why) {
-    failed++;
-    if (failures.length < 100) {
-      failures.add('${item.device.name}: ${item.kind.name} $why');
-    }
+  // One item could not be written; record what it was, where, and why.
+  //
+  // [meaning] is the one human sentence the report prints; [fault] is what the request layer saw
+  // (the FAIL flag, the lost reply); [clientReason] is the app's own refusal, which has no device
+  // code and says so instead of leaving the field blank.
+  void failItem(
+    RestoreItem item,
+    String meaning, {
+    RequestFault? fault,
+    String? clientReason,
+  }) {
+    reasons.add(
+      RestoreFailure.item(
+        item,
+        meaning: meaning,
+        fault: fault,
+        clientReason: clientReason,
+      ),
+    );
   }
 
-  void done(bool ok, RestoreItem item, String what) {
+  void done(
+    bool ok,
+    RestoreItem item, {
+    RequestFault? fault,
+    required String meaning,
+    String? clientReason,
+  }) {
     if (ok) {
       written++;
       writtenDevices.add(item.targetDevice!.id);
     } else {
-      failItem(item, what);
+      failItem(item, meaning, fault: fault, clientReason: clientReason);
     }
   }
-
-  String describe(RestoreItem i) => switch (i.kind) {
-    RestoreKind.entry => '${i.block?.name}/${i.entry?.field}[${i.entry?.key}]',
-    RestoreKind.script => 'script slot ${i.script?.slot}',
-    RestoreKind.subscription => 'from ${i.subscription?.provider}',
-    RestoreKind.sndb => 'sndb ${i.sndbEntry?.serial}',
-    RestoreKind.file => 'file ${i.file?.name}',
-  };
 
   // Files first: an entry may name one (the LED display's layout file name is only accepted
   // once the file exists), then the block entries, then the rest.
@@ -3463,7 +3634,12 @@ applyRestorePlan(RestorePlan plan) async {
     // not a loss; every other issue means an item the restore was asked to write.
     if (!item.ready) {
       if (item.issue != readOnlyIssue) {
-        failItem(item, '${describe(item)}: ${item.issue}');
+        failItem(
+          item,
+          'the restore refused this row before sending anything, so the device '
+          'was never asked for it',
+          clientReason: item.issue,
+        );
       }
       continue;
     }
@@ -3478,7 +3654,12 @@ applyRestorePlan(RestorePlan plan) async {
         // The bytes were validated during resolve() and cached on the item.
         final bytes = item.resolvedBytes;
         if (bytes == null) {
-          failItem(item, describe(item));
+          failItem(
+            item,
+            "the restore has no validated bytes for this entry, so there was "
+            "nothing to send",
+            clientReason: 'the value could not be encoded for the target',
+          );
           break;
         }
         final meta = ValueInfo(
@@ -3488,6 +3669,7 @@ applyRestorePlan(RestorePlan plan) async {
           size: bytes.length,
         );
         final block = item.targetBlock!;
+        reg.trace.clear();
         if (block.isDynamic) {
           final dyn = DynBlock(
             index: block.instance,
@@ -3504,7 +3686,10 @@ applyRestorePlan(RestorePlan plan) async {
                 ) !=
                 null,
             item,
-            describe(item),
+            fault: reg.trace.fault,
+            meaning:
+                'the write did not land, so the device keeps the value it held '
+                'for this entry',
           );
         } else {
           done(
@@ -3518,7 +3703,10 @@ applyRestorePlan(RestorePlan plan) async {
                 ) !=
                 null,
             item,
-            describe(item),
+            fault: reg.trace.fault,
+            meaning:
+                'the write did not land, so the device keeps the value it held '
+                'for this entry',
           );
         }
       case RestoreKind.script:
@@ -3533,8 +3721,14 @@ applyRestorePlan(RestorePlan plan) async {
           // Measure BEFORE the write, so "changed" is a fact about this device rather than an
           // assumption about restores: what it held now against what is about to be written.
           final held = await store.readFile(name);
+          store.trace.clear();
           if (!await store.writeFile(name, image)) {
-            failItem(item, describe(item));
+            failItem(
+              item,
+              'the script file could not be written, so the device does not '
+              'hold this script and cannot load it',
+              fault: store.trace.fault,
+            );
             break;
           }
           if (slot >= 0) {
@@ -3561,7 +3755,7 @@ applyRestorePlan(RestorePlan plan) async {
             'backup',
             'script ${item.script!.functionName} failed: $error',
           );
-          failItem(item, describe(item));
+          failItem(item, 'the script could not be written: $error');
           break;
         }
         writtenDevices.add(target.id);
@@ -3587,7 +3781,20 @@ applyRestorePlan(RestorePlan plan) async {
         final targetReg =
             target.resolveRef(s.target) ?? archiveRefReg(item.device, s.target);
         if (source == null || targetReg == null || provider == null) {
-          failItem(item, describe(item));
+          failItem(
+            item,
+            'one of the subscription\'s addresses does not resolve on this rig, '
+            'so the restore could not build the requester entry',
+            clientReason: [
+              if (provider == null) 'provider ${s.provider} is not on the bus',
+              if (source == null)
+                'source ${s.source.block} / '
+                    '${s.source.field} is not on the provider',
+              if (targetReg == null)
+                'target ${s.target.block} / '
+                    '${s.target.field} is not on the requester',
+            ].join('; '),
+          );
           break;
         }
         // One entry per distinct identity: the archive can name the same subscription twice
@@ -3638,7 +3845,15 @@ applyRestorePlan(RestorePlan plan) async {
         );
         final ok = await sub.setRequesterSubscription(index, entry: entry);
         if (!ok) {
-          failItem(item, describe(item));
+          failItem(
+            item,
+            'the device did not accept the requester entry, so this subscription '
+            'is not feeding anything',
+            fault: sub.trace.fault,
+            clientReason: sub.trace.fault == null
+                ? 'the write returned no acceptance'
+                : null,
+          );
           break;
         }
         writtenDevices.add(target.id);
@@ -3653,7 +3868,15 @@ applyRestorePlan(RestorePlan plan) async {
         // A device is not an entry in its own SNDB (the firmware refuses it), so skip the
         // target's own row rather than counting it as a failure.
         if (id == null || id == target.id) break;
-        done(await sndbWrite(unhexBytes(e.serial), id), item, describe(item));
+        sndbTrace.clear();
+        done(
+          await sndbWrite(unhexBytes(e.serial), id, trace: sndbTrace),
+          item,
+          fault: sndbTrace.fault,
+          meaning:
+              'the core did not record this serial, so the roster does not carry '
+              'the device at this address',
+        );
       case RestoreKind.file:
         final store = storage.putIfAbsent(
           target.id,
@@ -3668,6 +3891,7 @@ applyRestorePlan(RestorePlan plan) async {
           final held = fileId == null
               ? null
               : await store.readFile(item.file!.name);
+          store.trace.clear();
           final wrote = await store.writeFile(
             item.file!.name,
             item.file!.bytes,
@@ -3696,13 +3920,18 @@ applyRestorePlan(RestorePlan plan) async {
               );
             }
           }
-          done(wrote, item, describe(item));
+          done(
+            wrote,
+            item,
+            fault: store.trace.fault,
+            meaning: 'the file did not land, so the device does not hold it',
+          );
         } catch (error) {
           AppDiagnostics.log(
             'backup',
             'file ${item.file!.name} failed: $error',
           );
-          failItem(item, describe(item));
+          failItem(item, 'the file could not be written: $error');
         }
     }
   }
@@ -3712,10 +3941,7 @@ applyRestorePlan(RestorePlan plan) async {
   // fails and a cancelled TRID still in the table afterwards are all reported - a delete that
   // cannot be seen is the failure mode this exists to remove.
   final pruned = await pruneRequesterTable(plan);
-  for (final failure in pruned.failures) {
-    failed++;
-    if (failures.length < 100) failures.add(failure);
-  }
+  reasons.addAll(pruned.failures);
   // Every device this run wrote to is saved - the writes sit in RAM until then - and the scripts
   // are loaded last, so they read the values the restore has just written.
   await _persistWrites(writtenDevices);
@@ -3725,15 +3951,20 @@ applyRestorePlan(RestorePlan plan) async {
   // about to fill is not loaded twice, and it reloads nothing it has not measured as changed, so a
   // running script the archive did not touch is left alone.
   final reloadedScripts = await reloadChangedScripts(plan, changes);
-  for (final failure in reloadedScripts.failures) {
-    failed++;
-    if (failures.length < 100) failures.add(failure);
-  }
+  reasons.addAll(reloadedScripts.failures);
   for (final brought in await _bringUpScripts(scriptItems)) {
     if (brought.reason == null) {
       written++;
     } else {
-      failItem(brought.item, brought.reason!);
+      failItem(
+        brought.item,
+        'the script file is on the device but it was not brought up: '
+        '${brought.reason}',
+        fault: brought.fault,
+        clientReason: brought.fault == null
+            ? 'the load was accepted but the script is not running'
+            : null,
+      );
     }
   }
   // Then the mirror of the bring-up: a slot holding a script the archive does not carry is
@@ -3743,26 +3974,24 @@ applyRestorePlan(RestorePlan plan) async {
   // unload is reported, because an unload is a deletion and a silent one is as bad as a silent
   // delete of a requester entry.
   final swept = await pruneScriptSlots(plan);
-  for (final failure in swept.failures) {
-    failed++;
-    if (failures.length < 100) failures.add(failure);
-  }
+  reasons.addAll(swept.failures);
   // Then the file table behind those slots: a stale script is not gone while its FILE is stored,
   // so `SCR_000` stayed loadable after bambi's restore even though its slot had been unloaded.
   // It runs after the slot sweep on purpose - a slot the target refused to unload still runs its
   // file, and the file sweep keeps that file rather than break a running script.
   final sweptFiles = await pruneScriptFiles(plan);
-  for (final failure in sweptFiles.failures) {
-    failed++;
-    if (failures.length < 100) failures.add(failure);
-  }
-  return (
+  reasons.addAll(sweptFiles.failures);
+  final report = RestoreReport(
+    at: DateTime.now(),
     written: written,
-    failed: failed,
-    failures: failures,
+    reasons: reasons,
     requesterPrune: pruned.prunes,
     scriptSlots: swept.prunes,
     scriptFiles: sweptFiles.prunes,
     scriptReload: reloadedScripts.reports,
   );
+  // The reasons outlive the page: the backup page can reopen this run, and every failure is also
+  // in the diagnostics ring the Logs page dumps.
+  RestoreSession.record(report);
+  return report;
 }

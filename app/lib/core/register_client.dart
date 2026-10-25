@@ -54,6 +54,10 @@ class RegisterClient {
 
   RegisterClient({required this.deviceId, this.readAttempts = 1});
 
+  /// The first failure of this client's requests since the caller last cleared it, so a caller that
+  /// must report WHY a write did not land can say what the device answered (see [RequestTrace]).
+  final RequestTrace trace = RequestTrace();
+
   /// How many times a READ is re-sent before the caller treats the reply as lost.
   ///
   /// Default 1 - a read is sent once, as it always was, and no timer is scheduled - because the
@@ -94,6 +98,7 @@ class RegisterClient {
     timeout: timeout,
     defaultTimeout: _requestTimeout,
     tag: 'register',
+    trace: trace,
   );
 
   /// Sends a READ - a CID that returns data and changes nothing - and re-sends it while no reply
@@ -129,6 +134,7 @@ class RegisterClient {
     timeout: timeout,
     defaultTimeout: _requestTimeout,
     tag: 'register',
+    trace: trace,
   );
 
   /// True when a flag-answering command replies FLAG_SUCCESS; a transport failure or a
@@ -188,7 +194,10 @@ class RegisterClient {
   Future<List<({int type, int maxInstance})>?> enumerateBlockTypes() async {
     final cached = _blockTypesCache;
     if (cached != null) return cached;
-    final reply = await requestRead(RegisterCid.enumerateBlocks, payload: const []);
+    final reply = await requestRead(
+      RegisterCid.enumerateBlocks,
+      payload: const [],
+    );
     if (reply == null) return null;
     final types = [
       for (final w in _streamWords(reply))
@@ -547,7 +556,10 @@ class RegisterClient {
     int block, {
     bool withName = true,
   }) async {
-    final reply = await requestRead(RegisterCid.read, payload: _dynBi(block, 0xFF));
+    final reply = await requestRead(
+      RegisterCid.read,
+      payload: _dynBi(block, 0xFF),
+    );
     if (reply == null || reply.length < 8) return null;
     final meta = ValueInfo.fromBytes(reply, 4);
 
@@ -695,12 +707,34 @@ class RegisterClient {
     List<int> value, {
     Duration? timeout,
   }) async {
-    final reply = await request(
+    // Asked WITH the packet flags on purpose: a register write answers FAIL - and carries no payload
+    // at all when it does (`RespondStatus(Frame, false)` in the firmware) - so the flag is the only
+    // place the refusal is visible. `request` is this same call minus the flags, so nothing about the
+    // accepted path changes; what changes is that a refused write can say so (see [RequestTrace]).
+    final response = await requestWithFlags(
       RegisterCid.write,
       payload: [...bi, ...meta.toBytes(), ...value],
       timeout: timeout ?? const Duration(seconds: 4),
     );
-    if (reply == null || reply.length < 8) return null;
+    // No link or no reply: the request layer has already recorded which.
+    if (response == null) return null;
+    final reply = response.payload;
+    // The device refused it, and the flag - recorded on the trace - is its answer.
+    if (response.fail) return null;
+    if (reply.length < 8) {
+      // The device echoes the ValueInfo of an accepted write, so an answer with no usable ValueInfo
+      // is a refusal the flag did not mark.
+      trace.unusable(
+        deviceId,
+        service: ServiceType.register,
+        cid: RegisterCid.write,
+        payload: reply,
+        detail:
+            'an accepted write echoes the ValueInfo; this reply has '
+            '${reply.length} byte(s)',
+      );
+      return null;
+    }
     final echoMeta = ValueInfo.fromBytes(reply, 4);
     return valueSlice(reply, echoMeta.size);
   }

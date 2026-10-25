@@ -591,7 +591,8 @@ void main() {
       expect(
         result.failures.any(
           (f) =>
-              f.contains('deleting script file SCR_000') &&
+              f.contains('SCR_000') &&
+              f.contains('deleting failed') &&
               f.contains('still stored'),
         ),
         isTrue,
@@ -641,7 +642,7 @@ void main() {
       expect(prune.deleted, isEmpty);
       expect(prune.remainingText, 'unconfirmed');
       expect(
-        result.failures.any((f) => f.contains('script files not swept')),
+        result.failures.any((f) => f.contains('script files read')),
         isTrue,
         reason: result.failures.toString(),
       );

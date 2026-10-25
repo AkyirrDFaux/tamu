@@ -10,6 +10,7 @@ import '../core/notifications.dart';
 import '../core/script_file.dart';
 import '../core/types.dart';
 import 'theme.dart';
+import 'restore_result.dart';
 import 'viewer_kit.dart';
 import 'widgets.dart';
 
@@ -103,6 +104,9 @@ class _BackupPageState extends State<BackupPage> {
       MaterialPageRoute(builder: (_) => RestorePlanPage(plan: plan)),
     );
     if (applied == true && mounted) {
+      // The run's report is the session's last one now, so the page's "Last restore" opens what the
+      // plan page just showed.
+      setState(() {});
       _snack('Restore applied');
     }
   }
@@ -118,6 +122,17 @@ class _BackupPageState extends State<BackupPage> {
           appBar: AppBar(
             title: const Text('Backup'),
             leading: const ShellDrawerButton(),
+            actions: [
+              // The last restore stays readable after its dialog is gone: the owner reads the run,
+              // closes it, and only then writes the card (Akyirr, 2026-10-25).
+              TextButton.icon(
+                onPressed: RestoreSession.last == null
+                    ? null
+                    : () => showRestoreResult(context, RestoreSession.last!),
+                icon: const Icon(Icons.receipt_long_outlined),
+                label: const Text('Last restore'),
+              ),
+            ],
           ),
           body: !connected
               ? const Center(child: Text('Not connected'))
@@ -248,90 +263,18 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
 
   Future<void> _apply() async {
     setState(() => _busy = true);
+    RestoreReport? report;
     try {
-      final result = await applyRestorePlan(plan);
-      final cancelledTrids = [
-        for (final prune in result.requesterPrune) ...prune.cancelled,
-      ];
-      // An unloaded script slot stops a running script just as a cancelled requester entry stops a
-      // feed, so it is reported with its slot and file id rather than left silent.
-      final unloadedSlots = [
-        for (final prune in result.scriptSlots) ...prune.unloaded.keys,
-      ];
-      final keptSlots = [
-        for (final prune in result.scriptSlots) ...prune.keptBySelection.keys,
-      ];
-      // A deleted script FILE is what makes an unloaded stale script stay loadable, so it is
-      // reported with its name and the slot it backed, the way a slot is reported by number.
-      final deletedFiles = [
-        for (final prune in result.scriptFiles)
-          for (final e in prune.deleted.entries)
-            '${e.key} (slot ${scriptFileId(e.key)})',
-      ];
-      // An entry the page listed as a DELETE and the user turned off is kept, so it is counted
-      // with the others the run deliberately left alone rather than vanishing from the report.
-      final keptTrids = [
-        for (final prune in result.requesterPrune) ...prune.kept,
-      ];
-      // A duplicate is what made the same script run twice, so it is named with the slot the
-      // archive actually names for it rather than folded into the plain unload count.
-      final duplicateSlots = [
-        for (final prune in result.scriptSlots)
-          for (final e in prune.duplicates.entries)
-            'slot ${e.key} (duplicate of ${scriptFileName(e.value.fileId)} at '
-                'slot ${e.value.canonical})',
-      ];
-      // A reload is what makes a changed script actually run, so the slots it touched are part of
-      // the run's outcome - and so is the count it left alone, which is the evidence that unchanged
-      // running scripts were not disturbed.
-      final reloadedSlots = [
-        for (final report in result.scriptReload) ...report.reloaded.keys,
-      ];
-      if (mounted) {
-        showSnack(
-          context,
-          'Restored ${result.written} item(s)'
-          // A cancellation is a deletion, so it is never silent: the count and the TRIDs are
-          // reported with the run (Docs/App/Backup.md).
-          '${cancelledTrids.isEmpty ? '' : ', cancelled ${cancelledTrids.length} '
-                    'requester entr${cancelledTrids.length == 1 ? 'y' : 'ies'} '
-                    '(${cancelledTrids.map((t) => '0x${t.toRadixString(16)}').join(', ')})'}'
-          // Same for an unload: the slot is what the device stops running.
-          '${unloadedSlots.isEmpty ? '' : ', unloaded ${unloadedSlots.length} '
-                    'script slot${unloadedSlots.length == 1 ? '' : 's'} the archive '
-                    'does not carry (${unloadedSlots.map((s) => 'slot $s').join(', ')})'}'
-          // A duplicate ran one script twice; the slot the archive names for it is named too.
-          '${duplicateSlots.isEmpty ? '' : ', unloaded ${duplicateSlots.length} '
-                    'duplicate script slot${duplicateSlots.length == 1 ? '' : 's'} '
-                    '(${duplicateSlots.join(', ')})'}'
-          // A deleted file is the other half of an unload: without it the script is gone from the
-          // slots but still stored, and a later "load all" brings it back.
-          '${deletedFiles.isEmpty ? '' : ', deleted ${deletedFiles.length} '
-                    'stale script file${deletedFiles.length == 1 ? '' : 's'} '
-                    '(${deletedFiles.join(', ')})'}'
-          // ... and a slot left alone because it was not part of this run says so, so it cannot be
-          // mistaken for one the archive carries.
-          '${keptSlots.isEmpty ? '' : ', left ${keptSlots.length} '
-                    'unselected script slot${keptSlots.length == 1 ? '' : 's'} '
-                    'loaded'}'
-          '${keptTrids.isEmpty ? '' : ', left ${keptTrids.length} '
-                    'unselected requester '
-                    'entr${keptTrids.length == 1 ? 'y' : 'ies'} '
-                    '(${keptTrids.map((t) => '0x${t.toRadixString(16)}').join(', ')})'}'
-          // A reloaded slot is running the code this restore wrote; saying so separates "the file
-          // is new" from "the device runs it".
-          '${reloadedSlots.isEmpty ? '' : ', reloaded ${reloadedSlots.length} '
-                    'changed script slot${reloadedSlots.length == 1 ? '' : 's'} '
-                    '(${reloadedSlots.map((s) => 'slot $s').join(', ')})'}'
-          '${result.failed > 0 ? ', ${result.failed} failed' : ''}',
-        );
-        Navigator.of(context).pop(true);
-      }
+      report = await applyRestorePlan(plan);
+      // The counts and - above all - the reasons per item: a bare "17 failed" in a snackbar is the
+      // report Akyirr's card is about. The dialog is also the screen the text is copied from.
+      if (mounted) await showRestoreResult(context, report);
     } catch (error) {
       if (mounted) showSnack(context, 'Restore failed: $error');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+    if (report != null && mounted) Navigator.of(context).pop(true);
   }
 
   @override

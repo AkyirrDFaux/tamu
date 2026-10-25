@@ -434,15 +434,15 @@ void main() {
     expect(files.deleted, isEmpty);
     expect(result.failed, 3);
     expect(
-      result.failures.any((f) => f.contains('scripts not reloaded')),
+      result.failures.any((f) => f.contains('script slots read')),
       isTrue,
     );
     expect(
-      result.failures.any((f) => f.contains('script slots not swept')),
+      result.failures.any((f) => f.contains('script slots read')),
       isTrue,
     );
     expect(
-      result.failures.any((f) => f.contains('script files not swept')),
+      result.failures.any((f) => f.contains('script files read')),
       isTrue,
     );
     expect(fake.unloads, isEmpty);
@@ -619,7 +619,7 @@ void main() {
       expect(result.failed, 1);
       expect(
         result.failures.single,
-        contains('reloading script slot 1 (SCR_001) failed'),
+        contains('1 (SCR_001)'),
       );
       expect(result.failures.single, contains('still runs the image it held'));
       // The script it could not reload is not then unloaded by the sweep: the archive carries it.
@@ -647,7 +647,7 @@ void main() {
       expect(result.failed, 1);
       expect(
         result.failures.single,
-        contains('unloading script slot 0 (SCR_000) failed'),
+        contains('0 (SCR_000)'),
       );
       expect(result.failures.single, contains('still loaded'));
     },

@@ -26,6 +26,7 @@ import 'device_identity.dart';
 import 'diagnostics.dart';
 import 'protocol.dart';
 import 'register_client.dart';
+import 'request_channel.dart';
 import 'script_client.dart';
 import 'script_file.dart';
 import 'sndb.dart';
@@ -35,6 +36,7 @@ import 'system_schema.dart';
 import 'types.dart';
 
 part 'backup_capture.dart'; // capture a device into the semantic backup model
+part 'backup_failure.dart'; // why a restore item failed, and the run's report
 part 'backup_restore.dart'; // live model, restore plan and apply
 
 /// Files larger than this are not captured (the 64-byte Storage fragments make

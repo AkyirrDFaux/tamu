@@ -15,6 +15,13 @@ class SubscriptionClient {
 
   SubscriptionClient({required this.deviceId});
 
+  /// The first failure of this client's requests since the caller last cleared it, so a restore can
+  /// report the code a refused requester write answered with (see [RequestTrace]).
+  final RequestTrace _trace = RequestTrace();
+
+  /// This client's request faults, for a caller that reports WHY a requester row did not land.
+  RequestTrace get trace => _trace;
+
   ServiceType get service => ServiceType.subscriptions;
 
   Duration get _requestTimeout => const Duration(seconds: 3);
@@ -68,10 +75,18 @@ class SubscriptionClient {
     final channel = requestChannel;
     if (channel == null) {
       AppDiagnostics.log('subscriptions', 'no link');
+      _trace.record(
+        RequestFault(
+          kind: RequestFaultKind.noLink,
+          deviceId: toDevice ?? deviceId,
+          service: service,
+          cid: cid,
+        ),
+      );
       return null;
     }
     try {
-      return await channel.requestWithFlags(
+      final response = await channel.requestWithFlags(
         toDevice ?? deviceId,
         service,
         cid,
@@ -79,8 +94,28 @@ class SubscriptionClient {
         timeout: timeout ?? _requestTimeout,
         transactionId: transactionId,
       );
+      // A FAIL with the packet flags is the device refusing this entry; recording it is what lets
+      // a restore report the code instead of only that the cancel did not land.
+      if (response.fail) {
+        _trace.refused(
+          toDevice ?? deviceId,
+          service: service,
+          cid: cid,
+          payload: response.payload,
+        );
+      }
+      return response;
     } catch (error) {
       AppDiagnostics.log('subscriptions', 'request failed: $error');
+      _trace.record(
+        RequestFault(
+          kind: RequestFaultKind.noReply,
+          deviceId: toDevice ?? deviceId,
+          service: service,
+          cid: cid,
+          detail: '$error',
+        ),
+      );
       return null;
     }
   }

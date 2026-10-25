@@ -208,6 +208,11 @@ class _FakeRegisterChannel implements RequestChannel {
     int? transactionId,
   }) async {
     sent.add((service: service, cid: functionCid, payload: payload));
+    // A Register write echoes the address, the accepted ValueInfo and the value: the reply is the
+    // request's own payload, and the flag says the device accepted it.
+    if (service == ServiceType.register && functionCid == RegisterCid.write) {
+      return PacketResponse(payload: payload, success: true, fail: false);
+    }
     return const PacketResponse(payload: [], success: true, fail: false);
   }
 }

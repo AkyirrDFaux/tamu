@@ -115,6 +115,11 @@ class _FakeTable implements RequestChannel {
       payload: payload,
       trid: transactionId,
     ));
+    // A register write echoes the address, the accepted ValueInfo and the value - the same reply
+    // the payload path returns, now carrying the SUCCESS flag the write is judged by.
+    if (service == ServiceType.register && functionCid == RegisterCid.write) {
+      return PacketResponse(payload: payload, success: true, fail: false);
+    }
     if (service != ServiceType.subscriptions) return _ok;
     switch (functionCid) {
       case 0x10: // Get subscriptions: the table, 28-byte entries, no count prefix in the payload.
@@ -541,7 +546,7 @@ void main() {
       expect(device.saves, 0);
       expect(
         result.failures.join('\n'),
-        contains('requester table not pruned'),
+        contains('does not resolve'),
       );
     },
   );
@@ -595,7 +600,7 @@ void main() {
       );
       expect(
         result.failures.join('\n'),
-        contains('requester table not pruned'),
+        contains('requester table read'),
       );
     },
   );
@@ -626,7 +631,7 @@ void main() {
       expect(result.failed, 1, reason: result.failures.toString());
       expect(
         result.failures.join('\n'),
-        contains('requester table not pruned'),
+        contains('requester table read'),
       );
     },
   );
@@ -666,7 +671,7 @@ void main() {
       expect(prune.remaining, isEmpty);
       expect(
         result.failures.join('\n'),
-        contains('could not confirm the requester save'),
+        contains('could not be read back'),
       );
       expect(result.failed, 1, reason: result.failures.toString());
       expect(

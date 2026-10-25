@@ -48,6 +48,11 @@ class StorageClient {
 
   StorageClient({required this.deviceId});
 
+  /// The first failure of this client's requests since the caller last cleared it, so a caller that
+  /// must report WHY a file write did not land can say what the device answered (see
+  /// [RequestTrace]).
+  final RequestTrace trace = RequestTrace();
+
   Future<List<int>?> _request(
     int cid, {
     List<int> payload = const [],
@@ -64,6 +69,7 @@ class StorageClient {
     defaultTimeout: const Duration(seconds: 6),
     requestFrag: requestFrag,
     tag: 'storage',
+    trace: trace,
   );
 
   /// The firmware answers status commands with the packet success/fail flags instead of a
@@ -77,6 +83,14 @@ class StorageClient {
     final link = requestChannel;
     if (link == null) {
       AppDiagnostics.log('storage', 'no link');
+      trace.record(
+        RequestFault(
+          kind: RequestFaultKind.noLink,
+          deviceId: deviceId,
+          service: ServiceType.storage,
+          cid: cid,
+        ),
+      );
       return false;
     }
     try {
@@ -88,9 +102,27 @@ class StorageClient {
         timeout: timeout ?? const Duration(seconds: 6),
         requestFrag: requestFrag,
       );
+      // A FAIL is the device saying no to this command; the flag is the only status it sends.
+      if (response.fail) {
+        trace.refused(
+          deviceId,
+          service: ServiceType.storage,
+          cid: cid,
+          payload: response.payload,
+        );
+      }
       return response.success;
     } catch (error) {
       AppDiagnostics.log('storage', 'request failed: $error');
+      trace.record(
+        RequestFault(
+          kind: RequestFaultKind.noReply,
+          deviceId: deviceId,
+          service: ServiceType.storage,
+          cid: cid,
+          detail: '$error',
+        ),
+      );
       return false;
     }
   }
@@ -256,9 +288,34 @@ class StorageClient {
         ...bytes.sublist(offset, end),
       ];
       final reply = await _request(6, payload: payload, requestFrag: true);
-      if (reply == null || reply.length < 2) return false;
+      if (reply == null || reply.length < 2) {
+        if (reply != null) {
+          trace.unusable(
+            deviceId,
+            service: ServiceType.storage,
+            cid: 6,
+            payload: reply,
+            detail:
+                'a write fragment is answered with the u16 sequence it '
+                'accepted; this reply has ${reply.length} byte(s)',
+          );
+        }
+        return false;
+      }
       final lastSeq = reply[0] | (reply[1] << 8);
-      if (lastSeq == 0xFFFF) return false; // device reported no writable target
+      if (lastSeq == 0xFFFF) {
+        // The device's own "I have no writable target for this fragment" answer.
+        trace.unusable(
+          deviceId,
+          service: ServiceType.storage,
+          cid: 6,
+          payload: reply,
+          detail:
+              'the device answered 0xFFFF: no writable target for the '
+              'fragment',
+        );
+        return false;
+      }
       next = lastSeq + 1;
       offset = end;
     }

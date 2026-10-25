@@ -92,6 +92,11 @@ class ScriptClient {
 
   ScriptClient({required this.deviceId});
 
+  /// The first failure of this client's requests since the caller last cleared it, so a caller that
+  /// must report WHY a load, an unload or a script-file write did not land can say what the device
+  /// answered (see [RequestTrace]).
+  final RequestTrace trace = RequestTrace();
+
   Future<List<int>?> _request(
     ServiceType service,
     int cid, {
@@ -104,6 +109,7 @@ class ScriptClient {
     payload: payload,
     timeout: timeout,
     tag: 'script',
+    trace: trace,
   );
 
   /// True when a management command replies FLAG_SUCCESS. These commands carry no status
@@ -123,6 +129,7 @@ class ScriptClient {
         payload: payload,
         timeout: timeout,
         tag: 'script',
+        trace: trace,
       ))?.ok ??
       false;
 
@@ -167,7 +174,8 @@ class ScriptClient {
     final reply = await _request(ServiceType.script, 0);
     if (reply == null) return null;
     final map = [
-      for (var i = 0; i + 1 < reply.length; i += 2) reply[i] | (reply[i + 1] << 8),
+      for (var i = 0; i + 1 < reply.length; i += 2)
+        reply[i] | (reply[i + 1] << 8),
     ];
     return {
       for (var slot = 0; slot < map.length; slot++)

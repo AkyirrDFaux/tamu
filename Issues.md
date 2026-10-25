@@ -318,3 +318,19 @@ are hardware-only.
   level change, in both directions; the trigger only selects which of those changes are sent."; and to
   the Value-update row's response, "`Current value`; for an edge trigger, the edge counter (`uint16`
   little-endian) alone - its parity is the level: odd = pressed/true, even = lifted/false."
+
+- **E49** **`Docs/App/Backup.md` still describes the restore's report as "written/failed counts", while
+  the app now reports a reason per failed item.** Since `t_7cfa3a99` (owner report, 2026-10-25: a run
+  showed 17 failures with no reason) a restore records, per failed item, the device and target, the
+  item kind (block field / script / script file / requester row / layout / file), the address as the
+  plan names it, the code the device answered with - `FAIL (FLAG_FAIL 0x40, no reason payload)` for a
+  refusal, or an explicit "no code from the device" for a client-side one - and one sentence saying
+  what that means; the result screen groups them by device and copies the whole report as text, and
+  the run's reasons survive in `RestoreSession.last` and the diagnostics ring. Proposed wording, for
+  the parent to apply with Akyirr's approval (Docs are off limits to workers): in
+  `Docs/App/Backup.md`, replace "**Restore** applies the checked items and reports written/failed
+  counts." with "**Restore** applies the checked items and opens a result screen: the written/failed
+  counts, one section per device for every failed item - its kind, the address the plan names it by,
+  the code the device answered with (or that the app refused it and sent nothing) and what that means
+  - and a **Copy as text** action for the whole report, so a failure can be quoted in a report
+  instead of counted."
