@@ -69,8 +69,10 @@ inline RequesterEntry* SubscriptionsService::RequesterUpsert(uint16_t Trid) {
 inline void SubscriptionsService::ApplyRequesterValue(RequesterEntry *Entry, const uint8_t *Val, uint8_t Vlen, bool Confirm) {
     // A value update renews the 120 s lease even when the target register is momentarily
     // unresolvable; otherwise a briefly unavailable target would let the entry expire and
-    // cancel its still-live provider.
-    Entry->LastValueMs = DeviceStatus.UptimeMs;
+    // cancel its still-live provider. It is also the answer to the install: the provider's CID 1
+    // reply carries the current value, so any value from the right provider clears the entry's
+    // unanswered count and puts its next renewal back on the slow keepalive.
+    Entry->Lease.OnAnswer(DeviceStatus.UptimeMs);
     Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
 
     // A value update that carries no value bytes is refused before it can touch the target: a

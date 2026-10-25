@@ -10,6 +10,7 @@
 #include "Core/Functions/MemoryTypes.h"
 #include "Core/Services/Register.h"
 #include "Core/Services/Storage.h"
+#include "Core/Services/SubscriptionsLease.h" // SUB_TIMEOUT_MS/SubTimeoutFrom + the requester timing
 #include "Core/Types/Enums.h"
 
 // Subscription service (Docs/Services/Subscriptions.md).
@@ -69,11 +70,8 @@ static inline uint32_t SubMinTime(const SubscriptionTable &Table) {
     return (uint32_t)Table.MinTime[0] | ((uint32_t)Table.MinTime[1] << 8) | ((uint32_t)Table.MinTime[2] << 16);
 }
 
-// Docs: "Timeout 120s, renewed with new request." Both sides expire entries that stop being
-// renewed (a value update / re-registration refreshes the deadline).
-#define SUB_TIMEOUT_MS 120000u
-
-static inline uint32_t SubTimeoutFrom(uint32_t NowMs) { return NowMs + SUB_TIMEOUT_MS; }
+// SUB_TIMEOUT_MS ("Timeout 120s, renewed with new request") and SubTimeoutFrom live in
+// SubscriptionsLease.h, next to the keepalive cadence that has to stay inside that lease.
 
 // ---------------------------------------------------------------------------
 // Shared table search. The requester and provider tables are searched the same
@@ -107,14 +105,10 @@ struct RequesterEntry {
     uint32_t TargetReg = 0;      // local write target
     uint32_t Timeout = 0;        // local uptime deadline (not persisted)
     bool Active = false;
-    // Initialization tracking (transient): the entry is "initialized" once a value update
-    // arrives; until then the requester re-sends the registration (CID 1) to wake the provider.
-    uint32_t LastRegisteredMs = 0; // last re-registration sent
-    uint32_t LastValueMs = 0;      // uptime of the last received value (0 = never served)
+    // Install/keepalive bookkeeping (transient, after the wire prefix): whether the provider last
+    // answered the install decides the retry cadence. See SubscriptionsLease.h.
+    SubRequesterLease Lease;
 };
-
-#define SUB_RETRY_MS          100   // re-registration interval while no value has arrived
-#define SUB_KEEPALIVE_MS      60000 // renew the provider's 120 s lease once values flow
 
 // The wire prefix of the entry IS the struct prefix, so serialization is a plain copy of the
 // first 28 bytes (Docs "Requester table entry"): providerAddr, trid, table, targetReg, timeout.

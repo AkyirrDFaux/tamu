@@ -232,8 +232,7 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
             Entry->Sub = Table;
             Entry->TargetReg = TargetReg;
             Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
-            Entry->LastRegisteredMs = 0;
-            Entry->LastValueMs = 0;
+            Entry->Lease = SubRequesterLease{}; // unserved again: fast retry until a value arrives
             // Persist this set's own entry, but must not rewrite the file from the live table: an
             // entry another subscription lost to a lease expiry is not a deliberate removal, so it
             // has to survive in `.SUBREQ` for the next boot (and an empty table must not delete the

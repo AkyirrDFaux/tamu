@@ -188,6 +188,25 @@ are hardware-only.
   (`SubscriptionsControl.h:161-164`, `Resp = 1`), which the requester applies as the target's value -
   a Bool target reads that as a press.
 
+- **E46** **A keepalive the provider never answered was still assumed to have renewed the entry, so
+  one lost `Change` killed a subscription for a whole keepalive period.** The trigger runs on the
+  **provider** (`EvaluateProviderTriggers`, node 0.3), whose entry is leased for 120 s and renewed
+  only when the core's `Change` arrives; the core re-sent it every 60 s once any value had flowed,
+  without ever asking whether it was answered. One lost frame (half-duplex, silence-gated transmit)
+  and the node's entry expired 120 s after its last renewal: every switch press was then invisible
+  until the next keepalive re-installed it - up to 60 s later. Shape as reported: random death,
+  everything else healthy, recovery "after a while" bounded by the keepalive. **Fixed in
+  `t_6dcaad54`**: `SubRequesterLease` (`SubscriptionsLease.h`) counts the installs sent since the
+  provider last answered and drops the entry to `SUB_RETRY_MS` until it does (bounded to
+  `SUB_FAST_ATTEMPTS` so an absent node is not hammered at 100 ms); an answered entry keeps the 60 s
+  keepalive. The answer is the CID 1 reply itself, matched by echoed TRID + `id_src` == the entry's
+  provider - a `FLAG_SUCCESS`/`FLAG_FAIL` ack cannot be it, the dispatcher routes those to the app
+  link (`Dispatcher.h:69-76`). Per the owner's ruling the requester's own 120 s deadline is now
+  renewed **only** by that answer, never by the send: an entry nothing ever answers expires 120 s
+  after its last answer, is dropped from the live table (`.SUBREQ` keeps it) and stops retrying.
+  *Not covered*: presses made while the node's entry is already gone - the trigger state is
+  recreated, not replayed, so the fix bounds the dead window rather than closing it.
+
 ## Valu v2.0 app (2026-10-06) - parked (owner: not now)
 
 - **E27** **Resistive measurement reference resistor is undefined.** `Docs/Devices.md` gives three ADC

@@ -124,8 +124,7 @@ inline void SubscriptionsService::LoadRequesterTable() {
         Off += REQUESTER_FILE_ENTRY_SIZE;
         Loaded++;
         Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
-        Entry->LastRegisteredMs = 0;
-        Entry->LastValueMs = 0;
+        Entry->Lease = SubRequesterLease{};   // unserved again: fast retry until a value arrives
     }
     DeviceLog("SUB", "requester recall: %u of %u entries from %u B",
               (unsigned)Loaded, (unsigned)Count, (unsigned)Len);
@@ -140,8 +139,12 @@ inline void SubscriptionsService::RegisterRequesterProvider(RequesterEntry* Entr
     // Re-qualified against the current net, not the net the entry was written under.
     uint16_t ProviderAddr = RequesterProviderAddr(*Entry);
 
-    Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
-    Entry->LastRegisteredMs = DeviceStatus.UptimeMs;
+    // The entry's own 120 s deadline is NOT renewed here. An install only counts once the provider
+    // confirms it, so an unanswered send leaves the lease exactly where the last answer put it
+    // (ApplyRequesterValue renews it) and the entry expires if it is never confirmed - the
+    // documented "expiry is a FAILURE" path, which keeps the entry in `.SUBREQ` for the next boot.
+    // The send only moves the retry clock, and the unanswered count that decides the next attempt.
+    Entry->Lease.OnSend(DeviceStatus.UptimeMs);
 
 #ifdef USE_SUB_PROVIDE
     if (ProviderAddr == DeviceStatus.ShortAddress) {
@@ -182,7 +185,7 @@ inline void SubscriptionsService::ReRegisterForNode(uint16_t Addr) {
         // The node has just appeared, so whatever it held is gone (its table is RAM-only): treat
         // these entries as un-served again, so they re-enter the fast retry window for the node's
         // whole start-up instead of sitting on the slow keepalive after a single push.
-        Entry.LastValueMs = 0;
+        Entry.Lease.OnProviderGone();
         RegisterRequesterProvider(&Entry);
     }
 }
@@ -214,13 +217,14 @@ inline void SubscriptionsService::SubscriptionsReRegisterPending() {
 // (a value update only travels provider -> requester, so the requester must renew the
 // provider explicitly - Docs "Timeout 120s, renewed with new request").
 //
-// The fast interval is keyed to the entry not being served, not to uptime: an un-served entry
-// (restored at boot, or whose node just re-appeared and had LastValueMs cleared) keeps retrying
-// until a value arrives, because its provider's table is RAM-only and may still be empty. The
-// old uptime-keyed window collapsed to 60 s ten seconds after boot, so a node that came back
-// later had no fast window left and its subscription stayed dead until the app re-applied the
-// setup. The cost is that a requester whose provider never answers retries at SUB_RETRY_MS
-// instead of once a minute; the entry still stops as soon as it is served.
+// The cadence itself is SubRequesterLease::Interval (SubscriptionsLease.h), so the host test can
+// drive it: fast while the entry is unserved OR its last installs went unanswered, the slow
+// keepalive once the provider answers. An unanswered keepalive must not wait the keepalive -
+// the provider's lease runs out meanwhile and the node silently drops the entry, which is the
+// "switch dies at random, comes back after a while" failure.
+//
+// Nothing here is optimistic: neither lease is extended because we sent something. The entry's own
+// deadline moves only when the provider answers, and the provider's only when the Change arrives.
 inline void SubscriptionsService::RequesterInitCheck(uint32_t NowMs) {
     // ONE re-registration per call, round-robin. The bus is half-duplex and a transmit is
     // silence-gated then echo-verified, so re-registering every due entry in one pass put several
@@ -233,8 +237,7 @@ inline void SubscriptionsService::RequesterInitCheck(uint32_t NowMs) {
         if (++ReRegisterCursor >= MAX_REQUESTER_SUBS) ReRegisterCursor = 0;
         RequesterEntry* Entry = &RequesterTable[ReRegisterCursor];
         if (!Entry->Active) continue;
-        uint32_t Interval = (Entry->LastValueMs == 0) ? SUB_RETRY_MS : SUB_KEEPALIVE_MS;
-        if (NowMs - Entry->LastRegisteredMs < Interval) continue;
+        if (!Entry->Lease.Due(NowMs)) continue;
         RegisterRequesterProvider(Entry);
         return;
     }

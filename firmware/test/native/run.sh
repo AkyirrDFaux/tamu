@@ -11,6 +11,9 @@
 #   crc_test.cpp      Crc8 (Core/Functions/Packet.h), both OPTIMIZE_SPEED shapes
 #   value_update_test.cpp  a 0-length value write is refused at the dynamic block
 #                     (Core/Functions/MemoryBlocks.h), so the target keeps its value
+#   lease_test.cpp    the requester's install/keepalive cadence (Core/Services/
+#                     SubscriptionsLease.h): an unanswered install retries at SUB_RETRY_MS instead
+#                     of waiting the keepalive, while an answered one stays on the 60 s keepalive
 #
 # The numeric core is built in three shapes: the core (64-bit) and the DAS (32-bit, no
 # Vector/Matrix) are the real targets; the third - 32-bit *with* Vector/Matrix - is a
@@ -95,6 +98,10 @@ echo
 
 echo "### native value-update tests (a 0-length value is refused; the dynamic target keeps its value)"
 build_run "valueupdate" "value_update_test.cpp"
+echo
+
+echo "### native subscription-keepalive tests (an unanswered install retries fast, not in 60 s)"
+build_run "lease" "lease_test.cpp"
 echo
 
 echo "### native reset-cause tests (the DAS boot report's flag byte)"
