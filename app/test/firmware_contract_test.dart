@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/block_registry.dart';
 import 'package:tamuapp/core/render_dict.dart';
+import 'package:tamuapp/core/script_errors.dart';
 import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_functions.dart';
 import 'package:tamuapp/core/types.dart';
@@ -349,6 +350,35 @@ void main() {
     test('the max call depth matches', () {
       expect(fw['SCRIPT_MAX_CALL_DEPTH'], scriptMaxCallDepth);
     });
+
+    test(
+      'the error-code registry names every SCRIPT_ERR_* the firmware defines',
+      () {
+        // The app owns the error names (Docs/Services/Script.md "Error Model"), but the numbering is
+        // the firmware's: a code whose meaning moved would be read as a different fault.
+        final firmwareErrors = {
+          for (final entry in fw.entries)
+            if (entry.key.startsWith('SCRIPT_ERR_')) entry.key: entry.value,
+        };
+        expect(firmwareErrors, isNotEmpty);
+        for (final entry in firmwareErrors.entries) {
+          expect(
+            ScriptErrorCode.names[entry.value],
+            entry.key,
+            reason: 'code ${entry.value}',
+          );
+        }
+        // And the app must not name a code the firmware does not define.
+        // (names is code -> name; firmwareErrors is name -> code.)
+        for (final entry in ScriptErrorCode.names.entries) {
+          expect(
+            firmwareErrors[entry.value],
+            entry.key,
+            reason: 'app names ${entry.value} (code ${entry.key})',
+          );
+        }
+      },
+    );
 
     test('the CID 3 report-record layout matches', () {
       // ScriptClient.readState decodes these offsets; a drift would mis-read the record.

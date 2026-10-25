@@ -6,6 +6,7 @@ library;
 import 'package:flutter/material.dart';
 
 import '../core/script_client.dart';
+import '../core/script_fault.dart';
 import '../core/script_file.dart';
 import '../core/storage_client.dart';
 import 'script_editor_page.dart';
@@ -23,6 +24,10 @@ class _LoadedScript {
   final List<ScriptInputSpec> inputSpecs;
   final List<String> inputNames;
 
+  /// The decoded fault of this slot, or null when it is not in error (Docs/Services/Script.md
+  /// "Error Model"). Built from the CID 3 report against the stored file's own program.
+  final ScriptFault? fault;
+
   const _LoadedScript({
     required this.slot,
     required this.fileId,
@@ -31,6 +36,7 @@ class _LoadedScript {
     required this.instructionCounter,
     this.inputSpecs = const [],
     this.inputNames = const [],
+    this.fault,
   });
 
   String get fileName => scriptFileName(fileId);
@@ -117,6 +123,7 @@ class _ScriptsPageState extends State<ScriptsPage>
       var specs = const <ScriptInputSpec>[];
       var names = const <String>[];
       var display = p.metaName;
+      ScriptFault? fault;
       final bytes = await _storage.readFile(scriptFileName(p.fileId));
       if (bytes != null) {
         try {
@@ -124,11 +131,18 @@ class _ScriptsPageState extends State<ScriptsPage>
           specs = parsed.inputSpecs;
           names = parsed.inputNames;
           if (parsed.functionName.isNotEmpty) display = parsed.functionName;
+          // The record names the instruction and the error, never the operand: the register
+          // the faulted instruction addressed is read back from the file's own program.
+          fault = fileFault(report, parsed);
         } on FormatException {
           specs = const [];
           names = const [];
         }
       }
+      // A file that is missing or malformed still decodes the instruction and the error.
+      fault ??= report == null || !report.hasError
+          ? null
+          : ScriptFault.fromReport(report);
       list.add(
         _LoadedScript(
           slot: p.slot,
@@ -138,6 +152,7 @@ class _ScriptsPageState extends State<ScriptsPage>
           instructionCounter: report?.line ?? 0,
           inputSpecs: specs,
           inputNames: names,
+          fault: fault,
         ),
       );
     }
@@ -337,10 +352,18 @@ class _ScriptsPageState extends State<ScriptsPage>
       child: ExpansionTile(
         leading: ScriptStateDot(s.state),
         title: Text(s.name, style: theme.textTheme.titleSmall),
-        subtitle: Text(
-          '${s.fileName} · ${ScriptState.label(s.state)}'
-          '${s.instructionCounter > 0 ? ' · IC ${s.instructionCounter}' : ''}',
-          style: theme.textTheme.bodySmall,
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${s.fileName} · ${ScriptState.label(s.state)}'
+              '${s.instructionCounter > 0 ? ' · IC ${s.instructionCounter}' : ''}',
+              style: theme.textTheme.bodySmall,
+            ),
+            // The fault sits directly under the state it belongs to: a state of Error without
+            // the decoded sentence is the "error 2 at cat 4 op 1" the owner reported.
+            if (s.fault case final fault?) ScriptFaultRow(fault, dense: true),
+          ],
         ),
         childrenPadding: const EdgeInsets.only(bottom: Spacing.md),
         children: [

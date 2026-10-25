@@ -46,13 +46,10 @@ extension on _ScriptEditorPageState {
                 ),
               ],
             ),
-            if (_errorCode != 0 || _errorInstruction != 0)
+            if (_fault() case final fault?)
               Padding(
                 padding: const EdgeInsets.only(top: Spacing.sm),
-                child: Text(
-                  'Error $_errorCode ${_errorLocation()}',
-                  style: theme.textTheme.bodyMedium?.copyWith(color: kError),
-                ),
+                child: ScriptFaultRow(fault),
               ),
             const SizedBox(height: Spacing.lg),
             ScriptControlBar(
@@ -79,14 +76,24 @@ extension on _ScriptEditorPageState {
     );
   }
 
-  /// Where the fault happened, decoded from the report record's instruction encoding
-  /// (`1 + ((category << 8) | opcode)`). The error code itself is instruction-specific, so its
-  /// name is only meaningful against this instruction; the code catalogue is undecided, so the
-  /// raw code is shown as-is (no invented names).
-  String _errorLocation() {
-    final decoded = ScriptReport.decodeInstruction(_errorInstruction);
-    if (decoded == null) return '(engine)';
-    return 'at cat ${decoded.$1} op ${decoded.$2}';
+  /// The current fault, decoded: the report record's `instruction | error` pair turned into a
+  /// sentence (line, instruction, register, error name). Null when the script is not in error.
+  ///
+  /// The register comes from the draft's own program - the record carries no operand, so the
+  /// constant BlockInfo has to be read back from the line the fault names (see [draftFault]).
+  ScriptFault? _fault() {
+    if (_errorCode == 0 && _errorInstruction == 0) return null;
+    final report = ScriptReport(
+      state: _state,
+      depth: _callDepth,
+      line: _instructionCounter,
+      instruction: _errorInstruction,
+      error: _errorCode,
+    );
+    final draft = _draft;
+    return draft == null
+        ? ScriptFault.fromReport(report)
+        : draftFault(report, draft);
   }
 
   Future<void> _moveToLine() async {

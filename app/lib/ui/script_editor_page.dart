@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 
 import '../core/script_client.dart';
 import '../core/script_draft.dart';
+import '../core/script_fault.dart';
 import '../core/script_file.dart';
 import '../core/script_functions.dart';
 import '../core/script_instructions.dart';

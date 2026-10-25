@@ -8,8 +8,10 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/script_client.dart';
+import '../core/script_fault.dart';
 import '../core/script_file.dart';
 import '../core/types.dart';
 import 'formatters.dart';
@@ -38,6 +40,45 @@ class ScriptStateDot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Icon(Icons.circle, size: Spacing.lg, color: scriptStateColor(state));
+  }
+}
+
+/// A decoded script fault, as the sentence the Scripts page and the editor show next to the
+/// script's state, with a Copy that puts that sentence on the clipboard.
+///
+/// The text is the whole point: a report record's `instruction | error` pair prints as
+/// `error 2 at cat 4 op 1` and says nothing. [ScriptFault.text] names the line, the instruction,
+/// the register it addressed and the error.
+class ScriptFaultRow extends StatelessWidget {
+  const ScriptFaultRow(this.fault, {super.key, this.dense = false});
+
+  final ScriptFault fault;
+
+  /// The list-row size (the Scripts page card) rather than the editor card's.
+  final bool dense;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final style =
+        (dense ? theme.textTheme.bodySmall : theme.textTheme.bodyMedium)
+            ?.copyWith(color: kError);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: SelectableText(fault.text, style: style)),
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          tooltip: 'Copy fault as text',
+          icon: Icon(Icons.copy_all, size: dense ? IconSize.sm : IconSize.md),
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: fault.text));
+            if (!context.mounted) return;
+            showSnack(context, 'Fault copied');
+          },
+        ),
+      ],
+    );
   }
 }
 

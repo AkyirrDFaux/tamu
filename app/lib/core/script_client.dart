@@ -77,9 +77,9 @@ class ScriptReport {
 
   /// Decodes the [instruction] encoding `1 + ((category << 8) | opcode)` back into
   /// `(category, opcode)`, so the UI can look the instruction up. Returns null when the encoding
-  /// is 0 - a fault not attributable to an instruction (engine-level), or no fault at all - so
-  /// the caller shows the raw error code alone. This maps the encoding only; it does not name
-  /// error codes (that catalogue is undecided - keep the raw code).
+  /// is 0 - a fault not attributable to an instruction (engine-level), or no fault at all.
+  /// This maps the encoding only; naming the instruction, its register and the error is
+  /// [ScriptFault]'s job (`script_fault.dart`).
   static (int category, int opcode)? decodeInstruction(int instruction) {
     if (instruction == 0) return null;
     final encoded = instruction - 1;
