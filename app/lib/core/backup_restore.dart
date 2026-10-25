@@ -2399,6 +2399,10 @@ reloadChangedScripts(RestorePlan plan, ScriptChanges changes) async {
         continue;
       }
 
+      // The state read above goes through this same client, so a read that failed would otherwise
+      // be reported as the code for the unload - the reader would chase the wrong cause. Clear
+      // here, immediately before the operation whose failure is reported.
+      client.trace.clear();
       if (!await client.unload(slot)) {
         refused[slot] = fileId;
         failures.add(
@@ -3843,6 +3847,10 @@ Future<RestoreReport> applyRestorePlan(RestorePlan plan) async {
           minTimeMs: s.minTimeMs,
           deadzone: s.deadzone,
         );
+        // The table read above rides the same client and trace, so a failed read would be
+        // reported as the code for this write - and the next item would inherit this item's
+        // fault. Clear here, immediately before the operation whose failure is reported.
+        sub.trace.clear();
         final ok = await sub.setRequesterSubscription(index, entry: entry);
         if (!ok) {
           failItem(

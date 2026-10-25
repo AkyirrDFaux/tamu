@@ -433,18 +433,9 @@ void main() {
     expect(files.confirmed, isFalse);
     expect(files.deleted, isEmpty);
     expect(result.failed, 3);
-    expect(
-      result.failures.any((f) => f.contains('script slots read')),
-      isTrue,
-    );
-    expect(
-      result.failures.any((f) => f.contains('script slots read')),
-      isTrue,
-    );
-    expect(
-      result.failures.any((f) => f.contains('script files read')),
-      isTrue,
-    );
+    expect(result.failures.any((f) => f.contains('script slots read')), isTrue);
+    expect(result.failures.any((f) => f.contains('script slots read')), isTrue);
+    expect(result.failures.any((f) => f.contains('script files read')), isTrue);
     expect(fake.unloads, isEmpty);
   });
 
@@ -617,13 +608,45 @@ void main() {
       expect(reload.reloaded, isEmpty);
       expect(reload.refusedText, 'slot 1 (SCR_001)');
       expect(result.failed, 1);
-      expect(
-        result.failures.single,
-        contains('1 (SCR_001)'),
-      );
+      expect(result.failures.single, contains('1 (SCR_001)'));
       expect(result.failures.single, contains('still runs the image it held'));
       // The script it could not reload is not then unloaded by the sweep: the archive carries it.
       expect(fake.loaded, {1: 1});
+    },
+  );
+
+  test(
+    'a reload that fails reports the code of the UNLOAD, not of the state read first',
+    () async {
+      // Two failures in a row on one client: the report record (CID 3) the reload reads first is
+      // never answered, and the unload that follows is refused. The trace keeps the FIRST fault
+      // until it is cleared, so without a clear before the unload the report would hand the reader
+      // "no reply" for a write the device actually refused - the same class of defect as a bare
+      // count, since it names the wrong cause.
+      final scripts = [_script(1, 'Fan curve')];
+      final fake = _FakeCore(loaded: {1: 1});
+      fake.files['SCR_001'] = const [
+        0,
+        0,
+      ]; // not the archive's image, so it is reloaded
+      fake.statesUnreadable = true;
+      fake.refuseUnload.add(1);
+      install(fake);
+
+      final result = await applyRestorePlan(_plan(_device(scripts), _live()));
+
+      final failure = result.reasons.firstWhere(
+        (r) => r.kindWord == 'script slot',
+      );
+      print('refused reload after an unreadable state -> ${failure.line}');
+      expect(
+        failure.code,
+        startsWith('FAIL (FLAG_FAIL 0x40'),
+        reason:
+            'the code belongs to the unload, not to the state read before it',
+      );
+      expect(failure.code, isNot(contains('no reply')));
+      expect(failure.meaning, contains('refused the unload'));
     },
   );
 
@@ -645,10 +668,7 @@ void main() {
       expect(prune.refusedText, 'slot 0 (SCR_000)');
       expect(prune.remaining, {0: 0, 1: 1, 2: 2});
       expect(result.failed, 1);
-      expect(
-        result.failures.single,
-        contains('0 (SCR_000)'),
-      );
+      expect(result.failures.single, contains('0 (SCR_000)'));
       expect(result.failures.single, contains('still loaded'));
     },
   );

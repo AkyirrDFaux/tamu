@@ -11,6 +11,8 @@
 // the positive control: an accepted run reports no failures at all, so a report full of noise
 // cannot pass for a report of failures.
 
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/backup.dart';
 import 'package:tamuapp/core/backup_format.dart';
@@ -36,6 +38,23 @@ class _RefusingBus implements RequestChannel {
 
   /// The commands refused, as `service/cid`.
   final refuse = <String>{};
+
+  /// The commands the device never answers at all, as `service/cid` - a timeout.
+  final silent = <String>{};
+
+  /// Answers for the requester writes (`subscriptions/17`), consumed in order. `null` is an entry
+  /// the device never answers; an empty queue means the write is accepted, the normal answer.
+  ///
+  /// Two requester rows in one run need two different answers before the report can be asked
+  /// whether each row carries its OWN reason instead of the one before it.
+  final requesterWriteAnswers = <PacketResponse?>[];
+
+  /// The firmware's refusal, to queue in [requesterWriteAnswers]: FLAG_FAIL and no payload.
+  static const refusal = PacketResponse(
+    payload: [],
+    success: false,
+    fail: true,
+  );
 
   /// Loaded script slots: slot -> SCR file id.
   final Map<int, int> loaded;
@@ -135,6 +154,17 @@ class _RefusingBus implements RequestChannel {
     int? transactionId,
   }) async {
     sent.add((service: service, cid: functionCid, payload: payload));
+    // A command the device never answers is a timeout, not a refusal: the two arrive at the app
+    // as different reasons, so a case can tell them apart.
+    final command = '${service.name}/$functionCid';
+    if (silent.contains(command)) throw TimeoutException('$command: no reply');
+    if (service == ServiceType.subscriptions &&
+        functionCid == 0x11 &&
+        requesterWriteAnswers.isNotEmpty) {
+      final answer = requesterWriteAnswers.removeAt(0);
+      if (answer == null) throw TimeoutException('$command: no reply');
+      return answer;
+    }
     if (_refuses(service, functionCid)) return _failed;
     if (service == ServiceType.register) {
       switch (functionCid) {
@@ -199,65 +229,72 @@ BackupBlockRef _ref(String block, int type, int field, String fieldName) =>
       keyIndex: 0,
     );
 
+/// One requester row: a field of the provider (`1.3`) read into the PWM's Duty.
+BackupRequesterSubscription _subscription({
+  int sourceField = 4,
+  String sourceName = 'Measured Value',
+}) => BackupRequesterSubscription(
+  provider: '1.3',
+  trigger: 'Periodic',
+  source: _ref(
+    'Resistive measurement',
+    BlockType.resistiveMeasure.value,
+    sourceField,
+    sourceName,
+  ),
+  target: _ref('PWM output', BlockType.pwm.value, 1, 'Duty'),
+  periodMs: 100,
+  minTimeMs: 10,
+  deadzone: 0,
+);
+
 /// One archive carrying a PWM entry, a script and a subscription - the three kinds a restore writes
 /// through three different clients, so one failing run can report all of them.
-BackupDevice _archive() => BackupDevice(
-  type: 'Tamu v2.0A',
-  typeId: 1,
-  id: idFromString('1.1')!,
-  name: 'Tamu',
-  blocks: [
-    BackupBlock(
-      type: 'PWM output',
-      typeIndex: BlockType.pwm.value,
-      instance: 0,
-      name: 'Fan',
-      isDynamic: false,
-      entries: [
-        BackupEntry(
-          field: 'Duty',
-          fieldIndex: 1,
-          key: 'Key 0',
-          keyIndex: 0,
-          type: 'Number',
-          flags: const ['Persistent'],
-          value: 40.0,
-          size: 4,
+///
+/// [subscriptions] replaces the single default row, so a case can carry two.
+BackupDevice _archive({List<BackupRequesterSubscription>? subscriptions}) =>
+    BackupDevice(
+      type: 'Tamu v2.0A',
+      typeId: 1,
+      id: idFromString('1.1')!,
+      name: 'Tamu',
+      blocks: [
+        BackupBlock(
+          type: 'PWM output',
+          typeIndex: BlockType.pwm.value,
+          instance: 0,
+          name: 'Fan',
+          isDynamic: false,
+          entries: [
+            BackupEntry(
+              field: 'Duty',
+              fieldIndex: 1,
+              key: 'Key 0',
+              keyIndex: 0,
+              type: 'Number',
+              flags: const ['Persistent'],
+              value: 40.0,
+              size: 4,
+            ),
+          ],
         ),
       ],
-    ),
-  ],
-  scripts: [
-    BackupScript(
-      slot: 1,
-      functionName: 'Fan curve',
-      properties: const [],
-      inputs: const [],
-      outputs: const [],
-      variables: const [],
-      constants: const [],
-      lines: const [],
-    ),
-  ],
-  files: const [],
-  layouts: const [],
-  requesterSubscriptions: [
-    BackupRequesterSubscription(
-      provider: '1.3',
-      trigger: 'Periodic',
-      source: _ref(
-        'Resistive measurement',
-        BlockType.resistiveMeasure.value,
-        4,
-        'Measured Value',
-      ),
-      target: _ref('PWM output', BlockType.pwm.value, 1, 'Duty'),
-      periodMs: 100,
-      minTimeMs: 10,
-      deadzone: 0,
-    ),
-  ],
-);
+      scripts: [
+        BackupScript(
+          slot: 1,
+          functionName: 'Fan curve',
+          properties: const [],
+          inputs: const [],
+          outputs: const [],
+          variables: const [],
+          constants: const [],
+          lines: const [],
+        ),
+      ],
+      files: const [],
+      layouts: const [],
+      requesterSubscriptions: subscriptions ?? [_subscription()],
+    );
 
 LiveEntry _liveEntry(int field, String name, {List<int> value = const []}) =>
     LiveEntry(
@@ -272,7 +309,10 @@ LiveEntry _liveEntry(int field, String name, {List<int> value = const []}) =>
 /// The live nodes the archive is restored onto: the requester it names (`1.1`), and the provider
 /// (`1.3`) the subscription reads from - a subscription whose provider is off the bus would be
 /// reported as an unresolved address, which is a different reason.
-List<LiveDevice> _live() => [
+///
+/// [secondSource] adds the provider field a second requester row reads, so two rows on one device
+/// both resolve.
+List<LiveDevice> _live({bool secondSource = false}) => [
   LiveDevice(
     id: idFromString('1.1')!,
     name: 'Tamu',
@@ -299,19 +339,25 @@ List<LiveDevice> _live() => [
         instance: 0,
         name: 'Resistive measurement',
         isDynamic: false,
-        entries: [_liveEntry(4, 'Measured Value')],
+        entries: [
+          _liveEntry(4, 'Measured Value'),
+          if (secondSource) _liveEntry(3, 'Raw'),
+        ],
       ),
     ],
   ),
 ];
 
-RestorePlan _plan() {
-  final live = _live();
+RestorePlan _plan({
+  List<LiveDevice>? live,
+  List<BackupRequesterSubscription>? subscriptions,
+}) {
+  final nodes = live ?? _live();
   return planFromSnapshot(
-    devices: [_archive()],
-    live: live,
+    devices: [_archive(subscriptions: subscriptions)],
+    live: nodes,
     inventories: {
-      for (final device in live)
+      for (final device in nodes)
         device.id: const LiveInventory(
           fileNames: {},
           loadedSlots: {},
@@ -377,6 +423,75 @@ void main() {
         reason: 'a blank is what the owner could not act on',
       );
       expect(failure.meaning, contains('never asked'));
+    },
+  );
+
+  test('two requester rows on one device each carry their OWN answer', () async {
+    // The subscription client keeps the FIRST fault until it is cleared, so without a clear
+    // before each write item 2 reports item 1's code verbatim. The fake refuses the first write
+    // with the firmware's answer and never answers the second, so a report that reuses one code
+    // for both cannot pass this.
+    final bus = _RefusingBus()
+      ..requesterWriteAnswers.addAll([_RefusingBus.refusal, null]);
+    installRequestChannel(bus);
+    addTearDown(() => installRequestChannel(null));
+
+    final report = await applyRestorePlan(
+      _plan(
+        live: _live(secondSource: true),
+        subscriptions: [
+          _subscription(),
+          _subscription(sourceField: 3, sourceName: 'Raw'),
+        ],
+      ),
+    );
+
+    final rows = report.reasons
+        .where((r) => r.kindWord == 'requester row')
+        .toList();
+    // Printed on purpose: the handoff quotes the text the owner would paste for this case.
+    // ignore: avoid_print
+    print('--- two requester rows ---\n${report.text}\n--- end ---');
+    expect(rows, hasLength(2), reason: report.failures.join(' | '));
+    final codes = [for (final row in rows) row.code];
+    expect(
+      codes.where((c) => c.startsWith('FAIL (FLAG_FAIL 0x40')),
+      hasLength(1),
+      reason: 'exactly one row was refused: $codes',
+    );
+    expect(
+      codes.where((c) => c.contains('no reply')),
+      hasLength(1),
+      reason:
+          'the row the device never answered says so in its own words: $codes',
+    );
+    expect(rows[0].subject, isNot(rows[1].subject));
+  });
+
+  test(
+    'a requester row whose table read timed out reports the write\'s code',
+    () async {
+      // The table read and the write share one client and one trace. A read the device never answers
+      // must not become the reason for a write the device refused: the reader would chase the wrong
+      // cause.
+      final bus = _RefusingBus()
+        ..silent.add('subscriptions/16') // the requester table read
+        ..refuse.add('subscriptions/17'); // the write itself
+      installRequestChannel(bus);
+      addTearDown(() => installRequestChannel(null));
+
+      final report = await applyRestorePlan(_plan());
+
+      final failure = report.reasons.firstWhere(
+        (r) => r.kindWord == 'requester row',
+      );
+      expect(
+        failure.code,
+        startsWith('FAIL (FLAG_FAIL 0x40'),
+        reason:
+            'the code belongs to the write, not to the read that came before it',
+      );
+      expect(failure.code, isNot(contains('no reply')));
     },
   );
 
