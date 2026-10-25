@@ -1836,6 +1836,11 @@ Set<String> _filesThePlanWrites(List<BackupDevice> devices) {
 /// archive's own structure into a page of FAIL lines - 18 of them, none of which was a write that
 /// could ever have landed. The run reports them one line each instead, with what the device state
 /// makes of the row, so `0 failed` cannot be read as "nothing was left out".
+///
+/// Each reason says BOTH why the archive carries no value for the row
+/// ([_noValueSource]) and what the device state makes of it ([_noValueOutcome]): a dictionary
+/// marker is not the same fact as a volatile row the capture leaves out, and a row the archive
+/// does not carry a value for may well hold a value on the device.
 List<RestoreSkip> structuralSkips(RestorePlan plan) {
   final out = <RestoreSkip>[];
   for (final source in plan.devices) {
@@ -1856,33 +1861,16 @@ List<RestoreSkip> structuralSkips(RestorePlan plan) {
                 field: entry.fieldIndex,
                 key: entry.keyIndex,
               );
-        final dictionary =
-            type == DataType.geometry ||
-            type == DataType.texture ||
-            type == DataType.unknownKeyed;
-        final String reason;
-        if (target == null) {
-          reason =
-              'the archive device has no target on this rig, and the row '
-              'carries no value of its own';
-        } else if (live == null) {
-          reason =
-              'the device carries no such block, and a row with no value bytes '
-              'cannot be created from the host: the firmware refuses a write '
-              'with an empty value';
-        } else if (row == null) {
-          reason =
-              'the device carries no such row, and it cannot be created from the '
-              'host: the firmware refuses a write with an empty value';
-        } else if (dictionary) {
-          reason =
-              "the device carries the row: key ${entry.keyIndex} is the field's "
-              'dictionary marker, which declares the type and holds no value of '
-              'its own';
-        } else {
-          reason =
-              'the device carries the row, which holds no value of its own';
-        }
+        // A dictionary marker declares no length and sits beside the keys that carry the value:
+        // its type is what makes the field a keyed dictionary, and it holds nothing else.
+        final marker =
+            entry.size == 0 &&
+            (type == DataType.geometry ||
+                type == DataType.texture ||
+                type == DataType.unknownKeyed);
+        final reason =
+            '${_noValueSource(entry, marker: marker)}; '
+            '${_noValueOutcome(entry, marker: marker, hasTarget: target != null, hasBlock: live != null, hasRow: row != null)}';
         out.add(
           RestoreSkip(
             archive: source.name,
@@ -1899,6 +1887,67 @@ List<RestoreSkip> structuralSkips(RestorePlan plan) {
     }
   }
   return out;
+}
+
+/// Why the archive carries no value for one structural row: the first half of a
+/// [RestoreSkip.reason].
+///
+/// [entryDeclaresNoValue] folds two different facts together, and one sentence for both is what a
+/// reader got wrong: a row whose declared length is 0 carries nothing BY DESIGN (a dictionary
+/// marker, or a row the firmware keeps empty), while a row the capture drops the value of
+/// (`structural`) is a volatile row - it may hold a perfectly good value on the device, and what it
+/// lacks is a value in the archive (`backupBlockFromVisited` in `backup.dart`: a dynamic block's
+/// non-persistent row keeps its identity, type, flags and size, and only its value is dropped).
+String _noValueSource(BackupEntry entry, {required bool marker}) {
+  if (entry.size == 0) {
+    return marker
+        ? "key ${entry.keyIndex} is the field's dictionary marker: it declares "
+              'the type and holds no value of its own'
+        : 'the row declares no length (size 0), so there is no value to write '
+              'to it';
+  }
+  return 'the archive carries no value for it: the row is volatile, so its '
+      'value is runtime state and only its structure is restored';
+}
+
+/// What the device state makes of one structural row: the second half of a
+/// [RestoreSkip.reason].
+///
+/// It never claims the device's row is empty: a structural row with a declared length can hold its
+/// own value, and the structure phase creates a missing one zero-filled
+/// ([prepareDynamicBlocks], which carries the declared type and size). Only a row that declares no
+/// length is one no host write can create - the firmware refuses a write with no bytes - so only
+/// that case says "cannot be created".
+String _noValueOutcome(
+  BackupEntry entry, {
+  required bool marker,
+  required bool hasTarget,
+  required bool hasBlock,
+  required bool hasRow,
+}) {
+  if (!hasTarget) {
+    return 'this rig carries no target device for the archive, so nothing was '
+        'sent to it';
+  }
+  if (!hasBlock) {
+    return entry.size == 0
+        ? 'the device carries no such block, and a row with no length cannot '
+              'be created: the firmware refuses a write with no bytes'
+        : 'the device carries no such block; the structure phase builds the '
+              'block and this row zero-filled, and no value is written to it';
+  }
+  if (!hasRow) {
+    return entry.size == 0
+        ? 'the device carries no such row, and a row with no length cannot be '
+              'created: the firmware refuses a write with no bytes'
+        : 'the device carries no such row; the structure phase creates a row '
+              'with a declared length zero-filled, and no value is written to '
+              'it';
+  }
+  if (marker) return 'the device carries the row';
+  return entry.size == 0
+      ? 'the device carries the row, which holds no bytes of its own'
+      : 'the device carries the row and keeps the value it already holds';
 }
 
 /// Creates the dynamic structure a plan's targets are missing - the blocks when absent, and the

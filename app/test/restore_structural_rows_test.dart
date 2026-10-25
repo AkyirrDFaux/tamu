@@ -702,4 +702,112 @@ void main() {
       expect(client.trace.fault!.detail, contains('dictionary markers'));
     },
   );
+
+  test(
+    'a structural row the archive has no value for is not reported as empty',
+    () async {
+      // A dynamic field added from the app is written with `size: seed.length` and flags that
+      // default to volatile, so the capture archives it as a STRUCTURAL row that DECLARES a length
+      // (`backupBlockFromVisited`: identity, type, flags and size, no value). The archive carries
+      // no value for it - but the device's row holds one, and the report used to tell the reader
+      // the opposite ("the device carries the row, which holds no value of its own").
+      final archive = _archive(
+        blocks: [
+          BackupBlock(
+            type: 'Dynamic',
+            typeIndex: dynamicTypeBase,
+            instance: 0,
+            name: 'Subscriptions',
+            isDynamic: true,
+            entries: [
+              BackupEntry(
+                field: 'Field 4',
+                fieldIndex: 4,
+                key: 'Key 0',
+                keyIndex: 0,
+                type: 'Number',
+                flags: const ['Volatile'],
+                value: null,
+                structural: true,
+                size: 4,
+              ),
+            ],
+          ),
+        ],
+      );
+      LiveBlock blockWith(List<LiveEntry> entries) => LiveBlock(
+        type: dynamicTypeBase,
+        instance: 0,
+        name: 'Subscriptions',
+        isDynamic: true,
+        entries: entries,
+      );
+      final live = _live(
+        blocks: [
+          blockWith([
+            LiveEntry(
+              field: 4,
+              key: 0,
+              fieldName: 'Field 4',
+              keyName: 'Key 0',
+              meta: ValueInfo(type: DataType.number.value, size: 4),
+              value: const [1, 2, 3, 4],
+            ),
+          ]),
+        ],
+      );
+      final device = _DynamicDevice();
+      device.rows['0:4:0'] = (
+        type: DataType.number.value,
+        value: const [1, 2, 3, 4],
+        flags: 0,
+      );
+      _install(device);
+
+      final plan = _plan(archive: archive, live: live);
+      // Structure, not a value item: the run never plans a write for it.
+      expect(plan.items, isEmpty);
+      final skip = structuralSkips(plan).single;
+      // WHY the archive has no value (volatile, runtime state) ...
+      expect(skip.reason, contains('volatile'));
+      expect(skip.reason, contains('the archive carries no value for it'));
+      // ... and what the device holds, which is NOT "no value of its own".
+      expect(
+        skip.reason,
+        contains('the device carries the row and keeps the value it already holds'),
+      );
+      expect(skip.reason, isNot(contains('holds no value of its own')));
+      expect(skip.reason, isNot(contains('cannot be created')));
+
+      final report = await applyRestorePlan(plan);
+      expect(report.failed, 0, reason: report.text);
+      expect(report.counts, '0 written · 1 skipped (structural) · 0 failed');
+      expect(report.skipped.single.reason, skip.reason);
+      expect(report.text, contains('Skipped as structural (1)'));
+      // The row still holds what it held: nothing was written to it.
+      expect(device.rows['0:4:0']!.value, [1, 2, 3, 4]);
+      expect(device.zeroLengthValueWrites, 0);
+      expect(
+        device.sent.where(
+          (c) =>
+              c.service == ServiceType.register && c.cid == RegisterCid.write,
+        ),
+        isEmpty,
+      );
+
+      // The same structural row on a device that does NOT carry it IS creatable - the structure
+      // phase builds it zero-filled from the declared type and size - so its reason must not say
+      // it cannot be created (the old text said so for every structural row).
+      final absent = structuralSkips(
+        _plan(archive: archive, live: _live(blocks: [blockWith(const [])])),
+      ).single;
+      expect(absent.reason, contains('zero-filled'));
+      expect(absent.reason, isNot(contains('cannot be created')));
+      expect(
+        absent.reason,
+        isNot(contains('the device carries the row')),
+        reason: 'the device does not carry it'
+      );
+    },
+  );
 }

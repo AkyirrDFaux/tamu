@@ -199,8 +199,11 @@ class RestoreFailure {
 String _targetLabel(LiveDevice target) =>
     '${target.name} (${idToString(target.id)})';
 
-/// One row the restore left as STRUCTURE: an address the archive carries with no value of its own,
-/// so the run created nothing and wrote nothing ([entryDeclaresNoValue]).
+/// One row the restore left as STRUCTURE: an address the archive carries no value for, so the run
+/// wrote nothing to it ([entryDeclaresNoValue]). "Wrote nothing" is not "created nothing": a
+/// structural row that DECLARES a length and that the device was missing is created zero-filled by
+/// the structure phase, and one that declares no length cannot be created at all - the firmware
+/// refuses a write with no bytes.
 ///
 /// A dictionary marker is the case this exists for: `Geometry`/`Texture` at key 0 declares a field
 /// as a keyed dictionary and holds no value, and the LED display's eye blocks are nine of them per
@@ -209,8 +212,10 @@ String _targetLabel(LiveDevice target) =>
 /// failed: they are reported, one line each, so the count can say `skipped (structural)` and the
 /// reader can tell a marker from a write that did not land.
 ///
-/// [reason] is what the device state makes of the row: already carried (nothing to do), absent
-/// (a zero-length row cannot be created by a register write), or unplaceable.
+/// [reason] gives both halves, because they are different facts: WHY the archive carries no value
+/// for the row (it declares no length - a marker - or it is a volatile row whose value is runtime
+/// state the capture leaves out) and what the device state makes of it (carried with a value of its
+/// own, created as structure, uncreatable, or unplaceable).
 class RestoreSkip {
   final String archive;
   final String target;

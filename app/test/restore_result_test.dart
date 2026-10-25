@@ -231,8 +231,8 @@ void main() {
             kindWord: 'block field',
             subject: 'Dynamic "Left Eye" #1 / Field 4 [Key 0] (field 4 key 0)',
             reason:
-                "the device carries the row: key 0 is the field's dictionary "
-                'marker, which declares the type and holds no value of its own',
+                "key 0 is the field's dictionary marker: it declares the type "
+                'and holds no value of its own; the device carries the row',
           ),
         ],
       );
@@ -255,7 +255,7 @@ void main() {
       final text = report.text;
       expect(text, contains('602 written · 1 skipped (structural) · 0 failed'));
       expect(text, contains('Skipped as structural (1)'));
-      expect(text, contains('why : the device carries the row: key 0'));
+      expect(text, contains('why : key 0 is the field'));
       for (final line in text.split('\n')) {
         expect(
           line.length,
