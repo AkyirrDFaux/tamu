@@ -1,4 +1,4 @@
-A subscription service, initiated by the requester. A subscription times out after 120 s and is renewed by a new request. The service owns a reserved TrID range and is managed by the requester table.
+A subscription service, initiated by the requester. A subscription provider times out an entry after 120 s and renews it on a new request; the requester keeps its row until the subscription is cancelled. The service owns a reserved TrID range and is managed by the requester table.
 #### Subscription Table
 A minimum describing record, used for in-between device requests.
 
