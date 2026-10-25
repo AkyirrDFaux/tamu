@@ -577,7 +577,10 @@ Open:
   deadzone); requester 28 B / provider 32 B; the **provider** holds a 120 s lease renewed by
   keepalive/updates, while a **requester row never expires** - it goes only on an explicit cancel,
   an orphan announcement or a new setup (`t_eb35360c`), with the retry cadence as the bus guard
-  (fast while unanswered, capped at 5, then the 60 s keepalive); CIDs
+  (fast while unanswered, capped at 5, then the 60 s keepalive); running out of fast renewals is
+  **logged once per episode** (`t_62e8f3d3`: one `SUB` line with TRID, provider, target register and
+  uptime, saying the row is kept and on the keepalive - the flag is RAM-only and clears on an
+  answer); CIDs
   `0x0400/0x0401` inter-device, `0x0410-0x0413` requester, `0x0420/0x0421` provider; cancel is
   `trigger None`; `.SUBREQ` holds 24 B entries (TRID persisted, timeout regenerated).
 - **Subscription capabilities** are split: `SubscriptionRequest = 1<<7`, `SubscriptionProvide =

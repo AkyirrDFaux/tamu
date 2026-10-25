@@ -26,10 +26,18 @@
 // does not compile on the host. test/native/run.sh asserts it structurally instead (RequesterRemove
 // is called from that branch and from nowhere else, in particular not from Tick).
 //
+// Card t_62e8f3d3 adds the give-up report: when the fifth short renewal goes unanswered the row is
+// kept but retried at the keepalive cadence, and exactly one `SUB` log line says so - once per
+// episode (an answer ends the episode, so a later outage reports again), never on a healthy row.
+// The decision (SubRequesterLease::ShouldReportGaveUp) and the text (SubFormatGaveUp, also in
+// SubscriptionsLease.h) are driven here for real; the emit site in RegisterRequesterProvider is
+// guarded structurally by run.sh.
+//
 // No device dependency: built like align/stride (see run.sh).
 
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 #include "Core/Services/SubscriptionsLease.h"
 
@@ -60,6 +68,31 @@ static int checks = 0, failures = 0;
 // read as unserved - an artefact of the model, not of the device).
 static const uint32_t T0 = 5000;
 
+// One install/keepalive exactly as RegisterRequesterProvider issues it: the lease's own send, then
+// the once-per-episode give-up line that send may owe. `Reports` counts the lines the device would
+// log, so a test can assert the count instead of the text (the text has its own case below).
+static void SendInstall(SubRequesterLease &L, uint32_t NowMs, uint32_t &Reports) {
+    L.OnSend(NowMs);
+    if (L.ShouldReportGaveUp()) {
+        L.OnGaveUpReported();
+        Reports++;
+    }
+}
+
+// One whole unanswered episode, from whatever state the lease is in: the send that is due now (the
+// keepalive of a served row, or the initial install) and then the short renewals until the fast
+// window closes. Returns the give-up lines this episode emitted - one, if the report works.
+static uint32_t RunUnansweredEpisode(SubRequesterLease &L, uint32_t &Now, uint32_t &Reports) {
+    const uint32_t Before = Reports;
+    Now += L.Interval();
+    SendInstall(L, Now, Reports);
+    while (L.FastWindowOpen()) {
+        Now += L.Interval();
+        SendInstall(L, Now, Reports);
+    }
+    return Reports - Before;
+}
+
 // ---------------------------------------------------------------------------
 // The two sides, simulated at 1 ms per tick (a superset of the main loop's rate).
 // ---------------------------------------------------------------------------
@@ -68,6 +101,7 @@ struct Sim {
     uint32_t Now = 0;
     uint32_t Sends = 0;          // installs/keepalives sent (RequesterInitCheck)
     uint32_t Answers = 0;        // sends the provider answered with its current value
+    uint32_t GaveUps = 0;        // give-up lines RegisterRequesterProvider would have logged
     uint32_t LastSendMs = 0;
     uint32_t MaxSendGapMs = 0;   // longest gap between two sends (the cadence actually seen)
     uint32_t FastSends = 0;      // sends issued with the fast interval in front of them
@@ -106,7 +140,7 @@ struct Sim {
         }
         Sends++;
         LastSendMs = Now;
-        Lease.OnSend(Now);
+        SendInstall(Lease, Now, GaveUps);
         if (!NodeOn || No == DropSendNo) return;  // nothing hears it
         NodeHasEntry = true;
         NodeTimeout = SubTimeoutFrom(Now);
@@ -233,6 +267,118 @@ int main() {
         CHECK_EQ(CountFastResends(L, Now), SUB_FAST_ATTEMPTS); // the whole window again
     }
 
+    // ---- (d) The give-up report (card t_62e8f3d3): five short renewals with no answer produce
+    // exactly ONE line; the row is KEPT and put on the keepalive cadence; further unanswered sends
+    // in the same episode stay silent; a confirmation ends the episode, so a later failure reports
+    // again; and a row that is answered every time never reports.
+    {
+        uint32_t Reports = 0;
+        SubRequesterLease L;
+        uint32_t Now = T0;
+        Now += L.Interval();
+        SendInstall(L, Now, Reports);            // the install that opens the episode
+        CHECK_EQ(L.Unanswered, 1);
+        CHECK(L.FastWindowOpen());
+        CHECK(!L.ShouldReportGaveUp());          // nothing spent on the first send
+
+        // Four of the five short renewals: still inside the window, still silent.
+        for (int i = 1; i < SUB_FAST_ATTEMPTS; i++) {
+            Now += L.Interval();
+            SendInstall(L, Now, Reports);
+            CHECK_EQ(L.Interval(), SUB_RETRY_MS);
+            CHECK(!L.ShouldReportGaveUp());
+        }
+        CHECK_EQ(Reports, 0);
+        CHECK_EQ(L.Unanswered, SUB_FAST_ATTEMPTS); // the cap is inclusive: the window is still open
+        CHECK(L.FastWindowOpen());
+
+        // The fifth short renewal spends the window: one line, and the row moves to the keepalive.
+        Now += L.Interval();
+        SendInstall(L, Now, Reports);
+        CHECK_EQ(Reports, 1);
+        CHECK_EQ(L.Unanswered, SUB_FAST_ATTEMPTS + 1);
+        CHECK(!L.FastWindowOpen());
+        CHECK_EQ(L.Interval(), SUB_KEEPALIVE_MS);
+        CHECK(!L.Served());                        // nothing answered it: the row is kept, unserved
+
+        // Ten more unanswered keepalives in the SAME episode: no further lines. This is the
+        // "once per episode, not per retry" half - the row keeps trying for as long as it takes.
+        for (int i = 0; i < 10; i++) {
+            Now += L.Interval();
+            SendInstall(L, Now, Reports);
+        }
+        CHECK_EQ(Reports, 1);
+        CHECK(!L.Served());
+
+        // The provider answers at last (a value update, or the CID 1 install reply): the episode is
+        // over, the counter restarts and the next renewal is the keepalive...
+        L.OnAnswer(Now + 1);
+        CHECK_EQ(L.Unanswered, 0);
+        CHECK(L.Served());
+        CHECK(!L.ShouldReportGaveUp());
+        CHECK_EQ(L.Interval(), SUB_KEEPALIVE_MS);
+
+        // ... so a second failure reports again - exactly once more, and the row survives it.
+        CHECK_EQ(RunUnansweredEpisode(L, Now, Reports), 1);
+        CHECK_EQ(Reports, 2);
+        CHECK_EQ(L.Unanswered, SUB_FAST_ATTEMPTS + 1);
+        CHECK_EQ(L.Interval(), SUB_KEEPALIVE_MS);
+
+        // The same episode shape on a row that was served BEFORE the failure (its keepalive is the
+        // opener): also exactly one line.
+        L.OnAnswer(Now + 1);
+        CHECK_EQ(RunUnansweredEpisode(L, Now, Reports), 1);
+        CHECK_EQ(Reports, 3);
+        CHECK(L.Served());                         // "served" is sticky: being answered once is enough
+
+        L.OnProviderGone();                        // the node re-appeared with an empty table
+        CHECK(!L.ShouldReportGaveUp());            // a fresh episode starts silent
+        CHECK_EQ(RunUnansweredEpisode(L, Now, Reports), 1);
+        CHECK_EQ(Reports, 4);
+
+        // A row that is answered every time never reports, however long it runs.
+        {
+            uint32_t Healthy = 0;
+            SubRequesterLease H;
+            uint32_t T = T0;
+            for (int i = 0; i < 20; i++) {
+                T += H.Interval();
+                SendInstall(H, T, Healthy);
+                H.OnAnswer(T + 1);
+            }
+            CHECK_EQ(Healthy, 0);
+            CHECK(H.Served());
+        }
+    }
+
+    // ---- The line itself: SubFormatGaveUp is what the device prints (RegisterRequesterProvider
+    // passes it straight to DeviceLog), so its exact text is pinned here, along with the guarantee
+    // that the longest possible row still fits DeviceLog's buffer - a truncated log line would drop
+    // the TRID/register the message exists for.
+    {
+        char Line[SUB_GAVE_UP_TEXT_MAX];
+        unsigned Len = SubFormatGaveUp(Line, sizeof(Line), 0x1003, 0x0204, 0x04000010,
+                                      SUB_FAST_ATTEMPTS, 61500);
+        CHECK_EQ(Len, std::strlen(Line));
+        CHECK(std::strcmp(Line,
+                          "TRID 1003 prov 0204 reg 04000010: 5 short renewals unanswered, "
+                          "uptime 61500 ms, row kept, retrying at the keepalive") == 0);
+        // The real-world shape too: net-qualified node address, script-input target, a boot's uptime.
+        Len = SubFormatGaveUp(Line, sizeof(Line), 0x1000, 0x0204, 0x3F400001, SUB_FAST_ATTEMPTS, 4294967);
+        CHECK_EQ(Len, std::strlen(Line));
+        CHECK(std::strcmp(Line,
+                          "TRID 1000 prov 0204 reg 3F400001: 5 short renewals unanswered, "
+                          "uptime 4294967 ms, row kept, retrying at the keepalive") == 0);
+
+        // Worst case (full-width TRID/address/register, 3-digit count, 10-digit uptime) must not be
+        // truncated: Len is snprintf's would-be length, so Len < Size proves it fit.
+        char Worst[SUB_GAVE_UP_TEXT_MAX];
+        Len = SubFormatGaveUp(Worst, sizeof(Worst), 0xFFFF, 0xFFFF, 0xFFFFFFFFu, 255, 0xFFFFFFFFu);
+        CHECK(Len < SUB_GAVE_UP_TEXT_MAX);
+        CHECK_EQ(Len, std::strlen(Worst));
+        CHECK(std::strcmp(SUB_GAVE_UP_TAG, "SUB") == 0); // the tag the recall/save lines use
+    }
+
     // ---- The node re-appeared (its RAM-only table is gone): the row is treated as unserved again
     // and re-enters the fast window instead of sitting on the slow keepalive.
     {
@@ -261,6 +407,7 @@ int main() {
         CHECK_EQ(S.Sends, 4);                      // install + keepalives at 60/120/180 s
         CHECK_EQ(S.MaxSendGapMs, SUB_KEEPALIVE_MS);
         CHECK_EQ(S.NodeExpiries, 0);
+        CHECK_EQ(S.GaveUps, 0);                    // every renewal was answered: nothing to report
     }
 
     // ---- The bug (t_6dcaad54): a keepalive is lost (send #2, at 60 s). The next attempt must be
@@ -274,6 +421,7 @@ int main() {
         CHECK_EQ(S.Sends, 4);                 // install, lost keepalive, repair, next keepalive
         CHECK_EQ(S.NodeExpiries, 0);          // the node kept its entry throughout
         CHECK(S.NodeHasEntry);
+        CHECK_EQ(S.GaveUps, 0);               // the repair was answered: the window never closed
     }
 
     // ---- (a) A three-minute provider outage. The row is NOT dropped (no requester-side expiry, no
@@ -302,6 +450,7 @@ int main() {
         CHECK(S.LastAnswerMs >= S.PowerOnMs);
         CHECK(S.LastAnswerMs - S.PowerOnMs <= SUB_KEEPALIVE_MS); // within one keepalive of the return
         CHECK_EQ(S.NodeExpiries, 0);
+        CHECK_EQ(S.GaveUps, 1);                       // the outage was reported once, not per retry
     }
 
     // ---- (a) with the node announcing itself after its reboot (the normal case: Device.h's
@@ -338,6 +487,7 @@ int main() {
         CHECK(S.Lease.Unanswered >= 10);        // ten minutes of keepalives, saturating counter
         CHECK(S.MaxSendGapMs == SUB_KEEPALIVE_MS); // steady state: the keepalive, not 100 ms
         CHECK_EQ(S.FastSends, SUB_FAST_ATTEMPTS);  // the fast window was spent once
+        CHECK_EQ(S.GaveUps, 1);                    // ... and said so exactly once in ten minutes
     }
 
     std::printf("%d checks, %d failures\n", checks, failures);

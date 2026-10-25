@@ -148,6 +148,23 @@ inline void SubscriptionsService::RegisterRequesterProvider(RequesterEntry* Entr
     // fast while the installs go unanswered, capped, then the keepalive).
     Entry->Lease.OnSend(DeviceStatus.UptimeMs);
 
+    // The fast window is spent: this is the send that spends the fifth (and last) short renewal and
+    // nothing has answered the row, so from here it is retried at the keepalive cadence. Say so
+    // once per episode - before this line existed, a row that went quiet left no trace at all and
+    // its failure had to be guessed from the app's subscription table. The row is NOT dropped, so
+    // the message says it is kept; the provider address is the one actually being sent to (already
+    // re-qualified above), and the uptime is when the give-up happened.
+    if (Entry->Lease.ShouldReportGaveUp()) {
+        Entry->Lease.OnGaveUpReported();
+        char Line[SUB_GAVE_UP_TEXT_MAX];
+        // The count is the cap, not Lease.Unanswered: that counter also holds the send that opened
+        // the episode (the keepalive of a served row, or the initial install), so it reads one
+        // higher than the short renewals this line is about.
+        SubFormatGaveUp(Line, sizeof(Line), Entry->Trid, ProviderAddr, Entry->TargetReg,
+                        SUB_FAST_ATTEMPTS, DeviceStatus.UptimeMs);
+        DeviceLog(SUB_GAVE_UP_TAG, "%s", Line);
+    }
+
 #ifdef USE_SUB_PROVIDE
     if (ProviderAddr == DeviceStatus.ShortAddress) {
         // Same-device provider: install it directly (shared with the wire paths).

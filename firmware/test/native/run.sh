@@ -14,8 +14,9 @@
 #   lease_test.cpp    the requester row's lifetime and install/keepalive cadence (Core/Services/
 #                     SubscriptionsLease.h): rows are never dropped on time, an unanswered install
 #                     retries at SUB_RETRY_MS, capped at 5, then the keepalive, and an answer
-#                     resets the counter - plus a source guard that the only removal of a row is the
-#                     explicit-cancel branch of RequesterSet
+#                     resets the counter; the once-per-episode give-up line and its exact text -
+#                     plus a source guard that the only removal of a row is the explicit-cancel
+#                     branch of RequesterSet
 #
 # The numeric core is built in three shapes: the core (64-bit) and the DAS (32-bit, no
 # Vector/Matrix) are the real targets; the third - 32-bit *with* Vector/Matrix - is a
@@ -134,6 +135,33 @@ if [ "$(grep -c 'RequesterRemove' "$SUBS_SRC")" != 1 ]; then
 fi
 [ $guard_fail = 0 ] && echo "PASS: no time-based requester drop, 1 removal (explicit cancel) and no other"
 fail=$((fail + guard_fail))
+echo
+
+# t_62e8f3d3, structural half: the give-up line is emitted from RegisterRequesterProvider, which
+# pulls the packet/register/storage layer and cannot be compiled on the host. Assert the emit site
+# still exists and is still gated on the once-per-episode flag - a bare DeviceLog inside the retry
+# path would print on every send after the cap, which is exactly what the flag exists to prevent.
+echo "### source guard: the give-up line is emitted once per episode from the requester's send"
+PERSIST_SRC="src/Core/Services/SubscriptionsPersist.h"
+gaveup_block=$(sed -n '/if (Entry->Lease.ShouldReportGaveUp())/,/^    }/p' "$PERSIST_SRC")
+gaveup_fail=0
+if printf '%s\n' "$gaveup_block" | grep -q 'DeviceLog(SUB_GAVE_UP_TAG'; then
+    echo "PASS: gated on ShouldReportGaveUp and logged with the SUB tag"
+else
+    echo "FAIL $PERSIST_SRC: no DeviceLog(SUB_GAVE_UP_TAG, ...) inside the ShouldReportGaveUp() block"
+    gaveup_fail=1
+fi
+if [ "$(grep -c 'OnGaveUpReported' "$PERSIST_SRC")" != 1 ]; then
+    echo "FAIL $PERSIST_SRC: the flag must be set exactly once, at the emit site"
+    gaveup_fail=1
+fi
+# The message is formatted, never inlined per call site: one owner of the argument order, and the
+# text itself is pinned by lease_test.cpp through the same helper.
+if [ "$(grep -c 'SubFormatGaveUp' "$PERSIST_SRC")" != 1 ]; then
+    echo "FAIL $PERSIST_SRC: the line must be formatted through SubFormatGaveUp (SUB_GAVE_UP_FMT)"
+    gaveup_fail=1
+fi
+fail=$((fail + gaveup_fail))
 echo
 
 echo "### native reset-cause tests (the DAS boot report's flag byte)"

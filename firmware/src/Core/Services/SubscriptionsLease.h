@@ -8,6 +8,7 @@
 // exercises the same decision that runs on the core, not a copy of it.
 
 #include <cstdint>
+#include <cstdio>
 
 // Docs/Services/Subscriptions.md: "Timeout 120s, renewed with new request." The PROVIDER expires an
 // entry that stops being renewed (SubscriptionsControl.h Tick, SubscriptionsProvider.h). The
@@ -36,6 +37,31 @@ static constexpr uint8_t SUB_FAST_ATTEMPTS = 5u;
 // Docs: the local deadline an installed entry is given (not persisted).
 static inline uint32_t SubTimeoutFrom(uint32_t NowMs) { return NowMs + SUB_TIMEOUT_MS; }
 
+// The give-up report: one line per episode, when a row's fast retry window is spent (card
+// t_62e8f3d3). Five short renewals went unanswered, so from here the row is retried at the
+// keepalive cadence - and until this line existed nothing in the log said why a row went quiet.
+//
+// The text lives here, next to the state that decides it and host-clean, for the same reason the
+// lease itself does: test/native/lease_test.cpp formats the very string the device prints instead
+// of a copy of it, and the argument order has one owner (SubFormatGaveUp), so the emit site cannot
+// pass the fields in the wrong order.
+static constexpr char SUB_GAVE_UP_TAG[] = "SUB";
+static constexpr char SUB_GAVE_UP_FMT[] =
+    "TRID %04X prov %04X reg %08X: %u short renewals unanswered, uptime %u ms, row kept, "
+    "retrying at the keepalive";
+// DeviceLog's own buffer (Devices/*/Log.h): the longest form of the line above has to fit inside
+// it, and the host test pins that it does.
+static constexpr unsigned SUB_GAVE_UP_TEXT_MAX = 128;
+
+// Formats the line (returns the length snprintf produced, like snprintf itself, so a truncated
+// line is visible as Len >= Size).
+static inline unsigned SubFormatGaveUp(char *Dst, unsigned Size, uint16_t Trid, uint16_t ProviderAddr,
+                                       uint32_t TargetReg, unsigned Renewals, uint32_t UptimeMs) {
+    int Len = snprintf(Dst, Size, SUB_GAVE_UP_FMT, (unsigned)Trid, (unsigned)ProviderAddr,
+                       (unsigned)TargetReg, Renewals, (unsigned)UptimeMs);
+    return (Len < 0) ? Size : (unsigned)Len;
+}
+
 // The requester entry's install/keepalive bookkeeping (transient: not part of the wire entry).
 //
 // An install is only known to have landed when the provider answers it. The answer is the CID 1
@@ -61,6 +87,11 @@ struct SubRequesterLease {
     // provider first (Interval below).
     uint32_t LastValueMs = 0;
     uint8_t Unanswered = 0;        // installs sent since that answer (saturating, not persisted)
+    // The give-up line has been emitted for the current unanswered episode. Once per episode, not
+    // per retry: an answer (OnAnswer) ends the episode, so the next outage reports again. RAM-only,
+    // in the same transient tail as Unanswered - it is neither streamed nor persisted (`.SUBREQ`
+    // holds 24 B per entry), so a boot, recall or Set starts a fresh episode.
+    bool GaveUpReported = false;
 
     bool Served() const { return LastValueMs != 0; }
 
@@ -74,19 +105,36 @@ struct SubRequesterLease {
     // normal value path): the installs are answered, so the counter restarts and the next renewal
     // is the slow keepalive again. This is also the "a value update resets the counter" half of the
     // ruling - ApplyRequesterValue calls it for every value that arrives, not just for the install
-    // reply.
+    // reply - and it ends the give-up episode, so a later outage reports again.
     void OnAnswer(uint32_t NowMs) {
         LastValueMs = NowMs;
         Unanswered = 0;
+        GaveUpReported = false;
     }
 
     // The provider's table is gone (the node re-appeared and its table is RAM-only): treat the
     // entry as unserved again so it re-enters the fast window instead of sitting on the slow
-    // keepalive while the node's start-up install is retried.
+    // keepalive while the node's start-up install is retried. That is a new episode as well.
     void OnProviderGone() {
         LastValueMs = 0;
         Unanswered = 0;
+        GaveUpReported = false;
     }
+
+    // Is the short-retry window still open? The single place that answers it, because both the
+    // cadence (Interval) and the give-up report key off the same boundary - computing it twice is
+    // how a row ends up retrying on the keepalive without the line that explains it.
+    //   Unanswered counts the installs sent since the last answer, and SUB_FAST_ATTEMPTS of them are
+    //   renewed at the short cadence past the one that opened the episode (the keepalive of a served
+    //   row, or the initial install of a new one). So the window closes on the send that spends the
+    //   fifth short renewal, and the NEXT send is the keepalive.
+    bool FastWindowOpen() const { return Unanswered <= SUB_FAST_ATTEMPTS; }
+
+    // The give-up edge: the fast window has just closed - the fifth short renewal went unanswered -
+    // and this episode has not been reported yet. The row is NOT dropped (nothing on the requester
+    // side drops it); from here it retries at the keepalive cadence until the provider answers.
+    bool ShouldReportGaveUp() const { return !FastWindowOpen() && !GaveUpReported; }
+    void OnGaveUpReported() { GaveUpReported = true; }
 
     // How long after the last send the next one is due.
     //
@@ -106,7 +154,7 @@ struct SubRequesterLease {
     //    100 ms for ever on the shared bus.
     uint32_t Interval() const {
         if (Unanswered == 0 && Served()) return SUB_KEEPALIVE_MS;
-        return (Unanswered <= SUB_FAST_ATTEMPTS) ? SUB_RETRY_MS : SUB_KEEPALIVE_MS;
+        return FastWindowOpen() ? SUB_RETRY_MS : SUB_KEEPALIVE_MS;
     }
 
     bool Due(uint32_t NowMs) const { return (uint32_t)(NowMs - LastRegisteredMs) >= Interval(); }
