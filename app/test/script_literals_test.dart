@@ -269,8 +269,44 @@ void main() {
       );
       expect(result.constants.single.name, 'TARGET');
       expect(result.lines.single.operands.single.type, symConstant);
-      expect(result.uses.single.reason, contains('line target'));
+      expect(result.uses.single.reason, contains('names it'));
     });
+
+    test(
+      'a constant in a destination stays, and still follows the renumbering',
+      () {
+        // A malformed line the device would refuse (a destination must be writable): it is not
+        // turned into a predefine, and the destination symbol still points at its constant.
+        final d = ScriptDraft();
+        d.constants.addAll([
+          ScriptDraftValue(
+            name: 'LIT',
+            type: DataType.number,
+            value: numberToBytes(1.0),
+          ),
+          ScriptDraftValue(
+            name: 'BAD',
+            type: DataType.number,
+            value: numberToBytes(2.0),
+          ),
+        ]);
+        d.lines.add(
+          ScriptLine(
+            destinations: [_c(1)],
+            instruction: ScriptSymbol.instruction(catMath, 0),
+            operands: [_c(0)],
+          ),
+        );
+        final result = convertScriptLiterals(
+          constants: d.constants,
+          lines: d.lines,
+        );
+        expect([for (final c in result.constants) c.name], ['BAD']);
+        final destination = result.lines.single.destinations.single;
+        expect((destination.type, destination.value), (symConstant, 0));
+        expect(result.lines.single.operands.single.subtype, preIndex);
+      },
+    );
 
     test('a second pass changes nothing', () {
       final d = draft();

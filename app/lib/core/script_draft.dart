@@ -148,9 +148,11 @@ ScriptLiteralConversion convertScriptLiterals({
     }
   }
 
-  // 2. How many operands reference each constant, and which of them are line targets.
+  // 2. How many operands reference each constant, which are line targets, and which a
+  //    destination names (a destination must be writable, so such a constant is malformed
+  //    already - it is never rewritten into a predefine, only renumbered).
   final uses = <int, int>{};
-  final targets = <int>{};
+  final unwritable = <int>{};
   void scan(List<ScriptLine> program) {
     for (final line in program) {
       final def = line.def;
@@ -158,11 +160,16 @@ ScriptLiteralConversion convertScriptLiterals({
           def != null &&
           def.category == catFlow &&
           (def.op == 3 || def.op == 4);
+      for (final d in line.destinations) {
+        if (d.type != symConstant) continue;
+        uses[d.value] = (uses[d.value] ?? 0) + 1;
+        unwritable.add(d.value);
+      }
       for (var i = 0; i < line.operands.length; i++) {
         final o = line.operands[i];
         if (o.type != symConstant) continue;
         uses[o.value] = (uses[o.value] ?? 0) + 1;
-        if (isTarget && i == 0) targets.add(o.value);
+        if (isTarget && i == 0) unwritable.add(o.value);
       }
     }
   }
@@ -172,14 +179,14 @@ ScriptLiteralConversion convertScriptLiterals({
     if (f.hasBody) scan(f.body);
   }
 
-  // 3. A constant nothing references has no operand position to move into, and a line target is
-  //    an address rather than a literal: both stay stored (nothing is silently deleted).
+  // 3. A constant nothing references has no operand position to move into, and a line target or
+  //    a destination is not a literal: those stay stored (nothing is silently deleted).
   for (final i in candidate.keys.toList()) {
     if ((uses[i] ?? 0) == 0) {
       reason[i] = 'no operand references it';
       candidate.remove(i);
-    } else if (targets.contains(i)) {
-      reason[i] = 'a Flow Jump/Call uses it as a line target';
+    } else if (unwritable.contains(i)) {
+      reason[i] = 'a Flow Jump/Call or a destination names it';
       candidate.remove(i);
     }
   }
@@ -214,16 +221,23 @@ ScriptLiteralConversion convertScriptLiterals({
     kept.add(constants[i]);
   }
 
-  ScriptSymbol rewrite(ScriptSymbol symbol) {
+  /// A constant symbol keeps its meaning: it follows the survivors' renumbering. Only an
+  /// operand is ever replaced by a predefine - a destination cannot be one (it must be
+  /// writable) and neither can a flow target (it is an address).
+  ScriptSymbol renumber(ScriptSymbol symbol) {
     if (symbol.type != symConstant) return symbol;
-    final literal = candidate[symbol.value];
-    if (literal != null) return literal;
     final index = newIndex[symbol.value];
     return index == null ? symbol : ScriptSymbol.constant(index);
   }
 
+  ScriptSymbol rewrite(ScriptSymbol symbol) {
+    if (symbol.type != symConstant) return symbol;
+    final literal = candidate[symbol.value];
+    return literal ?? renumber(symbol);
+  }
+
   ScriptLine rewriteLine(ScriptLine line) => ScriptLine(
-    destinations: List.of(line.destinations),
+    destinations: [for (final d in line.destinations) renumber(d)],
     instruction: line.instruction,
     operands: [for (final o in line.operands) rewrite(o)],
     functionTarget: line.functionTarget,
