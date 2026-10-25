@@ -27,8 +27,12 @@
 //   - the ANSWER to "Change subscription" (0401) is unchanged and carries the current value alone
 //     (Docs CID 1, "Current value"); for an edge row that is its Bool, one byte. A value is at
 //     least one byte and a push is exactly two, so the shapes cannot collide. The answer is not a
-//     press - it tells the row to forget its baseline, and the next push is the zero point. Leaving
-//     it alone is also what keeps the feature inside the DAS's code space.
+//     press, and what it may do depends on whether the row has run before (SubEdgeAnswer below): the
+//     FIRST answer is the install, so it starts the row from that value and makes the next push the
+//     zero point, while the answer to a RENEWAL only extends the deadlines - it keeps the baseline
+//     (the provider keeps its counter across renewals) and does not write the target (that level was
+//     sampled before the request, so writing it would undo a press from the same round trip).
+//     Leaving it alone is also what keeps the feature inside the DAS's code space.
 //
 // Why the provider counts BOTH directions, whatever the trigger: parity can only mean the level if
 // every level change moves the counter. A rising-only counter would stay odd after the release and
@@ -192,11 +196,14 @@ struct SubEdgeState {
 
     // Classifies an arriving counter and advances the state.
     //
-    // `InstallAnswer` says this value is the provider's answer to an install/keepalive (the row
-    // sent a Change and this is what came back): the answer re-baselines, because the provider
-    // re-applies the table it was sent and its counter restarts there - a node that rebooted
-    // answers with 0, and the row must take 0 as its new zero point rather than read it as a jump
-    // back from whatever it had. Reset on install and on a confirmed re-registration, in one rule.
+    // `InstallAnswer` says this value is the provider's answer to the row's FIRST Change - the row
+    // has never been served, so this is the install and its counter is the zero point rather than a
+    // comparison. A node that rebooted (RAM-only provider table) answers its install with 0, and the
+    // row must take 0 as its new zero point instead of reading it as a jump back from whatever it
+    // had. A push that crosses a RENEWAL is NOT an install any more: the provider keeps its counter
+    // across renewals (owner ruling, 2026-10-25, SubscriptionsProviderReset.h), so that push is an
+    // ordinary press and has to be compared - and a provider that really did restart sends a counter
+    // that went backwards, which the resync case below already handles.
     SubEdgeKind Arrive(uint16_t Counter, bool InstallAnswer) {
         Missing = 0;
         Report = false;

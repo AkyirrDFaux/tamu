@@ -16,9 +16,12 @@
 //  2. A renewal of a NON-RUNNING subscription changes nothing. The same decision answers Install for
 //     a never-served row - the ONE place a reply may baseline the counter and start the row from the
 //     source's current value (Docs CID 1) - while an existing provider entry is only given the new
-//     timeout (ProviderApply's `Reset` is false on the 0401 path, true only for the explicit 0421).
-//     ProviderApply and the requester's target write pull the packet/register/device layer and do not
-//     link on the host, so run.sh asserts those two call sites structurally.
+//     timeout (ProviderApply's `Reset` is false on the 0401 path, true only for the explicit 0421),
+//     and that decision is host-clean code (SubscriptionsProviderReset.h) driven here: an identical
+//     re-install keeps every piece of trigger state, while a new entry, a changed source or a
+//     changed trigger resets it. ProviderApply's and the requester's target write pull the
+//     packet/register/device layer and do not link on the host, so run.sh asserts those call sites
+//     structurally.
 //  3. A FAILED renewal leaves the row intact and a later renewal succeeds. The lease has no removal
 //     path at all (run.sh pins that the only requester removal is RequesterSet's cancel branch), so
 //     six unanswered renewals leave the row served-or-not exactly as it was, retrying on the
@@ -34,6 +37,7 @@
 
 #include "Core/Services/SubscriptionsEdge.h"
 #include "Core/Services/SubscriptionsLease.h"
+#include "Core/Services/SubscriptionsProviderReset.h"
 
 static int checks = 0, failures = 0;
 
@@ -145,6 +149,36 @@ int main() {
         CHECK(!R.Edge.HaveBaseline);
     }
 
+    // ---- 2b. the provider: an identical re-install extends, a changed table resets --------
+    {
+        // The rig's row: TRID 0x1008, source Dynamic.0 field 4 (0xFC000400), EdgeRising.
+        const uint32_t Src = 0xFC000400u;
+        const uint32_t OtherSrc = 0xFC000500u;
+        const TriggerType Rising = TriggerType::EdgeRising;
+        const TriggerType Falling = TriggerType::EdgeFalling;
+
+        // A renewal: 0401 with the SAME entry, no explicit Set. Nothing may be reset, so the
+        // provider keeps Hash (the edge counter), LastBool, LastSentMs and EdgeDue across it -
+        // which is the whole point of the ruling: the counter stays continuous for the requester.
+        CHECK(!SubProviderReinstallResets(false, false, Src, Rising, Src, Rising));
+
+        // A new entry has no state worth keeping (requesterAddr 0 is the "free slot" marker).
+        CHECK(SubProviderReinstallResets(false, true, Src, Rising, Src, Rising));
+
+        // A retargeted source: the hash/counter/last value describe the field that is gone.
+        CHECK(SubProviderReinstallResets(false, false, Src, Rising, OtherSrc, Rising));
+
+        // A changed trigger: an edge counter and a value hash are not the same accounting, and
+        // LastBool/EdgeDue only mean something for the edge triggers.
+        CHECK(SubProviderReinstallResets(false, false, Src, Rising, Src, Falling));
+        CHECK(SubProviderReinstallResets(false, false, Src, Rising, Src, TriggerType::OnChangeConfirm));
+
+        // The explicit 0421 Set resets whatever the table says - it is a deliberate re-install,
+        // never a renewal.
+        CHECK(SubProviderReinstallResets(true, false, Src, Rising, Src, Rising));
+        CHECK(SubProviderReinstallResets(true, true, Src, Rising, OtherSrc, Falling));
+    }
+
     // ---- 3. A failed renewal leaves the row intact; a later one succeeds -------------------
     {
         Row R;
@@ -185,6 +219,50 @@ int main() {
         // The press that was counted while the renewals went unanswered is still compared.
         CHECK_EQ((int)R.Edge.Arrive(4, SubEdgeAnswer(R.Lease.Served()) == SubEdgeAnswerKind::Install),
                  (int)SubEdgeKind::Next);
+    }
+
+    // ---- 4. press -> renewal (button held) -> release+press still delivers both presses --
+    {
+        Row R;
+        R.Lease.OnSend(1000);
+        Answer(R, 1050);                  // install answered: the row is running
+        R.Edge.Rebaseline(14);            // install reply: counter 14 = lifted, the known state
+        R.Timeout = SubTimeoutFrom(1050);
+        CHECK(R.Lease.Served());
+
+        // The press is delivered live: delta 1, parity 1, nothing owed. (A live Next writes the
+        // arriving counter's level directly; ReplayNext only moves in a walk.)
+        CHECK_EQ((int)R.Edge.Arrive(15, SubEdgeAnswer(R.Lease.Served()) == SubEdgeAnswerKind::Install),
+                 (int)SubEdgeKind::Next);
+        CHECK_EQ(R.Edge.Last, 15);
+        CHECK_EQ(SubEdgeLevelByte(15), 1); // counter 15: pressed
+
+        // The renewal goes out and comes back while the button is held. It may extend only.
+        const uint32_t RenewAt = 1000 + SUB_KEEPALIVE_MS;
+        SendRenewal(R, RenewAt);
+        CHECK_EQ(SubEdgeAnswer(R.Lease.Served()) == SubEdgeAnswerKind::Renew, 1);
+        Answer(R, RenewAt + 40);
+        R.Timeout = SubTimeoutFrom(RenewAt + 40);
+        CHECK_EQ(R.Edge.Last, 15);        // the press above is still the counter accounting
+        CHECK(R.Edge.HaveBaseline);
+        CHECK_EQ(R.Edge.Pending, 0);      // the renewal's answer owed nothing
+        CHECK_EQ(R.Lease.Unanswered, 0);
+        CHECK_EQ(R.Timeout, RenewAt + 40 + SUB_TIMEOUT_MS);
+
+        // Release + the next press arrive together as counter 17: one edge was never seen, and the
+        // two levels it implies are delivered in order (16 lifted -> 0, then 17 pressed -> 1),
+        // ending on the newest counter. Neither the renewal nor the gap loses the first press.
+        CHECK_EQ((int)R.Edge.Arrive(17, SubEdgeAnswer(R.Lease.Served()) == SubEdgeAnswerKind::Install),
+                 (int)SubEdgeKind::Gap);
+        CHECK_EQ(R.Edge.Missing, 1);
+        CHECK_EQ(R.Edge.Pending, 2);
+        CHECK_EQ(R.Edge.ReplayLevel(), 0);
+        R.Edge.OnReplayed();
+        CHECK_EQ(R.Edge.ReplayLevel(), 1);
+        R.Edge.OnReplayed();
+        CHECK_EQ(R.Edge.Pending, 0);
+        CHECK_EQ(R.Edge.Last, 17);
+        CHECK(!R.Edge.Episode);
     }
 
     // ---- the cadence beats the provider's 120 s lease with margin --------------------------

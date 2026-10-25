@@ -252,14 +252,16 @@ echo
 # t_e7e40f2e, structural half: a renewal is a plain 0401 with the same entry (owner ruling,
 # 2026-10-25), so an EXISTING provider entry may only have its TIMEOUT extended - no hash/counter,
 # value, last-sent or trigger reset - and a renewal's answer may neither re-baseline the requester's
-# edge counter nor write its target. The two sites that cannot be linked on the host are asserted
-# here: the 0401 call site passes Reset = false (only a new entry or a retargeted source resets, via
-# ProviderApply's own TargetChanged), the explicit 0421 Set keeps Reset = true, and the requester's
-# edge branch asks SubEdgeAnswer for the decision, keeps its single ResetBaseline in the Install
-# branch, and never treats an unanswered renewal as an install.
+# edge counter nor write its target. The reset decision itself is host-clean code
+# (SubscriptionsProviderReset.h) and is driven by renewal_test.cpp; what is asserted here is that the
+# device goes THROUGH it: the 0401 call site passes Reset = false, the explicit 0421 Set keeps
+# Reset = true, and ProviderApply gates its wipe on SubProviderReinstallResets. The requester's edge
+# branch asks SubEdgeAnswer for the decision, keeps its single ResetBaseline in the Install branch,
+# and never treats an unanswered renewal as an install.
 echo "### source guard: a renewal extends the timeouts and resets no state"
 RENEW_REQ_SRC="src/Core/Services/SubscriptionsRequester.h"
 RENEW_CTL_SRC="src/Core/Services/SubscriptionsControl.h"
+RENEW_PROV_SRC="src/Core/Services/SubscriptionsProvider.h"
 renew_fail=0
 if [ "$(grep -c 'ProviderApply(Entry, Frame.Trid, Frame.IdSrc, Table, false);' "$RENEW_CTL_SRC")" != 1 ]; then
     echo "FAIL $RENEW_CTL_SRC: the 0401 (renewal) path must extend the entry, not reset it"
@@ -271,6 +273,18 @@ if [ "$(grep -c 'ProviderApply(Entry, Frame.Trid, Frame.IdSrc, Table, true);' "$
 fi
 if [ "$(grep -c 'ProviderInstall(Frame.Trid, RequesterAddr, Table, true)' "$RENEW_CTL_SRC")" != 1 ]; then
     echo "FAIL $RENEW_CTL_SRC: the explicit provider Set (0421) must still re-install with a reset"
+    renew_fail=1
+fi
+if [ "$(grep -c 'SubProviderReinstallResets(Reset, Entry->RequesterAddr == 0,' "$RENEW_PROV_SRC")" != 1 ]; then
+    echo "FAIL $RENEW_PROV_SRC: ProviderApply's reset decision must be the host-tested SubProviderReinstallResets"
+    renew_fail=1
+fi
+if [ "$(grep -c 'if (ResetState)' "$RENEW_PROV_SRC")" != 1 ]; then
+    echo "FAIL $RENEW_PROV_SRC: the trigger-state wipe must be gated on the reset decision"
+    renew_fail=1
+fi
+if [ "$(grep -c 'Reset || TargetChanged' "$RENEW_PROV_SRC")" != 0 ]; then
+    echo "FAIL $RENEW_PROV_SRC: the old reset rule (source-only) is back; a changed trigger must reset too"
     renew_fail=1
 fi
 if [ "$(grep -c 'SubEdgeAnswer(Entry->Lease.Served())' "$RENEW_REQ_SRC")" != 1 ]; then
@@ -289,6 +303,21 @@ if [ "$(grep -c 'Unanswered != 0' "$RENEW_REQ_SRC")" != 0 ]; then
     echo "FAIL $RENEW_REQ_SRC: an unanswered RENEWAL must not turn a press into a new baseline"
     renew_fail=1
 fi
+# The renewal branch itself: it must extend the lease AND the deadline, and touch nothing else.
+renew_branch=$(sed -n '/A renewal: a plain 0401/,/return;/p' "$RENEW_REQ_SRC")
+case "$renew_branch" in
+    *'Entry->Lease.OnAnswer('*'Entry->Timeout = SubTimeoutFrom('*) ;;
+    *)
+        echo "FAIL $RENEW_REQ_SRC: the renewal answer must extend the lease and the row's timeout"
+        renew_fail=1
+        ;;
+esac
+case "$renew_branch" in
+    *'Edge.'*|*'ApplyRequesterValue'*)
+        echo "FAIL $RENEW_REQ_SRC: the renewal answer must not touch the edge accounting or the target"
+        renew_fail=1
+        ;;
+esac
 [ $renew_fail = 0 ] && echo "PASS: 0401 extends only, 0421 resets, the install is the only re-baseline"
 fail=$((fail + renew_fail))
 echo
