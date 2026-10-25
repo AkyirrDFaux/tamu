@@ -43,11 +43,47 @@ void main() {
     expect(display.fields[3].name, 'Layout File Name');
     expect(display.fields[4].name, 'Refresh Rate');
 
-    // Resistive measurement: Sampling, Sensor type, Filter, Measured value, Current range.
+    // Resistive measurement: Sampling, Sensor type, Filter, Measured value, Current range,
+    // then the two rail flags (firmware Core/Devices/Measuring.h fields 5/6).
     final meas = blockInfoFor(BlockType.resistiveMeasure)!;
-    expect(meas.fields.length, 5);
+    expect(meas.fields.map((f) => f.name), [
+      'Sampling Rate',
+      'Sensor Type',
+      'Filter Coefficient',
+      'Measured Value',
+      'Current Range',
+      'Open Circuit',
+      'Short Circuit',
+    ]);
     expect(meas.fields[2].name, 'Filter Coefficient');
-    expect(meas.fields[3].name, 'Measured Value');
-    expect(meas.fields[4].name, 'Current Range');
+  });
+
+  // The rail flags are named at the indexes the firmware's ResistiveMeasEntries table uses,
+  // so the register page, the backup view and the subscription picker stop rendering
+  // "Field 5"/"Field 6". A shift here would silently mislabel both rails.
+  test('resistive-measure rail flags resolve at field indices 5 and 6', () {
+    final meas = blockInfoFor(BlockType.resistiveMeasure)!;
+    expect(meas.field(5)?.name, 'Open Circuit');
+    expect(meas.field(6)?.name, 'Short Circuit');
+    // The two flags are plain Bools on the wire: no unit, no edit range, no enum labels.
+    for (final index in const [5, 6]) {
+      final info = meas.field(index)!;
+      expect(info.unit, isNull);
+      expect(info.min, isNull);
+      expect(info.max, isNull);
+      expect(info.enumValues, isNull);
+      expect(info.transform, isFalse);
+    }
+  });
+
+  // Every call site bounds-checks before naming a field (register_page_tiles.dart,
+  // register_backup_view.dart, subscriptions_dialog.dart all fall back to "Field N"), so an
+  // unknown index must resolve to null rather than throw - a device with a newer firmware
+  // must not crash the page.
+  test('an unknown field index resolves to null instead of throwing', () {
+    final meas = blockInfoFor(BlockType.resistiveMeasure)!;
+    expect(meas.field(7), isNull);
+    expect(meas.field(99), isNull);
+    expect(meas.field(-1), isNull);
   });
 }

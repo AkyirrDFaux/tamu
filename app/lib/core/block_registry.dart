@@ -154,6 +154,10 @@ const _resistiveMeasureFields = [
   FieldInfo('Filter Coefficient', min: 0, max: 1, step: 0.05),
   FieldInfo('Measured Value'),
   FieldInfo('Current Range', unit: 'kOhm'),
+  // The two rail flags (firmware Core/Devices/Measuring.h, fields 5/6): read-only Bools
+  // computed with every sample. They carry no unit or edit range - they are never written.
+  FieldInfo('Open Circuit'),
+  FieldInfo('Short Circuit'),
 ];
 
 const Map<BlockType, BlockInfo> _blockRegistry = {

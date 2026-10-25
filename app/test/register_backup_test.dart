@@ -100,6 +100,7 @@ void main() {
     WidgetTester tester, {
     DeviceBackup? b,
     Future<void> Function(int, int, int, int)? onRecall,
+    List<({int type, int inst, ValueInfo meta, String name})?>? topology,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -107,7 +108,7 @@ void main() {
         home: Scaffold(
           body: RegisterBackupView(
             backup: b ?? backup(),
-            blocks: blocks,
+            blocks: topology ?? blocks,
             onRecall: onRecall,
           ),
         ),
@@ -120,6 +121,33 @@ void main() {
       reason: 'the backup view threw while rendering',
     );
   }
+
+  // The block reports 7 fields on a post-51a44cd firmware, but only 0-2 are persistent: the
+  // rail flags (5/6) are volatile, so they must still be *named* here and reported as not
+  // backed up rather than shown as "Field 5"/"Field 6".
+  testWidgets('the rail flags are named and reported as not backed up', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      topology: [
+        (
+          type: BlockType.resistiveMeasure.value,
+          inst: 0,
+          meta: ValueInfo(type: BlockType.resistiveMeasure.value, size: 7),
+          name: 'Meas',
+        ),
+      ],
+    );
+    for (final name in const ['Open Circuit', 'Short Circuit']) {
+      expect(find.text(name), findsOneWidget, reason: '"$name" is labelled');
+    }
+    // Fields 3-6 are volatile (Measured Value, Current Range and the two rail flags), so all
+    // four rows say "not backed up" - a flag is never a stored value.
+    expect(find.textContaining('not backed up'), findsNWidgets(4));
+    expect(find.textContaining('Field 5'), findsNothing);
+    expect(find.textContaining('Field 6'), findsNothing);
+  });
 
   testWidgets('shows stored values and marks the ones that were never saved', (
     tester,

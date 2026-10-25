@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tamuapp/core/block_registry.dart';
 import 'package:tamuapp/core/render_dict.dart';
 import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_functions.dart';
@@ -73,6 +74,49 @@ Map<String, int> _firmwareEnum(String relativePath, String enumName) {
     return values;
   }
   return const {};
+}
+
+/// Reads the field table of a firmware static block (`const BlockEntry Name[] = { ... }`).
+///
+/// The app's field labels are indexed by field number, so a firmware field the app table does
+/// not carry renders as an unnamed "Field N" row on every surface that displays it. Parsing the
+/// entry table (field index, offset, type, flags) keeps the two in step instead of trusting a
+/// comment that nothing checks.
+///
+/// Returns null when the firmware tree is not checked out next to the app (the contract tests
+/// then skip), and an empty list when the file exists but the table could not be parsed - that
+/// is a broken guard, not an absent firmware, so it must not pass silently.
+List<({int field, int offset, String type, String flags})>?
+_firmwareBlockEntries(String relativePath, String tableName) {
+  for (final path in [
+    '../firmware/$relativePath',
+    '../../firmware/$relativePath',
+  ]) {
+    final file = File(path);
+    if (!file.existsSync()) continue;
+    final source = file.readAsStringSync();
+    final start = source.indexOf('$tableName[]');
+    if (start < 0) return const [];
+    final open = source.indexOf('{', start);
+    final close = source.indexOf('\n};', open);
+    if (open < 0 || close < 0) return const [];
+    final out = <({int field, int offset, String type, String flags})>[];
+    final re = RegExp(
+      r'MakeFieldKey\((\d+),\s*(\d+)\),\s*(\d+),\s*\{\(uint16_t\)DataType::(\w+),\s*sizeof\([^)]*\),\s*([^}]*)\}',
+    );
+    for (final line in source.substring(open, close).split('\n')) {
+      final m = re.firstMatch(line);
+      if (m == null) continue;
+      out.add((
+        field: int.parse(m.group(1)!),
+        offset: int.parse(m.group(3)!),
+        type: m.group(4)!,
+        flags: m.group(5)!.trim(),
+      ));
+    }
+    return out;
+  }
+  return null;
 }
 
 /// Compares an app enum (`name -> value`) against a firmware enum.
@@ -418,6 +462,48 @@ void main() {
         // Docs/Services/Router.md (the feature is not implemented).
         appOnly: const {'router'},
       );
+    });
+  }, skip: skipReason);
+
+  group('block field schema contract (app vs firmware)', () {
+    test('the ResistiveMeasure schema and the app registry name the same fields', () {
+      final entries = _firmwareBlockEntries(
+        'src/Core/Devices/Measuring.h',
+        'ResistiveMeasEntries',
+      );
+      if (entries == null) {
+        return; // firmware source not available next to the app
+      }
+      expect(
+        entries,
+        isNotEmpty,
+        reason:
+            'the ResistiveMeasEntries table was not parsed - guard is broken',
+      );
+      final meas = blockInfoFor(BlockType.resistiveMeasure)!;
+      // A firmware field with no app label renders as "Field N" on the register page, the
+      // backup view and the subscription picker - the defect this guard exists for.
+      expect(
+        meas.fields.length,
+        entries.length,
+        reason: 'app field labels lag the firmware ResistiveMeasEntries table',
+      );
+      // The label list is indexed by field number, so the entries must run 0..n-1 in order.
+      expect(
+        [for (final e in entries) e.field],
+        [for (var i = 0; i < entries.length; i++) i],
+      );
+      // The rail flags (app indices 5/6): the app renders them as a Bool with no edit
+      // control, which is the firmware's Bool + read-only treatment.
+      for (final index in const [5, 6]) {
+        final entry = entries.firstWhere((e) => e.field == index);
+        expect(entry.type, 'Bool', reason: 'field $index type');
+        expect(
+          entry.flags,
+          contains('ValueReadOnly'),
+          reason: 'field $index flags',
+        );
+      }
     });
   }, skip: skipReason);
 
