@@ -781,10 +781,16 @@ final List<HilTest> moduleTests = <HilTest>[
             BlockType.resistiveMeasure.value,
             inst,
           );
+          // The rig enumerates the schema the running firmware carries. Fields 0-4
+          // are the original set; 5/6 are the two rail flags (Open Circuit / Short
+          // Circuit) added to ResistiveMeasEntries, so the current schema is seven
+          // indexes.
           expect(
             fields,
-            equals([0, 1, 2, 3, 4]),
-            reason: '${d.label} channel $inst has the documented fields',
+            equals([0, 1, 2, 3, 4, 5, 6]),
+            reason:
+                '${d.label} channel $inst enumerates fields 0-6 '
+                '(rate, sensor, filter, value, range, open, short)',
           );
 
           final rate = await reg.readBlockField(
@@ -848,10 +854,75 @@ final List<HilTest> moduleTests = <HilTest>[
             reason: '${d.label} Current Range is read-only',
           );
 
+          // The two rail flags sit after the Numbers: one byte each, Bool, and
+          // read-only like Measured Value and Current Range, because the device's
+          // sample loop owns them. Same treatment as fields 3/4, per field.
+          final rails = <bool>[];
+          for (final f in [5, 6]) {
+            final rail = await reg.readBlockField(
+              BlockType.resistiveMeasure.value,
+              inst,
+              f,
+              0,
+            );
+            expect(
+              rail,
+              isNotNull,
+              reason: '${d.label} channel $inst field $f is readable',
+            );
+            expect(
+              rail!.meta.dataType,
+              DataType.bool_,
+              reason: '${d.label} channel $inst field $f is a Bool rail flag',
+            );
+            expect(
+              rail.value.length,
+              1,
+              reason: '${d.label} channel $inst field $f is one byte',
+            );
+            expect(
+              rail.meta.readOnly,
+              isTrue,
+              reason: '${d.label} channel $inst field $f is read-only',
+            );
+            rails.add(rail.value.first != 0);
+          }
+
+          // A read-only field must also REFUSE the write, not merely advertise the
+          // flag (the firmware rejects it before touching storage, so no payload
+          // comes back). Field 5 carries the probe for the pair: both flags take the
+          // same read-only path as fields 3/4.
+          expect(
+            await reg.writeBlockField(
+              BlockType.resistiveMeasure.value,
+              inst,
+              5,
+              0,
+              ValueInfo(type: DataType.bool_.value, size: 1),
+              const [1],
+            ),
+            isNull,
+            reason: '${d.label} channel $inst field 5 refuses a write',
+          );
+          // The device is still answering right after the refusal, so the null above
+          // is a rejection and not a dead link. (The flag itself is not compared: the
+          // rails are live and may flip between the two reads.)
+          expect(
+            await reg.readBlockField(
+              BlockType.resistiveMeasure.value,
+              inst,
+              5,
+              0,
+            ),
+            isNotNull,
+            reason: '${d.label} channel $inst answers a read after the refusal',
+          );
+
           ctx.note(
             '${d.label} channel $inst: sensor ${sensor.value.first}, '
             '${numberFromBytes(value.value).toStringAsFixed(2)} '
-            '(range ${numberFromBytes(range.value).toStringAsFixed(2)} kOhm)',
+            '(range ${numberFromBytes(range.value).toStringAsFixed(2)} kOhm, '
+            'open ${rails[0]}, short ${rails[1]})',
           );
         }
       }
