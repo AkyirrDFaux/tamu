@@ -460,6 +460,13 @@ Still open:
   path (32 788 -> 42 176, 93.6 %), parked. See `Issues.md` E29.
 - **Whether the editor pre-checks a script** against the device's free memory and slot count before
   upload, and how a memory-bound load failure surfaces (reporting belongs with the catalogue above).
+- **The two setups still store their small literals as constants** - the app encoder now emits a
+  small literal as a predefine in its operand position (`app/lib/core/script_literals.dart`: `Bool`,
+  `Index` 0..32767, `Char`, and a Q8.8 `Number` only when it is exact), so a re-saved script drops
+  those constants; akyirr 113 -> 77 and bambi 120 -> 84 once re-saved, 8 bytes of constant space
+  per literal. Until the archives are re-saved and uploaded the device keeps paying for the old
+  form. The 8/9 near-miss values per setup (`0.1999969482421875` and friends) cannot convert at all
+  - they are not multiples of 1/256 - and stay constants by design.
 
 ## Beta window plan (2026-10-07) - Tamu core/DAS + app; Valu v2 parked
 

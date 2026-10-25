@@ -32,8 +32,11 @@ ScriptDraft _draft() {
   draft.constants.add(
     ScriptDraftValue(
       name: 'K',
+      // A value no Q8.8 predefine reproduces (Q16.16 raw 13107 is not a multiple of 256), so the
+      // constant stays a constant and this fixture keeps exercising the semantic value round-trip
+      // (`script_literals_test.dart` covers the literals that DO become predefines).
       type: DataType.number,
-      value: numberToBytes(42),
+      value: numberToBytes(0.1999969482421875),
     ),
   );
   draft.lines.add(
@@ -83,7 +86,7 @@ void main() {
     expect(backup.properties, ['Load on boot', 'Run on load']);
     expect(backup.inputs.single.type, 'Number');
     expect(backup.inputs.single.ui!.style, 'Slider');
-    expect(backup.constants.single.value, 42.0);
+    expect(backup.constants.single.value, 0.1999969482421875);
 
     final restored = BackupScript.fromJson(backup.toJson()).toDraft();
     expect(restored.functionName, 'TestFn');
@@ -93,7 +96,7 @@ void main() {
     expect(restored.inputs.single.spec.uiType, ScriptUiType.slider);
     expect(restored.inputs.single.spec.max, 10);
     expect(restored.inputs.single.value, numberToBytes(1.5));
-    expect(restored.constants.single.value, numberToBytes(42));
+    expect(restored.constants.single.value, numberToBytes(0.1999969482421875));
     expect(restored.lines.length, 3);
     // The rebuilt SCR_XX image is byte-identical to the original.
     expect(restored.toImage(), _imageFor(draft, 3));

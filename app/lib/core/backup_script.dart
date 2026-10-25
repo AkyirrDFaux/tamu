@@ -505,15 +505,22 @@ class BackupScript {
     // The Properties word also declares the slot (bits 8-15). The boot load reads it to know
     // where an on-boot file goes; without it every file declares slot 0 and they collide.
     if (slot >= 0) props = scriptPropertiesWithSlot(props, slot);
+    // A draft never carries a literal a predefine can carry (`script_literals.dart`), so the
+    // archive's semantic form and the image rebuilt from it agree on the constant table.
+    final literals = convertScriptLiterals(
+      constants: [for (final v in constants) value(v)],
+      lines: [for (final l in lines) l.toLine()],
+      functions: [for (final f in functions) f.toFunction()],
+    );
     return ScriptDraft(
       functionName: functionName,
       properties: props,
       inputs: [for (final v in inputs) value(v)],
       outputs: [for (final v in outputs) value(v)],
       variables: [for (final v in variables) value(v)],
-      constants: [for (final v in constants) value(v)],
-      lines: [for (final l in lines) l.toLine()],
-      functions: [for (final f in functions) f.toFunction()],
+      constants: literals.constants,
+      lines: literals.lines,
+      functions: literals.functions,
       functionReservations: [
         for (final r in functionReservations) r.toRecord(),
       ],

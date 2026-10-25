@@ -133,7 +133,10 @@ void main() {
               name: 'Period',
               type: DataType.number,
               size: 4,
-              value: numberToBytes(2.5),
+              // Not Q8.8-exact (Q16.16 raw 13107), so it stays a named constant and this test
+              // keeps covering the name round-trip; `script_literals_test.dart` covers the
+              // literals that become predefines instead.
+              value: numberToBytes(0.1999969482421875),
             ),
           )
           ..lines.add(
