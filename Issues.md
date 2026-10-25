@@ -349,3 +349,19 @@ are hardware-only.
   row, but reachable from any other 0-length source); and if a mismatch really should be reported,
   the decision belongs beside `ValueReadable`/`ValueUpdateApplicable` in `MemoryTypes.h`, not in a
   branch of a 200-line assignment.
+
+- **E51** **`Docs/App/Backup.md` does not describe the created / re-created rows a restore reports.** Since
+  `t_ef2b1461` (owner defect, measured on the rig 2026-10-25: `Dynamic[0]` f4 k0 was a `Number` at 1
+  byte where the archive declares `Bool` at 1, and the emote selector's register read of it landed as
+  `SCRIPT_ERR_TYPE`) a restore makes a dynamic block's structure in the archive's DECLARED type and
+  size, re-creates a row the device holds in another `(type, size)`, leaves zero-length dictionary
+  markers alone, and reports each structure row as created or re-created - per row in the result
+  screen and the copied text, and in `RestoreReport.metadata` (`created`, `recreated`, `structure`).
+  The counts line is now `N written · A created · B re-created · C skipped (structural) · D failed`
+  (the two middle parts appear only when non-zero, and a created row whose value is then written is
+  counted in both). Proposed wording, for the parent to apply with Akyirr's approval - Docs are off
+  limits to workers: in `Docs/App/Backup.md`'s restore paragraph, after the report sentence E49
+  already covers, add: "A dynamic block's structure is made in the type and size the archive
+  declares; a row the device holds in another type or size is re-created rather than written into,
+  and the run names every row it created or re-created. A dictionary field's key-0 marker has no
+  value to write and is left as structure, never written."

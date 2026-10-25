@@ -899,7 +899,10 @@ void main() {
       final report = await applyRestorePlan(plan);
 
       expect(report.failed, 0, reason: report.text);
-      expect(report.counts, '0 written · 1 skipped (structural) · 0 failed');
+      expect(
+        report.counts,
+        '0 written · 1 created · 1 skipped (structural) · 0 failed',
+      );
       final skip = report.skipped.single;
       // WHAT HAPPENED: the run created the row. It never held a value, so the report must not say it
       // "keeps the value it already holds" - the row did not exist before this run.
@@ -945,6 +948,331 @@ void main() {
       print('--- created-row report ---\n${report.text}\n--- end ---');
     },
   );
+
+  test('a declared Bool row the device holds as a Number is re-created as a Bool', () async {
+    // The rig's row, 2026-10-25: `Dynamic[0]` field 4 key 0. The archive declares `Bool` at 1
+    // byte; the device holds `Number` at 1 byte, so the value is not convertible and the emote
+    // selector's register read of it lands as SCRIPT_ERR_TYPE. A dynamic row carries its own type
+    // and length, so the shape is device state a restore has to correct - not a constraint it
+    // reads back.
+    final archive = _archive(
+      blocks: [
+        BackupBlock(
+          type: 'Dynamic',
+          typeIndex: dynamicTypeBase,
+          instance: 0,
+          name: 'Subscriptions',
+          isDynamic: true,
+          entries: [
+            BackupEntry(
+              field: 'Field 4',
+              fieldIndex: 4,
+              key: 'Key 0',
+              keyIndex: 0,
+              type: 'Bool',
+              flags: const ['Persistent'],
+              value: true,
+              size: 1,
+            ),
+          ],
+        ),
+      ],
+    );
+    final liveBlock = LiveBlock(
+      type: dynamicTypeBase,
+      instance: 0,
+      name: 'Subscriptions',
+      isDynamic: true,
+      entries: [
+        LiveEntry(
+          field: 4,
+          key: 0,
+          fieldName: 'Field 4',
+          keyName: 'Key 0',
+          meta: ValueInfo(
+            type: DataType.number.value,
+            size: 1,
+            flags: ValueFlags.persistent,
+          ),
+          value: const [1],
+        ),
+      ],
+    );
+    final plan = _plan(
+      archive: archive,
+      live: _live(blocks: [liveBlock]),
+    );
+    final device = _DynamicDevice();
+    device.rows['0:4:0'] = (
+      type: DataType.number.value,
+      value: const [1],
+      flags: ValueFlags.persistent,
+    );
+    _install(device);
+
+    final report = await applyRestorePlan(plan);
+
+    // The row the emote selector reads is a Bool at 1 byte, holding the archive's value.
+    expect(device.rows['0:4:0']!.type, DataType.bool_.value);
+    expect(device.rows['0:4:0']!.value, hasLength(1));
+    expect(device.rows['0:4:0']!.value, [1]);
+    // And the run says it did it: the row was RE-created (it existed, in another type), and the
+    // value write then landed on the repaired row.
+    expect(report.failed, 0, reason: report.text);
+    expect(
+      report.counts,
+      '1 written · 1 re-created · 0 skipped (structural) · 0 failed',
+    );
+    final fixed = report.recreated.single;
+    expect(fixed.subject, contains('Field 4'));
+    expect(fixed.shape, 'Bool, 1 byte(s)');
+    expect(fixed.held, 'Number, 1 byte(s)');
+    expect(fixed.line, contains('re-created as Bool, 1 byte(s)'));
+    expect(fixed.line, contains('where it held Number, 1 byte(s)'));
+    // The repair reached the bus as ONE write carrying the declared type and length.
+    final writes = device.sent
+        .where(
+          (c) =>
+              c.service == ServiceType.register && c.cid == RegisterCid.write,
+        )
+        .toList();
+    for (final write in writes) {
+      final meta = ValueInfo.fromBytes(write.payload, 4);
+      expect(meta.type, DataType.bool_.value);
+      expect(meta.size, 1);
+      expect(write.payload.sublist(8), hasLength(1));
+    }
+
+    // ignore: avoid_print
+    print('--- re-created row report ---\n${report.text}\n--- end ---');
+  });
+
+  test(
+    'a declared Bool row the device lacks is created as a Bool, and reported',
+    () async {
+      final archive = _archive(
+        blocks: [
+          BackupBlock(
+            type: 'Dynamic',
+            typeIndex: dynamicTypeBase,
+            instance: 0,
+            name: 'Subscriptions',
+            isDynamic: true,
+            entries: [
+              BackupEntry(
+                field: 'Field 4',
+                fieldIndex: 4,
+                key: 'Key 0',
+                keyIndex: 0,
+                type: 'Bool',
+                flags: const ['Persistent'],
+                value: true,
+                size: 1,
+              ),
+            ],
+          ),
+        ],
+      );
+      // The device carries the block but no rows at all.
+      final liveBlock = LiveBlock(
+        type: dynamicTypeBase,
+        instance: 0,
+        name: 'Subscriptions',
+        isDynamic: true,
+        entries: const [],
+      );
+      final plan = _plan(
+        archive: archive,
+        live: _live(blocks: [liveBlock]),
+      );
+      final device = _DynamicDevice();
+      _install(device);
+
+      final report = await applyRestorePlan(plan);
+
+      // A created row carries the DECLARED type: `Bool` at 1 byte, never a Number default.
+      expect(device.rows['0:4:0']!.type, DataType.bool_.value);
+      expect(device.rows['0:4:0']!.value, [1]);
+      expect(report.failed, 0, reason: report.text);
+      expect(
+        report.counts,
+        '1 written · 1 created · 0 skipped (structural) · 0 failed',
+      );
+      final made = report.created.single;
+      expect(made.recreated, isFalse);
+      expect(made.verb, 'created');
+      expect(made.shape, 'Bool, 1 byte(s)');
+      expect(made.held, isNull);
+      expect(made.line, contains('created as Bool, 1 byte(s)'));
+      expect(report.metadata['created'], 1);
+      expect(report.metadata['recreated'], 0);
+      expect(
+        (report.metadata['structure']! as List).single,
+        containsPair('shape', 'Bool, 1 byte(s)'),
+      );
+      // The create carried the declared type and length, and no Number default ever went out.
+      final writes = device.sent
+          .where(
+            (c) =>
+                c.service == ServiceType.register && c.cid == RegisterCid.write,
+          )
+          .toList();
+      expect(writes, hasLength(2));
+      for (final write in writes) {
+        expect(
+          ValueInfo.fromBytes(write.payload, 4).type,
+          DataType.bool_.value,
+        );
+      }
+    },
+  );
+
+  test(
+    'a structural Bool row the device lacks is created as a Bool and named as created',
+    () async {
+      final archive = _archive(
+        blocks: [
+          BackupBlock(
+            type: 'Dynamic',
+            typeIndex: dynamicTypeBase,
+            instance: 0,
+            name: 'Subscriptions',
+            isDynamic: true,
+            entries: [
+              BackupEntry(
+                field: 'Field 4',
+                fieldIndex: 4,
+                key: 'Key 0',
+                keyIndex: 0,
+                type: 'Bool',
+                flags: const ['Volatile'],
+                value: null,
+                structural: true,
+                size: 1,
+              ),
+            ],
+          ),
+        ],
+      );
+      final liveBlock = LiveBlock(
+        type: dynamicTypeBase,
+        instance: 0,
+        name: 'Subscriptions',
+        isDynamic: true,
+        entries: const [],
+      );
+      final plan = _plan(
+        archive: archive,
+        live: _live(blocks: [liveBlock]),
+      );
+      final device = _DynamicDevice();
+      _install(device);
+
+      final report = await applyRestorePlan(plan);
+
+      // Structure, not a value: the row is made in the declared shape, all zeroes, and the report
+      // names it BOTH as the row the structure phase created and as a structural skip.
+      expect(device.rows['0:4:0']!.type, DataType.bool_.value);
+      expect(device.rows['0:4:0']!.value, [0]);
+      expect(report.failed, 0, reason: report.text);
+      expect(
+        report.counts,
+        '0 written · 1 created · 1 skipped (structural) · 0 failed',
+      );
+      expect(report.created.single.shape, 'Bool, 1 byte(s)');
+      expect(
+        report.skipped.single.reason,
+        contains('the structure phase created it zero-filled this run'),
+      );
+      expect(report.text, contains('Created (1)'));
+      expect(report.text, isNot(contains('Re-created (')));
+    },
+  );
+
+  test("a value write carries the archive's declared type, not the row's", () async {
+    // The row on the device is the damaged one (Number at 1 byte) but the PLAN's snapshot says
+    // it already carries the declared shape - a capture made before the damage, or a snapshot
+    // read before something else wrote it. The structure phase then has nothing to re-create,
+    // so the value write is the only thing that can repair the row: it must carry the archive's
+    // declared type, or it writes the damage back and the row stays unconvertible.
+    final archive = _archive(
+      blocks: [
+        BackupBlock(
+          type: 'Dynamic',
+          typeIndex: dynamicTypeBase,
+          instance: 0,
+          name: 'Subscriptions',
+          isDynamic: true,
+          entries: [
+            BackupEntry(
+              field: 'Field 4',
+              fieldIndex: 4,
+              key: 'Key 0',
+              keyIndex: 0,
+              type: 'Bool',
+              flags: const ['Persistent'],
+              value: true,
+              size: 1,
+            ),
+          ],
+        ),
+      ],
+    );
+    final liveBlock = LiveBlock(
+      type: dynamicTypeBase,
+      instance: 0,
+      name: 'Subscriptions',
+      isDynamic: true,
+      entries: [
+        LiveEntry(
+          field: 4,
+          key: 0,
+          fieldName: 'Field 4',
+          keyName: 'Key 0',
+          meta: ValueInfo(
+            type: DataType.bool_.value,
+            size: 1,
+            flags: ValueFlags.persistent,
+          ),
+          value: const [0],
+        ),
+      ],
+    );
+    final plan = _plan(
+      archive: archive,
+      live: _live(blocks: [liveBlock]),
+    );
+    final device = _DynamicDevice();
+    // The device itself holds the damaged row: a Number at 1 byte.
+    device.rows['0:4:0'] = (
+      type: DataType.number.value,
+      value: const [1],
+      flags: ValueFlags.persistent,
+    );
+    _install(device);
+
+    final report = await applyRestorePlan(plan);
+
+    expect(report.failed, 0, reason: report.text);
+    // The structure phase made nothing (the plan thought the row was fine), and the ONE write
+    // that went out carried the declared type.
+    expect(report.structure, isEmpty);
+    final writes = device.sent
+        .where(
+          (c) =>
+              c.service == ServiceType.register && c.cid == RegisterCid.write,
+        )
+        .toList();
+    expect(writes, hasLength(1));
+    expect(
+      ValueInfo.fromBytes(writes.single.payload, 4).type,
+      DataType.bool_.value,
+    );
+    expect(ValueInfo.fromBytes(writes.single.payload, 4).size, 1);
+    // The address is a Bool now: the write re-typed it instead of re-asserting the damage.
+    expect(device.rows['0:4:0']!.type, DataType.bool_.value);
+    expect(device.rows['0:4:0']!.value, [1]);
+  });
 
   test(
     'a structural row already present in the declared shape is reported as kept',

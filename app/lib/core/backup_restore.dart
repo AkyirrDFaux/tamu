@@ -287,13 +287,7 @@ List<int>? resolveEntryBytes(
   final sourceType = dataTypeFromWord(source.type);
   if (sourceType == null) return null;
   final targetType = target.meta.dataType;
-  final text =
-      (sourceType == DataType.text ||
-          sourceType == DataType.name ||
-          sourceType == DataType.filename) &&
-      (targetType == DataType.text ||
-          targetType == DataType.name ||
-          targetType == DataType.filename);
+  final text = _isCharacterType(sourceType) && _isCharacterType(targetType);
   final retype = !text && sourceType != targetType;
   if (retype && !allowTypeChange) return null;
   // The length hint decides how many bytes the write carries, and the two sides own it for
@@ -321,6 +315,39 @@ List<int>? resolveEntryBytes(
     info: target.info,
     size: hint > 0 ? hint : null,
   );
+}
+
+/// One of the CHARACTER shapes the firmware stores as a fixed-width string: `Text`, `Name` (16
+/// characters) and `Filename`. Their widths and encodings are interchangeable on the way in - the
+/// device's own row decides both (B10) - so they never re-type one another.
+bool _isCharacterType(DataType type) =>
+    type == DataType.text || type == DataType.name || type == DataType.filename;
+
+/// The type ONE value write carries, for the archive row [entry] and the live row it addresses.
+///
+/// A DYNAMIC block's row carries its OWN type - there is no compile-time schema - so the archive's
+/// declared type is what a write has to assert. A live row of another type is device state an
+/// earlier write can have left wrong, and writing the live type back would re-assert that damage on
+/// every run: measured on the rig 2026-10-25, `Dynamic[0]` field 4 key 0 stayed a `Number` at 1 byte
+/// where the archive declares `Bool` at 1, so the emote selector's register read of it landed as
+/// `SCRIPT_ERR_TYPE` however often the archive was restored. A STATIC block's field type is the
+/// firmware's schema, so the live type is the fact there and is kept.
+///
+/// The two exceptions are the ones [resolveEntryBytes] already makes about the BYTES, so the type
+/// and the bytes of one write can never disagree:
+///  * two character shapes (`Name` vs `Text`) do not re-type each other - the device's width and
+///    encoding decide the bytes, and a restore must not turn a `Name` row into a `Text` one;
+///  * a row the archive types as `None`/`Undefined` declares no type (a delete or a placeholder),
+///    so the live type stays.
+int entryWriteType(bool isDynamic, BackupEntry entry, LiveEntry target) {
+  final declared = dataTypeFromWord(entry.type);
+  final live = target.meta.dataType;
+  if (!isDynamic || declared == null) return live.value;
+  if (declared == DataType.none || declared == DataType.undefined) {
+    return live.value;
+  }
+  if (_isCharacterType(declared) && _isCharacterType(live)) return live.value;
+  return declared.value;
 }
 
 // ---------------------------------------------------------------------------
@@ -727,6 +754,22 @@ class RestorePlan {
   /// block, and the structure phase re-reads and re-points the plan afterwards, which can hand the
   /// source a snapshot whose live id differs.
   final Set<String> createdStructure = {};
+
+  /// The rows [prepareDynamicBlocks] RE-CREATED on a target during this run, by address identity
+  /// ([createdRowKey]): addresses the device carried in a `(type, size)` the archive contradicts.
+  ///
+  /// A dynamic row carries its own type and length, so a row the device holds as a `Number` where
+  /// the archive declares a `Bool` is not a row a value write may fill - the write would carry the
+  /// row's type back and the device would keep contradicting the archive for ever (the emote
+  /// selector's read of it lands as `SCRIPT_ERR_TYPE`). It is re-created in the declared shape
+  /// instead. Kept apart from [createdStructure] because the report says which of the two happened,
+  /// and because a re-created row existed before the run.
+  final Set<String> recreatedStructure = {};
+
+  /// Every structure row this run made, in the order it made them, for the report
+  /// ([RestoreStructureRow]): created and re-created rows, with the shape each was made as and the
+  /// shape the device held before it.
+  final List<RestoreStructureRow> structureRows = [];
 
   RestorePlan({
     required this.devices,
@@ -1899,13 +1942,15 @@ List<RestoreSkip> structuralSkips(RestorePlan plan) {
                 type == DataType.texture ||
                 type == DataType.unknownKeyed);
         // A row the structure phase made during THIS run did not exist before it, so the report
-        // must not describe the device as holding a value for it ([RestorePlan.createdStructure]).
-        final created = plan.createdStructure.contains(
-          createdRowKey(source, block, entry),
-        );
+        // must not describe the device as holding a value for it ([RestorePlan.createdStructure]);
+        // a row it RE-created held something else, so that is said instead
+        // ([RestorePlan.recreatedStructure]).
+        final key = createdRowKey(source, block, entry);
+        final created = plan.createdStructure.contains(key);
+        final recreated = plan.recreatedStructure.contains(key);
         final reason =
             '${_noValueSource(entry, marker: marker)}; '
-            '${_noValueOutcome(entry, marker: marker, hasTarget: target != null, hasBlock: live != null, hasRow: row != null, created: created)}';
+            '${_noValueOutcome(entry, marker: marker, hasTarget: target != null, hasBlock: live != null, hasRow: row != null, created: created, recreated: recreated)}';
         out.add(
           RestoreSkip(
             archive: source.name,
@@ -1966,10 +2011,15 @@ String _noValueOutcome(
   required bool hasBlock,
   required bool hasRow,
   required bool created,
+  bool recreated = false,
 }) {
   if (created) {
     return 'the structure phase created it zero-filled this run, and no value '
         'was written';
+  }
+  if (recreated) {
+    return 'the structure phase re-created it in the declared type and size '
+        'this run, and no value was written';
   }
   if (!hasTarget) {
     return 'this rig carries no target device for the archive, so nothing was '
@@ -2018,10 +2068,12 @@ String _noValueOutcome(
 /// exists only because this phase made it, and the report must say that instead of describing the
 /// device as keeping a value the row never held.
 Future<int> prepareDynamicBlocks(RestorePlan plan) async {
-  // The set describes what THIS run's structure phase created: a plan applied a second time must
+  // The sets describe what THIS run's structure phase created: a plan applied a second time must
   // not carry the previous run's creations into the new report, where the row is now one the
   // device holds.
   plan.createdStructure.clear();
+  plan.recreatedStructure.clear();
+  plan.structureRows.clear();
   var created = 0;
   for (final source in plan.devices) {
     final target = plan.deviceTargets[source.id];
@@ -2125,8 +2177,29 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
         }
         created++;
         // Bookkeeping only: the report must say this row was CREATED this run rather than that
-        // the device kept a value it never held ([RestorePlan.createdStructure]).
-        plan.createdStructure.add(createdRowKey(source, block, entry));
+        // the device kept a value it never held ([RestorePlan.createdStructure]), and it must say
+        // which of the two happened - a row the device held in another (type, size) was
+        // RE-CREATED in the declared one, which is the repair a contradicting row needs.
+        final key = createdRowKey(source, block, entry);
+        if (live == null) {
+          plan.createdStructure.add(key);
+        } else {
+          plan.recreatedStructure.add(key);
+        }
+        plan.structureRows.add(
+          RestoreStructureRow(
+            archive: source.name,
+            target: '${target.name} (${idToString(target.id)})',
+            targetId: target.id,
+            kindWord: 'block field',
+            subject: restoreEntrySubject(block, entry),
+            shape: '${dataTypeWord(type)}, ${entry.size} byte(s)',
+            held: live == null
+                ? null
+                : '${dataTypeWord(live.meta.dataType)}, '
+                      '${live.meta.size} byte(s)',
+          ),
+        );
       }
     }
   }
@@ -3946,13 +4019,17 @@ Future<RestoreReport> applyRestorePlan(RestorePlan plan) async {
           );
           break;
         }
+        // The type the write carries is the ARCHIVE's declared one for a dynamic block's row, and
+        // the live row's for a static one - see [entryWriteType] for why the live type is not a
+        // constraint on a dynamic row. It is the same choice `resolveEntryBytes` already made for
+        // the BYTES, so the two halves of one write cannot disagree.
+        final block = item.targetBlock!;
         final meta = ValueInfo(
-          type: item.targetEntry!.meta.type,
+          type: entryWriteType(block.isDynamic, item.entry!, item.targetEntry!),
           flags: item.targetEntry!.meta.flags,
           key: item.targetEntry!.key,
           size: bytes.length,
         );
-        final block = item.targetBlock!;
         // A row whose value encodes to NO bytes is structure, not a write: the firmware refuses a
         // write with an empty value, and sending it would report a FAIL for a row that was never a
         // value to begin with. It is reported as a structural skip, like the archive's own
@@ -4294,6 +4371,7 @@ Future<RestoreReport> applyRestorePlan(RestorePlan plan) async {
     written: written,
     reasons: reasons,
     skipped: skipped,
+    structure: [...plan.structureRows],
     requesterPrune: pruned.prunes,
     scriptSlots: swept.prunes,
     scriptFiles: sweptFiles.prunes,

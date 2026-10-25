@@ -247,22 +247,93 @@ class RestoreSkip {
   /// one sentence per line.
   String get block {
     const head = '    why : ';
-    const width = 76;
     final buffer = StringBuffer('  $kindWord  $subject\n$head');
-    var column = head.length;
-    for (final word in reason.split(' ')) {
-      if (column > head.length && column + word.length + 1 > width) {
-        buffer.write('\n${' ' * head.length}$word');
-        column = head.length + word.length;
-      } else {
-        if (column > head.length) {
-          buffer.write(' ');
-          column++;
-        }
-        buffer.write(word);
-        column += word.length;
+    _wrapUnder(buffer, reason, head);
+    return buffer.toString();
+  }
+}
+
+/// Wraps [text] under [head] at a phone-readable width, appending to [buffer].
+///
+/// Shared by the report's row shapes ([RestoreSkip.block], [RestoreStructureRow.block]) so the
+/// clipboard text has ONE wrap rule: every one of them is pasted into a card.
+void _wrapUnder(StringBuffer buffer, String text, String head) {
+  const width = 76;
+  var column = head.length;
+  for (final word in text.split(' ')) {
+    if (column > head.length && column + word.length + 1 > width) {
+      buffer.write('\n${' ' * head.length}$word');
+      column = head.length + word.length;
+    } else {
+      if (column > head.length) {
+        buffer.write(' ');
+        column++;
       }
+      buffer.write(word);
+      column += word.length;
     }
+  }
+}
+
+/// One dynamic row the STRUCTURE phase made on a target during a run, as the report names it.
+///
+/// A restore writes into a structure that must already exist, so `prepareDynamicBlocks` makes the
+/// rows the device is missing - and RE-CREATES the ones it holds in a `(type, size)` that
+/// contradicts the archive, because a dynamic row carries its OWN type and length: `SetEntry` gives
+/// the address the archive's shape as soon as a write carrying one lands, and writing the value
+/// into a row of another type would re-assert the damage instead of repairing it.
+///
+/// Both used to be silent. A dynamic row's type is state the device holds, so a row left holding
+/// `Number` at 1 byte where the archive declares `Bool` at 1 byte broke every reader of it (the
+/// emote selector's register read lands as `SCRIPT_ERR_TYPE`) while the report said `0 failed`.
+/// These rows are neither written nor skipped: they are one line each, with the shape the row was
+/// made AS and the shape the device held before it.
+class RestoreStructureRow {
+  final String archive;
+  final String target;
+  final int? targetId;
+  final String kindWord;
+  final String subject;
+
+  /// The shape the row was made as, in the archive's words: `Bool, 1 byte`.
+  final String shape;
+
+  /// What the device held before, when it held the row in another shape: `Number, 1 byte`. Null
+  /// for a row the device did not carry at all, which is a create.
+  final String? held;
+
+  const RestoreStructureRow({
+    required this.archive,
+    required this.target,
+    this.targetId,
+    required this.kindWord,
+    required this.subject,
+    required this.shape,
+    this.held,
+  });
+
+  /// A row the device already carried in another shape: this one was re-created, not created.
+  bool get recreated => held != null;
+
+  String get verb => recreated ? 're-created' : 'created';
+
+  bool get placed => targetId != null;
+
+  /// The one-line form: the row, what it was made as, and what the device held before.
+  String get line =>
+      '$target: $kindWord $subject - $verb as $shape'
+      '${held == null ? '' : ', where it held $held'}';
+
+  /// The result screen's shape: the row on its own line, the shape wrapped under it.
+  String get block {
+    const head = '    as  : ';
+    final buffer = StringBuffer('  $kindWord  $subject\n$head');
+    _wrapUnder(
+      buffer,
+      '$verb as $shape'
+      '${held == null ? '' : ', where the device held $held'}',
+      head,
+    );
     return buffer.toString();
   }
 }
@@ -285,6 +356,15 @@ class RestoreReport {
   /// [reasons], never folded into either.
   final List<RestoreSkip> skipped;
 
+  /// The dynamic rows the STRUCTURE phase made on a target ([RestoreStructureRow]), in the order
+  /// the run touched them: created when the device was missing the address, re-created when it
+  /// held it in a `(type, size)` that contradicts the archive.
+  ///
+  /// They are the rows a restore needs before it can write anything, and the ones a type the
+  /// device had been left holding wrongly is repaired through, so a run that reports only
+  /// `written` and `failed` cannot show that repair - or the failure to make it - at all.
+  final List<RestoreStructureRow> structure;
+
   final List<RequesterPrune> requesterPrune;
   final List<ScriptSlotPrune> scriptSlots;
   final List<ScriptFilePrune> scriptFiles;
@@ -295,6 +375,7 @@ class RestoreReport {
     required this.written,
     required this.reasons,
     this.skipped = const [],
+    this.structure = const [],
     this.requesterPrune = const [],
     this.scriptSlots = const [],
     this.scriptFiles = const [],
@@ -303,17 +384,45 @@ class RestoreReport {
 
   int get failed => reasons.length;
 
+  /// The structure rows the device did NOT carry before the run.
+  List<RestoreStructureRow> get created => [
+    for (final row in structure)
+      if (!row.recreated) row,
+  ];
+
+  /// The structure rows the device held in a `(type, size)` the archive contradicts, and the run
+  /// therefore re-created in the archive's shape.
+  List<RestoreStructureRow> get recreated => [
+    for (final row in structure)
+      if (row.recreated) row,
+  ];
+
+  /// The structure rows as plain lines, one per row.
+  List<String> get structureLines => [for (final row in structure) row.line];
+
   /// The failures as plain lines, one per reason - the shape a log line or a test reads.
   List<String> get failures => [for (final r in reasons) r.line];
 
   /// The structural skips as plain lines, one per row.
   List<String> get skips => [for (final s in skipped) s.line];
 
-  /// The run's counts as one line: written, skipped as structure, failed. Three numbers, because a
-  /// structural row is not a failure and a run that reported it as one hid the reason it was not
-  /// written behind a count.
-  String get counts =>
-      '$written written · ${skipped.length} skipped (structural) · $failed failed';
+  /// The run's counts as one line: written, created, re-created, skipped as structure, failed.
+  ///
+  /// The three structural numbers are separate because they are three different facts and a run
+  /// that folded them together hid the reason a row was not written behind a count: a STRUCTURAL
+  /// row is one the archive carries no value for (nothing was meant to be sent to it), a CREATED
+  /// row one the device did not have, and a RE-CREATED row one it held in the wrong shape - the
+  /// case a device that had been left holding a `Number` where the archive declares a `Bool` is
+  /// repaired through. `created` and `re-created` are counted per structure row, so a row whose
+  /// value the run then wrote appears here AND in `written`; [text] says so under the heading.
+  String get counts {
+    final parts = <String>['$written written'];
+    if (created.isNotEmpty) parts.add('${created.length} created');
+    if (recreated.isNotEmpty) parts.add('${recreated.length} re-created');
+    parts.add('${skipped.length} skipped (structural)');
+    parts.add('$failed failed');
+    return parts.join(' · ');
+  }
 
   /// The failures grouped by the device they were being written to, in first-seen order, so the
   /// result screen can show one section per node - what a person fixing a rig actually walks
@@ -413,6 +522,46 @@ class RestoreReport {
         buffer.writeln(skip.block);
       }
     }
+    // The structure the run made, per row. A created row is one the device did not have; a
+    // re-created one is a row it held at the archive's address but NOT in the archive's
+    // (type, size) - the damage a device keeps until a run gives it the shape back. The overlap
+    // with `written` is stated under the heading so the counts cannot be read as disjoint.
+    void structureSection(
+      String heading,
+      String note,
+      List<RestoreStructureRow> rows,
+    ) {
+      if (rows.isEmpty) return;
+      buffer
+        ..writeln()
+        ..writeln('$heading (${rows.length})');
+      for (final row in rows) {
+        buffer.writeln(row.block);
+      }
+      // The note is wrapped like every other sentence in this text: the report is pasted into a
+      // card, and one 300-character line cannot be read on a phone.
+      const head = '  note: ';
+      buffer.write(head);
+      _wrapUnder(buffer, note, head);
+      buffer.writeln();
+    }
+
+    structureSection(
+      'Created',
+      'The device did not carry these rows; they are made as the archive '
+          'declares them. A row whose value the archive carries is then '
+          'written, so it is counted here and in "written" above.',
+      created,
+    );
+    structureSection(
+      'Re-created',
+      'The device held these rows in another type or size; each is re-created '
+          'as the archive declares it, which is what repairs a row left holding '
+          'a Number where the archive declares a Bool. A row whose value the '
+          'archive carries is then written, so it is counted here and in '
+          '"written" above.',
+      recreated,
+    );
     void section(String heading, List<String> rows) {
       if (rows.isEmpty) return;
       buffer
@@ -434,8 +583,23 @@ class RestoreReport {
   Map<String, Object?> get metadata => {
     'at': at.toIso8601String(),
     'written': written,
+    'created': created.length,
+    'recreated': recreated.length,
     'skipped': skipped.length,
     'failed': failed,
+    'structure': [
+      for (final row in structure)
+        {
+          'device': row.target,
+          'targetId': row.targetId,
+          'archive': row.archive,
+          'kind': row.kindWord,
+          'subject': row.subject,
+          'verb': row.verb,
+          'shape': row.shape,
+          'held': row.held,
+        },
+    ],
     'failures': [
       for (final r in reasons)
         {
@@ -492,6 +656,11 @@ abstract final class RestoreSession {
     }
     for (final skip in report.skipped) {
       AppDiagnostics.log('restore', skip.line);
+    }
+    // A created or re-created row is a repair of device state the archive contradicts; the run's
+    // proof of it has to outlive the dialog the same way its failures do.
+    for (final row in report.structure) {
+      AppDiagnostics.log('restore', row.line);
     }
   }
 

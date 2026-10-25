@@ -91,6 +91,57 @@ void main() {
     expect(bytes, 'hello'.codeUnits + List.filled(3, 0x00));
   });
 
+  test(
+    'a dynamic write carries the declared type, a static one the schema type',
+    () {
+      // A dynamic row's declared type is what the write asserts: the live type may be damage.
+      expect(
+        entryWriteType(
+          true,
+          _entry('State', 0, 'Bool', true, size: 1),
+          _live('State', 0, DataType.number, size: 1),
+        ),
+        DataType.bool_.value,
+      );
+      // A static field's type is the firmware's schema: the live type is kept.
+      expect(
+        entryWriteType(
+          false,
+          _entry('State', 0, 'Bool', true, size: 1),
+          _live('State', 0, DataType.number),
+        ),
+        DataType.number.value,
+      );
+      // Two character shapes never re-type one another - the device's width decides the bytes.
+      expect(
+        entryWriteType(
+          true,
+          _entry('Name', 0, 'Text', 'hi', size: 2),
+          _live('Name', 0, DataType.name, size: 16),
+        ),
+        DataType.name.value,
+      );
+      // `None` is a delete, not a type: the live type stays.
+      expect(
+        entryWriteType(
+          true,
+          _entry('Gone', 0, 'None', null, size: 0),
+          _live('Gone', 0, DataType.number),
+        ),
+        DataType.number.value,
+      );
+      // `Undefined` declares nothing either.
+      expect(
+        entryWriteType(
+          true,
+          _entry('Placeholder', 0, 'Undefined', null, size: 0),
+          _live('Placeholder', 0, DataType.number),
+        ),
+        DataType.number.value,
+      );
+    },
+  );
+
   test('enum names resolve against the target option set', () {
     const info = FieldInfo(
       'Sensor Type',
@@ -255,7 +306,11 @@ void main() {
       name: 'Core',
       blocks: const [],
     );
-    final live = LiveDevice(id: idFromString('39.1')!, name: 'Core', blocks: const []);
+    final live = LiveDevice(
+      id: idFromString('39.1')!,
+      name: 'Core',
+      blocks: const [],
+    );
     final plan = RestorePlan(
       devices: [core],
       liveDevices: [live],
@@ -343,7 +398,10 @@ void main() {
 
     // The provider DEVICE lookup is unchanged: it matches by node and ignores the net, which is
     // what resolves the provider device where a bare `0.2` names it.
-    expect(providerDeviceFor(plan.liveDevices, '0.2')?.id, idFromString('39.2'));
+    expect(
+      providerDeviceFor(plan.liveDevices, '0.2')?.id,
+      idFromString('39.2'),
+    );
   });
 
   test('backup zip is per device with no aggregate manifest', () {

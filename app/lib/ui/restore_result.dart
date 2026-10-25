@@ -65,6 +65,17 @@ class RestoreResultView extends StatelessWidget {
           // each row was left alone, so "0 failed" cannot read as "nothing was left out".
           if (report.skips.isNotEmpty)
             _listSection(context, 'Skipped as structural', report.skips),
+          // The structure the run made, per row: created rows and the ones it had to re-create
+          // because the device held them in another type or size. A repair of device state is
+          // something the owner asked to see, not a silent side effect.
+          if (report.created.isNotEmpty)
+            _listSection(context, 'Created', [
+              for (final row in report.created) row.line,
+            ]),
+          if (report.recreated.isNotEmpty)
+            _listSection(context, 'Re-created', [
+              for (final row in report.recreated) row.line,
+            ]),
           // A deletion is neither a success nor a failure, so it gets its own heading rather than
           // being folded into either count.
           if (removed.isNotEmpty)
