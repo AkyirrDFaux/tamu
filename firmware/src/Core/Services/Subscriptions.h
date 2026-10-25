@@ -44,6 +44,7 @@ private:
     ProviderEntry* ProviderInstall(uint16_t Trid, uint16_t RequesterAddr,
                                    const SubscriptionTable &Table, bool Reset = false);
     void HandleProviderConfirmation(const PacketFrame &Frame);
+    uint8_t ProviderEdgePayload(const uint8_t *Val, uint8_t Vlen, uint32_t Counter);
     uint32_t SubscriptionsDeltaHash(const FieldResult &Fr, uint32_t Deadzone);
     uint32_t SubscriptionsAbsDelta(int32_t NowMs, int32_t Last);
     bool SubscriptionsIsScalar(const FieldResult &Fr);
@@ -68,6 +69,10 @@ private:
     // Round-robin cursor for the unserved-entry re-registration: one entry per tick, so a send
     // cannot put several blocking transmits back to back with no bus service between them.
     uint8_t ReRegisterCursor = 0;
+    // Round-robin cursor for the edge replay: one replayed edge per tick, for the same reason (a
+    // burst with no bus service between writes) and so a counting script behind the target sees
+    // each recovered press as its own pass.
+    uint8_t ReplayCursor = 0;
 
     static bool RequesterOccupied(const RequesterEntry &Entry);
     static bool RequesterEntryLive(const uint8_t *Entry);
@@ -77,8 +82,11 @@ private:
     void RequesterRemove(RequesterEntry* Entry);
     RequesterEntry* RequesterAlloc(uint16_t Trid);
     RequesterEntry* RequesterUpsert(uint16_t Trid);
-    void ApplyRequesterValue(RequesterEntry *Entry, const uint8_t *Val, uint8_t Vlen, bool Confirm);
+    bool WriteRequesterTarget(RequesterEntry *Entry, const uint8_t *Val, uint8_t Vlen);
+    bool ApplyRequesterValue(RequesterEntry *Entry, const uint8_t *Val, uint8_t Vlen, bool Confirm);
+    void ApplyRequesterEdge(RequesterEntry *Entry, uint16_t Counter, const uint8_t *Val, uint8_t Vlen);
     void HandleRequesterValueUpdate(const PacketFrame &Frame);
+    void SubscriptionsReplayPending();
     bool SaveRequesterTable(bool KeepFileEntries = false); // false when a write failed
     void RegisterRequesterProvider(RequesterEntry* Entry);
     void SubscriptionsReRegisterPending();

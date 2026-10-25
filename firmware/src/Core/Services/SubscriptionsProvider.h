@@ -61,6 +61,16 @@ inline ProviderEntry* SubscriptionsService::ProviderInstall(uint16_t Trid, uint1
     return Entry;
 }
 
+// Lays out an edge-triggered value payload in the frame: the counter ahead of the value
+// (SubscriptionsEdge.h). One owner of the layout on the provider side, so the push cannot drift from
+// what the requester parses. The construct call that follows passes nullptr as the payload, so it
+// only fills the header and finalizes the CRC over the bytes already in the frame.
+inline uint8_t SubscriptionsService::ProviderEdgePayload(const uint8_t *Val, uint8_t Vlen, uint32_t Counter) {
+    SubEdgeCounterStore(TxFrame.Payload, Counter);
+    memcpy(TxFrame.Payload + SUB_EDGE_COUNTER_SIZE, Val, Vlen);
+    return (uint8_t)(Vlen + SUB_EDGE_COUNTER_SIZE);
+}
+
 // The provider side of the requester's confirmation (CID 0 request): the payload is the
 // FNV-1a hash of the value the requester received; confirm-required triggers stop here.
 inline void SubscriptionsService::HandleProviderConfirmation(const PacketFrame &Frame) {
@@ -174,7 +184,12 @@ inline void SubscriptionsService::EvaluateProviderTriggers(uint32_t NowMs) {
         FieldResult Fr = SubscriptionsGetField(Entry->Sub.SourceReg);
         if (!Fr.Data) continue;
         uint8_t Vlen = Fr.Descriptor.Size;
-        if (Vlen > MAX_PAYLOAD_SIZE) Vlen = MAX_PAYLOAD_SIZE;
+        // An edge-triggered update carries the counter ahead of the value (SubscriptionsEdge.h), so
+        // its value has to leave room for the two counter bytes inside one payload.
+        const bool Edge = SubTriggerIsEdge(Entry->Sub.Trigger);
+        const uint8_t MaxLen = Edge ? (uint8_t)(MAX_PAYLOAD_SIZE - SUB_EDGE_COUNTER_SIZE)
+                                    : (uint8_t)MAX_PAYLOAD_SIZE;
+        if (Vlen > MaxLen) Vlen = MaxLen;
 
         bool Send = false;
 #ifdef USE_SUB_REQUEST
@@ -296,7 +311,16 @@ inline void SubscriptionsService::EvaluateProviderTriggers(uint32_t NowMs) {
 #ifdef USE_SUB_REQUEST
         if (Entry->RequesterAddr == DeviceStatus.ShortAddress) {
             RequesterEntry* Requester = RequesterFindByTrid(Entry->Trid);
-            if (Requester) { ApplyRequesterValue(Requester, (const uint8_t *)Fr.Data, Vlen, false); Applied = true; }
+            if (Requester) {
+                // An edge send carries the counter on the wire; locally there is no wire, so the
+                // same counter goes in directly - the row's accounting must not depend on whether
+                // its provider happens to be on another node.
+                if (SubTriggerIsEdge(Entry->Sub.Trigger))
+                    ApplyRequesterEdge(Requester, (uint16_t)Entry->Hash, (const uint8_t *)Fr.Data, Vlen);
+                else
+                    ApplyRequesterValue(Requester, (const uint8_t *)Fr.Data, Vlen, false);
+                Applied = true;
+            }
             if (Entry->Sub.Trigger == TriggerType::OnChangeConfirm && HavePendingHash)
                 Entry->Hash = PendingHash;
         }
@@ -307,10 +331,17 @@ inline void SubscriptionsService::EvaluateProviderTriggers(uint32_t NowMs) {
             // FLAG_REQACK made the requester confirm triggers that never expect a reply.
             uint8_t Flags = FLAG_TYPE | FLAG_START | FLAG_STOP;
             if (Entry->Sub.Trigger == TriggerType::OnChangeConfirm) Flags |= FLAG_REQACK;
+            const uint8_t *Src = (const uint8_t *)Fr.Data;
+            uint8_t Len = Vlen;
+            if (Edge) {
+                // Docs: an edge-triggered value update is the edge counter (u16 little-endian,
+                // SubscriptionsEdge.h) ahead of the value.
+                Len = ProviderEdgePayload((const uint8_t *)Fr.Data, Vlen, Entry->Hash);
+                Src = nullptr; // already laid out in the frame
+            }
             PacketConstruct(&TxFrame, Entry->RequesterAddr,
                             MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::ValueUpdate),
-                            Entry->Trid, Flags,
-                            (const uint8_t *)Fr.Data, Vlen, Prio);
+                            Entry->Trid, Flags, Src, Len, Prio);
             SendAndVerifyPacket(TxFrame);
         }
     }

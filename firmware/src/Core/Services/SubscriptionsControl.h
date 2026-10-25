@@ -152,6 +152,13 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
             // Docs CID 1: the response to a change subscription is the CURRENT VALUE (so the
             // requester starts from a known state). Fall back to a 1-byte ack when the source
             // register does not resolve (yet).
+            //
+            // For an edge trigger this answer stays VALUE-ONLY - it does not carry the edge counter
+            // that a push does. It is the row's answer, so the requester takes it as the moment to
+            // forget its baseline (SubscriptionsRequester.h): the next push becomes the zero point.
+            // Two reasons: the answer is not a press, so there is no gap to account for around it;
+            // and it is the whole DAS flash difference - counter-plus-value here cost ~120 B on a
+            // part with 68 B free, while the value-only answer keeps the documented payload.
             {
                 FieldResult Cur = SubscriptionsGetField(Table.SourceReg);
                 if (Cur.Data) {
@@ -233,6 +240,7 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
             Entry->TargetReg = TargetReg;
             Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs); // wire field, not enforced
             Entry->Lease = SubRequesterLease{}; // unserved again: fast retry until a value arrives
+            Entry->Edge = SubEdgeState{};       // no counter baseline: the next one is the zero point
             // Persist this set's own entry, but must not rewrite the file from the live table: a
             // row that is missing from the live table is not a deliberate removal (an entry that
             // could not be restored because the table was full still belongs to the saved setup),
@@ -325,6 +333,10 @@ inline void SubscriptionsService::Tick(uint32_t NowMs) {
     // cadence, not a lifetime: SubRequesterLease retries fast, capped at SUB_FAST_ATTEMPTS, then
     // falls back to the keepalive until an install is answered.
     RequesterInitCheck(NowMs);
+    // The edges a gap lost are owed to the target: one replay per tick (see
+    // SubscriptionsRequester.h), so a counting script behind the target catches up one press at a
+    // time instead of getting a burst in one pass.
+    SubscriptionsReplayPending();
     SubscriptionsReRegisterPending();
 #endif
 }

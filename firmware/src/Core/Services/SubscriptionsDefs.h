@@ -10,6 +10,7 @@
 #include "Core/Functions/MemoryTypes.h"
 #include "Core/Services/Register.h"
 #include "Core/Services/Storage.h"
+#include "Core/Services/SubscriptionsEdge.h"   // the edge counter's wire encoding + the requester state
 #include "Core/Services/SubscriptionsLease.h" // SUB_TIMEOUT_MS/SubTimeoutFrom + the requester timing
 #include "Core/Types/Enums.h"
 
@@ -20,6 +21,9 @@
 //                     foreign-origin flag and confirms with a hash.
 // Value updates carry the RAW value bytes (no TLFV header); the requester's confirmation
 // is the 4-byte FNV-1a hash of the received bytes.
+// An EDGE-triggered value update is the exception: it carries the provider's edge counter (u16
+// little-endian) ahead of the value, so the requester can tell a press it lost from one it never
+// got. See Core/Services/SubscriptionsEdge.h for the layout and the classification.
 // The subscription TRID range (TRID_SUB_BASE..TRID_SUB_MAX) is defined in Functions/Packet.h.
 
 // Packet priorities (Docs/RSBus and Packets.md: high-priority subscriptions sit above
@@ -114,6 +118,11 @@ struct RequesterEntry {
     // RAM-only - it is not part of the 28 B wire prefix and not part of the 24 B `.SUBREQ` entry - so
     // every boot, recall and Set starts it at 0.
     SubRequesterLease Lease;
+    // The edge trigger's counter accounting (Docs: an edge update carries the provider's edge
+    // counter; see SubscriptionsEdge.h). Transient like the lease, and for the same reason - it is
+    // neither streamed by Get subscriptions nor written to `.SUBREQ` - so an install, a recall and
+    // a boot all start the row with no baseline to compare a counter against.
+    SubEdgeState Edge;
 };
 
 // The wire prefix of the entry IS the struct prefix, so serialization is a plain copy of the
