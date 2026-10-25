@@ -31,9 +31,16 @@ inline void SubscriptionsService::ProviderClearEntry(ProviderEntry* Entry) {
 }
 
 // Fills an already-resolved provider entry from a subscription table. `reset` forces a trigger
-// state reset (an explicit Set); a new entry (requesterAddr 0) or a changed source register
-// resets anyway, so a retargeted or re-set subscription cannot suppress its first send with a
-// stale hash/last value from the previous target.
+// state reset; a new entry (requesterAddr 0) or a changed source register resets anyway, so a
+// retargeted or freshly installed subscription cannot suppress its first send with a stale
+// hash/last value from the previous target.
+//
+// A RENEWAL must not reset anything (owner ruling, 2026-10-25): it is a plain 0401 with the same
+// entry, so `reset` is false on that path (SubscriptionsControl.h CID 1) and an existing entry is
+// only given the new timeout below. That keeps `Hash` (the edge counter), `LastBool`, `LastSentMs`
+// and `EdgeDue` continuous across a renewal, which is what makes a press on either side of one an
+// ordinary press instead of a re-baseline. `reset` stays true only for the explicit provider Set
+// (0421), which is a deliberate re-install.
 inline void SubscriptionsService::ProviderApply(ProviderEntry* Entry, uint16_t Trid, uint16_t RequesterAddr,
                           const SubscriptionTable &Table, bool Reset) {
     bool TargetChanged = Entry->RequesterAddr == 0 || Entry->Sub.SourceReg != Table.SourceReg;

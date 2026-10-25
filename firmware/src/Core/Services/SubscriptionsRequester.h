@@ -139,11 +139,15 @@ inline bool SubscriptionsService::ApplyRequesterValue(RequesterEntry *Entry, con
 // the level this counter implies, and owe the missing edges to the target (the replay pass delivers
 // them, one per pass, from SubscriptionsTick).
 inline void SubscriptionsService::ApplyRequesterEdge(RequesterEntry *Entry, uint16_t Counter) {
-    // A push that arrives while an install/keepalive is still unanswered is the first thing the row
-    // has heard since it (re-)registered: whatever counter it carries is the row's zero point, not a
-    // comparison. A node that rebooted and pushes before answering its install would otherwise hand
-    // over a counter that looks like it went backwards (the resync case below, logged, no gap).
-    const bool InstallAnswer = !Entry->Lease.Served() || Entry->Lease.Unanswered != 0;
+    // A push that arrives while an install is still unanswered is the first thing a row that has
+    // NEVER been served has heard since it was set: whatever counter it carries is the row's zero
+    // point, not a comparison. That is the install case only. A push that crosses a RENEWAL is not
+    // a re-registration any more: the provider keeps its counter across renewals (owner ruling,
+    // 2026-10-25), so its counter is continuous and the push is an ordinary press that has to be
+    // compared - treating it as a zero point would throw away the presses counted since the last
+    // one. A provider that really did restart (a node reboot clears its RAM-only table) sends a
+    // counter that went BACKWARDS, which `Arrive` already handles as a resync below.
+    const bool InstallAnswer = !Entry->Lease.Served();
     const uint16_t From = Entry->Edge.Last;
     const SubEdgeKind Kind = Entry->Edge.Arrive(Counter, InstallAnswer);
 
@@ -203,15 +207,25 @@ inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &
     //   >= 2 bytes - a PUSH: the provider's edge counter (u16, the whole payload). The counter is
     //                consumed here and never reaches the target; the level its parity implies is.
     //   <  2 bytes - the provider's ANSWER to "Change subscription" (Docs: "Current value"), which
-    //                carries the value alone (for an edge row, its Bool). That is the row's answer,
-    //                not a press, so it re-baselines the counter instead of being classified: the
-    //                next push becomes the zero point.
+    //                carries the value alone (for an edge row, its Bool). What that answer MAY do
+    //                depends on whether the row has been served before (SubEdgeAnswer): the first
+    //                one is the install, any later one is a renewal and extends the deadlines only.
     if (SubTriggerIsEdge(Entry->Sub.Trigger)) {
         if (Len >= SUB_EDGE_COUNTER_SIZE) {
             ApplyRequesterEdge(Entry, SubEdgeCounterLoad(Frame.Payload));
-        } else {
+        } else if (SubEdgeAnswer(Entry->Lease.Served()) == SubEdgeAnswerKind::Install) {
             Entry->Edge.ResetBaseline();
             ApplyRequesterValue(Entry, Frame.Payload, (uint8_t)Len, false);
+        } else {
+            // A renewal: a plain 0401 with the same entry, so it may only extend the row's
+            // deadlines (owner ruling, 2026-10-25 - "nothing else special should happen"). The
+            // baseline is KEPT: the provider no longer restarts its counter on a renewal
+            // (SubscriptionsProvider.h), so the next push is compared against the row's last
+            // counter instead of being taken as a new zero point. The target is NOT written: this
+            // reply carries the level the source had when the request was made, so writing it
+            // would undo a press that landed while the reply was in flight.
+            Entry->Lease.OnAnswer(DeviceStatus.UptimeMs);
+            Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
         }
         return;
     }

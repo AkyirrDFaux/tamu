@@ -129,6 +129,30 @@ static constexpr uint16_t SUB_EDGE_RESYNC_DELTA = 0x8000u;
 // capped here so the debt cannot wrap (uint8) or turn into thousands of passes.
 static constexpr uint8_t SUB_EDGE_PENDING_MAX = 255;
 
+// What the answer to an install/keepalive means for an edge row.
+//
+// A renewal is a plain 0401 with the SAME entry (Docs/Services/Subscriptions.md: "kept alive by
+// repeating the Set Subscription command (041x/1) ... there is no separate renewal command"), and
+// per the owner's ruling (2026-10-25) it may only extend the timeouts - "nothing else special
+// should happen". So the answer to a row the provider has ALREADY served is a renewal: it keeps
+// the counter baseline and must not write the target, because the reply carries the source's
+// current level SAMPLED BEFORE it was sent, and writing that level would erase a press delivered
+// in the same round trip.
+//
+// The FIRST answer is different: it is the install of a row that has never been served, and Docs
+// CID 1 makes it the moment the row starts "from a known value" - it baselines the counter and
+// writes that value. `Served()` on the lease (Core/Services/SubscriptionsLease.h) is exactly the
+// "has this row ever been answered" state, which is also the ruling's "if the subscription was
+// already running" test.
+//
+// Host-clean and named here, next to the counter accounting it belongs to, so the native test
+// drives the same decision the device makes instead of a copy of it.
+enum class SubEdgeAnswerKind : uint8_t { Install = 0, Renew = 1 };
+
+static inline SubEdgeAnswerKind SubEdgeAnswer(bool Served) {
+    return Served ? SubEdgeAnswerKind::Renew : SubEdgeAnswerKind::Install;
+}
+
 // One row's edge accounting. Transient: it is NOT part of the 28 B requester wire entry and NOT
 // part of the 24 B `.SUBREQ` file entry (like SubRequesterLease), so every boot, recall and set
 // starts it fresh - which is exactly the reset rule the counter needs.

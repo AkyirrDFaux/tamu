@@ -144,22 +144,34 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
 
             SubscriptionTable Table;
             memcpy((void *)&Table, Frame.Payload, SUB_TABLE_WIRE_SIZE);
-            // Reuse the entry found above (no second search). An explicit Set resets its trigger
-            // state so a retargeted subscription sends its first value immediately.
+            // Reuse the entry found above (no second search).
+            //
+            // Reset is FALSE here on purpose: this is the command a subscription is kept alive with
+            // (Docs/Services/Subscriptions.md: "kept alive by repeating the Set Subscription command
+            // (041x/1) with the same entry; there is no separate renewal command"), so an entry that
+            // is already there is EXTENDED - its timeout, in ProviderApply - and nothing else. Per
+            // the owner's ruling (2026-10-25) a renewal resets no hash/counter, no value, no
+            // last-sent time and no trigger state: resetting the edge counter here restarted it
+            // under the requester and made every press around a renewal a re-baseline instead of a
+            // press. ProviderApply still resets a NEW entry and a retargeted source (its own
+            // TargetChanged test), which is all a renewal must never be; an app-driven Set (0421,
+            // below) keeps Reset = true because that one is a deliberate re-install.
             if (!Entry) Entry = ProviderFindFree();
             if (!Entry) { SubReply(Frame, nullptr, 0, FLAG_FAIL); break; }
-            ProviderApply(Entry, Frame.Trid, Frame.IdSrc, Table, true);
+            ProviderApply(Entry, Frame.Trid, Frame.IdSrc, Table, false);
             // Docs CID 1: the response to a change subscription is the CURRENT VALUE (so the
             // requester starts from a known state). Fall back to a 1-byte ack when the source
             // register does not resolve (yet).
             //
             // For an edge trigger this answer stays VALUE-ONLY - it does not carry the edge counter
-            // that a push does (a push is exactly the 2-byte counter). It is the row's answer, so
-            // the requester takes it as the moment to forget its baseline (SubscriptionsRequester.h):
-            // the next push becomes the zero point. The answer is not a press, so there is no gap to
-            // account for around it, and it gives the row the source's current level at install - and
-            // it is the whole DAS flash difference, since carrying the counter here too cost ~120 B
-            // on a part with well under a hundred free.
+            // that a push does (a push is exactly the 2-byte counter). What the requester does with
+            // it depends on whether the row has been served before (SubEdgeAnswer,
+            // SubscriptionsRequester.h): the FIRST answer is the install and starts the row from
+            // this level, while the answer to a renewal only extends the deadlines and touches
+            // nothing else, because the level here is the one the source had when the request was
+            // made - writing it would undo a press that landed in the same round trip.
+            // It is also the whole DAS flash difference, since carrying the counter here too cost
+            // ~120 B on a part with well under a hundred free.
             {
                 FieldResult Cur = SubscriptionsGetField(Table.SourceReg);
                 if (Cur.Data) {

@@ -159,6 +159,10 @@ echo "### native edge-counter tests (the counter IS the payload, parity is the l
 build_run "edgecounter" "edge_counter_test.cpp" -DUSE_SUB_REQUEST
 echo
 
+echo "### native renewal-contract tests (a renewal extends the timeouts and nothing else)"
+build_run "renewal" "renewal_test.cpp" -DUSE_SUB_REQUEST
+echo
+
 # t_378cc55c, structural half: the two device sites that put the counter on the wire and read it back
 # off again cannot be linked on the host (they pull the packet/register/device layer), so the facts
 # the accounting depends on are asserted on the source itself:
@@ -245,6 +249,50 @@ echo
 # asserted on the source itself - Tick has no time-based requester drop, and the ONLY removal of a
 # requester row is the explicit-cancel branch of RequesterSet, which also cancels the provider side.
 # A failure here is either the expiry coming back or the cancel path being lost with it.
+# t_e7e40f2e, structural half: a renewal is a plain 0401 with the same entry (owner ruling,
+# 2026-10-25), so an EXISTING provider entry may only have its TIMEOUT extended - no hash/counter,
+# value, last-sent or trigger reset - and a renewal's answer may neither re-baseline the requester's
+# edge counter nor write its target. The two sites that cannot be linked on the host are asserted
+# here: the 0401 call site passes Reset = false (only a new entry or a retargeted source resets, via
+# ProviderApply's own TargetChanged), the explicit 0421 Set keeps Reset = true, and the requester's
+# edge branch asks SubEdgeAnswer for the decision, keeps its single ResetBaseline in the Install
+# branch, and never treats an unanswered renewal as an install.
+echo "### source guard: a renewal extends the timeouts and resets no state"
+RENEW_REQ_SRC="src/Core/Services/SubscriptionsRequester.h"
+RENEW_CTL_SRC="src/Core/Services/SubscriptionsControl.h"
+renew_fail=0
+if [ "$(grep -c 'ProviderApply(Entry, Frame.Trid, Frame.IdSrc, Table, false);' "$RENEW_CTL_SRC")" != 1 ]; then
+    echo "FAIL $RENEW_CTL_SRC: the 0401 (renewal) path must extend the entry, not reset it"
+    renew_fail=1
+fi
+if [ "$(grep -c 'ProviderApply(Entry, Frame.Trid, Frame.IdSrc, Table, true);' "$RENEW_CTL_SRC")" != 0 ]; then
+    echo "FAIL $RENEW_CTL_SRC: no 0401 may reset the provider entry"
+    renew_fail=1
+fi
+if [ "$(grep -c 'ProviderInstall(Frame.Trid, RequesterAddr, Table, true)' "$RENEW_CTL_SRC")" != 1 ]; then
+    echo "FAIL $RENEW_CTL_SRC: the explicit provider Set (0421) must still re-install with a reset"
+    renew_fail=1
+fi
+if [ "$(grep -c 'SubEdgeAnswer(Entry->Lease.Served())' "$RENEW_REQ_SRC")" != 1 ]; then
+    echo "FAIL $RENEW_REQ_SRC: the install/renewal decision must be SubEdgeAnswer(Served())"
+    renew_fail=1
+fi
+if [ "$(grep -c 'SubEdgeAnswerKind::Install' "$RENEW_REQ_SRC")" != 1 ]; then
+    echo "FAIL $RENEW_REQ_SRC: only the install answer may re-baseline the counter"
+    renew_fail=1
+fi
+if [ "$(grep -c 'Edge.ResetBaseline()' "$RENEW_REQ_SRC")" != 1 ]; then
+    echo "FAIL $RENEW_REQ_SRC: the counter baseline may be reset in exactly one place (the install)"
+    renew_fail=1
+fi
+if [ "$(grep -c 'Unanswered != 0' "$RENEW_REQ_SRC")" != 0 ]; then
+    echo "FAIL $RENEW_REQ_SRC: an unanswered RENEWAL must not turn a press into a new baseline"
+    renew_fail=1
+fi
+[ $renew_fail = 0 ] && echo "PASS: 0401 extends only, 0421 resets, the install is the only re-baseline"
+fail=$((fail + renew_fail))
+echo
+
 echo "### source guard: requester rows are dropped only by an explicit cancel"
 SUBS_SRC="src/Core/Services/SubscriptionsControl.h"
 tick_body=$(sed -n '/inline void SubscriptionsService::Tick/,$p' "$SUBS_SRC")
