@@ -211,6 +211,14 @@ String _sha(List<int> bytes) {
   return hash.toRadixString(16).padLeft(8, '0');
 }
 
+bool _sameBytes(List<int> a, List<int> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
 /// The RAM a script's constant space occupies: one ValueInfo per constant (4 bytes) plus the
 /// value bytes, each entry aligned to 4 (`Docs/Services/Script.md` "File Blocks": the tables sit
 /// in the value's own run-time order).
@@ -257,14 +265,18 @@ void _measure(String path, {bool symbols = false}) {
     totalJson += _jsonBytes(entry);
     // What the semantic form weighs once the app re-saves it: the archive's own byte delta is
     // this figure, because a setup stores a script semantically and nothing else.
-    totalResaved += _jsonBytes(
-      BackupScript.fromDraft(script.slot, draft).toJson(),
-    );
+    final resaved = BackupScript.fromDraft(script.slot, draft);
+    totalResaved += _jsonBytes(resaved.toJson());
+    // A re-save must be idempotent: writing the semantic form out and reading it back has to
+    // rebuild the same image, or a second save would keep churning the archive.
+    final again = BackupScript.fromJson(resaved.toJson()).toDraft();
+    final stable = _sameBytes(again.toImage(), image);
     stdout.writeln(
       '-- slot ${script.slot} "${script.functionName}" consts=${f.constants.length} '
       'inputs=${f.inputs.length} outputs=${f.outputs.length} '
       'vars=${f.variables.length} lines=${lines.length} image=${image.length} '
-      'constspace=${_constSpace(f)} sha256=${_sha(image)}',
+      'constspace=${_constSpace(f)} sha256=${_sha(image)} '
+      'resave=${stable ? "OK" : "DIFF"}',
     );
     for (var i = 0; i < lines.length; i++) {
       stdout.writeln(_line(f, lines[i], i, symbols: symbols));
