@@ -45,7 +45,7 @@ inline void SubscriptionsService::ProviderApply(ProviderEntry* Entry, uint16_t T
         Entry->LastSentMs = 0;
         Entry->Hash = 0;
         Entry->LastBool = false;
-        Entry->SentCounter = 0;
+        Entry->EdgeDue = false;
         Entry->LastVec[0] = Entry->LastVec[1] = Entry->LastVec[2] = 0;
     }
 }
@@ -61,14 +61,14 @@ inline ProviderEntry* SubscriptionsService::ProviderInstall(uint16_t Trid, uint1
     return Entry;
 }
 
-// Lays out an edge-triggered value payload in the frame: the counter ahead of the value
-// (SubscriptionsEdge.h). One owner of the layout on the provider side, so the push cannot drift from
-// what the requester parses. The construct call that follows passes nullptr as the payload, so it
-// only fills the header and finalizes the CRC over the bytes already in the frame.
-inline uint8_t SubscriptionsService::ProviderEdgePayload(const uint8_t *Val, uint8_t Vlen, uint32_t Counter) {
+// Lays out an edge-triggered value payload in the frame: the counter, and nothing else - for an
+// edge trigger the counter IS the payload, and its parity carries the level (SubscriptionsEdge.h).
+// One owner of the layout on the provider side, so the push cannot drift from what the requester
+// parses. The construct call that follows passes nullptr as the payload, so it only fills the
+// header and finalizes the CRC over the bytes already in the frame.
+inline uint8_t SubscriptionsService::ProviderEdgePayload(uint32_t Counter) {
     SubEdgeCounterStore(TxFrame.Payload, Counter);
-    memcpy(TxFrame.Payload + SUB_EDGE_COUNTER_SIZE, Val, Vlen);
-    return (uint8_t)(Vlen + SUB_EDGE_COUNTER_SIZE);
+    return SUB_EDGE_COUNTER_SIZE;
 }
 
 // The provider side of the requester's confirmation (CID 0 request): the payload is the
@@ -184,12 +184,11 @@ inline void SubscriptionsService::EvaluateProviderTriggers(uint32_t NowMs) {
         FieldResult Fr = SubscriptionsGetField(Entry->Sub.SourceReg);
         if (!Fr.Data) continue;
         uint8_t Vlen = Fr.Descriptor.Size;
-        // An edge-triggered update carries the counter ahead of the value (SubscriptionsEdge.h), so
-        // its value has to leave room for the two counter bytes inside one payload.
+        // An edge-triggered update carries the counter alone (SubscriptionsEdge.h), so its payload is
+        // two bytes whatever the source's width; the clamp is about the value bytes of every other
+        // trigger.
         const bool Edge = SubTriggerIsEdge(Entry->Sub.Trigger);
-        const uint8_t MaxLen = Edge ? (uint8_t)(MAX_PAYLOAD_SIZE - SUB_EDGE_COUNTER_SIZE)
-                                    : (uint8_t)MAX_PAYLOAD_SIZE;
-        if (Vlen > MaxLen) Vlen = MaxLen;
+        if (!Edge && Vlen > MAX_PAYLOAD_SIZE) Vlen = MAX_PAYLOAD_SIZE;
 
         bool Send = false;
 #ifdef USE_SUB_REQUEST
@@ -232,13 +231,18 @@ inline void SubscriptionsService::EvaluateProviderTriggers(uint32_t NowMs) {
         case TriggerType::EdgeAny: {
             bool Cur = ValueInfoType(Fr.Descriptor.Type) == (uint16_t)DataType::Bool &&
                        ((const uint8_t *)Fr.Data)[0] != 0;
-            bool Edge = (Entry->Sub.Trigger == TriggerType::EdgeRising)  ? (Cur && !Entry->LastBool)
-                      : (Entry->Sub.Trigger == TriggerType::EdgeFalling) ? (!Cur && Entry->LastBool)
-                                                                     : (Cur != Entry->LastBool);
+            // The counter counts EVERY level change, so its parity is the level (SubscriptionsEdge.h);
+            // the trigger only decides which of those changes are sent. Counting just the trigger's
+            // own direction would leave a rising-only counter odd after the release, and the
+            // requester would read "still pressed" from a lifted switch.
+            const SubEdgeStep Step = SubEdgeClassify(Entry->Sub.Trigger, Cur, Entry->LastBool);
             Entry->LastBool = Cur;
-            if (Edge) Entry->Hash++; // counter; send on increase (not sooner than the retry interval)
-            Send = (Entry->Hash != Entry->SentCounter) && (Elapsed >= SubMinTime(Entry->Sub));
-            if (Send) Entry->SentCounter = Entry->Hash;
+            if (Step.Counted) {
+                Entry->Hash++; // counter; send on an edge, not sooner than the retry interval
+                if (Step.Due) Entry->EdgeDue = true;
+            }
+            Send = Entry->EdgeDue && (Elapsed >= SubMinTime(Entry->Sub));
+            if (Send) Entry->EdgeDue = false;
             break;
         }
 
@@ -316,7 +320,7 @@ inline void SubscriptionsService::EvaluateProviderTriggers(uint32_t NowMs) {
                 // same counter goes in directly - the row's accounting must not depend on whether
                 // its provider happens to be on another node.
                 if (SubTriggerIsEdge(Entry->Sub.Trigger))
-                    ApplyRequesterEdge(Requester, (uint16_t)Entry->Hash, (const uint8_t *)Fr.Data, Vlen);
+                    ApplyRequesterEdge(Requester, (uint16_t)Entry->Hash);
                 else
                     ApplyRequesterValue(Requester, (const uint8_t *)Fr.Data, Vlen, false);
                 Applied = true;
@@ -335,8 +339,8 @@ inline void SubscriptionsService::EvaluateProviderTriggers(uint32_t NowMs) {
             uint8_t Len = Vlen;
             if (Edge) {
                 // Docs: an edge-triggered value update is the edge counter (u16 little-endian,
-                // SubscriptionsEdge.h) ahead of the value.
-                Len = ProviderEdgePayload((const uint8_t *)Fr.Data, Vlen, Entry->Hash);
+                // SubscriptionsEdge.h) and nothing else.
+                Len = ProviderEdgePayload(Entry->Hash);
                 Src = nullptr; // already laid out in the frame
             }
             PacketConstruct(&TxFrame, Entry->RequesterAddr,

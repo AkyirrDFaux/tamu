@@ -107,27 +107,43 @@ echo "### native subscription-keepalive tests (rows never expire; unanswered ins
 build_run "lease" "lease_test.cpp"
 echo
 
-echo "### native edge-counter tests (the edge wire counter: baseline/next/duplicate/gap/resync + replay)"
+echo "### native edge-counter tests (the counter IS the payload, parity is the level, the walk)"
 build_run "edgecounter" "edge_counter_test.cpp" -DUSE_SUB_REQUEST
 echo
 
-# t_932f285f, structural half: the two device sites that put the counter on the wire and read it back
+# t_378cc55c, structural half: the two device sites that put the counter on the wire and read it back
 # off again cannot be linked on the host (they pull the packet/register/device layer), so the facts
 # the accounting depends on are asserted on the source itself:
 #   - the provider lays out an edge payload ONLY through ProviderEdgePayload (one owner of the
-#     counter-then-value layout), and only for an edge trigger;
-#   - the requester strips the counter with Frame.Payload + SUB_EDGE_COUNTER_SIZE and writes the
-#     target from that value pointer alone - the counter must never reach the target;
+#     layout), that payload is the counter alone (nothing is copied behind it), only for an edge
+#     trigger, and the provider steps the counter through SubEdgeClassify (every level change counts,
+#     so parity is the level);
+#   - the requester reads the counter with SubEdgeCounterLoad and nothing else - there is no value
+#     behind it (no `Payload + SUB_EDGE_COUNTER_SIZE`), the counter is never written to the target,
+#     and the only writes are the 1-byte level (parity) both live and in the replay walk;
 #   - every target write goes through the single WriteRequesterTarget (so a replay cannot take a
 #     different path than a live update);
-#   - the two payload shapes are split on the length, and the value-only answer re-baselines.
-echo "### source guard: the edge counter never reaches the target, and the layout has one owner"
+#   - the two payload shapes are split on the length, and the value-only answer re-baselines;
+#   - no retained value survives anywhere (the level is derived, not kept).
+echo "### source guard: the counter is the whole payload and parity is the level, on both ends"
 REQ_SRC="src/Core/Services/SubscriptionsRequester.h"
 PROV_SRC="src/Core/Services/SubscriptionsProvider.h"
 CTL_SRC="src/Core/Services/SubscriptionsControl.h"
 edge_guard_fail=0
 if [ "$(grep -c 'SubEdgeCounterStore' "$PROV_SRC")" != 1 ]; then
     echo "FAIL $PROV_SRC: the provider must lay out the counter in exactly one place (ProviderEdgePayload)"
+    edge_guard_fail=1
+fi
+if [ "$(grep -c 'memcpy(TxFrame.Payload' "$PROV_SRC")" != 0 ]; then
+    echo "FAIL $PROV_SRC: nothing may be appended behind the counter - it is the whole payload"
+    edge_guard_fail=1
+fi
+if [ "$(grep -c 'return SUB_EDGE_COUNTER_SIZE;' "$PROV_SRC")" != 1 ]; then
+    echo "FAIL $PROV_SRC: the edge payload length must be the counter size and nothing more"
+    edge_guard_fail=1
+fi
+if [ "$(grep -c 'SubEdgeClassify' "$PROV_SRC")" != 1 ]; then
+    echo "FAIL $PROV_SRC: the provider must count level changes through SubEdgeClassify (parity is the level)"
     edge_guard_fail=1
 fi
 if [ "$(grep -c 'SubEdgeCounterStore' "$CTL_SRC")" != 0 ]; then
@@ -138,8 +154,16 @@ if [ "$(grep -c 'SubEdgeCounterLoad' "$REQ_SRC")" != 1 ]; then
     echo "FAIL $REQ_SRC: the counter must be read in exactly one place (the value-update path)"
     edge_guard_fail=1
 fi
-if [ "$(grep -c 'Frame.Payload + SUB_EDGE_COUNTER_SIZE' "$REQ_SRC")" != 1 ]; then
-    echo "FAIL $REQ_SRC: the value update must hand on the value bytes only (Payload + SUB_EDGE_COUNTER_SIZE)"
+if [ "$(grep -c 'Frame.Payload + SUB_EDGE_COUNTER_SIZE' "$REQ_SRC")" != 0 ]; then
+    echo "FAIL $REQ_SRC: nothing may sit behind the counter - the update has no value bytes"
+    edge_guard_fail=1
+fi
+if [ "$(grep -c 'SubEdgeLevelByte' "$REQ_SRC")" != 1 ]; then
+    echo "FAIL $REQ_SRC: the written level must be derived from parity (SubEdgeLevelByte), not from the counter"
+    edge_guard_fail=1
+fi
+if [ "$(grep -c 'WriteRequesterTarget(Entry, &Level, 1)' "$REQ_SRC")" != 2 ]; then
+    echo "FAIL $REQ_SRC: the live level and the replay must both write exactly one parity byte"
     edge_guard_fail=1
 fi
 # One target writer: a replay and a live update must not be able to disagree about what may be written.
@@ -147,20 +171,24 @@ if [ "$(grep -c 'RegisterSetByBlockInfo' "$REQ_SRC")" != 1 ]; then
     echo "FAIL $REQ_SRC: every target write must go through WriteRequesterTarget"
     edge_guard_fail=1
 fi
-if ! grep -q 'Len >= SUB_EDGE_COUNTER_SIZE + 1' "$REQ_SRC"; then
-    echo "FAIL $REQ_SRC: the push/answer split must be on the payload length (>= counter + 1 value byte)"
+if ! grep -q 'Len >= SUB_EDGE_COUNTER_SIZE' "$REQ_SRC"; then
+    echo "FAIL $REQ_SRC: the push/answer split must be on the payload length (a push is the counter, no value byte)"
     edge_guard_fail=1
 fi
 if [ "$(grep -c 'Edge.ResetBaseline()' "$REQ_SRC")" != 1 ]; then
     echo "FAIL $REQ_SRC: the value-only answer must re-baseline the counter (once)"
     edge_guard_fail=1
 fi
-# The replay has to be driven from the main loop, and only one edge per pass.
+if [ "$(grep -rc 'SUB_EDGE_REPLAY_VALUE_MAX' src --include=*.h | grep -vc ':0$')" != 0 ]; then
+    echo "FAIL: no value bytes are retained for a replay any more - the level is derived from the counter"
+    edge_guard_fail=1
+fi
+# The replay has to be driven from the main loop, and only one level per pass.
 if ! grep -q 'SubscriptionsReplayPending();' "$CTL_SRC"; then
     echo "FAIL $CTL_SRC: Tick must run the edge replay"
     edge_guard_fail=1
 fi
-[ $edge_guard_fail = 0 ] && echo "PASS: counter is one-owner on both ends, never written to the target, replay driven from Tick"
+[ $edge_guard_fail = 0 ] && echo "PASS: counter-only payload, parity-derived level, one target writer, replay driven from Tick"
 fail=$((fail + edge_guard_fail))
 echo
 

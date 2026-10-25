@@ -45,27 +45,31 @@ are hardware-only.
   already inside the 512 B), and its arithmetic merely coincides with the 2026-10-08 Phase-0 build
   (`6c3d210:TODO.md:34`, `13440/14336 = 93.75 %`) that the criterion was copied from. **The image is
   not over budget and nothing needs to be trimmed.** Clean rebuild (2026-10-25, this tree, the
-  measurement rail flags `t_1381f097` on top of `6a3a953`): `RAM 100.0% (2048/2048)` /
-  `Flash 95.9% (13744/14336)`; `.text` ends at `0x3D40`, the 4 B `.init_array` takes it to `0x3D44`,
-  and the 112 B `.data` initialiser image is flash-resident too, so the image ends at `0x3DB4`:
-  **13748 B of the 13824 B code space (99.45 %), 76 B spare** before `.fixed_data` at `0x3E00`.
-  Platformio's 14336 B denominator is the storage-inclusive App size, so 95.9 % is not a fullness
-  figure; its 13744 B counts the `.data` image and skips the `.init_array`.
+  counter-only edge payload `t_378cc55c` on top of the rail flags `t_1381f097`): `RAM 100.0%
+  (2048/2048)` / `Flash 95.6% (13708/14336)`; `.text` ends at `0x3D1C`, the 4 B `.init_array` takes
+  it to `0x3D20`, and the 112 B `.data` initialiser image is flash-resident too, so the image ends at
+  `0x3D90`: **13712 B of the 13824 B code space (99.19 %), 112 B spare** before `.fixed_data` at
+  `0x3E00`. Platformio's 14336 B denominator is the storage-inclusive App size, so 95.6 % is not a
+  fullness figure; its 13708 B counts the `.data` image and skips the `.init_array`.
   Trend: 13600 B at `0c55523` (2026-10-24), 13776 B at `9e1378b` (reset-cause report + edge counter),
-  then 13676 B at `6a3a953` (two build flags bought 100 B back), 13748 B now (the two rail flags
-  cost 72 B of image and 8 B of statics). Earlier headroom figures counted code only and ignored the
-  112 B `.data` image, so the real spare was always 112 B less than stated - 76 B now, which is
-  still under one small function.
+  then 13676 B at `6a3a953` (two build flags bought 100 B back), 13748 B at `t_1381f097` (the two rail
+  flags cost 72 B of image and 8 B of statics), 13712 B now (`t_378cc55c` gave 36 B back: an edge
+  update's payload is the counter alone, with no value bytes behind it). Earlier headroom figures
+  counted code only and ignored the 112 B `.data` image, so the real spare was always 112 B less than
+  stated - 112 B now.
   Carrying the edge counter on the 0401 answer too was measured at a further ~120 B and does not
   fit; that is why the answer stays value-only (`SubscriptionsEdge.h`).
-  The 100 % RAM figure is by design: statics (1056 B = 112 B `.data` + 944 B `.bss`) + stack (992 B)
-  fill the 2 KB exactly, the state `firmware/platformio.ini` documents, and the linker errors if
-  statics grow into the stack - which is exactly how the rail flags forced the stack down from
-  1000 B to 992 B (4 B per measurement instance: two Bools plus the struct's tail padding).
+  The RAM figure is by design: statics (1040 B = 112 B `.data` + 928 B `.bss`) + stack (1008 B) fill
+  the 2 KB exactly, the state `firmware/platformio.ini` documents, and the linker errors if statics
+  grow into the stack - which is exactly how the rail flags forced the stack down from 1000 B to
+  992 B (4 B per measurement instance: two Bools plus the struct's tail padding). `t_378cc55c`
+  removed a 4 B per-entry field from the provider entry (the send gate became a bool inside the
+  existing padding), so the stack went back up to 1008 B - the total stays 2048 B, the stack is the
+  part that grew.
   The 2028 B RAM gate could never have been met.
-  **Still a real warning:** measured image history 13600 -> 13776 -> 13676 -> 13748 B (see the trend
-  above); with 76 B left, further code growth fails the link rather than warning - measure before
-  adding a DAS feature. Size lines are only trustworthy after `pio run -e DAS_v0_1 -t clean`; a stale
+  **Still a real warning:** measured image history 13600 -> 13776 -> 13676 -> 13748 -> 13712 B (see the
+  trend above); with 112 B left, further code growth fails the link rather than warning - measure
+  before adding a DAS feature. Size lines are only trustworthy after a clean build; a stale
   `.pio/build/DAS_v0_1` can still report "up to date". Figures corrected in `TODO.md` (acceptance
   criteria and Phase 5) and `firmware/platformio.ini`; `AGENTS.md:54` still needs the owner
   (protected file, see E31).
@@ -294,3 +298,22 @@ are hardware-only.
   **Side effect of `compileSdk = 37`:** AGP 8.11.1 now also prints "We recommend using a newer Android
   Gradle plugin to use compile SDK version 37.0 ... tested up to compile SDK version 36.0" (a version-range
   notice, not a failure); it disappears with an AGP upgrade, which is a separate decision.
+
+- **E48** **`Docs/Services/Subscriptions.md` does not describe an edge trigger's value update, and the
+  code now carries the counter alone with the level as its parity.** The "Inter-device Commands (040x)"
+  table still gives the Value update's response as "Current value", and the edge trigger bullet says
+  only "Counts edges and sends an update on increase" with state "Counter". Since `t_378cc55c` (owner
+  rule, Akyirr) an edge-triggered update's whole payload IS that counter - `uint16` little-endian,
+  two bytes, nothing appended - and its parity carries the level (odd = true/pressed, even =
+  false/lifted), which is what lets a requester that missed updates count the edges it never saw and
+  replay them one per pass. Two consequences the docs should state as well: the provider's counter
+  counts every level change (both directions) and the trigger only selects which changes are sent -
+  otherwise parity could not mean the level, since a rising-only counter would stay odd after the
+  release; and the 0401 answer stays value-only (the Bool), which is what keeps the two payload
+  shapes apart (a push is exactly 2 bytes, the answer is 1).
+  Proposed for the owner (Docs are Akyirr's to edit): in the 040x table, the Value update response
+  becomes "`Current value`; for an edge trigger, the edge counter (`uint16` little-endian) alone -
+  its parity is the level: odd = pressed/true, even = lifted/false", and the edge trigger bullet
+  gains: "Counts every level change, so the counter's parity is the current level, and sends on the
+  edges this trigger names. The update carries the counter alone, so a requester that missed updates
+  replays the edges it did not see, one level per pass."

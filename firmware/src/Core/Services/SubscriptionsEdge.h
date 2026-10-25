@@ -6,33 +6,40 @@
 // "this happened". The wire used to carry the value alone, which made a press that arrived and a
 // press that was lost look identical at the requester - the target already held the value, so a
 // lost update changed nothing and said nothing (the "switch dies at random" family). The provider
-// has always counted its edges (ProviderEntry::Hash, Docs "Counter: for Bool edges only"); it now
-// sends that counter ahead of the value, so a lost update is a *visible* loss:
+// has always counted its edges (ProviderEntry::Hash, Docs "Counter: for Bool edges only"); the
+// counter is now the update's whole payload, and the LEVEL travels as its PARITY:
 //
 //   value update payload, edge triggers only (Docs/Services/Subscriptions.md, "Value update"):
 //
-//     +--------+--------+-----------------+
-//     | ctr lo | ctr hi | value bytes ... |
-//     +--------+--------+-----------------+
-//       0        1        2 ..
+//     +--------+--------+
+//     | ctr lo | ctr hi |
+//     +--------+--------+
+//       0        1        ...and nothing else: 2 bytes is the whole payload
 //
-//   - u16, little-endian: the low 16 bits of the provider's 32-bit edge counter. The provider
-//     increments the counter once per detected edge, so the wire value is `counter mod 2^16`.
-//   - the payload length is SUB_EDGE_COUNTER_SIZE + the value length; for the documented Bool edge
-//     that is 3 bytes.
+//   - u16, little-endian: the low 16 bits of the provider's 32-bit edge counter, so the wire value
+//     is `counter mod 2^16`. There is no separate value: for an edge trigger THE COUNTER IS THE
+//     PAYLOAD.
+//   - PARITY CARRIES THE LEVEL: odd = true (pressed / active), even = false (lifted). A counter that
+//     advanced by n from the row's last one means n edges happened, and every one of them is a
+//     level of its own (SubEdgeState's walk below delivers them in order, one per pass).
+//   - the payload length is exactly SUB_EDGE_COUNTER_SIZE. Nothing is appended.
 //   - every other trigger keeps its payload byte-for-byte: counter-free, value from byte 0.
 //   - the ANSWER to "Change subscription" (0401) is unchanged and carries the current value alone
-//     (Docs CID 1, "Current value"). A value is at least one byte, so the two shapes cannot
-//     collide: >= 3 bytes is a push with the counter in front, <= 2 bytes is the answer. The answer
-//     is not a press - it tells the row to forget its baseline, and the next push is the zero point.
-//     Leaving it alone is also what makes the feature fit the DAS, which has ~68 B of code space
-//     free: carrying the counter on the answer too cost ~120 B there.
+//     (Docs CID 1, "Current value"); for an edge row that is its Bool, one byte. A value is at
+//     least one byte and a push is exactly two, so the shapes cannot collide. The answer is not a
+//     press - it tells the row to forget its baseline, and the next push is the zero point. Leaving
+//     it alone is also what keeps the feature inside the DAS's code space.
 //
-// Why both ends must agree on the encoding: a mismatch (byte order, offset, width) does not fail
-// loudly - every update just looks like a gap of a random size - so the encoding has exactly one
-// owner (SubEdgeCounterStore/Load below) and both sides call it. The two images must be flashed
-// together for the same reason: an old requester would write the counter's bytes into the target as
-// if they were the value, and an old provider's counter-free push cannot be told from an answer.
+// Why the provider counts BOTH directions, whatever the trigger: parity can only mean the level if
+// every level change moves the counter. A rising-only counter would stay odd after the release and
+// the requester would read "still pressed" from a lifted switch. So the counter counts level
+// changes and the trigger only decides which of them are SENT (SubEdgeClassify below).
+//
+// Why both ends must agree on the encoding: a mismatch (byte order, width, a value appended or not)
+// does not fail loudly - every update just looks like a gap of a random size - so the encoding has
+// exactly one owner (SubEdgeCounterStore/Load below) and both sides call it. The two images must be
+// flashed together for the same reason: an old requester would write the counter's bytes into the
+// target as if they were the value, and an old provider's counter-free push is a different layout.
 //
 // Host-clean (no device headers, no globals) so test/native/edge_counter_test.cpp drives the same
 // state machine the core runs: RequesterEntry embeds SubEdgeState and the requester only calls its
@@ -44,8 +51,7 @@
 
 #include "Core/Types/Enums.h"
 
-// The counter ahead of an edge value: 16 bits, so an edge update costs two bytes of payload on a
-// high-priority packet that can be sent several times a second.
+// The whole edge payload: the counter, 16 bits. Nothing follows it.
 static constexpr uint8_t SUB_EDGE_COUNTER_SIZE = 2;
 
 // The provider's own counter is 32 bits (it increments ProviderEntry::Hash). Only the low 16 cross
@@ -61,7 +67,14 @@ static inline uint16_t SubEdgeCounterLoad(const uint8_t *Src) {
 }
 static_assert(SUB_EDGE_COUNTER_SIZE == 2, "the edge counter is a u16 on the wire");
 
-// Is this trigger an edge trigger (the only kind that carries the counter)?
+// The level a counter carries: its parity. Odd = true/pressed, even = false/lifted.
+static inline bool SubEdgeLevel(uint16_t Counter) { return (Counter & 1u) != 0; }
+
+// The same level as the single byte a Bool target takes (the only thing that may be written to the
+// target: the counter itself never is).
+static inline uint8_t SubEdgeLevelByte(uint16_t Counter) { return SubEdgeLevel(Counter) ? 1 : 0; }
+
+// Is this trigger an edge trigger (the only kind whose payload is the counter)?
 // A range test, not three equalities: it is called at every provider send and on both ends, and the
 // enum's edge values are contiguous (pinned below).
 static inline bool SubTriggerIsEdge(TriggerType Trigger) {
@@ -71,6 +84,24 @@ static inline bool SubTriggerIsEdge(TriggerType Trigger) {
 static_assert((uint8_t)TriggerType::EdgeRising == 4 && (uint8_t)TriggerType::EdgeFalling == 5 &&
                   (uint8_t)TriggerType::EdgeAny == 6,
               "SubTriggerIsEdge is a range test: the edge triggers must stay contiguous");
+
+// What one Bool sample means to an edge-triggered provider entry.
+struct SubEdgeStep {
+    bool Counted; // the level changed: the counter advances (its parity is the level)
+    bool Due;     // ...and this change is one the trigger sends
+};
+
+// Classifies one sample against the previous one. EVERY level change is counted (see the header
+// comment: parity is the level); the trigger only decides whether this particular change is one to
+// send - a rising subscription is told about a press and not about its release, and still counts
+// both, because the next press has to arrive on an odd counter.
+static inline SubEdgeStep SubEdgeClassify(TriggerType Trigger, bool Now, bool Prev) {
+    if (Now == Prev) return SubEdgeStep{false, false};
+    const bool Due = (Trigger == TriggerType::EdgeRising)  ? Now
+                   : (Trigger == TriggerType::EdgeFalling) ? !Now
+                                                           : (Trigger == TriggerType::EdgeAny);
+    return SubEdgeStep{true, Due};
+}
 
 
 #ifdef USE_SUB_REQUEST
@@ -93,29 +124,27 @@ enum class SubEdgeKind : uint8_t {
 // and replaying 32k presses into a target on successive passes would be worse than saying so.
 static constexpr uint16_t SUB_EDGE_RESYNC_DELTA = 0x8000u;
 
-// How many missing edges a row will replay. One per pass, so this is also the longest the target
-// stays "catching up"; a larger gap is still logged with its true size (Missing), just capped here
-// so the debt cannot wrap (uint8) or turn into thousands of passes.
+// How many edge levels a row will still deliver. One per pass, so this is also the longest the
+// target stays "catching up"; a larger gap is still logged with its true size (Missing), just
+// capped here so the debt cannot wrap (uint8) or turn into thousands of passes.
 static constexpr uint8_t SUB_EDGE_PENDING_MAX = 255;
-
-// The value bytes kept for a replay. Edge triggers are Bool-only in the docs, so 1 byte covers
-// every documented case; the margin is for a provider entry that set an edge trigger on something
-// wider. A wider value still updates the target - it just cannot be replayed, and the gap is
-// logged as dropped instead.
-static constexpr uint8_t SUB_EDGE_REPLAY_VALUE_MAX = 4;
 
 // One row's edge accounting. Transient: it is NOT part of the 28 B requester wire entry and NOT
 // part of the 24 B `.SUBREQ` file entry (like SubRequesterLease), so every boot, recall and set
 // starts it fresh - which is exactly the reset rule the counter needs.
+//
+// The debt is a WALK, not a retained value: `ReplayNext` is the counter whose level the next pass
+// writes and `Pending` how many levels are still owed, so the last write is always the level of
+// `Last` (the newest counter). That invariant is what keeps the target true: the level is parity,
+// so a walk that stopped early would leave the target on the wrong side.
 struct SubEdgeState {
-    uint16_t Last = 0;      // the counter this row has accounted up to
-    uint16_t Missing = 0;   // size of the newest gap (delta - 1); 0 unless the last arrive was a gap
-    uint8_t Pending = 0;    // missing edges still owed to the target (saturating, one per pass)
+    uint16_t Last = 0;       // the counter this row has accounted up to
+    uint16_t Missing = 0;    // size of the newest gap (delta - 1); 0 unless the last arrive was a gap
+    uint16_t ReplayNext = 0; // the next counter whose level the replay writes
+    uint8_t Pending = 0;     // edge levels still owed to the target (saturating, one per pass)
     bool HaveBaseline = false;
-    bool Report = false;    // the last arrive opened a gap/resync episode: log it (once per episode)
-    bool Episode = false;   // a gap episode is open (cleared when the debt is paid or given up)
-    uint8_t ValueLen = 0;   // retained value bytes (0 = nothing to replay with)
-    uint8_t Value[SUB_EDGE_REPLAY_VALUE_MAX] = {};
+    bool Report = false;     // the last arrive opened a gap/resync episode: log it (once per episode)
+    bool Episode = false;    // a gap episode is open (cleared when the debt is paid or given up)
 
     // A fresh row (install, recall, a new set): no baseline, no debt. The next counter is taken as
     // the zero point instead of being compared against a counter from before the row existed.
@@ -130,6 +159,7 @@ struct SubEdgeState {
     // Takes `Counter` as the new zero point: an answered (re-)registration, or a resync.
     void Rebaseline(uint16_t Counter) {
         Last = Counter;
+        ReplayNext = Counter;
         HaveBaseline = true;
         Pending = 0;
         Missing = 0;
@@ -161,39 +191,47 @@ struct SubEdgeState {
             return SubEdgeKind::Resync;
         }
         Last = Counter;
-        if (Delta == 1) return SubEdgeKind::Next;
-        // n-1 edges were never seen: the update itself delivers the n-th.
+        if (Delta == 1) {
+            // The normal case. A walk still catching up takes this edge as its last step (one level
+            // per pass, oldest first) instead of the caller writing it out of order.
+            if (Pending) {
+                if (Pending < SUB_EDGE_PENDING_MAX) Pending = (uint8_t)(Pending + 1);
+                else ReplayNext++; // full: drop the OLDEST owed level, the walk must still end here
+            }
+            return SubEdgeKind::Next;
+        }
+        // A gap: the whole run is owed, from the first counter that was never seen up to this one.
+        // n-1 edges were never seen (Missing, for the log), and the update's own edge is the last
+        // level the walk writes.
         Missing = (uint16_t)(Delta - 1);
-        const uint32_t Total = (uint32_t)Pending + Missing;
-        Pending = (uint8_t)(Total > SUB_EDGE_PENDING_MAX ? SUB_EDGE_PENDING_MAX : Total);
+        if (!Episode) ReplayNext = (uint16_t)(Counter - Delta + 1);
+        const uint32_t Total = (uint32_t)Pending + Delta;
+        if (Total > SUB_EDGE_PENDING_MAX) {
+            // Capped: drop from the FRONT of the debt so the walk still ends on `Counter` and the
+            // target's last level is the one this update carries.
+            ReplayNext = (uint16_t)(Counter - (SUB_EDGE_PENDING_MAX - 1));
+            Pending = SUB_EDGE_PENDING_MAX;
+        } else {
+            Pending = (uint8_t)Total;
+        }
         Report = !Episode; // one line per episode, not one per lost packet
         Episode = true;
         return SubEdgeKind::Gap;
     }
 
-    // Keeps the value bytes a replay re-delivers. False when they cannot be kept (no value, or one
-    // wider than the buffer): the gap can then only be logged, never delivered.
-    bool Retain(const uint8_t *Val, uint8_t Vlen) {
-        if (Vlen == 0 || Vlen > SUB_EDGE_REPLAY_VALUE_MAX || !Val) {
-            ValueLen = 0;
-            return false;
-        }
-        memcpy(Value, Val, Vlen);
-        ValueLen = Vlen;
-        return true;
-    }
+    // The level the next replay writes: parity of the counter the walk has reached.
+    uint8_t ReplayLevel() const { return SubEdgeLevelByte(ReplayNext); }
 
-    bool CanReplay() const { return ValueLen != 0; }
-
-    // One replay was delivered to the target (the caller does the write). Paying the last one closes
+    // One level was written to the target (the caller does the write). Paying the last one closes
     // the episode, so a later gap logs again.
     void OnReplayed() {
-        if (Pending) Pending--;
-        if (!Pending) Episode = false;
+        if (!Pending) return;
+        ReplayNext++;
+        if (--Pending == 0) Episode = false;
     }
 
-    // A replay cannot be delivered (no value was retained, or the target refused the write): say
-    // what is being given up and close the episode. Returns the number of edges dropped.
+    // The target cannot take the walk (its register no longer resolves, the field is read-only): say
+    // what is being given up and close the episode. Returns the number of levels dropped.
     uint8_t GiveUp() {
         const uint8_t Lost = Pending;
         Pending = 0;
@@ -208,9 +246,7 @@ struct SubEdgeState {
 // ---------------------------------------------------------------------------
 static constexpr char SUB_EDGE_TAG[] = "SUB";
 static constexpr char SUB_EDGE_GAP_FMT[] =
-    "TRID %04X prov %04X: gap of %u edges (counter %u -> %u), %s";
-static constexpr char SUB_EDGE_GAP_REPLAY[] = "replaying";
-static constexpr char SUB_EDGE_GAP_DROPPED[] = "target cannot take a replay, dropped";
+    "TRID %04X prov %04X: gap of %u edges (counter %u -> %u), one level per pass";
 static constexpr char SUB_EDGE_RESYNC_FMT[] =
     "TRID %04X prov %04X: counter went back (%u -> %u), provider restarted, baseline resynced";
 static constexpr char SUB_EDGE_DROP_FMT[] =
@@ -222,9 +258,9 @@ static constexpr unsigned SUB_EDGE_TEXT_MAX = 128;
 
 // Formats a gap line (returns the length snprintf produced, so Len >= Size means it was truncated).
 static inline unsigned SubFormatEdgeGap(char *Dst, unsigned Size, uint16_t Trid, uint16_t ProviderAddr,
-                                        unsigned From, unsigned To, unsigned Missing, bool Replaying) {
+                                        unsigned From, unsigned To, unsigned Missing) {
     int Len = snprintf(Dst, Size, SUB_EDGE_GAP_FMT, (unsigned)Trid, (unsigned)ProviderAddr, Missing,
-                       From, To, Replaying ? SUB_EDGE_GAP_REPLAY : SUB_EDGE_GAP_DROPPED);
+                       From, To);
     return (Len < 0) ? Size : (unsigned)Len;
 }
 
@@ -235,7 +271,7 @@ static inline unsigned SubFormatEdgeResync(char *Dst, unsigned Size, uint16_t Tr
     return (Len < 0) ? Size : (unsigned)Len;
 }
 
-// Formats the line a give-up emits: the replay could not be delivered and this many edges are lost.
+// Formats the line a give-up emits: the walk could not be delivered and this many edges are lost.
 static inline unsigned SubFormatEdgeDrop(char *Dst, unsigned Size, uint16_t Trid, uint16_t ProviderAddr,
                                          unsigned Counter, unsigned Missing) {
     int Len = snprintf(Dst, Size, SUB_EDGE_DROP_FMT, (unsigned)Trid, (unsigned)ProviderAddr, Counter, Missing);

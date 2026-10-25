@@ -154,11 +154,12 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
             // register does not resolve (yet).
             //
             // For an edge trigger this answer stays VALUE-ONLY - it does not carry the edge counter
-            // that a push does. It is the row's answer, so the requester takes it as the moment to
-            // forget its baseline (SubscriptionsRequester.h): the next push becomes the zero point.
-            // Two reasons: the answer is not a press, so there is no gap to account for around it;
-            // and it is the whole DAS flash difference - counter-plus-value here cost ~120 B on a
-            // part with 68 B free, while the value-only answer keeps the documented payload.
+            // that a push does (a push is exactly the 2-byte counter). It is the row's answer, so
+            // the requester takes it as the moment to forget its baseline (SubscriptionsRequester.h):
+            // the next push becomes the zero point. The answer is not a press, so there is no gap to
+            // account for around it, and it gives the row the source's current level at install - and
+            // it is the whole DAS flash difference, since carrying the counter here too cost ~120 B
+            // on a part with well under a hundred free.
             {
                 FieldResult Cur = SubscriptionsGetField(Table.SourceReg);
                 if (Cur.Data) {

@@ -133,12 +133,12 @@ inline bool SubscriptionsService::ApplyRequesterValue(RequesterEntry *Entry, con
     return true;
 }
 
-// An edge-triggered update: the counter says which press this is, so a press that never arrived can
-// be accounted for instead of vanishing. The classification and its baselines live in
-// SubscriptionsEdge.h (host-tested); this is the device half - log once per episode, apply the
-// value the update carried, and owe the missing presses to the target (the replay pass delivers
+// An edge-triggered update: the counter IS the payload and its parity is the level, so a press that
+// never arrived can be accounted for instead of vanishing. The classification and the replay walk
+// live in SubscriptionsEdge.h (host-tested); this is the device half - log once per episode, write
+// the level this counter implies, and owe the missing edges to the target (the replay pass delivers
 // them, one per pass, from SubscriptionsTick).
-inline void SubscriptionsService::ApplyRequesterEdge(RequesterEntry *Entry, uint16_t Counter, const uint8_t *Val, uint8_t Vlen) {
+inline void SubscriptionsService::ApplyRequesterEdge(RequesterEntry *Entry, uint16_t Counter) {
     // A push that arrives while an install/keepalive is still unanswered is the first thing the row
     // has heard since it (re-)registered: whatever counter it carries is the row's zero point, not a
     // comparison. A node that rebooted and pushes before answering its install would otherwise hand
@@ -147,35 +147,38 @@ inline void SubscriptionsService::ApplyRequesterEdge(RequesterEntry *Entry, uint
     const uint16_t From = Entry->Edge.Last;
     const SubEdgeKind Kind = Entry->Edge.Arrive(Counter, InstallAnswer);
 
+    // Every push is an answer from the provider, and keeping that bookkeeping current is what makes
+    // the 120 s deadline mean "when this row was last served" (see ApplyRequesterValue). It is done
+    // here as well because a gap writes nothing now - its levels belong to the replay walk - and the
+    // lease must not depend on whether this update had a level to write.
+    Entry->Lease.OnAnswer(DeviceStatus.UptimeMs);
+    Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
+
     // A duplicate is a verified send whose ack was lost: the press is already in the target.
     if (Kind == SubEdgeKind::Duplicate) return;
 
-    // What a replay re-delivers. Taken before the log so the line can say whether the missing edges
-    // can be delivered at all (a value too wide to keep can only be reported, not replayed).
-    const bool CanReplay = Entry->Edge.Retain(Val, Vlen);
-
     if (Entry->Edge.Report) {
         char Line[SUB_EDGE_TEXT_MAX];
-        unsigned Len = (Kind == SubEdgeKind::Resync)
-            ? SubFormatEdgeResync(Line, sizeof(Line), Entry->Trid, RequesterProviderAddr(*Entry), From, Counter)
-            : SubFormatEdgeGap(Line, sizeof(Line), Entry->Trid, RequesterProviderAddr(*Entry), From, Counter,
-                               Entry->Edge.Missing, CanReplay);
+        if (Kind == SubEdgeKind::Resync)
+            SubFormatEdgeResync(Line, sizeof(Line), Entry->Trid, RequesterProviderAddr(*Entry), From, Counter);
+        else
+            SubFormatEdgeGap(Line, sizeof(Line), Entry->Trid, RequesterProviderAddr(*Entry), From, Counter,
+                             Entry->Edge.Missing);
         DeviceLog(SUB_EDGE_TAG, "%s", Line);
     }
 
-    // The update's own value lands first (the n-th edge), then the n-1 missing ones are replayed.
-    if (!ApplyRequesterValue(Entry, Val, Vlen, false)) {
-        // The target refused the value, so it cannot take a replay either: say what is given up
-        // (the gap line above promised a replay when the value could have been kept).
-        const uint8_t Lost = Entry->Edge.GiveUp();
-        if (Lost) {
-            char Line[SUB_EDGE_TEXT_MAX];
-            SubFormatEdgeDrop(Line, sizeof(Line), Entry->Trid, RequesterProviderAddr(*Entry), Counter, Lost);
-            DeviceLog(SUB_EDGE_TAG, "%s", Line);
-        }
-        return;
+    // What may reach the target: the LEVEL as parity, one byte, never the counter as a number. With
+    // no debt the level lands now. With a gap the walk owns the target - it starts at the oldest
+    // edge that was never seen and ends on this counter, one level per pass - so writing here as
+    // well would put the levels out of order and the walk's last write is the one that must stand.
+    if (Entry->Edge.Pending == 0) {
+        const uint8_t Level = SubEdgeLevelByte(Counter);
+        // A refused write means the target register no longer resolves or its field is read-only;
+        // the target keeps its value and there is nothing a replay could do with it either. That is
+        // permanent and visible in the field itself, so it is not logged (one line per press would
+        // be spam); a debt that cannot be paid is reported by the walk, which owns the give-up.
+        (void)WriteRequesterTarget(Entry, &Level, 1);
     }
-    if (!CanReplay) Entry->Edge.GiveUp(); // reported above; nothing can be delivered
 }
 
 inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &Frame) {
@@ -196,17 +199,16 @@ inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &
     const uint16_t Len = PayloadBytes(Frame);
 
     // An edge-triggered row sees two payload shapes, and they cannot collide because a value is at
-    // least one byte (SubscriptionsEdge.h):
-    //   >= 3 bytes - a PUSH: the provider's edge counter (2) and the value behind it;
-    //   <= 2 bytes - the provider's ANSWER to "Change subscription" (Docs: "Current value"), which
-    //                carries the value alone. That is the row's answer, not a press, so it re-baselines
-    //                the counter instead of being classified: the next push becomes the zero point.
+    // least one byte and a push is exactly two (SubscriptionsEdge.h):
+    //   >= 2 bytes - a PUSH: the provider's edge counter (u16, the whole payload). The counter is
+    //                consumed here and never reaches the target; the level its parity implies is.
+    //   <  2 bytes - the provider's ANSWER to "Change subscription" (Docs: "Current value"), which
+    //                carries the value alone (for an edge row, its Bool). That is the row's answer,
+    //                not a press, so it re-baselines the counter instead of being classified: the
+    //                next push becomes the zero point.
     if (SubTriggerIsEdge(Entry->Sub.Trigger)) {
-        if (Len >= SUB_EDGE_COUNTER_SIZE + 1) {
-            // The counter is consumed here and never reaches the target: the apply below is handed
-            // the value bytes only, at their own offset and length.
-            ApplyRequesterEdge(Entry, SubEdgeCounterLoad(Frame.Payload), Frame.Payload + SUB_EDGE_COUNTER_SIZE,
-                               (uint8_t)(Len - SUB_EDGE_COUNTER_SIZE));
+        if (Len >= SUB_EDGE_COUNTER_SIZE) {
+            ApplyRequesterEdge(Entry, SubEdgeCounterLoad(Frame.Payload));
         } else {
             Entry->Edge.ResetBaseline();
             ApplyRequesterValue(Entry, Frame.Payload, (uint8_t)Len, false);
@@ -222,27 +224,30 @@ inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &
     ApplyRequesterValue(Entry, Frame.Payload, (uint8_t)Len, Confirm);
 }
 
-// Delivers the edges a gap lost, one per tick (Docs: the requester does not drop a "subscription
-// happened", it catches its target up). One per pass on purpose: the target is written once per
-// main-loop pass, so a script counting presses behind it sees each recovered press as a separate
-// pass instead of a burst it cannot count.
+// Delivers the edges a gap lost, one level per tick (Docs: the requester does not drop a
+// "subscription happened", it catches its target up). The debt is a walk over the counters that were
+// never delivered (SubEdgeState), so each pass writes the level of the next counter - parity - and
+// the last pass writes the level of the newest counter, which is what leaves the target true.
+// One per pass on purpose: the target is written once per main-loop pass, so a script counting
+// presses behind it sees each recovered press as a separate pass instead of a burst it cannot count.
 //
-// A target that cannot take a replay - the value was too wide to retain, or the write is refused
-// (the register no longer resolves, the field is read-only) - is reported and the remaining debt is
-// given up: replaying a press into a target that will not take it would retry for ever.
+// A target that cannot take a level - the register no longer resolves, the field is read-only - is
+// reported and the remaining debt is given up: replaying into a target that will not take it would
+// retry for ever.
 inline void SubscriptionsService::SubscriptionsReplayPending() {
     for (int n = 0; n < MAX_REQUESTER_SUBS; n++) {
         if (++ReplayCursor >= MAX_REQUESTER_SUBS) ReplayCursor = 0;
         RequesterEntry* Entry = &RequesterTable[ReplayCursor];
         if (!Entry->Active || Entry->Edge.Pending == 0) continue;
-        if (WriteRequesterTarget(Entry, Entry->Edge.Value, Entry->Edge.ValueLen)) {
+        const uint8_t Level = Entry->Edge.ReplayLevel();
+        if (WriteRequesterTarget(Entry, &Level, 1)) {
             Entry->Edge.OnReplayed();
             return;
         }
         const uint8_t Lost = Entry->Edge.GiveUp();
         char Line[SUB_EDGE_TEXT_MAX];
         SubFormatEdgeDrop(Line, sizeof(Line), Entry->Trid, RequesterProviderAddr(*Entry),
-                          Entry->Edge.Last, Lost);
+                          Entry->Edge.ReplayNext, Lost);
         DeviceLog(SUB_EDGE_TAG, "%s", Line);
         return;
     }

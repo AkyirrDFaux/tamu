@@ -21,9 +21,10 @@
 //                     foreign-origin flag and confirms with a hash.
 // Value updates carry the RAW value bytes (no TLFV header); the requester's confirmation
 // is the 4-byte FNV-1a hash of the received bytes.
-// An EDGE-triggered value update is the exception: it carries the provider's edge counter (u16
-// little-endian) ahead of the value, so the requester can tell a press it lost from one it never
-// got. See Core/Services/SubscriptionsEdge.h for the layout and the classification.
+// An EDGE-triggered value update is the exception: its whole payload is the provider's edge counter
+// (u16 little-endian, 2 bytes), there is no value beside it, and the level travels as its parity
+// (odd = pressed, even = lifted). See Core/Services/SubscriptionsEdge.h for the layout, the
+// classification and the replay walk.
 // The subscription TRID range (TRID_SUB_BASE..TRID_SUB_MAX) is defined in Functions/Packet.h.
 
 // Packet priorities (Docs/RSBus and Packets.md: high-priority subscriptions sit above
@@ -121,7 +122,8 @@ struct RequesterEntry {
     // The edge trigger's counter accounting (Docs: an edge update carries the provider's edge
     // counter; see SubscriptionsEdge.h). Transient like the lease, and for the same reason - it is
     // neither streamed by Get subscriptions nor written to `.SUBREQ` - so an install, a recall and
-    // a boot all start the row with no baseline to compare a counter against.
+    // a boot all start the row with no baseline to compare a counter against. Parity carries the
+    // level (odd = pressed), so this is also the row's only copy of it.
     SubEdgeState Edge;
 };
 
@@ -158,10 +160,11 @@ struct ProviderEntry {
     uint32_t LastSentMs = 0;
     uint32_t Hash = 0;           // FNV-1a hash / edge counter / last value / subresolution
     uint32_t Timeout = 0;        // local uptime deadline
-    // Transient (not serialized): last boolean sample for edge detection and the last
-    // counter value that was transmitted.
+    // Transient (not serialized): the last boolean sample for edge detection, and whether a counted
+    // level change is still owed a send (the counter itself must not be the send gate: it moves on
+    // the changes the trigger does not send as well).
     bool LastBool = false;
-    uint32_t SentCounter = 0;
+    bool EdgeDue = false;
     // Last SENT vector for a delta subscription on a Vector source (up to 3 axes); the
     // scalar delta reuses `hash` for the same purpose.
     int32_t LastVec[3] = {0, 0, 0};
