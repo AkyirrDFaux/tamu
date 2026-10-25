@@ -117,6 +117,21 @@ void main() {
       expect(_reason(DataType.bool_, [2]), contains('neither false nor true'));
     });
 
+    test('a constant with no value bytes is not the literal 0', () {
+      // A fresh editor entry (and a zero-size row in a file) carries no value.
+      for (final type in [
+        DataType.number,
+        DataType.integer,
+        DataType.uint32,
+        DataType.enum_,
+        DataType.bool_,
+        DataType.char,
+      ]) {
+        expect(_predefine(type, const []), isNull, reason: type.word);
+        expect(_reason(type, const []), contains('carries no value'));
+      }
+    });
+
     test('a BlockInfo, a container and a byte string stay constants', () {
       final blockInfo = Uint8List.fromList([0x00, 0x01, 0x02, 0xFC]);
       expect(

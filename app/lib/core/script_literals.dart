@@ -61,6 +61,11 @@ const int scriptIndexLiteralMax = 0x7FFF;
 /// either a container or a byte string whose bytes ARE its meaning, and a predefine carries a
 /// single 16-bit value.
 ScriptLiteralPredefine scriptLiteralPredefine(DataType type, Uint8List value) {
+  // A constant that declares a size but carries no value (a fresh entry in the editor, or a
+  // zero-size row in a file) has nothing to carry: it must not turn into the literal 0.
+  if (value.isEmpty) {
+    return const ScriptLiteralPredefine.keep('it carries no value');
+  }
   switch (type) {
     case DataType.blockInfo:
       return const ScriptLiteralPredefine.keep(
@@ -121,7 +126,8 @@ ScriptLiteralPredefine _numberLiteral(int raw) {
     }
     if (whole < 0) return _q88(raw, text);
     return ScriptLiteralPredefine.keep(
-      '$text is above the 16-bit Index literal limit ($scriptIndexLiteralMax)',
+      '$text is outside both literal forms '
+      '(Index 0..$scriptIndexLiteralMax, Q8.8 -128..127.99)',
     );
   }
   return _q88(raw, text);
