@@ -63,7 +63,9 @@ The Hash/Hashlike field carries one of:
 		- Retry interval (ms)
 		- Last time sent (ms), Hash
 - Rising, falling or any edge detection (high priority, `Bool` only)
-	- Counts edges and sends an update on increase.
+	- Sends an update on each edge increase; **the payload is the counter itself** (`uint16`, little-endian, = the `Hash/Hashlike` counter).
+	- **Parity is the level:** odd = currently true/pressed, even = false/lifted. A jump of `n` means `n` edges.
+	- The requester writes the derived `Bool` into the target; the counter is never stored as a value.
 	- Settings and states:
 		- Retry interval (ms)
 		- Last time sent (ms), Counter
