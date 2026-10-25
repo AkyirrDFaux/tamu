@@ -23,6 +23,12 @@ Subscriptions are stored in a sequential table, sorted by TrID.
 | Timeout             | uint32       | Local uptime; ignored by Set Subscription and not persistent |
 
 On receiving a value update, the requester finds the target register by its TrID and writes the value there if possible. The requester re-activates after boot and recalls its values from a file in [[Services/Storage]], a 1:1 copy of the table except for the timeout value. Non-requested value updates are answered with a cancel request.
+#### Renewal
+A subscription is kept alive by repeating the Set Subscription command (041x/1) with the same entry; there is no separate renewal command.
+
+- Provider side: if the entry already exists, the command extends its timeout and answers success as usual. Nothing else about the entry changes — its hash, last value, last time sent and trigger state are left untouched.
+- Requester side: it extends its own timeout when it receives a successful reply, and only then. A failed reply leaves the timeout alone.
+- A requester entry is not removed because renewals failed; it stays and is retried until a renewal succeeds or it is cancelled.
 ### Provider
 Use define `USE_SUB_PROVIDE`.
 
