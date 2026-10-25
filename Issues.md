@@ -299,21 +299,22 @@ are hardware-only.
   Gradle plugin to use compile SDK version 37.0 ... tested up to compile SDK version 36.0" (a version-range
   notice, not a failure); it disappears with an AGP upgrade, which is a separate decision.
 
-- **E48** **`Docs/Services/Subscriptions.md` does not describe an edge trigger's value update, and the
-  code now carries the counter alone with the level as its parity.** The "Inter-device Commands (040x)"
-  table still gives the Value update's response as "Current value", and the edge trigger bullet says
-  only "Counts edges and sends an update on increase" with state "Counter". Since `t_378cc55c` (owner
-  rule, Akyirr) an edge-triggered update's whole payload IS that counter - `uint16` little-endian,
-  two bytes, nothing appended - and its parity carries the level (odd = true/pressed, even =
-  false/lifted), which is what lets a requester that missed updates count the edges it never saw and
-  replay them one per pass. Two consequences the docs should state as well: the provider's counter
-  counts every level change (both directions) and the trigger only selects which changes are sent -
-  otherwise parity could not mean the level, since a rising-only counter would stay odd after the
-  release; and the 0401 answer stays value-only (the Bool), which is what keeps the two payload
-  shapes apart (a push is exactly 2 bytes, the answer is 1).
-  Proposed for the owner (Docs are Akyirr's to edit): in the 040x table, the Value update response
-  becomes "`Current value`; for an edge trigger, the edge counter (`uint16` little-endian) alone -
-  its parity is the level: odd = pressed/true, even = lifted/false", and the edge trigger bullet
-  gains: "Counts every level change, so the counter's parity is the current level, and sends on the
-  edges this trigger names. The update carries the counter alone, so a requester that missed updates
-  replays the edges it did not see, one level per pass."
+- **E48** **`Docs/Services/Subscriptions.md` leaves two edge-trigger details unstated: which changes
+  the counter counts, and that the 040x Value-update row carries two different payload shapes.** The
+  edge trigger's bullet (`Subscriptions.md:65-68`, owner-approved in `c0a0ac6`) already states the
+  counter-as-payload rule, parity-as-level, a jump of `n` = `n` edges, and that the requester stores
+  the derived `Bool` and never the counter; `t_378cc55c` implements exactly that (the whole payload is
+  the counter, `uint16` little-endian, two bytes, nothing appended; odd = true/pressed, even =
+  false/lifted). What the section does not say:
+  (a) the provider's counter counts **every** level change, in both directions, while the trigger only
+  selects which of those changes are sent - without that a reader cannot see why parity may be read as
+  the level, since a rising-only counter would stay odd after the release;
+  (b) the "Inter-device Commands (040x)" Value-update row (`Subscriptions.md:81`) gives the response as
+  "Current value" only, which does not distinguish the edge push (exactly 2 bytes, the counter) from
+  the `Change subscription` (0401) answer (1 byte, the current value, i.e. the `Bool` for an edge) -
+  the two shapes stay apart precisely because they differ in length.
+  Proposed additions, for the parent to apply with Akyirr's approval (Docs are off limits to workers),
+  leaving the existing bullet text as committed: to the edge trigger bullet, "The counter counts every
+  level change, in both directions; the trigger only selects which of those changes are sent."; and to
+  the Value-update row's response, "`Current value`; for an edge trigger, the edge counter (`uint16`
+  little-endian) alone - its parity is the level: odd = pressed/true, even = lifted/false."
