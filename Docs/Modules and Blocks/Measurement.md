@@ -9,6 +9,8 @@ A voltage divider based measurement, with reference resistor switching.
 | Filter Coefficient | 2   | P, TR | Number | EMA coefficient (0-1), applied to the raw ADC value |
 | Measured Value     | 3   | RO     | Number | -/V/kOhm/Lux/°C |
 | Current Range      | 4   | RO     | Number | kOhm |
+| Open Circuit       | 5   | RO     | `Bool` | true when the measurement is at its maximum resistance range and the input is at the upper limit of the ADC window; recomputed with every sample, and false in every other combination. |
+| Short Circuit      | 6   | RO     | `Bool` | true when the measurement is at its minimum resistance range and the input is at the lower limit of the ADC window; recomputed with every sample, and false in every other combination. |
 
 Sensor types: Raw Measurement, Raw Voltage, Raw Resistance, LDR 10K, NTC10K, NTC100K
 ### Acc & Gyr
