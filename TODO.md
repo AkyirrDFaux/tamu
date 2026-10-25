@@ -452,7 +452,10 @@ Still open:
 
 - **The per-instruction error-code catalogue** - the engine-level codes that report with instruction
   0, the codes for each instruction that can fault, and the result codes the external-facing
-  instructions return. `Pow`'s failure detail is the only one settled.
+  instructions return. `Pow`'s failure detail is the only one settled. The generic `SCRIPT_ERR_*`
+  names (1..8) are now the app's (`app/lib/core/script_errors.dart`, guarded against
+  `ScriptDefs.h`), and a fault report decodes to line + instruction + register + error name
+  (`app/lib/core/script_fault.dart`); what is still missing is a code's *meaning* per instruction.
 - **The Valu's script flash headroom** - its 16-slot registry costs ~9 KB flash to restore the tick
   path (32 788 -> 42 176, 93.6 %), parked. See `Issues.md` E29.
 - **Whether the editor pre-checks a script** against the device's free memory and slot count before
