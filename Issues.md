@@ -37,7 +37,8 @@ are hardware-only.
   actually works (USB port reset, then a single `wchisp-nightly` invocation) needs folding into it
   as an `--isp` mode so `./upload.sh boot valu` matches reality.
 - **E30** **The DAS_v0_1 size gate was a measurement, not a budget — and the documented headroom is
-  stale.** Settled 2026-10-17 (owner decision, Akyirr, via kanban `t_2143e21b`, audit `t_e1d8c148`):
+  stale.** (Headroom figure superseded 2026-10-27 by **E53**: the image now ends at `0x3df8`, 8 B
+  spare, not 112 B.) Settled 2026-10-17 (owner decision, Akyirr, via kanban `t_2143e21b`, audit `t_e1d8c148`):
   the ceiling is the physical code space, **13824 B at `0x800`-`0x3E00`**, plus **2048 B RAM** — not
   the `<= 13440 B flash / <= 2028 B RAM` pair the criterion carried from 2026-10-11 until
   2026-10-17 (`TODO.md:165` as of `e0b5df3`).
@@ -380,3 +381,29 @@ are hardware-only.
   `true` main-loop pass for each new edge of the subscribed direction (a jump of `n` = `n` passes,
   consecutive) and `false` on the following pass, so a target with no edge reads `false`. The counter
   itself is never stored as a value."
+
+- **E53** **The DAS has 8 B of flash left, so an acknowledged edge update does not fit (measured;
+  owner decision needed).** The card `t_d43718b5` ruling (2026-10-27: an edge update is confirmed
+  too, and the provider's `Hash` packs the counter low and the last confirmed counter high) is
+  implemented and host-verified, but `DAS_v0_1` cannot take it. Clean build of `463f13c`, read off
+  the linker: `.text` `0x8c0`+`0x34c4`, `.init_array` 4 B at `0x3d84`, the 112 B `.data` initialiser
+  image at LMA `0x3d88`-`0x3df7`, so **the image ends at `0x3df8` - 8 B** before the storage
+  reservation at `0x3e00`. E30's "112 B spare" is stale: the DAS image has grown 104 B since that
+  2026-10-25 measurement, which makes any DAS change over 8 B a link failure rather than a size
+  warning.
+  The implemented change costs **+68 B on the DAS** (`.text` `0x34c4` -> `0x350c`; the image would end
+  at `0x3e3c`, i.e. 60 B into the reservation: `section .fixed_data LMA [0x3e00,0x3fff] overlaps
+  section .data LMA [0x3dcc,0x3e3b]`). It is state machine, not waste - with the DAS's own flags
+  (`rv32ecxw`, `-Os`) the helpers measure 42 B (`SubEdgeAdvance`), 18 B (`SubEdgeUnacked`), 18 B
+  (`SubEdgeAnswers`) and 8 B (`SubEdgeConfirmWord`) standalone, and the two behaviour-neutral diets
+  tried both measured **0 B** (dropping the redundant 041x FAIL cases, which already fall through to
+  the same `default` reply, and the `SubscriptionsHighPriority` range test - the compiler had both).
+  Measured options, each needing the owner: cutting the **Delta trigger** from the DAS frees 208 B
+  (the change then leaves 144 B spare), cutting **OnChangePeriodic** frees 124 B (60 B spare), and
+  removing the C++ dynamic initialisation (`_GLOBAL__sub_I_DeviceStatus` 34 B + the 4 B
+  `.init_array`) frees ~38 B - not enough alone, and it is a core-type change. A state layout that
+  reuses the provider entry's 3 padding bytes (an `EdgeDue`-style flag) would cost ~20 B of code,
+  which is still over the wall and contradicts the ruling. The core has room (Tamu_v2_0A +282 B,
+  664206 -> 664488 B of its 2752512 B ota_0 window).
+  The implementation is preserved as `firmware/.pio/scratch/edge-acked-update.patch` and attached to
+  the card; it applies cleanly to `463f13c`.
