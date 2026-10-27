@@ -23,8 +23,6 @@ Subscriptions are stored in a sequential table, sorted by TrID.
 | Timeout             | uint32       | Local uptime; ignored by Set Subscription and not persistent |
 | Hash/Hashlike       | uint32       | Bookkeeping for this row, interpreted by its trigger: an **edge** trigger keeps the last **counter** it saw, the value triggers keep the last **value**. Wire only, not persisted, so a recall or a reboot starts the row with none. |
 
-> The requester's `Hash/Hashlike` never decides whether anything is sent — the requester writes the value it is handed. It records what the row has seen (the counter for an edge trigger, the last value otherwise), and it starts empty after a recall or a reboot. The provider's field is not the same thing: there it is the reference the send decision compares against (see "The Hash/Hashlike field carries one of" in the Provider section).
-
 On receiving a value update, the requester finds the target register by its TrID and writes the value there if possible. The requester re-activates after boot and recalls its values from a file in [[Services/Storage]], a 1:1 copy of the table except for the timeout value. Non-requested value updates are answered with a cancel request.
 #### Renewal
 A subscription is kept alive by repeating the Set Subscription command (041x/1) with the same entry; there is no separate renewal command.
