@@ -5,6 +5,8 @@
 #include "Core/Types/Enums.h"
 // The open/short-circuit predicate (fields 5/6), shared with the native truth-table test.
 #include "Core/Devices/MeasuringFlags.h"
+// The Raw Resistance unit transform, shared with its native window test.
+#include "Core/Devices/MeasuringResistance.h"
 
 // The ResistiveMeasure block, identical on the DAS v0.1 and the Valu v2.0: the same
 // documented fields, offsets, write triggers and schema

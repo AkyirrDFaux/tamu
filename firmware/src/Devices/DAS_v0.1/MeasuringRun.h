@@ -69,8 +69,11 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
         break;
 
     case MeasRawResistance: // kOhm: R = Rref * V / (1 - V)
+        // Divide first: Rref * In leaves Q16.16 from raw 100 up on the 330 kOhm reference and
+        // FixedMul32 does not saturate, so the product-first form published a wrapped value.
+        // See Core/Devices/MeasuringResistance.h for the transform and the ceiling clamp.
         In = MeasClampAdc(In);
-        In = RrefKohm[Range] * In / (ADCRES - In);
+        In = MeasRawResistanceKohm(In, RrefKohm[Range]);
         break;
 
     case MeasLDR10K: // lux from the GL55 CdS photoresistor (datasheet/dsh.520-084.1.pdf)

@@ -3,7 +3,7 @@
 Open items only. Resolved findings, the 2026-10-04 per-area audits and the doc-fact-check rulings
 that were applied are in the git history.
 
-Item codes: **B** = code-fix items (the 2026-10-09 fact check); **E** = the remaining open backlog items, numbered for later handling. Closed on 2026-10-15 and removed: **B11** (BLE large-reply drain fixed), **E12** (storage hooks converted to a class), **E19** (structurally requester-only), **E24** (Register string clamp documented), **E28** (no capability bit needed), **E4** (obsolete, replaced), **E22** (not needed), **E23** (fixed).
+Item codes: **B** = code-fix items (the 2026-10-09 fact check); **E** = the remaining open backlog items, numbered for later handling. Closed on 2026-10-15 and removed: **B11** (BLE large-reply drain fixed), **E12** (storage hooks converted to a class), **E19** (structurally requester-only), **E24** (Register string clamp documented), **E28** (no capability bit needed), **E4** (obsolete, replaced), **E22** (not needed), **E23** (fixed). Closed on 2026-10-27 and removed: **E54** (Raw Resistance multiplied before it divided, so every 330 kΩ reading from raw 100 up wrapped; the transform now divides first and clamps at the Q16.16 ceiling, and `firmware/test/native/meas_transform_test.cpp` pins the whole window).
 
 ## B. Code fixes still open (the document is the specification)
 
@@ -384,35 +384,6 @@ are hardware-only.
   `true` main-loop pass for each new edge of the subscribed direction (a jump of `n` = `n` passes,
   consecutive) and `false` on the following pass, so a target with no edge reads `false`. The counter
   itself is never stored as a value."
-
-- **E54** **Raw Resistance publishes a wrapped value for every reading on the 330 kΩ range above raw
-  100 counts.** `firmware/src/Devices/DAS_v0.1/MeasuringRun.h:73` computes `RrefKohm[Range] * In /
-  (ADCRES - In)`: the MULTIPLY runs first, in Q16.16, so `330.0 * In` leaves the format as soon as
-  `In >= 100` counts (330*100 = 33,000 > 32,767.999, `Core/Types/Number.h:39` FixedMul32 keeps only
-  the middle 32 bits - it does not saturate). Counts here are the CLAMPED samples the transform
-  actually sees, `MeasClampAdc` = 1..1022 - 1022 usable values, not 1023. Measured on the host with
-  the DAS flags (`-DNUMBER_ONLY_32BIT -DSCALAR_ONLY`) against exact double arithmetic: on the 330 kΩ
-  range the published value is wrong for **923 of those 1022 usable counts** - every count from raw
-  100 up (raw 100 publishes **-35.25 kΩ** where the truth is 35.75; raw 500 publishes -60.4 where the
-  truth is 315.5; the 199 % worst case is a sign flip). The 10 kΩ range is exact across the whole
-  window because 10*1022 fits, and so is the 330 Ω range apart from Q16.16 quantisation at raw 1-4
-  (values below 2 Ω), so a sensor only sees this once it is ON the 330 kΩ range: raw >= 100 there is
-  equivalent to 35.75 kΩ, and the up-step needs raw > 900 on the 10 kΩ range, i.e. more than ~73 kΩ:
-  40 kΩ -> raw 818 -> 39.902 kΩ, 50 kΩ -> raw 853 -> 50.176 kΩ, 73 kΩ -> raw 900 -> 73.171 kΩ, all
-  correct; the first wrong sensor is 74 kΩ, raw 187 on the 330 kΩ range, publishing -4.577. There
-  are two ways onto that range: above ~73 kΩ via the up-step, and - after a downward change - any
-  resistance above ~33 kΩ, because the down-step needs raw < 93 (33 kΩ at raw 93 stays; 36 kΩ sits
-  at raw 101 and is already wrong). In the second case the node cannot re-range its way back out, so
-  a sensor that descends from above 73 kΩ to anywhere in ~35.75..73 kΩ keeps publishing the wrapped
-  value for as long as the resistance holds - with no flag and no log. The same expression shape
-  exists on the Valu (`Devices/Valu_v2.0/MeasuringRun.h:79`). Fix (not applied - it changes
-  published values, so the owner decides): divide first (`Ratio = In / (ADCRES - In)`, exact and
-  <= 1022), then multiply by `RrefKohm[Range]`, saturating where the product would leave Q16.16
-  (the ceiling is 32,767 kΩ, i.e. raw >= 1013 on the 330 kΩ range). Verified on the host with the
-  same probe: that form is exact for all 1022 usable counts on the 330 kΩ range and saturates only
-  the 10 counts whose true value is above the format's ceiling. A `test/native` case for the
-  transform would have caught this: `meas_rail_test.cpp` covers only the rail flags, so nothing
-  exercises the unit transforms.
 
 - **E55** **The ADC is clocked at 24 MHz, above the 14 MHz the CH32 ADC allows - and the `t_1e134fcc`
   diet removed the only code that could have reported it.** `Devices/DAS_v0.1/Measuring.h:69-108`

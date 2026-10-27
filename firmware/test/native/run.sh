@@ -20,6 +20,8 @@
 #                     resets the counter; the once-per-episode give-up line and its exact text -
 #                     plus a source guard that the only removal of a row is the explicit-cancel
 #                     branch of RequesterSet
+#   meas_transform_test.cpp  the Raw Resistance unit transform over the whole usable ADC window
+#                     (Core/Devices/MeasuringResistance.h), in both Number shapes
 #
 # The numeric core is built in three shapes: the core (64-bit) and the DAS (32-bit, no
 # Vector/Matrix) are the real targets; the third - 32-bit *with* Vector/Matrix - is a
@@ -642,6 +644,17 @@ echo
 
 echo "### native measurement rail-flag tests (open/short truth table + locked offsets/entries)"
 build_run "measrail" "meas_rail_test.cpp"
+echo
+
+# t_156125fc: the Raw Resistance unit transform. Built in both Number shapes because the defect it
+# pins (multiply-before-divide in Q16.16) wraps in the DAS's 32-bit FixedMul32 path AND in the
+# core's 64-bit one - the wrap happens in the assignment back to int32, not in the multiply helper.
+echo "### native raw-resistance transform tests (window 1..1022 x 3 references, DAS 32-bit shape)"
+build_run "meastransform_das" "meas_transform_test.cpp" -DNUMBER_ONLY_32BIT -DSCALAR_ONLY
+echo
+
+echo "### native raw-resistance transform tests (same contract, 64-bit Number shape)"
+build_run "meastransform_core" "meas_transform_test.cpp"
 echo
 
 exit $fail

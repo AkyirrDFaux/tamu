@@ -75,8 +75,10 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
         break;
 
     case MeasRawResistance: // kOhm: R = Rref * V / (1 - V)
+        // Same transform as the DAS, and the same defect in the product-first form: divide
+        // first, then multiply under the Q16.16 ceiling clamp (Core/Devices/MeasuringResistance.h).
         In = MeasClampAdc(In);
-        In = RrefKohm * In / (ADCRES - In);
+        In = MeasRawResistanceKohm(In, RrefKohm);
         break;
 
     case MeasLDR10K: // lux, GL55 CdS photoresistor (gamma ~0.6, R10K calibration)
