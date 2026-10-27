@@ -403,7 +403,15 @@ are hardware-only.
   before `ADC_Init` -> 12 MHz, inside the limit, and it doubles the sample window (73 ADCCLK = 6.1 us
   instead of 3.0 us), which is the right direction for the 330 kΩ range's source impedance. Cost:
   ~10 B of flash for the read-modify-write (456 B spare). Nothing here can be measured without the
-  two nodes, which cannot be attached to the programmer.
+  the two nodes cannot be attached to the programmer.
+  **FIXED in code (`t_26e15feb`, owner-approved 2026-10-27):** `MeasuringInit()` now calls
+  `RCC_ADCCLKConfig(RCC_PCLK2_Div4)` before `ADC_Init`. The built image shows the read-modify-write
+  (`2f08 lw a5,4(s0)` / mask `0xFFFF07FF` / `or a5,a5,s1` with `s1 = 0x4000` / `sw a5,4(s0)`), i.e.
+  bit 14 set = ADCPRE `01` = PCLK2/4 = **12 MHz**. Measured cost: **+40 B** of flash (`0x3C60` ->
+  `0x3C88`), leaving 376 B spare; the image is now `0x3C70` / 13424 B of 13824 after E56, **400 B
+  spare** (not 456 - read the ELF, not an earlier note). Conversion window is now 73/12 MHz = 6.08 us
+  (was 3.04) and TCONV = (73 + 11)/12 MHz = 7.0 us (was 3.5). Still unproven on hardware: an
+  over-clocked ADC and a settling window both need a real divider on a measuring node.
 
 - **E56** **The rail flags (fields 5/6) are computed from the EMA output, so a heavy Filter
   Coefficient hides a rail for seconds.** `Devices/DAS_v0.1/MeasuringRun.h:117-118` passes
@@ -415,4 +423,9 @@ are hardware-only.
   samples (~30 s) - long after the value has railed, and symmetric on recovery. Fix (not applied):
   pass `Number(Raw)`; `test/native/run.sh:600-606` pins the literal `FilteredRaw` argument, so that
   guard has to move with it. Behaviour change at FilterCoeff < 1, so it is the owner's call.
+  **FIXED in code (`t_26e15feb`, owner-approved 2026-10-27):** both call sites pass `Number(Raw)`;
+  the `run.sh` guard now pins that literal AND fails if `FilteredRaw` reaches either predicate
+  (negative control: reverting the two lines fails all three assertions). It also **shrank** the
+  image by 16 B (`0x3C60` -> `0x3C50`, measured alone), so with E55 the net is +16 B / 400 B spare.
+  Still unproven on hardware: a real open and a real short on the two measuring nodes.
 
