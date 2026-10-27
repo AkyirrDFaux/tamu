@@ -403,7 +403,7 @@ are hardware-only.
   before `ADC_Init` -> 12 MHz, inside the limit, and it doubles the sample window (73 ADCCLK = 6.1 us
   instead of 3.0 us), which is the right direction for the 330 kΩ range's source impedance. Cost:
   ~10 B of flash for the read-modify-write (456 B spare). Nothing here can be measured without the
-  the two nodes cannot be attached to the programmer.
+  two nodes, which cannot be attached to the programmer.
   **FIXED in code (`t_26e15feb`, owner-approved 2026-10-27):** `MeasuringInit()` now calls
   `RCC_ADCCLKConfig(RCC_PCLK2_Div4)` before `ADC_Init`. The built image shows the read-modify-write
   (`2f08 lw a5,4(s0)` / mask `0xFFFF07FF` / `or a5,a5,s1` with `s1 = 0x4000` / `sw a5,4(s0)`), i.e.
@@ -429,3 +429,40 @@ are hardware-only.
   image by 16 B (`0x3C60` -> `0x3C50`, measured alone), so with E55 the net is +16 B / 400 B spare.
   Still unproven on hardware: a real open and a real short on the two measuring nodes.
 
+- **E57** **The Valu ADC was clocked at 72 MHz - 5.1x the 14 MHz `fADC` maximum - because neither
+  prescaler on its measuring path was ever programmed.** `Devices/Valu_v2.0/Measuring.h`'s
+  `MeasuringInit()` enabled `ADC1` (`RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA |
+  RCC_APB2Periph_ADC1, ENABLE)`, line 44) and never wrote the ADC clock: no `RCC_ADCCLKConfig` and
+  no `RCC_PCLK2Config` call existed in the Valu env at any point before `a131de9` (both symbols first
+  appear in that commit, `git log -S` on `Devices/Valu_v2.0/`). Both fields therefore sat at their
+  reset values - the framework's `SetSysClock` paths all OR in
+  `RCC_PPRE2_DIV1` (`System/ch32v20x/system_ch32v20x.c`, every branch), so `PPRE2` = `000` = HCLK/1
+  -> **PCLK2 = 144 MHz**, and `ADCPRE` = `00` = PCLK2/2 (`ADCPrescTable[4] = {2,4,6,8}`,
+  `Peripheral/ch32v20x/src/ch32v20x_rcc.c:72`) -> **ADCCLK = 72 MHz** against the part's 14 MHz
+  ceiling (`datasheet/CH32V203.pdf` Table 4-27 ADC characteristics, `fADC` max 14 MHz; `CH32VRM.pdf`
+  "ADC clock shall not exceed 14MHz at most"). Unlike the DAS case (E55) the `/8` tap alone cannot
+  fix it: the v20x divider only offers /2,/4,/6,/8, so from a 144 MHz PCLK2 the slowest tap is still
+  **18 MHz**, 4 MHz over the rating. The APB2 prescaler has to move as well, so every conversion the
+  Valu measuring path has made so far ran 5x over spec.
+  **FIXED in code (`a131de9`, reviewed on `t_b4d0623d` 2026-10-27):** `MeasuringInit()` now calls
+  `RCC_PCLK2Config(RCC_HCLK_Div2)` then `RCC_ADCCLKConfig(RCC_PCLK2_Div8)` immediately before
+  `ADC_Init`/`ADC_Cmd` (`Measuring.h:80-81`), i.e. `PPRE2` = `100` -> PCLK2 **72 MHz** and `ADCPRE` =
+  `11` -> ADCCLK **9 MHz**. The image confirms both writes and their order: the `CFGR0`
+  read-modify-write sits at `0x9634`-`0x9650` (mask `0xFFFFC7FF` then `or 0x2000` for PPRE2; mask
+  `0xFFFF3FFF` then `or 0xC000` for ADCPRE, matching `CFGR0_PPRE2_Reset_Mask` /
+  `CFGR0_ADCPRE_Reset_Mask` in the SPL), and the first `ADC1` access (`0x40012400`) follows at
+  `0x9652`. What the PPRE2 halving does not cost: `TIM1CLK` stays `2 x PCLK2` = **144 MHz** whenever
+  the APB2 prescaler is not 1 (clock tree, "if(APB2 prescaler=1) *1 else *2"), so the period `PWM.h`
+  derives from `SystemCoreClock` (= HCLK = 144 MHz) still matches the fan timer; HCLK, SysTick and
+  `USBCLK` (from the PLL) are untouched. It does cost APB2 register accesses 2 HCLK cycles instead
+  of 1 - APB2 users here are only GPIOA/GPIOB/TIM1/ADC1, none of them bandwidth-bound. Timing at
+  9 MHz: the 239.5-cycle sample window is 26.6 us, TCONV = 250.5/9 = 27.8 us, all three channels in
+  one pass ~83 us (8.3 % CPU at the 1000 Hz Sampling Rate clamp), and `ADC_EOC_TIMEOUT_CYCLES`
+  counts HCLK cycles, so the timeout is unaffected. Cost **+36 B** of flash: `43124` -> `43160` of
+  `45056` (`.text` `0xa5dc` -> `0xa600`, bin `43128` -> `43164`, image end `0xD878` -> `0xD89C`,
+  1892 B spare), RAM unchanged at `18116`/`20480`. Those figures come from the reviewed build on
+  `t_b4d0623d` (fixed image against a control build of `a131de9^`), not from a build made for this
+  entry. **No hardware proof exists:** nothing has been flashed on the Valu board and HIL has not
+  been run, so neither the 9 MHz conversion accuracy nor the unchanged fan PWM has been observed on
+  the rig - that needs a real divider on a measuring node, and the fan PWM compared against the
+  pre-fix build.
