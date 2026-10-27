@@ -185,13 +185,16 @@ struct ProviderEntry {
     uint16_t Trid = 0;
     SubscriptionTable Sub;
     uint32_t LastSentMs = 0;
-    uint32_t Hash = 0;           // FNV-1a hash / edge counter / last value / subresolution
+    // Per trigger: FNV-1a hash / last value / subresolution pack, and for an EDGE trigger the packed
+    // counter - low 16 bits the local counter (the update's payload), high 16 bits the last counter
+    // the requester confirmed, so `high != low` IS "an edge update is unacknowledged and must be
+    // re-sent" (SubscriptionsEdge.h, SubEdgeAdvance/SubEdgeConfirm). That replaced the old EdgeDue
+    // flag, which was cleared at the send and therefore dropped a lost edge update.
+    uint32_t Hash = 0;
     uint32_t Timeout = 0;        // local uptime deadline
-    // Transient (not serialized): the last boolean sample for edge detection, and whether a counted
-    // level change is still owed a send (the counter itself must not be the send gate: it moves on
-    // the changes the trigger does not send as well).
+    // Transient (not serialized): the last boolean sample for edge detection. The send state of an
+    // edge row lives in `Hash` above, so there is no second flag to keep in step with it.
     bool LastBool = false;
-    bool EdgeDue = false;
     // Last SENT vector for a delta subscription on a Vector source (up to 3 axes); the
     // scalar delta reuses `hash` for the same purpose.
     int32_t LastVec[3] = {0, 0, 0};

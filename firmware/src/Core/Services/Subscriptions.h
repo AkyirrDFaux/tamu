@@ -44,7 +44,7 @@ private:
     ProviderEntry* ProviderInstall(uint16_t Trid, uint16_t RequesterAddr,
                                    const SubscriptionTable &Table, bool Reset = false);
     void HandleProviderConfirmation(const PacketFrame &Frame);
-    uint8_t ProviderEdgePayload(uint32_t Counter);
+    uint8_t ProviderEdgePayload(uint16_t Counter);
     uint32_t SubscriptionsDeltaHash(const FieldResult &Fr, uint32_t Deadzone);
     uint32_t SubscriptionsAbsDelta(int32_t NowMs, int32_t Last);
     bool SubscriptionsIsScalar(const FieldResult &Fr);
@@ -81,6 +81,7 @@ private:
     bool WriteRequesterTarget(RequesterEntry *Entry, const uint8_t *Val, uint8_t Vlen);
     bool ApplyRequesterValue(RequesterEntry *Entry, const uint8_t *Val, uint8_t Vlen, bool Confirm);
     void ApplyRequesterEdge(RequesterEntry *Entry, uint16_t Counter);
+    void SubscriptionsConfirmEdge(RequesterEntry *Entry, uint16_t Counter);
     void HandleRequesterValueUpdate(const PacketFrame &Frame);
     // The edge targets' pulse, once per main-loop pass: one TRUE per edge owed, then the FALSE that
     // closes it. Whole table, no cursor - every row with a pulse gets its pass in the same loop.

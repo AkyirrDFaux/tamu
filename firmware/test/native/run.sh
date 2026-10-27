@@ -159,6 +159,10 @@ echo "### native edge-counter tests (the counter IS the payload, parity is the c
 build_run "edgecounter" "edge_counter_test.cpp" -DUSE_SUB_REQUEST
 echo
 
+echo "### native edge-ack tests (an edge update is confirmed; an unacked counter is re-sent, not dropped)"
+build_run "edgeack" "edge_ack_test.cpp" -DUSE_SUB_REQUEST
+echo
+
 echo "### native renewal-contract tests (a renewal extends the timeouts and nothing else)"
 build_run "renewal" "renewal_test.cpp" -DUSE_SUB_REQUEST
 echo
@@ -303,6 +307,56 @@ fi
 # The pulse has to be driven from the main loop, one pass at a time.
 if ! grep -q 'SubscriptionsPulseTargets();' "$CTL_SRC"; then
     echo "FAIL $CTL_SRC: Tick must run the edge pulse"
+    edge_guard_fail=1
+fi
+# t_d43718b5, structural half: an edge update is ACKNOWLEDGED (owner ruling, 2026-10-27), and the
+# sites that send it, decide to re-send it and confirm it are device-side, so the facts are asserted
+# on the source:
+#   - the send is tagged FLAG_REQACK for an edge trigger as well as for a confirm trigger;
+#   - the provider's edge row counts through SubEdgeAdvance and decides a send through
+#     SubEdgeUnacked (the packed word: counter low, last confirmed counter high) - exactly once each,
+#     so nothing can count or gate behind the helpers' back;
+#   - the old EdgeDue flag is gone everywhere: it was cleared AT the send, which is what dropped a
+#     lost update;
+#   - the confirmation of an edge row goes through SubEdgeAnswers (only the counter it answers is
+#     confirmed) instead of overwriting the packed word with a hash;
+#   - the requester confirms an edge PUSH with the counter it received (SubscriptionsConfirmEdge),
+#     gated on FLAG_REQACK, and does it for a duplicate too - a duplicate is a re-send whose earlier
+#     ack was lost.
+if [ "$(grep -c 'if (Entry->Sub.Trigger == TriggerType::OnChangeConfirm || Edge) Flags |= FLAG_REQACK;' "$PROV_SRC")" != 1 ]; then
+    echo "FAIL $PROV_SRC: an edge update must ask for a confirmation (FLAG_REQACK)"
+    edge_guard_fail=1
+fi
+if [ "$(grep -c 'SubEdgeAdvance' "$PROV_SRC")" != 1 ]; then
+    echo "FAIL $PROV_SRC: the edge counter must advance through SubEdgeAdvance (once)"
+    edge_guard_fail=1
+fi
+if [ "$(grep -c 'SubEdgeUnacked' "$PROV_SRC")" != 1 ]; then
+    echo "FAIL $PROV_SRC: the send must be gated on SubEdgeUnacked (once)"
+    edge_guard_fail=1
+fi
+if [ "$(grep -rc '\.EdgeDue\|bool EdgeDue' src --include=*.h | grep -vc ':0$')" != 0 ]; then
+    echo "FAIL: EdgeDue is gone - a send state cleared at the send is what dropped a lost edge update"
+    edge_guard_fail=1
+fi
+if [ "$(grep -c 'SubEdgeAnswers(Entry->Hash, Answer)' "$PROV_SRC")" != 1 ]; then
+    echo "FAIL $PROV_SRC: an edge confirmation must be matched with SubEdgeAnswers (once)"
+    edge_guard_fail=1
+fi
+if [ "$(grep -c 'SubEdgeConfirmWord' "$PROV_SRC")" != 1 ]; then
+    echo "FAIL $PROV_SRC: the same-device send must be confirmed locally (SubEdgeConfirmWord, once)"
+    edge_guard_fail=1
+fi
+if [ "$(grep -c 'FLAG_REQACK) SubscriptionsConfirmEdge(Entry, Counter)' "$REQ_SRC")" != 1 ]; then
+    echo "FAIL $REQ_SRC: an edge push must be acknowledged when the provider asks for it"
+    edge_guard_fail=1
+fi
+if [ "$(grep -c 'SubscriptionsConfirmEdge(RequesterEntry' "$REQ_SRC")" != 1 ]; then
+    echo "FAIL $REQ_SRC: the edge acknowledgement must exist in exactly one place"
+    edge_guard_fail=1
+fi
+if [ "$(grep -c 'SubEdgeConfirmWord(Counter)' "$REQ_SRC")" != 1 ]; then
+    echo "FAIL $REQ_SRC: the acknowledgement must carry the counter it answers"
     edge_guard_fail=1
 fi
 [ $edge_guard_fail = 0 ] && echo "PASS: counter-only payload, one target writer, the pulse driven from Tick"

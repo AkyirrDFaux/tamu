@@ -5,7 +5,8 @@
 #include "Core/Types/Enums.h"
 
 // The provider's RE-INSTALL decision: does applying a subscription table have to throw away the
-// trigger state the entry holds (LastSentMs, Hash - the edge counter - LastBool, EdgeDue, LastVec)?
+// trigger state the entry holds (LastSentMs, Hash - the edge counter with the confirmed counter in
+// its high half - LastBool, LastVec)?
 //
 // A subscription is kept alive by repeating the Set Subscription command (0401) with the same entry
 // (Docs/Services/Subscriptions.md:27, "there is no separate renewal command"), and the owner's ruling
@@ -20,7 +21,7 @@
 //   - a new entry (`NewEntry`, requesterAddr 0): there is no state to keep;
 //   - a different SOURCE register: the hash/counter/last value describe the old field;
 //   - a different TRIGGER: an edge counter and a value hash are not the same accounting, and
-//     LastBool/EdgeDue belong to the edge triggers only.
+//     LastBool belongs to the edge triggers only.
 //
 // What deliberately does NOT reset: minTime, period and deadzone. They tune WHEN a trigger sends,
 // not what the stored state means, and resetting the counter for an interval tweak would be exactly

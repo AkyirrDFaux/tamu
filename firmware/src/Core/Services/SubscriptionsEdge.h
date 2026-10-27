@@ -22,7 +22,14 @@
 //   - the counter advances once per level change, so the advance an update carries (`Delta`) is how
 //     many changes happened since the row's last counter; SubEdgeDirectionCount below says how many
 //     of those are edges of the trigger's own direction.
-//   - the payload length is exactly SUB_EDGE_COUNTER_SIZE. Nothing is appended.
+//   - payload length is exactly SUB_EDGE_COUNTER_SIZE. Nothing is appended.
+//   - the ACK (owner ruling, 2026-10-27): an edge update is confirmed too. The provider tags the push
+//     FLAG_REQACK and keeps it pending - the low 16 bits of its Hash are the counter, the high 16 the
+//     last counter the requester confirmed, so `high != low` means "unacknowledged" and the row
+//     re-sends the SAME counter at the retry interval instead of dropping it. The requester answers
+//     with the counter it received (2 bytes, no FLAG_TYPE, CID 0), and the provider confirms exactly
+//     that counter (SubEdgeConfirm below). A re-sent counter is a Duplicate at the requester and adds
+//     no pulses; see SubEdgeState::Arrive.
 //   - every other trigger keeps its payload byte-for-byte: counter-free, value from byte 0.
 //   - the ANSWER to "Change subscription" (0401) is unchanged and carries the current value alone
 //     (Docs CID 1, "Current value"); for an edge row that is its Bool, one byte. A value is at
@@ -122,6 +129,69 @@ static inline SubEdgeStep SubEdgeClassify(TriggerType Trigger, bool Now, bool Pr
                                                            : (Trigger == TriggerType::EdgeAny);
     return SubEdgeStep{true, Due};
 }
+// ---------------------------------------------------------------------------
+// THE PROVIDER'S PACKED EDGE STATE (owner ruling, 2026-10-27): an edge update must be CONFIRMED,
+// so a lost one is re-sent instead of vanishing until the next press.
+//
+// The wire counter is 16 bits while ProviderEntry::Hash is 32, so for an edge trigger that one word
+// carries both roles:
+//
+//   low 16 bits  - the local counter. It advances once per counted level change, wraps at 65536,
+//                  and its parity is the level (a wrap is an even number of steps, so parity holds).
+//   high 16 bits - the last counter the REQUESTER confirmed.
+//
+// "Unacknowledged" is then simply `high != low` and needs no extra flag: the update's payload is the
+// low half; a confirmation sets `high = low`; while the halves differ the SAME low half is re-sent
+// (a re-send never advances the counter); a new edge advances the low half, so the pending send
+// carries the higher value - one in-flight counter, not a queue.
+//
+// This REPLACES the provider's EdgeDue flag. EdgeDue meant "a counted change is still owed a send"
+// but was cleared AT THE SEND, which is exactly what made a lost edge update disappear; `high !=
+// low` states the same thing, survives the send, and clears only when the requester answers.
+//
+// Nothing here may be applied to a non-edge trigger: those keep the field they always had (last
+// sent value, FNV-1a hash, subresolution pack), so every use below is gated on SubTriggerIsEdge.
+static inline uint16_t SubEdgeLowHalf(uint32_t Packed) { return (uint16_t)(Packed & 0xFFFFu); }
+static inline uint16_t SubEdgeHighHalf(uint32_t Packed) { return (uint16_t)(Packed >> 16); }
+static inline uint32_t SubEdgePackHalves(uint16_t Low, uint16_t High) {
+    return ((uint32_t)High << 16) | (uint32_t)Low;
+}
+
+// Is the newest counter still waiting for the requester's confirmation?
+static inline bool SubEdgeUnacked(uint32_t Packed) {
+    return SubEdgeLowHalf(Packed) != SubEdgeHighHalf(Packed);
+}
+
+// One counted level change. The low half always advances. The high half follows it only when the
+// row owes nothing (the halves match) AND this change is one the trigger does not send - such a
+// change produces no update at all, so it is "confirmed" by that silence. A change that is due, or
+// one that lands while a send is outstanding, leaves the high half where it is: the pending send
+// then carries the higher low half and the requester accounts for every step of it.
+static inline uint32_t SubEdgeAdvance(uint32_t Packed, bool Due) {
+    const uint16_t Low = (uint16_t)Packed;
+    const uint16_t Next = (uint16_t)(Low + 1u); // wraps at 2^16: parity still carries the level
+    // Quiet (nothing owed) and not a change the trigger sends: both halves move, so the silence is
+    // the confirmation. Otherwise only the low half does and the send is owed.
+    const bool Quiet = !Due && SubEdgeHighHalf(Packed) == Low;
+    return Quiet ? SubEdgePackHalves(Next, Next) : ((Packed & 0xFFFF0000u) | (uint32_t)Next);
+}
+
+// Is this confirmation's word the answer to the counter the row holds NOW?
+//
+// The requester answers with pack(counter, counter) - the counter it received, in both halves - so
+// the accepted answer is directly the confirmed word: `high = low`, exactly the ruling's rule. It
+// is compared first because an answer that raced a newer edge (it was in flight when that edge
+// counted) must NOT confirm the newer counter: accepting it would drop the press this scheme exists
+// to deliver, so a stale answer changes nothing and the next send carries the newer low half.
+static inline bool SubEdgeAnswers(uint32_t Packed, uint32_t Answer) {
+    return SubEdgeLowHalf(Answer) == SubEdgeLowHalf(Packed);
+}
+
+// The confirmation word a requester sends for the counter it received: the counter in both halves,
+// so an accepted answer is directly the row's confirmed state (and the self-loopback on one device
+// can confirm without a packet at all).
+static inline uint32_t SubEdgeConfirmWord(uint16_t Counter) { return SubEdgePackHalves(Counter, Counter); }
+
 
 
 #ifdef USE_SUB_REQUEST

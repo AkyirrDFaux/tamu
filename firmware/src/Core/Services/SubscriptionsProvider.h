@@ -38,11 +38,12 @@ inline void SubscriptionsService::ProviderClearEntry(ProviderEntry* Entry) {
 //
 // A RENEWAL must not reset anything (owner ruling, 2026-10-25): it is a plain 0401 with the same
 // entry, so `reset` is false on that path (SubscriptionsControl.h CID 1) and an existing entry is
-// only given the new timeout below. That keeps `Hash` (the edge counter), `LastBool`, `LastSentMs`
-// and `EdgeDue` continuous across a renewal, which is what makes a press on either side of one an
-// ordinary press instead of a re-baseline. `reset` stays true only for the explicit provider Set
-// (0421), which is a deliberate re-install. The decision itself lives in SubscriptionsProviderReset.h
-// so the host test drives the same rule instead of a structural copy of it.
+// only given the new timeout below. That keeps `Hash` (the edge counter with the confirmed counter
+// in its high half), `LastBool` and `LastSentMs` continuous across a renewal, which is what makes a
+// press on either side of one an ordinary press instead of a re-baseline. `reset` stays true only
+// for the explicit provider Set (0421), which is a deliberate re-install. The decision itself lives
+// in SubscriptionsProviderReset.h so the host test drives the same rule instead of a structural copy
+// of it.
 inline void SubscriptionsService::ProviderApply(ProviderEntry* Entry, uint16_t Trid, uint16_t RequesterAddr,
                           const SubscriptionTable &Table, bool Reset) {
     // Decided BEFORE the entry is overwritten below: it compares what the entry holds now against
@@ -58,7 +59,6 @@ inline void SubscriptionsService::ProviderApply(ProviderEntry* Entry, uint16_t T
         Entry->LastSentMs = 0;
         Entry->Hash = 0;
         Entry->LastBool = false;
-        Entry->EdgeDue = false;
         Entry->LastVec[0] = Entry->LastVec[1] = Entry->LastVec[2] = 0;
     }
 }
@@ -79,19 +79,32 @@ inline ProviderEntry* SubscriptionsService::ProviderInstall(uint16_t Trid, uint1
 // One owner of the layout on the provider side, so the push cannot drift from what the requester
 // parses. The construct call that follows passes nullptr as the payload, so it only fills the
 // header and finalizes the CRC over the bytes already in the frame.
-inline uint8_t SubscriptionsService::ProviderEdgePayload(uint32_t Counter) {
+//
+// The counter argument is the row's LOW HALF (SubEdgeLowHalf): the high half is the last confirmed
+// counter and never crosses the wire.
+inline uint8_t SubscriptionsService::ProviderEdgePayload(uint16_t Counter) {
     SubEdgeCounterStore(TxFrame.Payload, Counter);
     return SUB_EDGE_COUNTER_SIZE;
 }
 
-// The provider side of the requester's confirmation (CID 0 request): the payload is the
-// FNV-1a hash of the value the requester received; confirm-required triggers stop here.
+// The provider side of the requester's confirmation (CID 0 request). The payload is the value's
+// 32-bit word: the FNV-1a hash of the value the requester received for a value trigger, so a
+// confirm-required trigger stops here.
+//
+// An EDGE trigger is confirmed too (owner ruling, 2026-10-27). Its answer is
+// pack(counter, counter) - the counter the requester received, in both halves - so accepting it
+// IS the ruling's `high = low`. It is accepted only when it answers the counter the row holds now:
+// an answer that was in flight while a newer edge counted must not confirm that newer counter, or
+// the press it carries would be dropped (SubEdgeAnswers). An edge row that is still unacknowledged
+// simply re-sends its low half.
 inline void SubscriptionsService::HandleProviderConfirmation(const PacketFrame &Frame) {
     ProviderEntry* Entry = ProviderFindByTrid(Frame.Trid);
     if (!Entry) return;
     Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs); // a confirmation renews the lease
-    if (PayloadBytes(Frame) >= 4)
-        Entry->Hash = *reinterpret_cast<const uint32_t *>(Frame.Payload); // 4-byte aligned
+    if (PayloadBytes(Frame) < 4) return;
+    const uint32_t Answer = *reinterpret_cast<const uint32_t *>(Frame.Payload); // 4-byte aligned
+    if (!SubTriggerIsEdge(Entry->Sub.Trigger) || SubEdgeAnswers(Entry->Hash, Answer))
+        Entry->Hash = Answer;
 }
 
 // Per-value hashlike for the delta trigger: scalar -> the raw Number bits; vector ->
@@ -250,12 +263,20 @@ inline void SubscriptionsService::EvaluateProviderTriggers(uint32_t NowMs) {
             // requester would read "still pressed" from a lifted switch.
             const SubEdgeStep Step = SubEdgeClassify(Entry->Sub.Trigger, Cur, Entry->LastBool);
             Entry->LastBool = Cur;
-            if (Step.Counted) {
-                Entry->Hash++; // counter; send on an edge, not sooner than the retry interval
-                if (Step.Due) Entry->EdgeDue = true;
-            }
-            Send = Entry->EdgeDue && (Elapsed >= SubMinTime(Entry->Sub));
-            if (Send) Entry->EdgeDue = false;
+            // The low half is the counter, the high half the last confirmed counter: a counted
+            // change advances the low half, and the word stays the row's whole send state.
+            if (Step.Counted) Entry->Hash = SubEdgeAdvance(Entry->Hash, Step.Due);
+            // An update is owed exactly while the halves differ - a due change that has not been
+            // confirmed yet, or a send whose confirmation never came. It is therefore RE-SENT (the
+            // same counter, never an incremented one) at the subscription's retry interval, the
+            // edge trigger's documented "Retry interval (ms)" = minTime - the same gate the
+            // confirm-trigger repeat uses, so the two repeat paths cannot pace differently. Nothing
+            // resets the interval after a re-send, and a minTime of 0 means "every loop pass", again
+            // like the confirm path. The retries stop when the confirmation arrives (halves match),
+            // when the row is cancelled, or when the entry expires: a confirmation renews the lease
+            // and nothing else does, so a dead requester drops the provider entry after its 120 s
+            // timeout and cannot pin the row forever.
+            Send = SubEdgeUnacked(Entry->Hash) && (Elapsed >= SubMinTime(Entry->Sub));
             break;
         }
 
@@ -333,27 +354,34 @@ inline void SubscriptionsService::EvaluateProviderTriggers(uint32_t NowMs) {
                 // same counter goes in directly - the row's accounting must not depend on whether
                 // its provider happens to be on another node.
                 if (SubTriggerIsEdge(Entry->Sub.Trigger))
-                    ApplyRequesterEdge(Requester, (uint16_t)Entry->Hash);
+                    ApplyRequesterEdge(Requester, SubEdgeLowHalf(Entry->Hash));
                 else
                     ApplyRequesterValue(Requester, (const uint8_t *)Fr.Data, Vlen, false);
                 Applied = true;
             }
             if (Entry->Sub.Trigger == TriggerType::OnChangeConfirm && HavePendingHash)
                 Entry->Hash = PendingHash;
+            // The same-device requester has just received the edge counter, so the send is confirmed
+            // with no bus round trip: an ack cannot be sent to oneself, and the row must not sit
+            // unacknowledged (and re-send) because of where its provider happens to live.
+            if (SubTriggerIsEdge(Entry->Sub.Trigger))
+                Entry->Hash = SubEdgeConfirmWord(SubEdgeLowHalf(Entry->Hash));
         }
 #endif
         if (!Applied) {
             uint8_t Prio = SubscriptionsHighPriority(Entry->Sub.Trigger) ? PRIORITY_SUB_HIGH : PRIORITY_SUB_LOW;
-            // Only OnChangeConfirm repeats until acknowledged; tagging every update with
-            // FLAG_REQACK made the requester confirm triggers that never expect a reply.
+            // A confirm-required trigger and an edge trigger both repeat until the requester answers:
+            // an edge update is a press, and a press that was lost is exactly what must not vanish.
+            // (Every other trigger never expects a reply, and tagging one made the requester confirm
+            // triggers that do not.)
             uint8_t Flags = FLAG_TYPE | FLAG_START | FLAG_STOP;
-            if (Entry->Sub.Trigger == TriggerType::OnChangeConfirm) Flags |= FLAG_REQACK;
+            if (Entry->Sub.Trigger == TriggerType::OnChangeConfirm || Edge) Flags |= FLAG_REQACK;
             const uint8_t *Src = (const uint8_t *)Fr.Data;
             uint8_t Len = Vlen;
             if (Edge) {
                 // Docs: an edge-triggered value update is the edge counter (u16 little-endian,
                 // SubscriptionsEdge.h) and nothing else.
-                Len = ProviderEdgePayload(Entry->Hash);
+                Len = ProviderEdgePayload(SubEdgeLowHalf(Entry->Hash));
                 Src = nullptr; // already laid out in the frame
             }
             PacketConstruct(&TxFrame, Entry->RequesterAddr,

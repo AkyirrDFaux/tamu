@@ -208,6 +208,24 @@ inline void SubscriptionsService::ApplyRequesterEdge(RequesterEntry *Entry, uint
     // an edge target carries any more. The counter itself is never written anywhere.
 }
 
+// The requester's acknowledgement of an edge update: the counter it received, back to the provider as
+// the confirmation word (SubEdgeConfirmWord - the counter in both halves), which marks exactly that
+// counter confirmed and stops the re-send (SubscriptionsEdge.h, SubEdgeAnswers; the provider half is
+// HandleProviderConfirmation). Four bytes, the same shape the value confirmation carries (for an edge
+// row the counter IS the Hash/Hashlike a CID 0 confirmation holds, Docs/Services/Subscriptions.md),
+// and it carries WHICH counter is being answered: an answer that arrives after a newer edge counted
+// must not confirm the newer one.
+//
+// It is a request, not a response (no FLAG_TYPE), at the trigger's high priority - the same shape
+// the confirm trigger's confirmation has.
+inline void SubscriptionsService::SubscriptionsConfirmEdge(RequesterEntry *Entry, uint16_t Counter) {
+    const uint32_t Answer = SubEdgeConfirmWord(Counter);
+    PacketConstruct(&TxFrame, Entry->ProviderAddr,
+                    MakeService(ServiceType::Subscriptions, (uint8_t)SubCid::ValueUpdate), Entry->Trid,
+                    FLAG_START | FLAG_STOP, (const uint8_t *)&Answer, sizeof(Answer), PRIORITY_SUB_HIGH);
+    SendAndVerifyPacket(TxFrame);
+}
+
 inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &Frame) {
     if (!(Frame.Flags & FLAG_TYPE)) return;
     RequesterEntry* Entry = RequesterFindByTrid(Frame.Trid);
@@ -235,7 +253,16 @@ inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &
     //                one is the install, any later one is a renewal and extends the deadlines only.
     if (SubTriggerIsEdge(Entry->Sub.Trigger)) {
         if (Len >= SUB_EDGE_COUNTER_SIZE) {
-            ApplyRequesterEdge(Entry, SubEdgeCounterLoad(Frame.Payload));
+            const uint16_t Counter = SubEdgeCounterLoad(Frame.Payload);
+            ApplyRequesterEdge(Entry, Counter);
+            // An edge update is CONFIRMED too, when the provider asks for it (owner ruling,
+            // 2026-10-27): the ack echoes the counter it answers, so the provider can mark exactly
+            // that counter confirmed and stop re-sending it (SubscriptionsEdge.h, SubEdgeConfirm).
+            // It is sent for a DUPLICATE as well - a duplicate is a re-send whose earlier ack was
+            // lost, so staying silent would keep the provider repeating for ever. Gated on
+            // FLAG_REQACK like every other confirmation: a provider that does not expect a reply
+            // gets none.
+            if (Frame.Flags & FLAG_REQACK) SubscriptionsConfirmEdge(Entry, Counter);
         } else if (SubEdgeAnswer(Entry->Lease.Served()) == SubEdgeAnswerKind::Install) {
             Entry->Edge.ResetBaseline();
             ApplyRequesterValue(Entry, Frame.Payload, (uint8_t)Len, false);
