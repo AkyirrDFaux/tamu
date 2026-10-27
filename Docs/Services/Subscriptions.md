@@ -43,7 +43,7 @@ Active until cancelled; the information is not persistent on this side. The send
 | TrID                 | uint16       |                                            |
 | Subscription table   | ... 16 bytes |                                            |
 | Last time sent       | uint32       | ms in local uptime                         |
-| Hash/Hashlike        | uint32       | Last confirmed                             |
+| Hash/Hashlike        | uint32       | The reference the send decision compares against, per trigger: an **edge** trigger keeps a **counter** of counted level changes (and that counter is the update's payload), a **delta** trigger keeps the last **sent value**, and a confirm trigger keeps the **hash** of the confirmed value. Reused, not a value of its own; never written to the target. |
 | Timeout              | uint32       | Local uptime, ignored by Set Subscription  |
 
 The Hash/Hashlike field carries one of:
