@@ -83,10 +83,23 @@ void SetupRS485()
     RCC_APB2PeriphResetCmd(RCC_APB2Periph_USART1, ENABLE);
     RCC_APB2PeriphResetCmd(RCC_APB2Periph_USART1, DISABLE);
 
-    USART_InitTypeDef USART_InitStr = {0};
-    USART_InitStr.USART_BaudRate = 460800;
-    USART_InitStr.USART_Mode = USART_Mode_Tx | USART_Mode_Rx;
-    USART_Init(USART1, &USART_InitStr);
+    // USART1: 460800 8N1, TX+RX, no flow control, 16x oversampling. The SPL's USART_Init is
+    // deliberately not used: it derives the baud divisor from RCC_GetClocksFreq, whose two
+    // prescaler tables (APBAHBPrescTable + ADCPrescTable) are 36 B of the DAS's .data. The
+    // registers it would write are written here instead, from the same inputs: the struct it is
+    // given is zeroed apart from the baud rate and the mode, and USART1 was just reset above, so
+    // its clear-mask read-modify-writes reduce to these stores - same register values, same bytes.
+    // PCLK2 = HCLK = SYSCLK = 48 MHz (hsi+pll, HPRE and PPRE2 both Div1: System/ch32v00x
+    // SetSysClockTo_48MHZ_HSI), so USARTDIV = 48e6/(16*460800) = 6.5104 -> mantissa 6, fraction 8.
+    constexpr uint32_t RS485ClockHz = 48000000; // PCLK2, fixed by the build's clock configuration
+    constexpr uint32_t RS485Baud = 460800u;
+    // USARTDIV in sixteenths, rounded - the SPL's own 25x/100x arithmetic yields the same 104.
+    constexpr uint16_t RS485Brr = (uint16_t)((RS485ClockHz + RS485Baud / 2) / RS485Baud);
+    static_assert(RS485Brr == 0x68, "460800 baud at a 48 MHz PCLK2 must be BRR 0x68");
+    USART1->CTLR1 = USART_Mode_Tx | USART_Mode_Rx; // 8 data bits, no parity (both are zero)
+    USART1->CTLR2 = 0;                             // 1 stop bit
+    USART1->CTLR3 = 0;                             // no hardware flow control
+    USART1->BRR = RS485Brr;
 
     // 5. Enable Interrupts
     USART_ITConfig(USART1, USART_IT_RXNE, ENABLE); 

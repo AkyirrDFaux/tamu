@@ -44,7 +44,17 @@ static uint16_t MeasAdcRead(uint8_t Channel)
     return ADC_GetConversionValue(MEAS_ADC);
 }
 
+// Current reference range per channel. Written only by MeasSelectRange() below - including the
+// initial call from MeasuringInit() - so it needs no initialiser image and starts zeroed (.bss).
+static uint8_t MeasRange[2];
+// The range the filter history belongs to (MeasuringRun.h). Also uninitialised by design: it is
+// only read after ConvSeeded[] is true, and the sample that sets ConvSeeded stamps FiltRange
+// first (a !ConvSeeded sample re-seeds the history), so the power-on value is never observed.
+static uint8_t FiltRange[2];
+
 // Selects the reference resistor for measurement channel `index` (0 = 330R, 1 = 10k, 2 = 330k).
+// It also records the selection in MeasRange[] - the one place that state is written, so the
+// measuring loop needs no separate store and the array can live in .bss with no initialiser.
 static void MeasSelectRange(uint8_t Index, uint8_t Range)
 {
     if (Index > 1) return;
@@ -52,6 +62,7 @@ static void MeasSelectRange(uint8_t Index, uint8_t Range)
         PinHigh(RangePins[Index][RangeIndex].Port, RangePins[Index][RangeIndex].Pin);
     if (Range < 3)
         PinLow(RangePins[Index][Range].Port, RangePins[Index][Range].Pin);
+    MeasRange[Index] = Range;
 }
 
 // Configures the ADC and the range-selector GPIOs for both measurement channels.

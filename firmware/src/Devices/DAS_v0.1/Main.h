@@ -142,8 +142,12 @@ int main(void)
     uint8_t ResetCause = DasResetCauseFlags(RCC->RSTSCKR);
     RCC->RSTSCKR |= RCC_RMVF;
 
-    // Initialize system
-    SystemCoreClockUpdate();
+    // Initialize system. SystemCoreClockUpdate() is NOT needed: the clock configuration is part of
+    // the build (hsi+pll -> SYSCLK_FREQ_48MHZ_HSI, System/ch32v00x SetSysClockTo_48MHZ_HSI runs from
+    // SystemInit) and nothing reprograms RCC afterwards, so the framework's own initial value,
+    // `uint32_t SystemCoreClock = SYSCLK_FREQ_48MHZ_HSI;`, is already what the update recomputes
+    // (SWS=PLL, PLLSRC=HSI -> HSI_VALUE*2, HPRE=Div1 -> /1 = 48 MHz). Calling it cost the 16 B
+    // AHBPrescTable in .data plus the division and register reads on every boot.
     Delay_Init();
     SysTick->CTLR |= 0x05;
 

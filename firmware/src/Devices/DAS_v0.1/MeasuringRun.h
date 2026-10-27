@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Measuring.h" // MeasRange[]/FiltRange[] live there, beside MeasSelectRange()
+
 // The measurement sample loop. Split from Measuring.h (which defines the block + schema) so it
 // can address the board's static spaces directly, exactly like the other device implementations
 // included after the block instances (see Main.h).
@@ -8,8 +10,7 @@
 // the five documented fields). The RAW ADC sample is EMA-filtered; the history is re-seeded
 // whenever the auto-range switches the excitation scale.
 static Number MeasFiltered[2];
-static uint8_t MeasRange[2] = {1, 1}; // currently selected range (matches Measuring_Init)
-static uint8_t FiltRange[2] = {1, 1}; // range the filter history belongs to
+// MeasRange[]/FiltRange[] are declared in Measuring.h: MeasSelectRange() writes MeasRange[].
 static bool ConvSeeded[2] = {false, false};
 
 // Samples one measurement channel and updates the block outputs. `index` selects the
@@ -130,7 +131,6 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
     else if (Raw < RANGE_DOWN_RAW && NewRange > 0) NewRange--;
     if (NewRange != Range)
     {
-        MeasRange[Index] = NewRange;
-        MeasSelectRange(Index, NewRange);
+        MeasSelectRange(Index, NewRange); // also records NewRange in MeasRange
     }
 }

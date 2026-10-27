@@ -475,9 +475,9 @@ delivered target. No hard date.
 
 **Proposed acceptance criteria:** host gate exit 0 with zero failures; both firmware envs build with
 no size regression — for DAS the ceiling is 13824 B of code space (`0x800`-`0x3E00`) and 2048 B RAM
-(1056 B statics + 992 B stack, full by design), against a current image of 13748 B, i.e. 76 B of
+(984 B statics + 1064 B stack, full by design), against a current image of 13300 B, i.e. 524 B of
 headroom. Platformio's 14336 B denominator is the storage-inclusive App size (`0x800`-`0x4000`), not
-code space, so its 95.9 % is not a fullness figure; the image occupies 99.45 % of code space (13748
+code space, so its 92.7 % is not a fullness figure; the image occupies 96.21 % of code space (13300
 of 13824 B). The `<= 13440 B flash / <= 2028 B RAM` pair this criterion carried from
 2026-10-11 was a measurement, not a budget - see `Issues.md` E30.
 The rest: the Android APK installs and connects to the rig; the update flow completes end to end on
@@ -491,8 +491,8 @@ Open:
   section above. The older ranked fix order and its audit
   (`~/.hermes/notes/tamu-ui-audit-2026-10-08.md`) are historical: phase 1 was approved 2026-10-15,
   phase 2 is planned, phase 3 is open.
-- **Phase 5 - optimization + final verification**: DAS headroom (99.45 % of the 13824 B code space,
-  76 B left; RAM full by design), a final gate run, and the release checklist.
+- **Phase 5 - optimization + final verification**: DAS headroom (96.2 % of the 13824 B code space,
+  524 B left; RAM full by design), a final gate run, and the release checklist.
 
 ## Open work
 
