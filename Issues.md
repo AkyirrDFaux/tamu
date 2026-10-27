@@ -385,23 +385,32 @@ are hardware-only.
   consecutive) and `false` on the following pass, so a target with no edge reads `false`. The counter
   itself is never stored as a value."
 
-- **E54** **Raw Resistance publishes a wrapped value for every reading above ~35 kΩ on the 330 kΩ
-  range.** `firmware/src/Devices/DAS_v0.1/MeasuringRun.h:73` computes `RrefKohm[Range] * In /
+- **E54** **Raw Resistance publishes a wrapped value for every reading on the 330 kΩ range above raw
+  100 counts.** `firmware/src/Devices/DAS_v0.1/MeasuringRun.h:73` computes `RrefKohm[Range] * In /
   (ADCRES - In)`: the MULTIPLY runs first, in Q16.16, so `330.0 * In` leaves the format as soon as
   `In >= 100` counts (330*100 = 33,000 > 32,767.999, `Core/Types/Number.h:39` FixedMul32 keeps only
-  the middle 32 bits - it does not saturate). Measured on the host with the DAS flags
-  (`-DNUMBER_ONLY_32BIT -DSCALAR_ONLY`) against exact double arithmetic: on the 330 kΩ range the
-  published value is wrong for **924 of 1024 raw counts** (raw 100 publishes **-35.25 kΩ** where the
-  truth is 35.75; raw 500 publishes -60.4 where the truth is 315.5; the 199 % worst case is a sign
-  flip). The 10 kΩ range is exact across the whole window because 10*1022 fits. A sensor above
-  ~35 kΩ settles on the 330 kΩ range (the auto-range's raw>900 up-step) and stays there, so in Raw
-  Resistance mode it reports nonsense permanently - with no flag and no log. The same expression
-  shape exists on the Valu (`Devices/Valu_v2.0/MeasuringRun.h:79`). Fix (not applied - it changes
+  the middle 32 bits - it does not saturate). Counts here are the CLAMPED samples the transform
+  actually sees, `MeasClampAdc` = 1..1022 - 1022 usable values, not 1023. Measured on the host with
+  the DAS flags (`-DNUMBER_ONLY_32BIT -DSCALAR_ONLY`) against exact double arithmetic: on the 330 kΩ
+  range the published value is wrong for **923 of those 1022 usable counts** - every count from raw
+  100 up (raw 100 publishes **-35.25 kΩ** where the truth is 35.75; raw 500 publishes -60.4 where the
+  truth is 315.5; the 199 % worst case is a sign flip). The 10 kΩ range is exact across the whole
+  window because 10*1022 fits, and so is the 330 Ω range apart from Q16.16 quantisation at raw 1-4
+  (values below 2 Ω), so a sensor only sees this once it is ON the 330 kΩ range: raw >= 100 there is
+  equivalent to 35.75 kΩ, and the up-step needs raw > 900 on the 10 kΩ range, i.e. more than ~73 kΩ:
+  40 kΩ -> raw 818 -> 39.902 kΩ, 50 kΩ -> raw 853 -> 50.176 kΩ, 73 kΩ -> raw 900 -> 73.171 kΩ, all
+  correct; the first wrong sensor is 74 kΩ, raw 187 on the 330 kΩ range, publishing -4.577. There
+  are two ways onto that range: above ~73 kΩ via the up-step, and - after a downward change - any
+  resistance above ~33 kΩ, because the down-step needs raw < 93 (33 kΩ at raw 93 stays; 36 kΩ sits
+  at raw 101 and is already wrong). In the second case the node cannot re-range its way back out, so
+  a sensor that descends from above 73 kΩ to anywhere in ~35.75..73 kΩ keeps publishing the wrapped
+  value for as long as the resistance holds - with no flag and no log. The same expression shape
+  exists on the Valu (`Devices/Valu_v2.0/MeasuringRun.h:79`). Fix (not applied - it changes
   published values, so the owner decides): divide first (`Ratio = In / (ADCRES - In)`, exact and
   <= 1022), then multiply by `RrefKohm[Range]`, saturating where the product would leave Q16.16
   (the ceiling is 32,767 kΩ, i.e. raw >= 1013 on the 330 kΩ range). Verified on the host with the
-  same probe: that form is exact for all 1023 usable counts on the 330 kΩ range and saturates only
-  the 11 counts whose true value is above the format's ceiling. A `test/native` case for the
+  same probe: that form is exact for all 1022 usable counts on the 330 kΩ range and saturates only
+  the 10 counts whose true value is above the format's ceiling. A `test/native` case for the
   transform would have caught this: `meas_rail_test.cpp` covers only the rail flags, so nothing
   exercises the unit transforms.
 
