@@ -121,8 +121,9 @@ class SubscriptionClient {
   }
 
   /// Reads a fixed-size-entry table, or null when it could NOT be read: no link, no reply within
-  /// the timeout, or a FAIL answer. The provider table is 32-byte entries and the requester table
-  /// 28-byte ones (CIDs 0x20 and 0x10 respectively). Entries fill the stream.
+  /// the timeout, or a FAIL answer. Both tables are 32-byte entries (provider CID 0x20, requester
+  /// CID 0x10) - a requester row is providerAddr, TRID, the table, the target register, the
+  /// timeout and its hash. Entries fill the stream.
   ///
   /// The null is what lets a caller that DELETES rows tell "the device holds nothing" from "I
   /// could not look". An empty table is a real answer - the firmware streams one empty fragment
@@ -207,10 +208,11 @@ class SubscriptionClient {
 
   /// CID 0x10 as a read that can say "no answer": the target's requester table, or null when the
   /// device did not return it (no link, timeout, or a FAIL answer). `[]` is a real, empty table.
+  /// Its entries are 32 B on the wire (the requester table's Hash/Hashlike at offset 28 included).
   Future<List<RequesterSubscription>?> readRequesterSubscriptions() =>
       _readSubscriptionList(
         _cidGetRequester,
-        28,
+        32,
         RequesterSubscription.fromBytes,
       );
 

@@ -643,7 +643,12 @@ class ProviderSubscription {
   }
 }
 
-/// Requester-side subscription entry (Docs "Requester table entry", 28 B wire).
+/// Requester-side subscription entry (Docs "Requester table entry", 32 B wire: providerAddr,
+/// TRID, the subscription table, target register, timeout, hash/hashlike).
+///
+/// The Set command's payload is only the first 28 B ([toCreatePayload]): the device accepts any
+/// payload of 28 B or more and zeroes the hash on Set, so the hash is read off a Get reply and
+/// never carried in a Set.
 class RequesterSubscription {
   final int index;
   final int providerAddr;
@@ -652,6 +657,11 @@ class RequesterSubscription {
   final int targetReg; // BlockInfo (local write)
   final int timeout;
 
+  /// The row's Hash/Hashlike (wire offset 28), bookkeeping the device keeps and the app only
+  /// reads: for an edge trigger it is the last counter the row saw, for a value trigger the last
+  /// value it applied. Always 0 on an entry the app builds for a Set, because the device zeroes it.
+  final int hash;
+
   const RequesterSubscription._({
     required this.index,
     required this.providerAddr,
@@ -659,6 +669,7 @@ class RequesterSubscription {
     required this.table,
     required this.targetReg,
     required this.timeout,
+    this.hash = 0,
   });
 
   /// Convenience constructor from the flat fields (the UI/tests build entries this way).
@@ -673,6 +684,7 @@ class RequesterSubscription {
     required int minTimeMs,
     double deadzone = 0,
     this.timeout = 0,
+    this.hash = 0,
   }) : table = SubscriptionTable(
          sourceReg: sourceReg,
          trigger: trigger,
@@ -714,6 +726,12 @@ class RequesterSubscription {
     final targetReg = uint32FromBytes(bytes, offset);
     offset += 4;
     final timeout = uint32FromBytes(bytes, offset);
+    offset += 4;
+    // The hash fills the entry's last 4 bytes and exists only on the wire's Get form. A Set payload
+    // is the 28 B prefix, so an entry decoded from one carries no hash rather than reading past its
+    // end.
+    var hash = 0;
+    if (offset + 4 <= bytes.length) hash = uint32FromBytes(bytes, offset);
     return RequesterSubscription._(
       index: index,
       providerAddr: providerAddr,
@@ -721,6 +739,7 @@ class RequesterSubscription {
       table: table,
       targetReg: targetReg,
       timeout: timeout,
+      hash: hash,
     );
   }
 
@@ -737,7 +756,8 @@ class RequesterSubscription {
   int get blockKeyS => sourceReg & 0xFF;
 
   /// Wire layout for the 0x11 set request (providerAddr, trid, subscription table, targetReg,
-  /// timeout). The TRID is also echoed in the packet header.
+  /// timeout - 28 B). The TRID is also echoed in the packet header. The entry's hash is NOT part
+  /// of it: the device accepts any payload of 28 B or more and zeroes the hash on Set.
   List<int> toCreatePayload() {
     final buf = <int>[];
     buf.addAll([providerAddr & 0xFF, (providerAddr >> 8) & 0xFF]);
@@ -747,4 +767,9 @@ class RequesterSubscription {
     buf.addAll(uint32ToBytes(timeout));
     return buf;
   }
+
+  /// The full 32-byte entry the device streams for *Get requester subscriptions* (CID 0x10):
+  /// [toCreatePayload] plus the row's Hash/Hashlike. The mirror of
+  /// [ProviderSubscription.toBytes], and the only form that round-trips [hash].
+  List<int> toWireBytes() => [...toCreatePayload(), ...uint32ToBytes(hash)];
 }

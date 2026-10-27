@@ -122,18 +122,19 @@ class _FakeTable implements RequestChannel {
     }
     if (service != ServiceType.subscriptions) return _ok;
     switch (functionCid) {
-      case 0x10: // Get subscriptions: the table, 28-byte entries, no count prefix in the payload.
+      case 0x10: // Get subscriptions: the table, 32-byte entries (hash at offset 28), no count
+        // prefix in the payload.
         reads++;
         if (getTimesOut) throw StateError('no reply');
         if (_unreadable || (failGetFrom > 0 && reads >= failGetFrom)) {
           return _failed;
         }
         return PacketResponse(
-          payload: [for (final e in entries) ...e.toCreatePayload()],
+          payload: [for (final e in entries) ...e.toWireBytes()],
           success: true,
           fail: false,
         );
-      case 0x11: // Set subscription: a None trigger is a cancel.
+      case 0x11: // Set subscription: a None trigger is a cancel. The payload is the 28 B prefix.
         final entry = RequesterSubscription.fromBytes(0, payload);
         if (entry.trigger == TriggerType.none) {
           if (refuseCancel) return _failed;
