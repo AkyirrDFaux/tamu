@@ -110,15 +110,18 @@ static void MeasuringUpdate(uint8_t Index, uint16_t Raw)
     StaticVol.Meas[Index].MeasuredValue = In;
 
     // Open/Short circuit (fields 5/6): the two electrical rails of THIS sample. Both are judged
-    // from the sample the reported value came from and from `Range` - the reference resistor
-    // that was ACTIVE when it was taken - not from the range the auto-range picks below, so the
-    // flags can never disagree with the Measured Value / Current Range they are published with
-    // across a range transition. At both ends of the chain the auto-range is capped (no step
-    // past 330k up, none below 330R down), so a railed input settles on one range and the flag
-    // is stable there. The threshold (>= 1022 at the top, <= 1 at the bottom) is the same
-    // usable ADC window MeasClampAdc uses; see Core/Devices/MeasuringFlags.h.
-    StaticVol.Meas[Index].OpenCircuit = MeasOpenCircuit(Range, FilteredRaw);
-    StaticVol.Meas[Index].ShortCircuit = MeasShortCircuit(Range, FilteredRaw);
+    // from the RAW input sample - not from `In` (the transformed value) and not from `FilteredRaw`
+    // (the EMA output): the doc defines them as the input being at the limit of the ADC window, and
+    // an EMA would hide a rail for as long as its time constant (with FilterCoeff 0.02 the flag
+    // would appear ~300 samples after the input railed, and clear just as late). They are judged
+    // from `Range` - the reference resistor that was ACTIVE when the sample was taken - not from the
+    // range the auto-range picks below, so the flags can never disagree with the Measured Value /
+    // Current Range they are published with across a range transition. At both ends of the chain the
+    // auto-range is capped (no step past 330k up, none below 330R down), so a railed input settles on
+    // one range and the flag is stable there. The threshold (>= 1022 at the top, <= 1 at the bottom)
+    // is the same usable ADC window MeasClampAdc uses; see Core/Devices/MeasuringFlags.h.
+    StaticVol.Meas[Index].OpenCircuit = MeasOpenCircuit(Range, Number(Raw));
+    StaticVol.Meas[Index].ShortCircuit = MeasShortCircuit(Range, Number(Raw));
 
     // Auto-range from the raw sample, applied AFTER the transform used the active range. The
     // divider ratio R_sensor/R_ref = raw/(1023-raw) is independent of the selected reference,

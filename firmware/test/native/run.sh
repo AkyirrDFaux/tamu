@@ -590,8 +590,9 @@ echo
 # t_1381f097: the rail flags are computed in each device's sample loop (which pulls the chip
 # header and the block instances, so the host cannot link it). The predicate and the block layout
 # are covered by meas_rail_test.cpp; what remains is the WIRING, asserted on the source itself:
-# the DAS judges both flags from (the active range, the same filtered sample) in the pass that
-# publishes Measured Value / Current Range, and never from the range the auto-range picks later;
+# the DAS judges both flags from (the active range, the raw input sample of this pass) in the pass
+# that publishes Measured Value / Current Range, and never from the range the auto-range picks later
+# - nor from the EMA output, which would hide a rail for as long as its time constant (t_26e15feb);
 # no other code writes the two fields; and the Valu (one fixed reference, no range chain) keeps
 # both false.
 echo "### source guard: the rail flags are computed per sample in the sample loops"
@@ -599,12 +600,18 @@ DAS_RUN="src/Devices/DAS_v0.1/MeasuringRun.h"
 VALU_RUN="src/Devices/Valu_v2.0/MeasuringRun.h"
 MEAS_SRC="src/Core/Devices/Measuring.h"
 rail_fail=0
-if [ "$(grep -c 'StaticVol.Meas\[Index\].OpenCircuit = MeasOpenCircuit(Range, FilteredRaw);' "$DAS_RUN")" != 1 ]; then
-    echo "FAIL $DAS_RUN: OpenCircuit must be set once, from MeasOpenCircuit(Range, FilteredRaw)"
+if [ "$(grep -c 'StaticVol.Meas\[Index\].OpenCircuit = MeasOpenCircuit(Range, Number(Raw));' "$DAS_RUN")" != 1 ]; then
+    echo "FAIL $DAS_RUN: OpenCircuit must be set once, from MeasOpenCircuit(Range, Number(Raw)) - the raw input, not FilteredRaw"
     rail_fail=1
 fi
-if [ "$(grep -c 'StaticVol.Meas\[Index\].ShortCircuit = MeasShortCircuit(Range, FilteredRaw);' "$DAS_RUN")" != 1 ]; then
-    echo "FAIL $DAS_RUN: ShortCircuit must be set once, from MeasShortCircuit(Range, FilteredRaw)"
+if [ "$(grep -c 'StaticVol.Meas\[Index\].ShortCircuit = MeasShortCircuit(Range, Number(Raw));' "$DAS_RUN")" != 1 ]; then
+    echo "FAIL $DAS_RUN: ShortCircuit must be set once, from MeasShortCircuit(Range, Number(Raw)) - the raw input, not FilteredRaw"
+    rail_fail=1
+fi
+# The filtered sample must not reach either predicate: the flags are the INPUT at the limits, and
+# the auto-range beside them already judges Raw.
+if [ "$(grep -c 'MeasOpenCircuit(Range, FilteredRaw)\|MeasShortCircuit(Range, FilteredRaw)' "$DAS_RUN")" != 0 ]; then
+    echo "FAIL $DAS_RUN: the rail flags must not be judged from the EMA output (FilteredRaw)"
     rail_fail=1
 fi
 # Same pass as the published value: the flags are set after Measured Value, and before the

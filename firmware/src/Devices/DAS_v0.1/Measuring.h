@@ -84,6 +84,16 @@ void MeasuringInit()
     GPIO_InitStructure.GPIO_Pin = GPIO_Pin_4;
     GPIO_Init(GPIOC, &GPIO_InitStructure);
 
+    // ADC clock: nothing else programs the prescaler, so ADCPRE stays at its reset value 00 =
+    // PCLK2/2 = 24 MHz - above the 14 MHz the ADC allows (datasheet/CH32VRM.pdf, ADC clock
+    // prescaler note: "ADC clock shall not exceed 14MHz at most"). /4 = 12 MHz is inside the limit.
+    // The 73-cycle sample window then lasts 6.08 us instead of 3.04 us, and a whole conversion
+    // (TCONV = sampling + 11 ADCCLK = 84 cycles, the same manual) 7.0 us instead of 3.5 us: the
+    // longer window is what the 330 kOhm range needs, because that reference gives the divider the
+    // highest source impedance of the three and the sample-and-hold capacitor therefore needs more
+    // time to settle. The cost is 3.5 us per channel per sample, against a 10 Hz loop.
+    RCC_ADCCLKConfig(RCC_PCLK2_Div4);
+
     ADC_InitTypeDef ADC_InitStructure = {0};
     ADC_InitStructure.ADC_Mode = ADC_Mode_Independent;
     ADC_InitStructure.ADC_ScanConvMode = DISABLE;
