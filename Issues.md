@@ -385,3 +385,54 @@ are hardware-only.
   consecutive) and `false` on the following pass, so a target with no edge reads `false`. The counter
   itself is never stored as a value."
 
+- **E54** **Raw Resistance publishes a wrapped value for every reading above ~35 kΩ on the 330 kΩ
+  range.** `firmware/src/Devices/DAS_v0.1/MeasuringRun.h:73` computes `RrefKohm[Range] * In /
+  (ADCRES - In)`: the MULTIPLY runs first, in Q16.16, so `330.0 * In` leaves the format as soon as
+  `In >= 100` counts (330*100 = 33,000 > 32,767.999, `Core/Types/Number.h:39` FixedMul32 keeps only
+  the middle 32 bits - it does not saturate). Measured on the host with the DAS flags
+  (`-DNUMBER_ONLY_32BIT -DSCALAR_ONLY`) against exact double arithmetic: on the 330 kΩ range the
+  published value is wrong for **924 of 1024 raw counts** (raw 100 publishes **-35.25 kΩ** where the
+  truth is 35.75; raw 500 publishes -60.4 where the truth is 315.5; the 199 % worst case is a sign
+  flip). The 10 kΩ range is exact across the whole window because 10*1022 fits. A sensor above
+  ~35 kΩ settles on the 330 kΩ range (the auto-range's raw>900 up-step) and stays there, so in Raw
+  Resistance mode it reports nonsense permanently - with no flag and no log. The same expression
+  shape exists on the Valu (`Devices/Valu_v2.0/MeasuringRun.h:79`). Fix (not applied - it changes
+  published values, so the owner decides): divide first (`Ratio = In / (ADCRES - In)`, exact and
+  <= 1022), then multiply by `RrefKohm[Range]`, saturating where the product would leave Q16.16
+  (the ceiling is 32,767 kΩ, i.e. raw >= 1013 on the 330 kΩ range). Verified on the host with the
+  same probe: that form is exact for all 1023 usable counts on the 330 kΩ range and saturates only
+  the 11 counts whose true value is above the format's ceiling. A `test/native` case for the
+  transform would have caught this: `meas_rail_test.cpp` covers only the rail flags, so nothing
+  exercises the unit transforms.
+
+- **E55** **The ADC is clocked at 24 MHz, above the 14 MHz the CH32 ADC allows - and the `t_1e134fcc`
+  diet removed the only code that could have reported it.** `Devices/DAS_v0.1/Measuring.h:69-108`
+  enables the ADC peripheral clock (`RCC_APB2Periph_ADC1`, line 71) but never programs the ADC clock
+  divider: nothing in `firmware/src` calls `RCC_ADCCLKConfig`, and the built image confirms it (no
+  `RCC_ADCCLKConfig` symbol; the only writers of `RCC->CFGR0` are `SystemInit`'s `RCC_DeInit`
+  (`CFGR0 &= 0xF8FF0000`, which zeroes bits 0-15 - ADCPRE included) and the SW/PLLSRC writes, so no
+  write in the image ever puts a non-zero value in ADCPRE). `ADCPRE[4:0]` (`CFGR0[15:11]`, mask
+  `0x0000F800`) therefore ends at 0, which the SPL's own decode maps to `/2`
+  (`ch32v00x_rcc.c:462-476`, `ADCPrescTable[0] = 2`) -> ADCCLK = PCLK2/2 = **24 MHz**. The in-repo reference manual states the limit twice
+  (`datasheet/CH32VRM.pdf` p41 "ADC clock shall not exceed 14MHz at most", ADC chapter "Max=14MHz");
+  that chapter is the V20x/V30x family, the V003's own sheet is not in the tree, so confirm the V003
+  number before acting. Not a regression from the diet - the field was never written, before or
+  after - but the diet did delete the reading that would have shown it: the removed
+  `RCC_GetClocksFreq` computed exactly `ADCCLK_Frequency = 24 MHz` for this build. Proposed fix
+  (needs an owner decision + the rig): one `RCC_ADCCLKConfig(RCC_PCLK2_Div4)` in `MeasuringInit()`
+  before `ADC_Init` -> 12 MHz, inside the limit, and it doubles the sample window (73 ADCCLK = 6.1 us
+  instead of 3.0 us), which is the right direction for the 330 kΩ range's source impedance. Cost:
+  ~10 B of flash for the read-modify-write (456 B spare). Nothing here can be measured without the
+  two nodes, which cannot be attached to the programmer.
+
+- **E56** **The rail flags (fields 5/6) are computed from the EMA output, so a heavy Filter
+  Coefficient hides a rail for seconds.** `Devices/DAS_v0.1/MeasuringRun.h:117-118` passes
+  `FilteredRaw` to `MeasOpenCircuit`/`MeasShortCircuit`, while `Docs/Modules and Blocks/Measurement.md`
+  describes the flags as "the input ... at the upper/lower limit of the ADC window", and the
+  auto-range in the same function already judges the RAW sample. On a channel that is already on the
+  330 kΩ range an open circuit does not switch ranges, so nothing re-seeds the filter: with
+  FilterCoeff 0.5 the flag appears after ~9 samples (~0.9 s at 10 Hz), and with 0.02 after ~300
+  samples (~30 s) - long after the value has railed, and symmetric on recovery. Fix (not applied):
+  pass `Number(Raw)`; `test/native/run.sh:600-606` pins the literal `FilteredRaw` argument, so that
+  guard has to move with it. Behaviour change at FilterCoeff < 1, so it is the owner's call.
+
