@@ -69,10 +69,6 @@ private:
     // Round-robin cursor for the unserved-entry re-registration: one entry per tick, so a send
     // cannot put several blocking transmits back to back with no bus service between them.
     uint8_t ReRegisterCursor = 0;
-    // Round-robin cursor for the edge replay: one replayed edge per tick, for the same reason (a
-    // burst with no bus service between writes) and so a counting script behind the target sees
-    // each recovered press as its own pass.
-    uint8_t ReplayCursor = 0;
 
     static bool RequesterOccupied(const RequesterEntry &Entry);
     static bool RequesterEntryLive(const uint8_t *Entry);
@@ -86,7 +82,9 @@ private:
     bool ApplyRequesterValue(RequesterEntry *Entry, const uint8_t *Val, uint8_t Vlen, bool Confirm);
     void ApplyRequesterEdge(RequesterEntry *Entry, uint16_t Counter);
     void HandleRequesterValueUpdate(const PacketFrame &Frame);
-    void SubscriptionsReplayPending();
+    // The edge targets' pulse, once per main-loop pass: one TRUE per edge owed, then the FALSE that
+    // closes it. Whole table, no cursor - every row with a pulse gets its pass in the same loop.
+    void SubscriptionsPulseTargets();
     bool SaveRequesterTable(bool KeepFileEntries = false); // false when a write failed
     void RegisterRequesterProvider(RequesterEntry* Entry);
     void SubscriptionsReRegisterPending();

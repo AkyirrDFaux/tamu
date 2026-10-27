@@ -1,24 +1,28 @@
-// Host-side test for the edge counter that IS an edge-triggered value update's payload
-// (Core/Services/SubscriptionsEdge.h).
+// Host-side test for the edge counter that IS an edge-triggered value update's payload, and for the
+// pulse the requester writes into its target (Core/Services/SubscriptionsEdge.h).
+//
+// The counter and the target value are two different things:
+//   - the COUNTER is the provider's bookkeeping. Its parity is the level (odd = pressed, even =
+//     lifted), and the requester only READS it, to learn how many edges are new (the delta).
+//   - the TARGET VALUE is the requester's output: a PULSE. An edge update is worth one TRUE loop pass
+//     per new edge of the trigger's direction, consecutive, and then one FALSE (owner ruling,
+//     2026-10-27). The counter is never written into the target - not as a number, not as a level.
 //
 // The defect this pins: an edge-triggered update is a *press*, and the wire used to carry the value
 // alone - a Bool. A press that arrived and a press that was lost therefore looked identical at the
-// requester: the target already held the value, so a lost update changed nothing and said nothing.
-// The rule now: the provider's edge counter is the update's WHOLE payload (u16 little-endian, two
-// bytes, nothing appended) and its PARITY carries the level - odd = true/pressed, even =
-// false/lifted. A counter that advanced by n means n edges, and the requester walks them one level
-// per pass, oldest first, ending on the newest counter so the target is left on the true level.
+// requester. Then the wire carried the counter and the requester wrote its parity, which made a press
+// readable but left the target TRUE for ever: a held button, or any press, sat at true and every
+// consumer had to remember the last level to count a second one.
 //
-// What is under test is the real state machine the core runs, not a copy of it: RequesterEntry
-// embeds SubEdgeState and the requester only calls its methods (SubscriptionsEdge.h), so this file
-// drives Arrive/ReplayLevel/OnReplayed/GiveUp exactly as Core/Services/SubscriptionsRequester.h
-// does, and SubEdgeClassify exactly as Core/Services/SubscriptionsProvider.h does. The
-// classification is:
+// What is under test is the real state machine the core runs, not a copy of it: RequesterEntry embeds
+// SubEdgeState and the requester only calls its methods (Core/Services/SubscriptionsEdge.h), so this
+// file drives Arrive/NextPass/GiveUp exactly as Core/Services/SubscriptionsRequester.h does, and
+// SubEdgeClassify exactly as Core/Services/SubscriptionsProvider.h does. The classification is:
 //   Baseline  - the first counter since the row was installed (or since the provider answered a
 //               re-registration): the new zero point, never a gap
 //   Duplicate - the same counter again (a verified send retried after a lost ack): ignored
 //   Next      - counter + 1, the normal case, and also what a wrap looks like (modular)
-//   Gap       - counter + n (n >= 2): n-1 presses were never seen, walked one level per pass
+//   Gap       - counter + n (n >= 2): n-1 counters were never seen, so edges were lost
 //   Resync    - the counter went backwards: a restarted provider (a node's table is RAM-only),
 //               counted as a baseline break, never as a jump of ~32k presses
 //
@@ -55,15 +59,26 @@ static int checks = 0, failures = 0;
         }                                                                            \
     } while (0)
 
-// Drains the replay walk, collecting the level of every pass in order.
-static unsigned Drain(SubEdgeState &State, uint8_t *Out, unsigned Max) {
-    unsigned n = 0;
-    while (State.Pending && n < Max) {
-        Out[n++] = State.ReplayLevel();
-        State.OnReplayed();
+// Samples the target field once per loop pass, the way a consumer script reads it:
+//   'T' the pass wrote true     - the field reads true on that loop
+//   'F' the pass wrote false    - the field reads false on that loop
+//   '.' nothing was written     - the field keeps whatever it had (false, once the pulse is over)
+// This is the device's SubscriptionsPulseTargets loop: one NextPass per main-loop pass, one target
+// write per step that asks for one.
+static void Sample(SubEdgeState &State, char *Out, unsigned Passes) {
+    unsigned i = 0;
+    for (; i < Passes; i++) {
+        const SubEdgeState::SubPulseStep Step = State.NextPass();
+        Out[i] = Step.Write ? (Step.Value ? 'T' : 'F') : '.';
     }
-    return n;
+    Out[i] = '\0';
 }
+
+// The same sampling run, printed: the handoff quotes these lines as the per-loop measurement.
+static void PrintRun(const char *What, const char *Run, unsigned Passes) {
+    std::printf("  %-34s %u passes: %s\n", What, Passes, Run);
+}
+
 
 int main() {
     // ---- The wire encoding: u16 little-endian, and it is the WHOLE payload.
@@ -94,7 +109,7 @@ int main() {
         CHECK(SubTriggerIsEdge(TriggerType::EdgeAny));
     }
 
-    // ---- Parity IS the level: odd = true/pressed, even = false/lifted.
+    // ---- The counter's parity is the level - a property of the COUNTER, never of the target.
     {
         CHECK(!SubEdgeLevel(0));
         CHECK(SubEdgeLevel(1));
@@ -102,10 +117,6 @@ int main() {
         CHECK(SubEdgeLevel(3));
         CHECK(!SubEdgeLevel(0xFFFE));
         CHECK(SubEdgeLevel(0xFFFF));
-        CHECK_EQ(SubEdgeLevelByte(0), 0);
-        CHECK_EQ(SubEdgeLevelByte(1), 1);
-        CHECK_EQ(SubEdgeLevelByte(0x1234), 0);
-        CHECK_EQ(SubEdgeLevelByte(0x1235), 1);
         // A wrap keeps the meaning: 0xFFFF (odd, pressed) -> 0x0000 (even, lifted) is a release.
         CHECK(SubEdgeLevel(0xFFFF) != SubEdgeLevel(0x0000));
     }
@@ -146,216 +157,289 @@ int main() {
         CHECK(!SubEdgeClassify(TriggerType::Periodic, true, false).Due);
     }
 
-    // ---- Normal sequence: the first counter is the baseline, then +1 each time, and the level
-    //      alternates with it.
+    // ---- How many edges of the direction a counter advance contains: the number of true passes an
+    //      update is worth. The counter counts both directions, so a rising subscription's press is
+    //      every other step.
     {
-        SubEdgeState S;
-        CHECK(!S.HaveBaseline);
-        CHECK(S.Arrive(7, false) == SubEdgeKind::Baseline);
-        CHECK(S.HaveBaseline);
-        CHECK(!S.Report); // a baseline is not a gap: nothing to log
-        CHECK_EQ(S.Pending, 0);
-        CHECK_EQ(S.Last, 7);
-        CHECK_EQ(SubEdgeLevelByte(7), 1); // baseline counter odd: the source is pressed
-        CHECK(S.Arrive(8, false) == SubEdgeKind::Next);
-        CHECK_EQ(SubEdgeLevelByte(8), 0);
-        CHECK(S.Arrive(9, false) == SubEdgeKind::Next);
-        CHECK(S.Arrive(10, false) == SubEdgeKind::Next);
-        CHECK(!S.Report);
-        CHECK_EQ(S.Pending, 0);
-        CHECK_EQ(S.Last, 10);
+        CHECK_EQ(SubEdgeDirectionCount(TriggerType::EdgeAny, 0, 3), 3);
+        CHECK_EQ(SubEdgeDirectionCount(TriggerType::EdgeAny, 0xFFFF, 1), 1); // a wrap is one step
+
+        // Rising: from an even counter the first step is the press; from an odd one it is the lift.
+        CHECK_EQ(SubEdgeDirectionCount(TriggerType::EdgeRising, 0, 1), 1);
+        CHECK_EQ(SubEdgeDirectionCount(TriggerType::EdgeRising, 0, 2), 1); // press + lift
+        CHECK_EQ(SubEdgeDirectionCount(TriggerType::EdgeRising, 1, 1), 0); // a lift, not a press
+        CHECK_EQ(SubEdgeDirectionCount(TriggerType::EdgeRising, 1, 2), 1); // lift + press
+        CHECK_EQ(SubEdgeDirectionCount(TriggerType::EdgeRising, 1, 3), 1); // one press (at 3)
+        CHECK_EQ(SubEdgeDirectionCount(TriggerType::EdgeRising, 1, 4), 2); // two presses + a lift
+        CHECK_EQ(SubEdgeDirectionCount(TriggerType::EdgeRising, 0xFFFF, 2), 1); // wrap: 0, 1
+
+        // Falling is the mirror image.
+        CHECK_EQ(SubEdgeDirectionCount(TriggerType::EdgeFalling, 1, 1), 1); // a lift
+        CHECK_EQ(SubEdgeDirectionCount(TriggerType::EdgeFalling, 1, 2), 1); // lift + press
+        CHECK_EQ(SubEdgeDirectionCount(TriggerType::EdgeFalling, 0, 1), 0); // a press, not a lift
+        CHECK_EQ(SubEdgeDirectionCount(TriggerType::EdgeFalling, 2, 4), 2); // two lifts
+
+        // No advance, no edges.
+        CHECK_EQ(SubEdgeDirectionCount(TriggerType::EdgeAny, 7, 0), 0);
+        CHECK_EQ(SubEdgeDirectionCount(TriggerType::EdgeRising, 7, 0), 0);
     }
 
-    // ---- Duplicate: a verified send that was retried (the ack was lost) is the same press.
+    std::printf("== the target is a pulse: sampled once per loop pass ==\n");
+
+    // ---- A fresh row: the target may hold anything after a boot or a set, so the first pass closes
+    //      it with one false and then leaves it alone. No edge, no true.
     {
         SubEdgeState S;
-        S.Arrive(4, false);
-        CHECK(S.Arrive(5, false) == SubEdgeKind::Next);
-        CHECK(S.Arrive(5, false) == SubEdgeKind::Duplicate);
-        CHECK(S.Arrive(5, false) == SubEdgeKind::Duplicate);
-        CHECK(!S.Report);         // nothing is logged for a duplicate ...
-        CHECK_EQ(S.Pending, 0);   // ... and no level is owed
-        CHECK_EQ(S.Last, 5);
-        CHECK(S.Arrive(6, false) == SubEdgeKind::Next);
+        CHECK(S.High); // a new row clears the target rather than trusting it
+        char Run[16];
+        Sample(S, Run, 6);
+        PrintRun("no edge at all", Run, 6);
+        CHECK(std::strcmp(Run, "F.....") == 0);
+        CHECK_EQ(S.Budget, 0);
     }
 
-    // ---- Gap of 2: two edges were never seen. The walk owes the whole run - the two missed levels
-    //      AND the arriving one, oldest first - and ends on the newest counter, so the target is
-    //      left on the level that counter carries.
+    // ---- One press on a rising row: one true loop, then false, then nothing.
     {
         SubEdgeState S;
-        S.Arrive(3, false);
-        CHECK(S.Arrive(6, false) == SubEdgeKind::Gap); // 4 and 5 never arrived
-        CHECK(S.Report);                               // the episode is opened: log it once
-        CHECK_EQ(S.Missing, 2);                        // delta - 1, what the log reports
-        CHECK_EQ(S.Pending, 3);                        // 4, 5 and 6 are owed as levels
-        CHECK_EQ(S.ReplayNext, 4);                     // the oldest edge that was never seen
-        CHECK_EQ(S.Last, 6);
+        CHECK(S.Arrive(TriggerType::EdgeRising, 40, false) == SubEdgeKind::Baseline);
+        CHECK_EQ(S.Budget, 1); // the push that starts the row is one edge: it is still a press
+        char Run[16];
+        Sample(S, Run, 6);
+        PrintRun("single press (baseline push)", Run, 6);
+        CHECK(std::strcmp(Run, "TF....") == 0);
 
-        uint8_t Levels[8] = {};
-        CHECK_EQ(Drain(S, Levels, 8), 3);
-        CHECK_EQ(Levels[0], 0); // counter 4: even -> lifted
-        CHECK_EQ(Levels[1], 1); // counter 5: odd  -> pressed
-        CHECK_EQ(Levels[2], 0); // counter 6: even -> lifted, the level the update carried
-        CHECK_EQ(S.Pending, 0);
-        CHECK(!S.Episode);
-        CHECK_EQ(S.Last, 6);
-        // Paid up: the walk is gone, and the next edge lands on its own.
-        CHECK(S.Arrive(7, false) == SubEdgeKind::Next);
-        CHECK_EQ(S.Pending, 0);
+        // The next press: the counter went 40 -> 42 (press + release), so it is ONE press and one
+        // true pass - not two.
+        CHECK(S.Arrive(TriggerType::EdgeRising, 42, false) == SubEdgeKind::Gap);
+        CHECK_EQ(S.Missing, 1); // the release, reported but not a press
+        CHECK_EQ(S.Budget, 1);
+        Sample(S, Run, 6);
+        PrintRun("single press (counter +2)", Run, 6);
+        CHECK(std::strcmp(Run, "TF....") == 0);
     }
 
-    // ---- A second gap while the episode is open: accounted, not logged again, and the walk still
-    //      ends on the newest counter.
+    // ---- A held button: one press, one true loop, and then false however long it is held. Holding
+    //      produces no further counter changes, so nothing re-arms the pulse.
     {
         SubEdgeState S;
-        S.Arrive(3, false);
-        CHECK(S.Arrive(6, false) == SubEdgeKind::Gap);
-        S.Report = false;
-        CHECK(S.Arrive(9, false) == SubEdgeKind::Gap); // 7 and 8 missing
-        CHECK(!S.Report);
-        CHECK_EQ(S.Missing, 2);
-        CHECK_EQ(S.Pending, 6);    // 4,5,6 from the first gap and 7,8,9 from this one
-        CHECK_EQ(S.ReplayNext, 4); // continues where it stopped: oldest first
-        uint8_t Levels[8] = {};
-        CHECK_EQ(Drain(S, Levels, 8), 6);
-        CHECK_EQ(Levels[5], 1); // counter 9: odd -> pressed, the newest level stands
-        CHECK(!S.Episode);
-        // A press that arrives while the walk is still paying is appended to the walk, not written
-        // out of order: the last level must still be the newest counter's parity.
+        S.Arrive(TriggerType::EdgeRising, 0, false); // baseline
+        S.NextPass();
+        S.NextPass();                                // its own pulse is over
+        CHECK(S.Arrive(TriggerType::EdgeRising, 1, false) == SubEdgeKind::Next); // the press
+        CHECK_EQ(S.Budget, 1);
+        char Run[32];
+        Sample(S, Run, 20);
+        PrintRun("held button (one edge, held)", Run, 20);
+        CHECK(std::strcmp(Run, "TF..................") == 0);
+        CHECK_EQ(S.Budget, 0);
+        CHECK(!S.High); // the field is false and the row has stopped writing to it
+    }
+
+    // ---- A burst of 3 edges in one update: exactly three true loops, then false - not one long
+    //      true, and not one true.
+    {
+        SubEdgeState S;
+        S.Arrive(TriggerType::EdgeAny, 10, false); // baseline
+        S.NextPass();
+        S.NextPass(); // settle on false first
+        CHECK(S.Arrive(TriggerType::EdgeAny, 13, false) == SubEdgeKind::Gap);
+        CHECK_EQ(S.Budget, 3);
+        char Run[16];
+        Sample(S, Run, 8);
+        PrintRun("burst of 3 (EdgeAny, delta 3)", Run, 8);
+        CHECK(std::strcmp(Run, "TTTF....") == 0);
+
+        // The same three presses on a RISING row: six counter steps (three presses, three releases).
         SubEdgeState R;
-        R.Arrive(3, false);
-        R.Arrive(6, false);
-        CHECK_EQ(R.Pending, 3);
-        CHECK(R.Arrive(7, false) == SubEdgeKind::Next);
-        CHECK_EQ(R.Pending, 4);
-        uint8_t Tail[8] = {};
-        CHECK_EQ(Drain(R, Tail, 8), 4);
-        CHECK_EQ(Tail[3], SubEdgeLevelByte(7)); // ends on 7, not on 6
-        CHECK_EQ(Tail[0], SubEdgeLevelByte(4));
-        CHECK(!R.Episode);
-        // Paid up: the next gap is a new episode and is logged again.
-        CHECK(R.Arrive(10, false) == SubEdgeKind::Gap);
-        CHECK(R.Report);
+        R.Arrive(TriggerType::EdgeRising, 0, false); // baseline, even (lifted)
+        R.NextPass();
+        R.NextPass();
+        CHECK(R.Arrive(TriggerType::EdgeRising, 6, false) == SubEdgeKind::Gap);
+        CHECK_EQ(R.Budget, 3); // three presses, not six counter steps
+        Sample(R, Run, 8);
+        PrintRun("burst of 3 (EdgeRising, delta 6)", Run, 8);
+        CHECK(std::strcmp(Run, "TTTF....") == 0);
     }
 
-    // ---- The walk over a wrap: the counter is u16, so 0xFFFF -> 0 is an ordinary step, not a gap.
+    // ---- A missed press: the counter advanced by two presses' worth, so BOTH are pulses. This is
+    //      what makes a lost update recoverable instead of invisible.
+    {
+        SubEdgeState S;
+        S.Arrive(TriggerType::EdgeRising, 1, false); // baseline: pressed
+        S.NextPass();                                // the baseline's own pulse
+        S.NextPass();                                // closed
+        // Two presses happened, one push was lost: 1 -> 5 (press, lift, press, lift).
+        CHECK(S.Arrive(TriggerType::EdgeRising, 5, false) == SubEdgeKind::Gap);
+        CHECK_EQ(S.Missing, 3); // three counter steps never arrived
+        CHECK_EQ(S.Budget, 2);  // but two of them are presses
+        char Run[16];
+        Sample(S, Run, 6);
+        PrintRun("missed press + this one", Run, 6);
+        CHECK(std::strcmp(Run, "TTF...") == 0);
+    }
+
+    // ---- Duplicate: a verified send that was retried (the ack was lost) is the same press and adds
+    //      nothing - neither a second true nor a second log line.
+    {
+        SubEdgeState S;
+        S.Arrive(TriggerType::EdgeAny, 4, false);
+        CHECK(S.Arrive(TriggerType::EdgeAny, 5, false) == SubEdgeKind::Next);
+        CHECK_EQ(S.Budget, 2); // the baseline push (1) and this edge (1)
+        CHECK(S.Arrive(TriggerType::EdgeAny, 5, false) == SubEdgeKind::Duplicate);
+        CHECK(S.Arrive(TriggerType::EdgeAny, 5, false) == SubEdgeKind::Duplicate);
+        CHECK(!S.Report);
+        CHECK_EQ(S.Budget, 2);
+        CHECK_EQ(S.Last, 5);
+    }
+
+    // ---- An edge that arrives before the budget is exhausted EXTENDS the pulse by its own edges;
+    //      nothing already owed is dropped or restarted.
+    {
+        SubEdgeState S;
+        S.Arrive(TriggerType::EdgeAny, 10, false); // baseline: 1
+        S.NextPass();
+        S.NextPass();
+        CHECK_EQ(S.Budget, 0);
+        CHECK(S.Arrive(TriggerType::EdgeAny, 13, false) == SubEdgeKind::Gap); // 3 edges
+        CHECK_EQ(S.Budget, 3);
+        S.NextPass(); // one spent, two left
+        CHECK_EQ(S.Budget, 2);
+        CHECK(S.Arrive(TriggerType::EdgeAny, 15, false) == SubEdgeKind::Gap); // 2 more edges
+        CHECK_EQ(S.Budget, 4); // 2 left + 2 new
+        char Run[16];
+        Sample(S, Run, 8);
+        PrintRun("extended while running (2+2)", Run, 8);
+        CHECK(std::strcmp(Run, "TTTTF...") == 0);
+
+        // Extending with a single edge is +1, not a restart.
+        SubEdgeState R;
+        R.Arrive(TriggerType::EdgeAny, 0, false);
+        R.NextPass();
+        R.NextPass();
+        R.Arrive(TriggerType::EdgeAny, 3, false); // 3 edges
+        R.NextPass();                             // 2 left
+        R.Arrive(TriggerType::EdgeAny, 4, false); // one more
+        CHECK_EQ(R.Budget, 3);
+        char Run2[16];
+        Sample(R, Run2, 6);
+        CHECK(std::strcmp(Run2, "TTTF..") == 0);
+    }
+
+    // ---- A hold that produces nothing: repeated updates with the same counter never re-arm.
+    {
+        SubEdgeState S;
+        S.Arrive(TriggerType::EdgeRising, 7, false);
+        S.NextPass();
+        S.NextPass();
+        for (int i = 0; i < 5; i++) {
+            CHECK(S.Arrive(TriggerType::EdgeRising, 7, false) == SubEdgeKind::Duplicate);
+            CHECK(!S.NextPass().Write); // nothing to write: the field is already false
+        }
+        CHECK_EQ(S.Budget, 0);
+    }
+
+    // ---- The walk over a wrap: the counter is u16, so 0xFFFF -> 0 is an ordinary step.
     {
         SubEdgeState S;
         S.Rebaseline(0xFFFE);
-        CHECK(S.Arrive(0xFFFF, false) == SubEdgeKind::Next);
-        CHECK(S.Arrive(0x0000, false) == SubEdgeKind::Next); // wrapped: still +1
+        CHECK(S.Arrive(TriggerType::EdgeAny, 0xFFFF, false) == SubEdgeKind::Next);
+        CHECK(S.Arrive(TriggerType::EdgeAny, 0x0000, false) == SubEdgeKind::Next); // wrapped: +1
         CHECK(!S.Report);
-        CHECK_EQ(S.Pending, 0);
         CHECK_EQ(S.Last, 0);
-        CHECK(S.Arrive(0x0001, false) == SubEdgeKind::Next);
-        // A gap that spans the wrap: 0x0002..0x0004 missing, and the walk rolls over with it.
-        CHECK(S.Arrive(0x0005, false) == SubEdgeKind::Gap);
+        CHECK_EQ(S.Budget, 2);
+        // A gap that spans the wrap: 0x0001..0x0003 missing, four steps in all.
+        CHECK(S.Arrive(TriggerType::EdgeAny, 0x0004, false) == SubEdgeKind::Gap);
         CHECK_EQ(S.Missing, 3);
-        CHECK_EQ(S.Pending, 4);
-        CHECK_EQ(S.ReplayNext, 0x0002);
-        uint8_t Levels[8] = {};
-        CHECK_EQ(Drain(S, Levels, 8), 4);
-        CHECK_EQ(Levels[0], SubEdgeLevelByte(0x0002));
-        CHECK_EQ(Levels[3], 1); // counter 5: odd -> pressed
+        CHECK_EQ(S.Budget, 6);
     }
 
-    // ---- A gap that wraps past 0xFFFF: the walk is modular, so it walks 0xFFFE, 0xFFFF, 0x0000 ...
-    {
-        SubEdgeState S;
-        S.Rebaseline(0xFFFD);
-        CHECK(S.Arrive(0x0001, false) == SubEdgeKind::Gap); // 0xFFFE, 0xFFFF, 0x0000 missing
-        CHECK_EQ(S.Missing, 3);
-        CHECK_EQ(S.ReplayNext, 0xFFFE);
-        uint8_t Levels[8] = {};
-        CHECK_EQ(Drain(S, Levels, 8), 4);
-        CHECK_EQ(Levels[0], 0); // 0xFFFE even
-        CHECK_EQ(Levels[1], 1); // 0xFFFF odd
-        CHECK_EQ(Levels[2], 0); // 0x0000 even
-        CHECK_EQ(Levels[3], 1); // 0x0001 odd, the newest
-    }
-
-    // ---- Node reboot: the provider's counter restarts at zero. It must not read as a huge jump.
+    // ---- Node reboot: the provider's counter restarts at zero. It must not read as a huge jump,
+    //      and the pulses already owed are NOT thrown away.
     {
         // (a) the re-registration is answered first (the normal path: the node reappears, the row
         //     re-installs, the answer carries the restarted counter): a baseline, no gap, no log.
         SubEdgeState S;
-        S.Arrive(57, false);
-        CHECK(S.Arrive(58, false) == SubEdgeKind::Next);
-        CHECK(S.Arrive(60, false) == SubEdgeKind::Gap); // 59 was lost
-        CHECK_EQ(S.Pending, 2);
+        S.Arrive(TriggerType::EdgeAny, 57, false);
+        CHECK(S.Arrive(TriggerType::EdgeAny, 60, false) == SubEdgeKind::Gap); // 58, 59 lost
+        CHECK_EQ(S.Budget, 1 + 3);
         // The node reboots; its install is answered with counter 0.
-        CHECK(S.Arrive(0, true) == SubEdgeKind::Baseline);
+        // The push is still a push - it exists because an edge happened - so it is one pulse on top
+        // of the ones already owed; the reboot does not un-happen those.
+        CHECK(S.Arrive(TriggerType::EdgeAny, 0, true) == SubEdgeKind::Baseline);
         CHECK_EQ(S.Last, 0);
-        CHECK_EQ(S.Pending, 0);   // the levels owed for the old counter are meaningless now
+        CHECK_EQ(S.Budget, 5);
         CHECK(!S.Report);
-        CHECK(!S.Episode);
-        CHECK_EQ(SubEdgeLevelByte(0), 0); // a restarted counter is a lifted switch
-        CHECK(S.Arrive(1, false) == SubEdgeKind::Next);
+        CHECK(S.Arrive(TriggerType::EdgeAny, 1, false) == SubEdgeKind::Next);
+        CHECK_EQ(S.Budget, 6);
 
         // (b) an edge update arrives BEFORE the install is answered (the provider still had the
         //     entry, its counter restarted): that is a resync, still not a jump of ~32k presses.
         SubEdgeState R;
-        R.Arrive(57, false);
-        CHECK(R.Arrive(1, false) == SubEdgeKind::Resync);
-        CHECK(R.Report);          // the resync is logged (it means a node restarted unannounced)
-        CHECK_EQ(R.Missing, 0);   // ... but nothing is counted as missing
-        CHECK_EQ(R.Pending, 0);
-        CHECK_EQ(R.Last, 1);      // the new counter is the baseline
-        CHECK(R.Arrive(2, false) == SubEdgeKind::Next);
+        R.Arrive(TriggerType::EdgeAny, 57, false);
+        R.NextPass();
+        R.NextPass();
+        CHECK(R.Arrive(TriggerType::EdgeAny, 1, false) == SubEdgeKind::Resync);
+        CHECK(R.Report);        // the resync is logged (it means a node restarted unannounced)
+        CHECK_EQ(R.Missing, 0); // ... but nothing is counted as missing
+        CHECK_EQ(R.Budget, 0);  // and nothing is owed for it: the count restarted
+        CHECK_EQ(R.Last, 1);    // the new counter is the baseline
+        CHECK(R.Arrive(TriggerType::EdgeAny, 2, false) == SubEdgeKind::Next);
+        CHECK_EQ(R.Budget, 1);
     }
 
-    // ---- The debt is bounded: a huge gap is capped, and the cap still ends the walk on the newest
-    //      counter (dropping from the FRONT, because a walk that stopped short would leave the
-    //      target on the wrong side of the level).
+    // ---- The budget is bounded: a huge gap is capped, and the cap is reported with its true size.
     {
         SubEdgeState S;
         S.Rebaseline(0);
-        CHECK(S.Arrive(0x3000, false) == SubEdgeKind::Gap); // still under the resync boundary
+        CHECK(S.Arrive(TriggerType::EdgeAny, 0x3000, false) == SubEdgeKind::Gap); // under the resync
         CHECK_EQ(S.Missing, 0x2FFF);
-        CHECK_EQ(S.Pending, SUB_EDGE_PENDING_MAX); // saturating, not truncated to 0x2FFF & 0xFF
-        CHECK_EQ(S.ReplayNext, 0x3000 - (SUB_EDGE_PENDING_MAX - 1));
+        CHECK_EQ(S.Budget, SUB_EDGE_PULSE_MAX); // saturating, not truncated to 0x3000 & 0xFF
         CHECK(S.Report);
-        uint8_t Levels[SUB_EDGE_PENDING_MAX];
-        CHECK_EQ(Drain(S, Levels, SUB_EDGE_PENDING_MAX), SUB_EDGE_PENDING_MAX);
-        CHECK_EQ(Levels[SUB_EDGE_PENDING_MAX - 1], SubEdgeLevelByte(0x3000)); // ends on the newest
-        CHECK_EQ(S.Pending, 0);
-        CHECK(!S.Episode);
+        char Run[SUB_EDGE_PULSE_MAX + 2];
+        Sample(S, Run, SUB_EDGE_PULSE_MAX + 1);
+        unsigned Trues = 0;
+        for (unsigned i = 0; i < SUB_EDGE_PULSE_MAX; i++) Trues += (Run[i] == 'T');
+        CHECK_EQ(Trues, SUB_EDGE_PULSE_MAX);
+        CHECK_EQ(Run[SUB_EDGE_PULSE_MAX], 'F'); // the pulse closes on the next pass
+        CHECK_EQ(S.Budget, 0);
 
         // The resync boundary itself: half the ring away is a restarted provider, not a gap.
         SubEdgeState R;
         R.Rebaseline(0);
-        CHECK(R.Arrive(SUB_EDGE_RESYNC_DELTA, false) == SubEdgeKind::Resync);
+        CHECK(R.Arrive(TriggerType::EdgeAny, SUB_EDGE_RESYNC_DELTA, false) == SubEdgeKind::Resync);
         R.Rebaseline(0);
-        CHECK(R.Arrive(SUB_EDGE_RESYNC_DELTA - 1, false) == SubEdgeKind::Gap);
+        CHECK(R.Arrive(TriggerType::EdgeAny, SUB_EDGE_RESYNC_DELTA - 1, false) == SubEdgeKind::Gap);
     }
 
-    // ---- A target that cannot take a level: the debt is given up, exactly once, with its size.
+    // ---- A target that cannot take a pulse: the rest of the budget is given up, exactly once, with
+    //      its size - and the row then stops writing instead of retrying for ever.
     {
         SubEdgeState S;
-        S.Arrive(1, false);
-        S.Arrive(5, false); // 2,3,4 missing: four levels owed (2,3,4,5)
-        CHECK_EQ(S.Pending, 4);
+        S.Arrive(TriggerType::EdgeAny, 1, false);
+        S.Arrive(TriggerType::EdgeAny, 5, false); // 2, 3, 4 never arrived
+        CHECK_EQ(S.Budget, 5);
         const uint8_t Lost = S.GiveUp();
-        CHECK_EQ(Lost, 4);
-        CHECK_EQ(S.Pending, 0);
-        CHECK(!S.Episode);
+        CHECK_EQ(Lost, 5);
+        CHECK_EQ(S.Budget, 0);
         CHECK_EQ(S.GiveUp(), 0); // a second give-up reports nothing
+        CHECK(!S.NextPass().Write); // nothing more is written to a target that refused
     }
 
     // ---- Reset rules: an install (and a recall, which allocates a fresh row) starts the baseline
-    //      over, so the next counter is a baseline instead of a gap against the previous row's.
+    //      over, so the next counter is a baseline instead of a gap against the previous row's, and
+    //      the target is cleared once rather than trusted.
     {
         SubEdgeState S;
-        S.Arrive(10, false);
-        S.Arrive(13, false);
-        CHECK_EQ(S.Pending, 3);
+        S.Arrive(TriggerType::EdgeAny, 10, false);
+        S.Arrive(TriggerType::EdgeAny, 13, false);
+        CHECK_EQ(S.Budget, 4);
+        S.NextPass();
         S.ResetBaseline();
         CHECK(!S.HaveBaseline);
-        CHECK_EQ(S.Pending, 0);
-        CHECK(!S.Episode);
-        CHECK(S.Arrive(11, false) == SubEdgeKind::Baseline);
-        CHECK_EQ(S.Pending, 0);
+        CHECK_EQ(S.Budget, 0);
+        CHECK(S.High); // a fresh row re-clears the target
+        CHECK(S.Arrive(TriggerType::EdgeAny, 11, false) == SubEdgeKind::Baseline);
+        CHECK_EQ(S.Budget, 1); // the push that re-started the row is still one press
     }
 
     // ---- The lines the device prints. SubFormatEdgeGap / SubFormatEdgeResync / SubFormatEdgeDrop
@@ -366,7 +450,7 @@ int main() {
         unsigned Len = SubFormatEdgeGap(Line, sizeof(Line), 0x1003, 0x0204, 7, 9, 2);
         CHECK_EQ(Len, std::strlen(Line));
         CHECK(std::strcmp(Line,
-                          "TRID 1003 prov 0204: gap of 2 edges (counter 7 -> 9), one level per pass") == 0);
+                          "TRID 1003 prov 0204: gap of 2 edges (counter 7 -> 9), one pulse per pass") == 0);
 
         // Worst case (full-width TRID/address/counters, 5-digit count) must not be truncated.
         char Worst[SUB_EDGE_TEXT_MAX];
@@ -384,11 +468,11 @@ int main() {
         CHECK(Len < SUB_EDGE_TEXT_MAX);
         CHECK_EQ(Len, std::strlen(Worst));
 
-        // The give-up line: the walk could not be delivered, so say how many edges are lost.
-        Len = SubFormatEdgeDrop(Line, sizeof(Line), 0x1003, 0x0204, 12, 3);
+        // The give-up line: the target would not take the pulse, so say how many edges are lost.
+        Len = SubFormatEdgeDrop(Line, sizeof(Line), 0x1003, 0x0204, 3);
         CHECK_EQ(Len, std::strlen(Line));
-        CHECK(std::strcmp(Line, "TRID 1003 prov 0204: replay stopped at counter 12, 3 edges dropped") == 0);
-        Len = SubFormatEdgeDrop(Worst, sizeof(Worst), 0xFFFF, 0xFFFF, 65535, 255);
+        CHECK(std::strcmp(Line, "TRID 1003 prov 0204: target refused the pulse, 3 edges dropped") == 0);
+        Len = SubFormatEdgeDrop(Worst, sizeof(Worst), 0xFFFF, 0xFFFF, 255);
         CHECK(Len < SUB_EDGE_TEXT_MAX);
         CHECK_EQ(Len, std::strlen(Worst));
         CHECK(Len < 128); // DeviceLog's Buffer

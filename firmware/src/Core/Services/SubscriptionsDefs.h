@@ -24,7 +24,7 @@
 // An EDGE-triggered value update is the exception: its whole payload is the provider's edge counter
 // (u16 little-endian, 2 bytes), there is no value beside it, and the level travels as its parity
 // (odd = pressed, even = lifted). See Core/Services/SubscriptionsEdge.h for the layout, the
-// classification and the replay walk.
+// classification and the pulse the requester writes.
 // The subscription TRID range (TRID_SUB_BASE..TRID_SUB_MAX) is defined in Functions/Packet.h.
 
 // Packet priorities (Docs/RSBus and Packets.md: high-priority subscriptions sit above

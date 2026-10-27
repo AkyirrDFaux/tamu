@@ -365,3 +365,18 @@ are hardware-only.
   declares; a row the device holds in another type or size is re-created rather than written into,
   and the run names every row it created or re-created. A dictionary field's key-0 marker has no
   value to write and is left as structure, never written."
+
+- **E52** **`Docs/Services/Subscriptions.md:74` still says the requester writes the derived `Bool`
+  into the target, which the owner's pulse ruling supersedes.** The doc's edge bullet reads "The
+  requester writes the derived `Bool` into the target; the counter is never stored as a value" - the
+  counter half is exactly right and unchanged, but the value half now describes the old behaviour.
+  Since `t_431b1125` (owner ruling, 2026-10-27: "an edge-mode requester clears its output if another
+  edge was not detected") the target is a PULSE: an edge update is worth one `true` main-loop pass
+  per new edge of the trigger's direction and one `false` pass after them, consecutive, and a target
+  with no edge stays `false` instead of holding a level. Parity still describes the COUNTER (odd =
+  pressed, even = lifted) and is what lets the requester count the edges of a direction; it is not
+  written anywhere. Proposed wording, for the parent to apply with Akyirr's approval (Docs are off
+  limits to workers): replace that sentence with "The requester writes a pulse into the target: one
+  `true` main-loop pass for each new edge of the subscribed direction (a jump of `n` = `n` passes,
+  consecutive) and `false` on the following pass, so a target with no edge reads `false`. The counter
+  itself is never stored as a value."

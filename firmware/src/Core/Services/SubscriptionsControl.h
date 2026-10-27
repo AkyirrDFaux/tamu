@@ -346,10 +346,10 @@ inline void SubscriptionsService::Tick(uint32_t NowMs) {
     // cadence, not a lifetime: SubRequesterLease retries fast, capped at SUB_FAST_ATTEMPTS, then
     // falls back to the keepalive until an install is answered.
     RequesterInitCheck(NowMs);
-    // The edges a gap lost are owed to the target: one replay per tick (see
-    // SubscriptionsRequester.h), so a counting script behind the target catches up one press at a
-    // time instead of getting a burst in one pass.
-    SubscriptionsReplayPending();
+    // The edge targets' pulse: one TRUE pass per edge the row is owed, then the FALSE that closes it,
+    // once per main-loop pass (see SubscriptionsRequester.h / SubscriptionsEdge.h), so a counting
+    // script behind a target reads one loop per press instead of a level it has to remember.
+    SubscriptionsPulseTargets();
     SubscriptionsReRegisterPending();
 #endif
 }

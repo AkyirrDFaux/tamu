@@ -155,7 +155,7 @@ echo "### native subscription-keepalive tests (rows never expire; unanswered ins
 build_run "lease" "lease_test.cpp"
 echo
 
-echo "### native edge-counter tests (the counter IS the payload, parity is the level, the walk)"
+echo "### native edge-counter tests (the counter IS the payload, parity is the counter's level, the pulse)"
 build_run "edgecounter" "edge_counter_test.cpp" -DUSE_SUB_REQUEST
 echo
 
@@ -230,13 +230,15 @@ echo
 #     trigger, and the provider steps the counter through SubEdgeClassify (every level change counts,
 #     so parity is the level);
 #   - the requester reads the counter with SubEdgeCounterLoad and nothing else - there is no value
-#     behind it (no `Payload + SUB_EDGE_COUNTER_SIZE`), the counter is never written to the target,
-#     and the only writes are the 1-byte level (parity) both live and in the replay walk;
-#   - every target write goes through the single WriteRequesterTarget (so a replay cannot take a
+#     behind it (no `Payload + SUB_EDGE_COUNTER_SIZE`), and the counter is never written to the
+#     target: the one write is the pulse value the state machine hands out (SubEdgeState::NextPass),
+#     one byte, once per loop pass;
+#   - every target write goes through the single WriteRequesterTarget (so a pulse cannot take a
 #     different path than a live update);
 #   - the two payload shapes are split on the length, and the value-only answer re-baselines;
-#   - no retained value survives anywhere (the level is derived, not kept).
-echo "### source guard: the counter is the whole payload and parity is the level, on both ends"
+#   - no level is derived for the target any more (no SubEdgeLevelByte anywhere): parity describes
+#     the counter, and the value the requester writes is the pulse.
+echo "### source guard: the counter is the whole payload, and the target takes a pulse, on both ends"
 REQ_SRC="src/Core/Services/SubscriptionsRequester.h"
 PROV_SRC="src/Core/Services/SubscriptionsProvider.h"
 CTL_SRC="src/Core/Services/SubscriptionsControl.h"
@@ -269,12 +271,16 @@ if [ "$(grep -c 'Frame.Payload + SUB_EDGE_COUNTER_SIZE' "$REQ_SRC")" != 0 ]; the
     echo "FAIL $REQ_SRC: nothing may sit behind the counter - the update has no value bytes"
     edge_guard_fail=1
 fi
-if [ "$(grep -c 'SubEdgeLevelByte' "$REQ_SRC")" != 1 ]; then
-    echo "FAIL $REQ_SRC: the written level must be derived from parity (SubEdgeLevelByte), not from the counter"
+if [ "$(grep -rc 'SubEdgeLevelByte' src --include=*.h | grep -vc ':0$')" != 0 ]; then
+    echo "FAIL: nothing may derive a level for the target any more - its value is the pulse"
     edge_guard_fail=1
 fi
-if [ "$(grep -c 'WriteRequesterTarget(Entry, &Level, 1)' "$REQ_SRC")" != 2 ]; then
-    echo "FAIL $REQ_SRC: the live level and the replay must both write exactly one parity byte"
+if [ "$(grep -c 'WriteRequesterTarget(Entry, &Value, 1)' "$REQ_SRC")" != 1 ]; then
+    echo "FAIL $REQ_SRC: there must be exactly one target write, and it must be the pulse value"
+    edge_guard_fail=1
+fi
+if [ "$(grep -c 'Edge.NextPass()' "$REQ_SRC")" != 1 ]; then
+    echo "FAIL $REQ_SRC: the pulse must come from SubEdgeState::NextPass (one call per pass)"
     edge_guard_fail=1
 fi
 # One target writer: a replay and a live update must not be able to disagree about what may be written.
@@ -294,12 +300,12 @@ if [ "$(grep -rc 'SUB_EDGE_REPLAY_VALUE_MAX' src --include=*.h | grep -vc ':0$')
     echo "FAIL: no value bytes are retained for a replay any more - the level is derived from the counter"
     edge_guard_fail=1
 fi
-# The replay has to be driven from the main loop, and only one level per pass.
-if ! grep -q 'SubscriptionsReplayPending();' "$CTL_SRC"; then
-    echo "FAIL $CTL_SRC: Tick must run the edge replay"
+# The pulse has to be driven from the main loop, one pass at a time.
+if ! grep -q 'SubscriptionsPulseTargets();' "$CTL_SRC"; then
+    echo "FAIL $CTL_SRC: Tick must run the edge pulse"
     edge_guard_fail=1
 fi
-[ $edge_guard_fail = 0 ] && echo "PASS: counter-only payload, parity-derived level, one target writer, replay driven from Tick"
+[ $edge_guard_fail = 0 ] && echo "PASS: counter-only payload, one target writer, the pulse driven from Tick"
 fail=$((fail + edge_guard_fail))
 echo
 

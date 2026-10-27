@@ -114,20 +114,18 @@ int main() {
         // A renewal does not re-baseline the counter: the next press is compared, so the press that
         // happened ABOVE the old baseline is still accounted (a press counted across a renewal is
         // Next, not the new zero point).
-        CHECK_EQ((int)R.Edge.Arrive(15, SubEdgeAnswer(R.Lease.Served()) == SubEdgeAnswerKind::Install),
+        CHECK_EQ((int)R.Edge.Arrive(TriggerType::EdgeRising, 15,
+                                    SubEdgeAnswer(R.Lease.Served()) == SubEdgeAnswerKind::Install),
                  (int)SubEdgeKind::Next);
         CHECK_EQ(R.Edge.Last, 15);
-        CHECK_EQ(R.Edge.Pending, 0); // delta 1: nothing owed, the level is written live
-        // ...and the release is counted by the provider but not sent, so the next press is a gap
-        // that the walk delivers one level per pass - still ending on the newest counter.
-        CHECK_EQ((int)R.Edge.Arrive(17, false), (int)SubEdgeKind::Gap);
+        CHECK_EQ(R.Edge.Budget, 1); // delta 1 from a lifted counter: one press, one true pass
+        R.Edge.NextPass();
+        CHECK_EQ(R.Edge.Budget, 0);
+        // ...and the release is counted by the provider but not sent, so the next press is a gap -
+        // the two steps are one press and one lift, and only the press is a pulse.
+        CHECK_EQ((int)R.Edge.Arrive(TriggerType::EdgeRising, 17, false), (int)SubEdgeKind::Gap);
         CHECK_EQ(R.Edge.Missing, 1);
-        CHECK_EQ(R.Edge.Pending, 2);
-        CHECK_EQ(R.Edge.ReplayLevel(), 0); // counter 16: lifted
-        R.Edge.OnReplayed();
-        CHECK_EQ(R.Edge.ReplayLevel(), 1); // counter 17: pressed, the level this update carries
-        R.Edge.OnReplayed();
-        CHECK_EQ(R.Edge.Pending, 0);
+        CHECK_EQ(R.Edge.Budget, 1);
         CHECK_EQ(R.Edge.Last, 17);
     }
 
@@ -145,7 +143,7 @@ int main() {
         // the "changes nothing" half is the provider's: an existing entry is only given the new
         // timeout, and a NEW entry is the only thing a 0401 may create. Both are asserted on the
         // provider's call sites by run.sh.
-        CHECK_EQ(R.Edge.Pending, 0);
+        CHECK_EQ(R.Edge.Budget, 0);
         CHECK(!R.Edge.HaveBaseline);
     }
 
@@ -217,7 +215,8 @@ int main() {
         CHECK_EQ(R.Lease.Interval(), SUB_KEEPALIVE_MS);
         CHECK_EQ(R.Lease.LastValueMs, Now + 25);
         // The press that was counted while the renewals went unanswered is still compared.
-        CHECK_EQ((int)R.Edge.Arrive(4, SubEdgeAnswer(R.Lease.Served()) == SubEdgeAnswerKind::Install),
+        CHECK_EQ((int)R.Edge.Arrive(TriggerType::EdgeAny, 4,
+                                    SubEdgeAnswer(R.Lease.Served()) == SubEdgeAnswerKind::Install),
                  (int)SubEdgeKind::Next);
     }
 
@@ -232,10 +231,11 @@ int main() {
 
         // The press is delivered live: delta 1, parity 1, nothing owed. (A live Next writes the
         // arriving counter's level directly; ReplayNext only moves in a walk.)
-        CHECK_EQ((int)R.Edge.Arrive(15, SubEdgeAnswer(R.Lease.Served()) == SubEdgeAnswerKind::Install),
+        CHECK_EQ((int)R.Edge.Arrive(TriggerType::EdgeRising, 15,
+                                    SubEdgeAnswer(R.Lease.Served()) == SubEdgeAnswerKind::Install),
                  (int)SubEdgeKind::Next);
         CHECK_EQ(R.Edge.Last, 15);
-        CHECK_EQ(SubEdgeLevelByte(15), 1); // counter 15: pressed
+        CHECK_EQ(R.Edge.Budget, 1); // counter 15: one press, one true pass owed
 
         // The renewal goes out and comes back while the button is held. It may extend only.
         const uint32_t RenewAt = 1000 + SUB_KEEPALIVE_MS;
@@ -245,24 +245,22 @@ int main() {
         R.Timeout = SubTimeoutFrom(RenewAt + 40);
         CHECK_EQ(R.Edge.Last, 15);        // the press above is still the counter accounting
         CHECK(R.Edge.HaveBaseline);
-        CHECK_EQ(R.Edge.Pending, 0);      // the renewal's answer owed nothing
+        CHECK_EQ(R.Edge.Budget, 1);       // the renewal's answer changed no pulse
         CHECK_EQ(R.Lease.Unanswered, 0);
         CHECK_EQ(R.Timeout, RenewAt + 40 + SUB_TIMEOUT_MS);
 
         // Release + the next press arrive together as counter 17: one edge was never seen, and the
         // two levels it implies are delivered in order (16 lifted -> 0, then 17 pressed -> 1),
         // ending on the newest counter. Neither the renewal nor the gap loses the first press.
-        CHECK_EQ((int)R.Edge.Arrive(17, SubEdgeAnswer(R.Lease.Served()) == SubEdgeAnswerKind::Install),
+        CHECK_EQ((int)R.Edge.Arrive(TriggerType::EdgeRising, 17,
+                                    SubEdgeAnswer(R.Lease.Served()) == SubEdgeAnswerKind::Install),
                  (int)SubEdgeKind::Gap);
         CHECK_EQ(R.Edge.Missing, 1);
-        CHECK_EQ(R.Edge.Pending, 2);
-        CHECK_EQ(R.Edge.ReplayLevel(), 0);
-        R.Edge.OnReplayed();
-        CHECK_EQ(R.Edge.ReplayLevel(), 1);
-        R.Edge.OnReplayed();
-        CHECK_EQ(R.Edge.Pending, 0);
+        CHECK_EQ(R.Edge.Budget, 2);
+        R.Edge.NextPass();
+        R.Edge.NextPass();
+        CHECK_EQ(R.Edge.Budget, 0);
         CHECK_EQ(R.Edge.Last, 17);
-        CHECK(!R.Edge.Episode);
     }
 
     // ---- the cadence beats the provider's 120 s lease with margin --------------------------
@@ -279,9 +277,9 @@ int main() {
         // the counter starts again at 0, which is a backward jump and is read as a restart.
         SubEdgeState Edge;
         Edge.Rebaseline(14);
-        CHECK_EQ((int)Edge.Arrive(1, false), (int)SubEdgeKind::Resync);
+        CHECK_EQ((int)Edge.Arrive(TriggerType::EdgeAny, 1, false), (int)SubEdgeKind::Resync);
         CHECK_EQ(Edge.Last, 1);
-        CHECK_EQ(Edge.Pending, 0); // nothing is counted as lost: the count restarted
+        CHECK_EQ(Edge.Budget, 0); // nothing is counted as lost: the count restarted
     }
 
     std::printf("%d checks, %d failures\n", checks, failures);

@@ -133,11 +133,11 @@ inline bool SubscriptionsService::ApplyRequesterValue(RequesterEntry *Entry, con
     return true;
 }
 
-// An edge-triggered update: the counter IS the payload and its parity is the level, so a press that
-// never arrived can be accounted for instead of vanishing. The classification and the replay walk
-// live in SubscriptionsEdge.h (host-tested); this is the device half - log once per episode, write
-// the level this counter implies, and owe the missing edges to the target (the replay pass delivers
-// them, one per pass, from SubscriptionsTick).
+// An edge-triggered update: the counter IS the payload and says how many edges are new; the target is
+// owed one TRUE pass per new edge of the trigger's direction and one FALSE after them (owner ruling,
+// 2026-10-27). The classification and the pulse accounting live in SubscriptionsEdge.h (host-tested);
+// this is the device half - log once per gap, and let Arrive add the passes to the row's budget. The
+// target itself is written by SubscriptionsPulseTargets, one pass at a time, and never here.
 inline void SubscriptionsService::ApplyRequesterEdge(RequesterEntry *Entry, uint16_t Counter) {
     // A push that arrives while an install is still unanswered is the first thing a row that has
     // NEVER been served has heard since it was set: whatever counter it carries is the row's zero
@@ -149,16 +149,18 @@ inline void SubscriptionsService::ApplyRequesterEdge(RequesterEntry *Entry, uint
     // counter that went BACKWARDS, which `Arrive` already handles as a resync below.
     const bool InstallAnswer = !Entry->Lease.Served();
     const uint16_t From = Entry->Edge.Last;
-    const SubEdgeKind Kind = Entry->Edge.Arrive(Counter, InstallAnswer);
+    // Arrive classifies the counter AND adds the true passes this update is worth (one per edge of the
+    // trigger's direction), so the device cannot disagree with the host test about either.
+    const SubEdgeKind Kind = Entry->Edge.Arrive(Entry->Sub.Trigger, Counter, InstallAnswer);
 
     // Every push is an answer from the provider, and keeping that bookkeeping current is what makes
     // the 120 s deadline mean "when this row was last served" (see ApplyRequesterValue). It is done
-    // here as well because a gap writes nothing now - its levels belong to the replay walk - and the
-    // lease must not depend on whether this update had a level to write.
+    // here as well because a gap only arms the pulse - its budget is spent one pass at a time - and
+    // the lease must not depend on whether this update had edges to deliver.
     Entry->Lease.OnAnswer(DeviceStatus.UptimeMs);
     Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs);
 
-    // A duplicate is a verified send whose ack was lost: the press is already in the target.
+    // A duplicate is a verified send whose ack was lost: those edges are already in the budget.
     if (Kind == SubEdgeKind::Duplicate) return;
 
     if (Entry->Edge.Report) {
@@ -171,18 +173,10 @@ inline void SubscriptionsService::ApplyRequesterEdge(RequesterEntry *Entry, uint
         DeviceLog(SUB_EDGE_TAG, "%s", Line);
     }
 
-    // What may reach the target: the LEVEL as parity, one byte, never the counter as a number. With
-    // no debt the level lands now. With a gap the walk owns the target - it starts at the oldest
-    // edge that was never seen and ends on this counter, one level per pass - so writing here as
-    // well would put the levels out of order and the walk's last write is the one that must stand.
-    if (Entry->Edge.Pending == 0) {
-        const uint8_t Level = SubEdgeLevelByte(Counter);
-        // A refused write means the target register no longer resolves or its field is read-only;
-        // the target keeps its value and there is nothing a replay could do with it either. That is
-        // permanent and visible in the field itself, so it is not logged (one line per press would
-        // be spam); a debt that cannot be paid is reported by the walk, which owns the give-up.
-        (void)WriteRequesterTarget(Entry, &Level, 1);
-    }
+    // What may reach the target: nothing, here. The update has armed the row's pulse budget (Arrive),
+    // and the budget is spent one TRUE pass at a time by SubscriptionsPulseTargets - writing anything
+    // from this update would put a value in front of the passes it still owes, and a value is not what
+    // an edge target carries any more. The counter itself is never written anywhere.
 }
 
 inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &Frame) {
@@ -205,7 +199,7 @@ inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &
     // An edge-triggered row sees two payload shapes, and they cannot collide because a value is at
     // least one byte and a push is exactly two (SubscriptionsEdge.h):
     //   >= 2 bytes - a PUSH: the provider's edge counter (u16, the whole payload). The counter is
-    //                consumed here and never reaches the target; the level its parity implies is.
+    //                consumed here and never reaches the target; it only says how many edges are new.
     //   <  2 bytes - the provider's ANSWER to "Change subscription" (Docs: "Current value"), which
     //                carries the value alone (for an edge row, its Bool). What that answer MAY do
     //                depends on whether the row has been served before (SubEdgeAnswer): the first
@@ -238,32 +232,30 @@ inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &
     ApplyRequesterValue(Entry, Frame.Payload, (uint8_t)Len, Confirm);
 }
 
-// Delivers the edges a gap lost, one level per tick (Docs: the requester does not drop a
-// "subscription happened", it catches its target up). The debt is a walk over the counters that were
-// never delivered (SubEdgeState), so each pass writes the level of the next counter - parity - and
-// the last pass writes the level of the newest counter, which is what leaves the target true.
-// One per pass on purpose: the target is written once per main-loop pass, so a script counting
-// presses behind it sees each recovered press as a separate pass instead of a burst it cannot count.
+// One requester loop pass over the edge targets: this is what makes an edge target a PULSE instead of
+// a held level (owner ruling, 2026-10-27). SubEdgeState::NextPass hands out `true` while the row's
+// budget lasts - one pass per edge of the trigger's direction that arrived - and the single `false`
+// that closes the pulse after the last one, so a plain consumer that reads the field once per pass
+// counts presses without remembering the previous level. Nothing is written while a row has no pulse,
+// so an untouched button costs no register writes at all.
 //
-// A target that cannot take a level - the register no longer resolves, the field is read-only - is
-// reported and the remaining debt is given up: replaying into a target that will not take it would
-// retry for ever.
-inline void SubscriptionsService::SubscriptionsReplayPending() {
+// A target that cannot take a pulse - the register no longer resolves, the field is read-only - is
+// reported with the number of edges being dropped and the row idles until the next edge re-arms it;
+// retrying a target that refuses every write would spin for ever.
+inline void SubscriptionsService::SubscriptionsPulseTargets() {
     for (int n = 0; n < MAX_REQUESTER_SUBS; n++) {
-        if (++ReplayCursor >= MAX_REQUESTER_SUBS) ReplayCursor = 0;
-        RequesterEntry* Entry = &RequesterTable[ReplayCursor];
-        if (!Entry->Active || Entry->Edge.Pending == 0) continue;
-        const uint8_t Level = Entry->Edge.ReplayLevel();
-        if (WriteRequesterTarget(Entry, &Level, 1)) {
-            Entry->Edge.OnReplayed();
-            return;
-        }
+        RequesterEntry *Entry = &RequesterTable[n];
+        if (!Entry->Active || !SubTriggerIsEdge(Entry->Sub.Trigger)) continue;
+        const SubEdgeState::SubPulseStep Step = Entry->Edge.NextPass();
+        if (!Step.Write) continue;
+        // One byte: the pulse value, never the counter as a number.
+        const uint8_t Value = Step.Value;
+        if (WriteRequesterTarget(Entry, &Value, 1)) continue;
         const uint8_t Lost = Entry->Edge.GiveUp();
+        if (Lost == 0) continue;
         char Line[SUB_EDGE_TEXT_MAX];
-        SubFormatEdgeDrop(Line, sizeof(Line), Entry->Trid, RequesterProviderAddr(*Entry),
-                          Entry->Edge.ReplayNext, Lost);
+        SubFormatEdgeDrop(Line, sizeof(Line), Entry->Trid, RequesterProviderAddr(*Entry), Lost);
         DeviceLog(SUB_EDGE_TAG, "%s", Line);
-        return;
     }
 }
 #endif // USE_SUB_REQUEST
