@@ -296,8 +296,9 @@ struct SubEdgeState {
     //   budget left      -> true, one pass spent   (consecutive: one loop per edge)
     //   budget just ended-> one false, which closes the pulse
     //   idle and false   -> nothing to write, the field already is false
-    // So n edges are n true passes and the false that follows them, and a target nobody pressed is
-    // never written at all.
+    // So n edges are n true passes and the false that follows them. An idle row is silent, but only
+    // from its second pass on: a fresh row (install, recall, a new set, a boot) starts with High set,
+    // so its FIRST idle pass writes one clearing false, and every pass after that writes nothing.
     struct SubPulseStep {
         bool Write;
         uint8_t Value;
