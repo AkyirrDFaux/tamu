@@ -442,6 +442,38 @@ int main() {
         CHECK_EQ(S.Budget, 1); // the push that re-started the row is still one press
     }
 
+    // ---- What the wire reports (t_5da34b15): the row's Hash/Hashlike is the counter this state has
+    //      accounted up to - RequesterEntry::Hash is set to `Last` after every push, so these are the
+    //      values *Get subscriptions* hands out. A fresh row (a boot, a recall, a Set) has seen
+    //      nothing: 0 is its empty baseline, and the first counter it meets becomes the zero point
+    //      rather than a gap - which is why nothing the device missed while it was off is replayed.
+    {
+        SubEdgeState S;
+        CHECK_EQ(S.Last, 0); // no baseline yet: the field is empty
+        CHECK(!S.HaveBaseline);
+
+        CHECK(S.Arrive(TriggerType::EdgeAny, 40, false) == SubEdgeKind::Baseline);
+        CHECK_EQ(S.Last, 40); // the wire now reports the counter it took as its zero point
+        CHECK(S.Arrive(TriggerType::EdgeAny, 41, false) == SubEdgeKind::Next);
+        CHECK_EQ(S.Last, 41);
+        CHECK(S.Arrive(TriggerType::EdgeAny, 44, false) == SubEdgeKind::Gap);
+        CHECK_EQ(S.Last, 44); // a gap still moves it: it is the newest counter seen
+        CHECK(S.Arrive(TriggerType::EdgeAny, 44, false) == SubEdgeKind::Duplicate);
+        CHECK_EQ(S.Last, 44); // a retried send changes nothing, so the wire keeps the same value
+        CHECK(S.Arrive(TriggerType::EdgeAny, 2, false) == SubEdgeKind::Resync);
+        CHECK_EQ(S.Last, 2); // a restarted provider: the new count IS what the row has seen
+        CHECK(S.Arrive(TriggerType::EdgeAny, 0xFFFF, false) == SubEdgeKind::Resync);
+        CHECK_EQ(S.Last, 0xFFFF); // the wire carries the low 16 bits, so a full ring is 65535
+
+        // A recall (or a boot) allocates a fresh row: the field is empty again, so the next counter
+        // is a baseline and no pulse is owed for the gap across the power cycle.
+        S = SubEdgeState{};
+        CHECK_EQ(S.Last, 0);
+        CHECK(S.Arrive(TriggerType::EdgeAny, 900, false) == SubEdgeKind::Baseline);
+        CHECK_EQ(S.Budget, 1); // one press, the one that carried the new zero point
+        CHECK_EQ(S.Last, 900);
+    }
+
     // ---- The lines the device prints. SubFormatEdgeGap / SubFormatEdgeResync / SubFormatEdgeDrop
     //      are what SubscriptionsRequester.h hands to DeviceLog, so their exact text is pinned here,
     //      along with the guarantee that the longest line still fits DeviceLog's 128-byte buffer.

@@ -121,6 +121,27 @@ inline bool SubscriptionsService::ApplyRequesterValue(RequesterEntry *Entry, con
     // it leaves a confirm-required provider's hash unchanged and it retries with a real value.
     if (!WriteRequesterTarget(Entry, Val, Vlen)) return false;
 
+    // The row's Hash/Hashlike records what it has SEEN (Docs "Requester table entry": the counter
+    // for an edge trigger, the last value otherwise), and nothing is decided with it here - the
+    // requester writes the value it is handed, so this is bookkeeping the app can read off *Get
+    // subscriptions*, never a send gate and never something written into the target.
+    //
+    // A value that fits the 32-bit field IS the last value, little-endian and zero-extended (Bool,
+    // Index, Uint32 and Number all do - the types the docs name for "last value"); a wider value
+    // cannot be held, so it is kept as its FNV-1a fingerprint, the same form the provider's OnChange
+    // reference uses. An EDGE row's field is a counter, not a value, and is written by
+    // ApplyRequesterEdge alone: this path only ever hands an edge row the install's level (the 0401
+    // answer), which carries no counter and must not overwrite one.
+    if (!SubTriggerIsEdge(Entry->Sub.Trigger)) {
+        if (Vlen <= sizeof(Entry->Hash)) {
+            uint32_t Seen = 0;
+            for (uint8_t i = 0; i < Vlen; i++) Seen |= (uint32_t)Val[i] << (8 * i);
+            Entry->Hash = Seen;
+        } else {
+            Entry->Hash = Fnv1a(Val, Vlen);
+        }
+    }
+
     if (!Confirm) return true;
 
     // Confirmation: the requester sends the hash of the received value (docs CID 0: the
@@ -152,6 +173,14 @@ inline void SubscriptionsService::ApplyRequesterEdge(RequesterEntry *Entry, uint
     // Arrive classifies the counter AND adds the true passes this update is worth (one per edge of the
     // trigger's direction), so the device cannot disagree with the host test about either.
     const SubEdgeKind Kind = Entry->Edge.Arrive(Entry->Sub.Trigger, Counter, InstallAnswer);
+
+    // The row's Hash/Hashlike is the wire's copy of the counter this row has accounted up to, so the
+    // two can never disagree: it is taken from the state machine AFTER the classification instead of
+    // from `Counter`, and a duplicate (a retried send whose ack was lost) therefore leaves it where
+    // it was. An install, a recall or a reboot starts it at 0 - the field is not persisted (owner
+    // ruling, 2026-10-27) - and the next push after that is the row's zero point, so the gaps the
+    // device missed while it was off are NOT replayed as pulses on the first update.
+    Entry->Hash = Entry->Edge.Last;
 
     // Every push is an answer from the provider, and keeping that bookkeeping current is what makes
     // the 120 s deadline mean "when this row was last served" (see ApplyRequesterValue). It is done

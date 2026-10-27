@@ -13,8 +13,10 @@
 #ifdef USE_SUB_REQUEST
 
 // Docs: "recalls values from a file, which is a 1:1 copy of the table except timeout value."
-// Entry: the requester wire prefix minus the timeout = providerAddr(2) + trid(2) + table(16)
-// + targetReg(4) = 24 B, so it is copied whole.
+// Entry: the requester wire prefix minus the timeout and the hash = providerAddr(2) + trid(2)
+// + table(16) + targetReg(4) = 24 B, so it is copied whole. The hash is deliberately NOT in the
+// record (owner ruling, 2026-10-27): it is row bookkeeping, and a baseline from before a power
+// cycle would turn every gap across it into a burst of pulses on the first push after the recall.
 //
 // `KeepFileEntries` is what a save driven by an unrelated change (a set, which persists only its
 // own entry) passes: the file then keeps the entries it already holds that the live table no longer
@@ -126,6 +128,10 @@ inline void SubscriptionsService::LoadRequesterTable() {
         Loaded++;
         Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs); // wire field, not enforced
         Entry->Lease = SubRequesterLease{};   // unserved again: fast retry until a value arrives
+        // A recall starts the row with no baseline (the `.SUBREQ` record does not carry the hash,
+        // owner ruling 2026-10-27): the next counter/value the row sees is its first, so nothing that
+        // happened while the device was off is replayed as pulses.
+        Entry->Hash = 0;
     }
     DeviceLog("SUB", "requester recall: %u of %u entries from %u B",
               (unsigned)Loaded, (unsigned)Count, (unsigned)Len);

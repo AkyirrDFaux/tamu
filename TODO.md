@@ -584,7 +584,7 @@ Open:
 - **Addresses** are 6-bit net + 10-bit device (`MakeId`). Net 0 means the local net and is resolved
   to the local NetID at match/forward time (`NetQualifyLocal`); the core is `NetID.1`.
 - **Subscriptions**: shared 16-byte table (`sourceReg`, trigger, `minTime` uint24, period,
-  deadzone); requester 28 B / provider 32 B; the **provider** holds a 120 s lease renewed by
+  deadzone); requester 32 B / provider 32 B; the **provider** holds a 120 s lease renewed by
   keepalive/updates, while a **requester row never expires** - it goes only on an explicit cancel,
   an orphan announcement or a new setup (`t_eb35360c`), with the retry cadence as the bus guard
   (fast while unanswered, capped at 5, then the 60 s keepalive); running out of fast renewals is
@@ -592,7 +592,10 @@ Open:
   uptime, saying the row is kept and on the keepalive - the flag is RAM-only and clears on an
   answer); CIDs
   `0x0400/0x0401` inter-device, `0x0410-0x0413` requester, `0x0420/0x0421` provider; cancel is
-  `trigger None`; `.SUBREQ` holds 24 B entries (TRID persisted, timeout regenerated).
+  `trigger None`; `.SUBREQ` holds 24 B entries (TRID persisted, timeout regenerated). The requester
+  entry also carries the documented `Hash/Hashlike` after its timeout - wire only, so it is in
+  *Get subscriptions* but not in `.SUBREQ`, and the edge baseline therefore starts empty at every
+  boot and recall (`t_5da34b15`; the app's 28 B parser needs the new stride).
 - **Subscription capabilities** are split: `SubscriptionRequest = 1<<7`, `SubscriptionProvide =
   1<<9` (`Node = 1<<8`).
 - **Scripts**: `SCR_XXX` (4096 file ids) but only 64 loaded slots (6-bit); the caller picks the

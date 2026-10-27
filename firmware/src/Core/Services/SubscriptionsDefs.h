@@ -101,8 +101,9 @@ static Value *SubTableFindByTrid(Value (&Table)[Size], uint16_t Trid, Occupied I
 #ifdef USE_SUB_REQUEST
 #define MAX_REQUESTER_SUBS 16
 
-// Docs "Requester table entry" (28 B wire): providerAddr, TRID, the shared subscription
-// table, target register, timeout. The timeout is local uptime and is not persistent.
+// Docs "Requester table entry" (32 B wire): providerAddr, TRID, the shared subscription
+// table, target register, timeout, hash/hashlike. The timeout is local uptime and the hash is
+// bookkeeping, so neither is persistent.
 struct RequesterEntry {
     uint16_t ProviderAddr = 0;
     uint16_t Trid = 0;
@@ -113,29 +114,55 @@ struct RequesterEntry {
     // ruling t_eb35360c) and only the provider expires its own entry - so it is a wire field the app
     // can read, not a lifetime.
     uint32_t Timeout = 0;
+    // The row's Hash/Hashlike (Docs "Requester table entry"), the same named field the provider entry
+    // carries, but NOT the same thing: nothing here decides what is sent - the requester writes the
+    // value it is handed. It records what the row has SEEN, interpreted by its trigger: an edge row
+    // keeps the last counter it saw (the low 16 bits of the provider's counter, which is what the
+    // wire carries - see SubscriptionsEdge.h), and a value row keeps the last value it applied (the
+    // value itself little-endian when it fits these 4 bytes, its FNV-1a fingerprint otherwise). It is
+    // never written into the target.
+    //
+    // Wire only, by owner ruling (2026-10-27): it is in the 32 B Get-subscriptions prefix but NOT in
+    // the 24 B `.SUBREQ` record, so a recall or a reboot starts the row with no baseline - which is
+    // exactly what the edge accounting does with it: the first counter after a boot, a recall or an
+    // install is the row's zero point, so edges that happened while the device was off are NOT
+    // replayed as pulses (a persisted baseline would turn every gap across a power cycle into a
+    // burst). The provider side is non-persistent for the same reason.
+    uint32_t Hash = 0;
     bool Active = false;
     // Install/keepalive bookkeeping (transient, after the wire prefix): whether the provider last
     // answered the install decides the retry cadence. See SubscriptionsLease.h. The counter is
-    // RAM-only - it is not part of the 28 B wire prefix and not part of the 24 B `.SUBREQ` entry - so
+    // RAM-only - it is not part of the 32 B wire prefix and not part of the 24 B `.SUBREQ` entry - so
     // every boot, recall and Set starts it at 0.
     SubRequesterLease Lease;
     // The edge trigger's counter accounting (Docs: an edge update carries the provider's edge
     // counter; see SubscriptionsEdge.h). Transient like the lease, and for the same reason - it is
     // neither streamed by Get subscriptions nor written to `.SUBREQ` - so an install, a recall and
     // a boot all start the row with no baseline to compare a counter against. Parity carries the
-    // level (odd = pressed), so this is also the row's only copy of it.
+    // level (odd = pressed), so this is also the row's only copy of it. `Hash` above is the wire's
+    // copy of the counter this state has accounted up to (`Last`), kept in step on every push.
     SubEdgeState Edge;
 };
 
 // The wire prefix of the entry IS the struct prefix, so serialization is a plain copy of the
-// first 28 bytes (Docs "Requester table entry"): providerAddr, trid, table, targetReg, timeout.
+// first 32 bytes (Docs "Requester table entry"): providerAddr, trid, table, targetReg, timeout,
+// hash. The file record ends BEFORE both the timeout and the hash (24 B), so the same prefix
+// copy persists exactly the fields the docs call persistent.
 static_assert(offsetof(RequesterEntry, ProviderAddr) == 0, "wire order: providerAddr first");
 static_assert(offsetof(RequesterEntry, Trid) == 2, "wire order: Trid after providerAddr");
 static_assert(offsetof(RequesterEntry, Sub) == 4, "wire order: subscription table after Trid");
 static_assert(offsetof(RequesterEntry, TargetReg) == 20, "wire order: targetReg after the table");
 static_assert(offsetof(RequesterEntry, Timeout) == 24, "wire order: timeout after targetReg");
-#define REQUESTER_ENTRY_WIRE_SIZE 28
-#define REQUESTER_FILE_ENTRY_SIZE 24 // the wire entry minus the timeout (not persisted)
+static_assert(offsetof(RequesterEntry, Hash) == 28, "wire order: hash after timeout");
+#define REQUESTER_ENTRY_WIRE_SIZE 32
+#define REQUESTER_FILE_ENTRY_SIZE 24 // the wire entry minus the timeout and the hash (neither persists)
+static_assert(REQUESTER_ENTRY_WIRE_SIZE == 32, "the requester wire entry is 32 B (Docs requester table)");
+static_assert(REQUESTER_FILE_ENTRY_SIZE == 24, "the .SUBREQ record is 24 B (Docs: a copy minus the timeout)");
+// The file record IS the wire prefix up to the timeout: a persisted field must never be one the
+// docs exclude (the timeout is local uptime, the hash is bookkeeping), so a new wire field cannot
+// land inside the record by accident.
+static_assert(REQUESTER_FILE_ENTRY_SIZE == offsetof(RequesterEntry, Timeout),
+              "the .SUBREQ record must end before the timeout/hash: neither is persisted");
 
 // The deferred re-registration queue capacity: a short address list (not a bitmask) keeps any
 // 10-bit node id addressable, sized to the device registry's capacity (SNDB_MAX_ENTRIES) so a

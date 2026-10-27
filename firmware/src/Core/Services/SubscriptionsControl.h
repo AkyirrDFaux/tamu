@@ -90,7 +90,8 @@ inline void SubscriptionsService::ProviderStreamTable(const PacketFrame &Frame) 
 inline bool SubscriptionsService::RequesterEntryLive(const uint8_t *Entry) {
     return ((const RequesterEntry *)Entry)->Active;
 }
-// Streams the requester table (u8 count, then 28 B entries).
+// Streams the requester table (u8 count, then 32 B entries: the wire entry carries the row's
+// hash/hashlike after the timeout, so *Get subscriptions* reports it).
 inline void SubscriptionsService::RequesterStreamTable(const PacketFrame &Frame) {
     StreamSubscriptionTable(Frame, (const uint8_t *)RequesterTable, MAX_REQUESTER_SUBS,
                             REQUESTER_ENTRY_WIRE_SIZE, sizeof(RequesterEntry), RequesterEntryLive);
@@ -254,6 +255,10 @@ __attribute__((noinline)) inline bool SubscriptionsService::Handle(const PacketF
             Entry->Timeout = SubTimeoutFrom(DeviceStatus.UptimeMs); // wire field, not enforced
             Entry->Lease = SubRequesterLease{}; // unserved again: fast retry until a value arrives
             Entry->Edge = SubEdgeState{};       // no counter baseline: the next one is the zero point
+            // The row's Hash/Hashlike starts empty for the same reason: this Set may name a
+            // different provider or source, so the counter/value the old row had seen is not a
+            // baseline for the new one. Wire only (no `.SUBREQ` write below carries it).
+            Entry->Hash = 0;
             // Persist this set's own entry, but must not rewrite the file from the live table: a
             // row that is missing from the live table is not a deliberate removal (an entry that
             // could not be restored because the table was full still belongs to the saved setup),

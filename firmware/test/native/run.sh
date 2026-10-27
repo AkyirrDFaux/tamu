@@ -309,6 +309,94 @@ fi
 fail=$((fail + edge_guard_fail))
 echo
 
+# t_5da34b15, structural half: the requester row now carries the documented Hash/Hashlike
+# (Docs/Services/Subscriptions.md "Requester Table Entry": uint32, after the timeout), and by owner
+# ruling (2026-10-27) it is a WIRE field only - never in `.SUBREQ`. The sites that keep it are
+# device-side and do not link on the host, so the facts are asserted on the source and on the
+# layout:
+#   - an edge row mirrors its counter from the state machine AFTER the classification
+#     (Entry->Hash = Entry->Edge.Last), so a duplicate cannot move it and the wire cannot disagree
+#     with the accounting;
+#   - a value row keeps the last value it applied - the value itself little-endian when it fits the
+#     32-bit field (Bool/Index/Uint32/Number, the types the docs name), its FNV-1a fingerprint
+#     otherwise - gated on NOT being an edge row, so a value can never overwrite an edge counter;
+#   - a Set and a recall start it empty, so nothing the device missed is replayed as pulses;
+#   - the field is never written into a target and never decides a send;
+#   - the wire entry is 32 B with the hash at offset 28, while the `.SUBREQ` record stays 24 B and
+#     ends before the timeout/hash. SubscriptionsDefs.h pins all three with static_asserts at build
+#     time; the defines are re-checked here so an edit cannot slip past a stale binary.
+echo "### source guard: the requester Hash/Hashlike is a wire field of the row, never persisted"
+HASH_DEFS_SRC="src/Core/Services/SubscriptionsDefs.h"
+HASH_REQ_SRC="src/Core/Services/SubscriptionsRequester.h"
+HASH_CTL_SRC="src/Core/Services/SubscriptionsControl.h"
+HASH_PERSIST_SRC="src/Core/Services/SubscriptionsPersist.h"
+hash_fail=0
+if [ "$(grep -c '#define REQUESTER_ENTRY_WIRE_SIZE 32' "$HASH_DEFS_SRC")" != 1 ]; then
+    echo "FAIL $HASH_DEFS_SRC: the requester wire entry is 32 B (the hash is the 6th field)"
+    hash_fail=1
+fi
+if [ "$(grep -c '#define REQUESTER_FILE_ENTRY_SIZE 24' "$HASH_DEFS_SRC")" != 1 ]; then
+    echo "FAIL $HASH_DEFS_SRC: the .SUBREQ record stays 24 B (the hash is not persisted)"
+    hash_fail=1
+fi
+if [ "$(grep -c 'offsetof(RequesterEntry, Hash) == 28' "$HASH_DEFS_SRC")" != 1 ]; then
+    echo "FAIL $HASH_DEFS_SRC: the hash must sit at wire offset 28, right after the timeout"
+    hash_fail=1
+fi
+if [ "$(grep -c 'REQUESTER_FILE_ENTRY_SIZE == offsetof(RequesterEntry, Timeout)' "$HASH_DEFS_SRC")" != 1 ]; then
+    echo "FAIL $HASH_DEFS_SRC: the .SUBREQ record must end before the timeout/hash (pinned by an assert)"
+    hash_fail=1
+fi
+if [ "$(grep -c 'Entry->Hash = Entry->Edge.Last;' "$HASH_REQ_SRC")" != 1 ]; then
+    echo "FAIL $HASH_REQ_SRC: an edge row's hash must mirror the state machine's counter (once)"
+    hash_fail=1
+fi
+if [ "$(grep -c 'Entry->Hash = Fnv1a(Val, Vlen);' "$HASH_REQ_SRC")" != 1 ]; then
+    echo "FAIL $HASH_REQ_SRC: a value too wide for the field must be kept as its FNV-1a fingerprint (once)"
+    hash_fail=1
+fi
+if [ "$(grep -c 'Entry->Hash = Seen;' "$HASH_REQ_SRC")" != 1 ]; then
+    echo "FAIL $HASH_REQ_SRC: a value that fits the field must be kept as the value itself (once)"
+    hash_fail=1
+fi
+if [ "$(grep -c 'if (!SubTriggerIsEdge(Entry->Sub.Trigger)) {' "$HASH_REQ_SRC")" != 1 ]; then
+    echo "FAIL $HASH_REQ_SRC: the value hash must not overwrite an edge row's counter"
+    hash_fail=1
+fi
+if [ "$(grep -c 'Entry->Hash = 0;' "$HASH_CTL_SRC")" != 1 ]; then
+    echo "FAIL $HASH_CTL_SRC: a Set must start the row's hash empty (once)"
+    hash_fail=1
+fi
+if [ "$(grep -c 'Entry->Hash = 0;' "$HASH_PERSIST_SRC")" != 1 ]; then
+    echo "FAIL $HASH_PERSIST_SRC: a recall must start the row's hash empty (once)"
+    hash_fail=1
+fi
+# The file record copies the wire prefix up to the timeout, and nothing more.
+if [ "$(grep -c 'memcpy(Buf + Off, Entry, REQUESTER_FILE_ENTRY_SIZE)' "$HASH_PERSIST_SRC")" != 2 ]; then
+    echo "FAIL $HASH_PERSIST_SRC: the save must copy exactly REQUESTER_FILE_ENTRY_SIZE bytes (2 sites)"
+    hash_fail=1
+fi
+if [ "$(grep -c 'memcpy((void \*)Entry, Buf + Off, REQUESTER_FILE_ENTRY_SIZE)' "$HASH_PERSIST_SRC")" != 1 ]; then
+    echo "FAIL $HASH_PERSIST_SRC: the recall must read exactly REQUESTER_FILE_ENTRY_SIZE bytes"
+    hash_fail=1
+fi
+if [ "$(grep -c 'REQUESTER_ENTRY_WIRE_SIZE' "$HASH_PERSIST_SRC")" != 0 ]; then
+    echo "FAIL $HASH_PERSIST_SRC: the wire entry size must not reach the .SUBREQ codec"
+    hash_fail=1
+fi
+# Bookkeeping only: never handed to a target write, never a send gate.
+if [ "$(grep -rc '&Entry->Hash' src --include=*.h | grep -vc ':0$')" != 0 ]; then
+    echo "FAIL: the hash must never be written into a target (no &Entry->Hash anywhere)"
+    hash_fail=1
+fi
+if [ "$(grep -rc 'if (Entry->Hash' src --include=*.h | grep -vc ':0$')" != 0 ]; then
+    echo "FAIL: the requester's hash must never decide a send (it is bookkeeping)"
+    hash_fail=1
+fi
+[ $hash_fail = 0 ] && echo "PASS: hash at wire offset 28 (32 B entry), .SUBREQ still 24 B and hash-free"
+fail=$((fail + hash_fail))
+echo
+
 # t_eb35360c, structural half: a host test cannot compile RequesterSet's cancel branch or Tick (both
 # pull the packet/register/storage layer), so the two facts the owner's ruling depends on are
 # asserted on the source itself - Tick has no time-based requester drop, and the ONLY removal of a
