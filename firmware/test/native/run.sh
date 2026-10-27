@@ -163,6 +163,65 @@ echo "### native renewal-contract tests (a renewal extends the timeouts and noth
 build_run "renewal" "renewal_test.cpp" -DUSE_SUB_REQUEST
 echo
 
+echo "### native button-latch tests (a tap shorter than the loop is still one press)"
+build_run "buttonlatch" "button_latch_test.cpp"
+echo
+
+# t_25f04000, structural half: the device side of the button press capture cannot be linked on
+# the host (it is a GPIO/EXTI register), so the facts the sampling decision depends on are
+# asserted on the source:
+#   - the DAS button reports through ButtonSample, the decision the native test drives - not a
+#     second copy of `captured || pin low`;
+#   - the hardware capture is consumed on the pass that reported it (INTFR written back), so one
+#     caught edge is one press and a held press cannot be counted again;
+#   - only the falling edge is armed (a press is the active-low edge), and the capture is armed
+#     after the arming itself is discarded - otherwise the first pass can report a phantom press;
+#   - it stays a polled capture: no ISR, no PFIC line, no interrupt enable - which is what keeps
+#     it inside the DAS's remaining code space;
+#   - the main loop still samples the block once per pass.
+echo "### source guard: the DAS button reports the capture through ButtonSample and consumes it"
+BTN_SRC="src/Devices/DAS_v0.1/Button.h"
+MAIN_SRC="src/Devices/DAS_v0.1/Main.h"
+btn_fail=0
+if [ "$(grep -c 'ButtonSample(' "$BTN_SRC")" != 1 ]; then
+    echo "FAIL $BTN_SRC: the block must report through ButtonSample exactly once"
+    btn_fail=1
+fi
+if [ "$(grep -c 'EXTI->INTFR = DAS_BUTTON_EXTI' "$BTN_SRC")" != 2 ]; then
+    echo "FAIL $BTN_SRC: the capture must be cleared on the pass that reported it and after arming"
+    btn_fail=1
+fi
+consume_line=$(grep -n 'EXTI->INTFR = DAS_BUTTON_EXTI;' "$BTN_SRC" | tail -1 | cut -d: -f1)
+init_line=$(grep -n 'void DasButtonInit()' "$BTN_SRC" | cut -d: -f1)
+update_line=$(grep -n 'void DasButtonUpdate()' "$BTN_SRC" | cut -d: -f1)
+arm_clear_line=$(grep -n 'EXTI->INTFR = DAS_BUTTON_EXTI;' "$BTN_SRC" | head -1 | cut -d: -f1)
+if [ -z "$consume_line" ] || [ -z "$arm_clear_line" ] || [ -z "$init_line" ] || [ -z "$update_line" ]; then
+    echo "FAIL $BTN_SRC: both clears (arm and consume) must be present, in DasButtonInit/DasButtonUpdate"
+    btn_fail=1
+elif [ "$arm_clear_line" -le "$init_line" ] || [ "$arm_clear_line" -ge "$update_line" ]; then
+    echo "FAIL $BTN_SRC: the arming must clear the capture it latched, inside DasButtonInit"
+    btn_fail=1
+elif [ "$consume_line" -le "$update_line" ]; then
+    echo "FAIL $BTN_SRC: the capture must be cleared on the pass that reported it (DasButtonUpdate)"
+    btn_fail=1
+fi
+if [ "$(grep -c 'EXTI->FTENR |= DAS_BUTTON_EXTI' "$BTN_SRC")" != 1 ] ||
+   [ "$(grep -c 'EXTI->RTENR' "$BTN_SRC")" != 0 ]; then
+    echo "FAIL $BTN_SRC: only the falling edge may be armed (a press is the active-low edge)"
+    btn_fail=1
+fi
+if [ "$(grep -cE 'EXTI->INTENR|NVIC_EnableIRQ|__enable_irq|EXTI7_0_IRQHandler' "$BTN_SRC")" != 0 ]; then
+    echo "FAIL $BTN_SRC: the capture must stay polled - no ISR, no PFIC line, no interrupt enable"
+    btn_fail=1
+fi
+if [ "$(grep -c 'DasButtonUpdate();' "$MAIN_SRC")" != 1 ]; then
+    echo "FAIL $MAIN_SRC: the main loop must sample the button once per pass"
+    btn_fail=1
+fi
+[ $btn_fail = 0 ] && echo "PASS: the button reports the latched edge through ButtonSample and consumes it"
+fail=$((fail + btn_fail))
+echo
+
 # t_378cc55c, structural half: the two device sites that put the counter on the wire and read it back
 # off again cannot be linked on the host (they pull the packet/register/device layer), so the facts
 # the accounting depends on are asserted on the source itself:
