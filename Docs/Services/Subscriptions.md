@@ -21,6 +21,7 @@ Subscriptions are stored in a sequential table, sorted by TrID.
 | Subscription table  | ... 16 bytes |      |
 | Target register     | `BlockInfo`  | Local write |
 | Timeout             | uint32       | Local uptime; ignored by Set Subscription and not persistent |
+| Hash/Hashlike       | uint32       | Last counter / last value this row has seen. Wire only: not persisted, so a recall or a reboot starts the row with no baseline. |
 
 On receiving a value update, the requester finds the target register by its TrID and writes the value there if possible. The requester re-activates after boot and recalls its values from a file in [[Services/Storage]], a 1:1 copy of the table except for the timeout value. Non-requested value updates are answered with a cancel request.
 #### Renewal
@@ -71,6 +72,9 @@ The Hash/Hashlike field carries one of:
 - Rising, falling or any edge detection (high priority, `Bool` only)
 	- Sends an update on each edge increase; **the payload is the counter itself** (`uint16`, little-endian, = the `Hash/Hashlike` counter).
 	- **Parity is the level:** odd = currently true/pressed, even = false/lifted. A jump of `n` means `n` edges.
+	- On receiving an edge update the requester compares the counter with the last one it saw to learn **how many edges are new**, and writes the **output value** as a pulse: `true` for one loop per new edge, consecutive, then `false`.
+	- So a burst of three edges reads as three consecutive `true` loops; a single press reads as one; a held button reads `true` for one loop and then `false`.
+	- The counter is never written into the target. Parity describes the counter, not the target.
 	- The requester writes the derived `Bool` into the target; the counter is never stored as a value.
 	- Settings and states:
 		- Retry interval (ms)
