@@ -292,8 +292,9 @@ inline void SubscriptionsService::HandleRequesterValueUpdate(const PacketFrame &
 // a held level (owner ruling, 2026-10-27). SubEdgeState::NextPass hands out `true` while the row's
 // budget lasts - one pass per edge of the trigger's direction that arrived - and the single `false`
 // that closes the pulse after the last one, so a plain consumer that reads the field once per pass
-// counts presses without remembering the previous level. Nothing is written while a row has no pulse,
-// so an untouched button costs no register writes at all.
+// counts presses without remembering the previous level. An idle row is silent, but only from its
+// second pass on: a fresh row (install, recall, a new set, a boot) starts with High set, so its
+// FIRST idle pass writes one clearing false; every pass after it costs no register writes at all.
 //
 // A target that cannot take a pulse - the register no longer resolves, the field is read-only - is
 // reported with the number of edges being dropped and the row idles until the next edge re-arms it;
