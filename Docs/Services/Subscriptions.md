@@ -50,6 +50,8 @@ The Hash/Hashlike field carries one of:
 - Counter: for `Bool` edges only
 - Last value: for `Number`, `Index` and `Uint32` values only
 - Subresolution Vector: a zoomed-in portion of the sensitive area. For 3D it is 10 bits per axis, that is 5 bits above the deadzone (Hash and Sign) plus 5 bits below (Distance measurement). It is not included if the device measures no Vectors and has no Script support.
+
+For an edge trigger the 32-bit field is used in two 16-bit halves: the **low half is the local edge counter** (the value an update carries, wrapping at 65536 — a wrap is an even number of steps, so parity still carries the level) and the **high half is the last counter the requester confirmed**. `high != low` therefore means the last update is unacknowledged, and the provider re-sends the same counter until the halves match. A new edge increments the low half; a re-send never does.
 ### Trigger Types
 - None (cancelled or to be deleted)
 - Periodic (low priority, any type)
