@@ -28,14 +28,16 @@
 ///    the app surfaces as a sentence rather than leaving a control that silently does nothing.
 ///  - **Advertising has one condition: the radio is up and enabled and no session is up** (E64
 ///    ruling C, `BleAdvWanted()`). It never depends on the bond store or on a window, so the
-///    block's `Window` of 0 means "no pairing window", not "nothing on the air". The window
-///    and the store decide **who may connect** (`ConnectFilterWhitelistOnly()`): a bonded phone
-///    always, and any other phone while a window is open or while the store is still empty - an
-///    empty store is exactly how the first bond gets made. With a bond stored and no window the
-///    controller admits connect requests from the whitelist only, so a stranger's request is
-///    dropped in the link layer and, from that phone, looks like a device that is off or out of
-///    range. An empty store has nothing to protect and admits anyone; it also opens its own
-///    five-minute window once per boot and again after `Action = 1`. Only USB can open a window
+///    block's `Window` of 0 means "no pairing window", not "nothing on the air". What the window
+///    and the store do decide is **who may connect**: a bonded phone always, and any other phone
+///    while a window is open or while the store is still empty - an empty store is exactly how the
+///    first bond gets made. The gate is the device's own session check, never the controller's
+///    accept list (E66: nothing sets an advertising filter policy and the bond store is not
+///    mirrored into the controller's white list, because that list is matched against an address a
+///    privacy-enabled phone never connects from). So a stranger's CONNECT_REQ is answered and the
+///    link is refused when it cannot prove a bond - from that phone, a failed pairing rather than
+///    a silent absence. An empty store has nothing to protect and admits anyone; it also opens its
+///    own five-minute window once per boot and again after `Action = 1`. Only USB can open a window
 ///    (`Action = 0`). Neither shape of "it does not connect" is a broken device
 ///    ([bleLinkGuidance]).
 library;
@@ -484,10 +486,12 @@ enum BleLinkSymptom {
   /// the app's side.
   droppedDuringSecuring,
 
-  /// The device never answered: it is off, out of range, or — with a bond stored — it dropped
-  /// this phone's connect request in the link layer because it holds no bond for it (E64 ruling
-  /// C). That refusal is silent from the phone's side, so the two are told apart by what the
-  /// device says over USB, never by guessing here.
+  /// The device never answered: it is off, out of range, or its radio is switched off. A phone
+  /// the device holds no bond for is not silent in the same way — since E66 the device answers its
+  /// connect request and refuses the link once it cannot prove a bond, so the refusal normally
+  /// reaches the phone as a failed pairing ([securityRefused]). Some stacks report a
+  /// refuse-then-drop as a bare timeout anyway, which is what the device's USB panel settles
+  /// (`Last link`, [bleVerdictDetail]).
   unreachable,
 
   /// Anything else. The panel then lists both causes instead of guessing between them.
@@ -603,11 +607,11 @@ BleLinkGuidance bleLinkGuidance({
         symptom: BleLinkSymptom.unreachable,
         headline: 'The device did not answer this phone',
         detail:
-            'A device that holds bonds admits only the phones it holds bonds for: a connect '
-            'request from any other phone is dropped in the link layer, so from that phone it '
-            'looks exactly like a device that is off or out of range. A device that holds no '
-            'bonds admits any phone, so a device this phone cannot find at all is off, out of '
-            'range, or has its radio switched off.',
+            'The device answers a connect request from any phone and refuses the link when that '
+            'phone cannot prove a bond - a phone it holds no bond for sees the pairing fail, not '
+            'an unanswered request. An attempt that got no answer at all therefore points at the '
+            'device: it is off, out of range, or has its radio switched off. A device that holds '
+            'no bonds admits any phone, so an empty store is never why it cannot be found.',
         steps: [
           'Make sure the device is powered and near this phone.',
           'If this app can reach the device over USB, its Bluetooth panel says whether it holds '
@@ -626,10 +630,10 @@ BleLinkGuidance bleLinkGuidance({
         headline: 'Connection failed',
         detail:
             'A Bluetooth connection can fail in two ways that look alike from the phone: the '
-            'device holds no bond for this phone and drops its connect request (it advertises '
-            'for its bonded phones only), or the device is off, out of range or has its radio '
-            'switched off. A device that holds no bonds admits any phone, so it is not a third '
-            'case.',
+            'device holds no bond for this phone and refuses its link once it connects - the '
+            'request is answered, but the phone then cannot prove a bond - or the device is off, '
+            'out of range or has its radio switched off. A device that holds no bonds admits '
+            'any phone, so it is not a third case.',
         steps: [
           'If this app can reach the device over USB, its Bluetooth panel says which of the two '
               'it is.',

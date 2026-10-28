@@ -285,8 +285,8 @@ void main() {
     test('a closed window with bonds says bonded phones still reconnect', () {
       final snapshot = BleSecuritySnapshot.fromReads(block(bondCount: 2));
       expect(conditionOf(snapshot), BleSecurityCondition.closedBonded);
-      // The device keeps advertising for its bonded phones (whitelist-only), so it is not
-      // "not discoverable" - it is closed to anyone it holds no bond for.
+      // The device advertises to everyone and refuses the link of a phone whose bond it does not
+      // hold (E66: no accept list), so it is not "not discoverable" - it is closed to that phone.
       expect(bleSecurityHeadline(snapshot.condition), 'Bonded phones only');
       expect(
         bleSecurityDetail(snapshot.condition, snapshot),
@@ -480,22 +480,25 @@ void main() {
       },
     );
 
-    test('a timeout reports the device refusing a phone it holds no bond for', () {
+    test('a timeout points at the device, not at a refused bond', () {
       final guidance = bleLinkGuidance(
         errorText: 'BLE connect failed: TimeoutException after 0:00:30',
       );
       expect(guidance.symptom, BleLinkSymptom.unreachable);
       expect(guidance.likelyStaleBond, isFalse);
       expect(guidance.headline, 'The device did not answer this phone');
-      // E64 ruling C: a bonded core drops a stranger's connect request in the link layer, and
-      // from the phone that reads like a device that is off or out of range - so the refusal is
-      // named first, and an empty-store device is never called unreachable.
-      expect(guidance.detail, contains('admits only the phones it holds'));
+      // E66: a stranger's CONNECT_REQ is answered and the link refused once it cannot prove a
+      // bond, so that refusal reaches the phone as a failed pairing - which leaves the device
+      // being off / out of range as the cause of an attempt that got no answer at all. The
+      // answered-then-refused mechanism is named first, and an empty store is never the reason.
+      expect(guidance.detail, contains('connect request from any phone'));
+      expect(guidance.detail, contains('refuses the link'));
       expect(
-        guidance.detail.indexOf('holds bonds for'),
+        guidance.detail.indexOf('refuses the link'),
         lessThan(guidance.detail.indexOf('out of range')),
       );
       expect(guidance.detail, isNot(contains('off the air')));
+      expect(guidance.detail, isNot(contains('link layer')));
       expect(guidance.detail, contains('admits any phone'));
       expect(guidance.steps.join(' '), contains('pairing window'));
     });
@@ -508,8 +511,10 @@ void main() {
       expect(guidance.symptom, BleLinkSymptom.unknown);
       expect(guidance.likelyStaleBond, isFalse);
       // The second cause is a device that is off or has its radio off, never an empty store
-      // (E64 ruling C: an empty store admits any phone, so it can always be found).
+      // (an empty store admits any phone, so it can always be found), and never a link-layer drop
+      // (E66 deleted the accept list).
       expect(guidance.detail, isNot(contains('off the air')));
+      expect(guidance.detail, isNot(contains('link layer')));
       expect(guidance.detail, contains('admits any phone'));
       expect(guidance.steps.join(' '), contains('pairing window'));
       expect(guidance.steps.join(' '), contains('Forget'));

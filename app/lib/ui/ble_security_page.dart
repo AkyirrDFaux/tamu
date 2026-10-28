@@ -23,8 +23,9 @@ import 'widgets.dart';
 ///    the panel is therefore a read-out: the notice above the card says so up front, and a write
 ///    the device refuses comes back as a sentence naming the reason rather than a no-op.
 ///  - **Advertising is on whenever the radio is up and enabled and no session is up** (E64 ruling
-///    C); the bond store and the pairing window decide who may CONNECT instead. A bonded phone
-///    reconnects on its own, with no USB host and no window; any phone may connect while a window
+///    C); the bond store and the pairing window decide which links become a session instead (E66:
+///    the connect is answered and a link that cannot prove a bond is refused). A bonded phone
+///    reconnects on its own, with no USB host and no window; any phone may pair while a window
 ///    is open or while the store is still empty; only USB can open a window. The panel shows the
 ///    countdown, the bond list and the state as one story so "it will not connect" has a visible
 ///    cause.

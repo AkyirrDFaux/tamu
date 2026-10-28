@@ -725,10 +725,7 @@ no rows for fields 9-11; proposed rows - `Last peer | 0 | Text | RO | the identi
 decision used, empty before the first link`; `Last air | 0 | Text | RO | the address the peer
 connected from; it differs from Last peer when the controller resolved a rotating private address`;
 `Last link | 0 | Enum | RO | 0 none, 1 pending, 2 admitted, 3 refused (not a bond), 4 refused (paired
-outside the window), 5 refused (unsecured), 6 refused (busy)`. (b)
-`app/lib/core/ble_security.dart` needs the same three labels and `bleFieldCount = 12`:
-`app/test/firmware_contract_test.dart` compares the app's label list with the firmware table field by
-field and fails until it does.
+outside the window), 5 refused (unsecured), 6 refused (busy)`.
 
 
 **E67 `DeviceLog` is suppressed whenever a host holds the USB port, so rig evidence had to come from
