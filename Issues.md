@@ -872,3 +872,36 @@ says "`Action = 1` clears them, and so does changing the passkey" (docs commit `
 `t_944a5f2d`), and the closing paragraph of the panel in `app/lib/ui/ble_security_page.dart:704` now
 says the bonds are "cleared by \"Forget all bonds\" or by changing the passkey" (`7064526`, reviewed
 on `t_dd5f927c`). Neither text disagrees with the device any more.
+
+**E69 A peer that presents a bonded identity and asks to pair deletes that bond, and the then-empty
+store hands out a 5-minute pairing window.** Measured on the rig 2026-10-28 during items 3 and 5 of
+t_98acbebd (build 2026.10.28 iteration 44, the E64/E65/E66/E68 tree): device holds `Bond count 1`,
+`Window 0`; the central removes its OWN bond (`bluetoothctl remove`) and makes one connect. Same
+shape three times:
+- `RESULT: the device dropped the link at t=10.1 s` / `t=6.2 s` / `t=6.3 s`;
+- device read-out `LastLink=5 (refused: unsecured (no bond, or a passkey not used))` - the session gate
+  does its job, no session leaks;
+- `RESULT: ADVERTISING` on a scan right after;
+- but the store went `Bond count 1 -> 0` and `Window` jumped to `286053` / `286221` / `258310` ms.
+The deletion is not firmware code. `managed_components/h2zero__esp-nimble-cpp/src/NimBLEServer.cpp:607-624`
+handles `BLE_GAP_EVENT_REPEAT_PAIRING` by calling `ble_store_util_delete_peer()` and returning
+`BLE_GAP_REPEAT_PAIRING_RETRY` ("This app sacrifices security for convenience"), from inside the GAP
+event handler - i.e. before `BleServerCallbacks::onConnect`/`onAuthenticationComplete` judge anything -
+and this wrapper offers no override point (no `onRepeatPairing` in `NimBLEServer.h`; the framework's
+`CONFIG_BT_NIMBLE_HANDLE_REPEAT_PAIRING_DELETION` is off and would delete the entry anyway). Repeat
+pairing fires whenever a peer the store already has a bond for asks to pair again, which is exactly
+what a phone that discarded its keys (OS reset, "forget this device") or a peer using a spoofed public
+identity address does after our `ble_gap_security_initiate`.
+The consequence is in the interaction with the empty-store rule, not in the refusal: `AppBLETick`
+opens `BLE_AUTO_WINDOW_MS` (300 s) as soon as `AppBLEBondCount() == 0` (AppBLE.h:1113-1123), and inside
+a window `BleSessionAllowed` admits **any** peer that pairs. So a peer able to present the owner's
+identity address can turn a locked device into a 5-minute open pairing window and then bond to it. The
+benign half of the same path: an owner's phone whose OS drops the bond silently wipes the device's
+bond and makes the device offer itself to the room. Directions, not implemented: judge repeat pairing
+in the app (ignore while no window is open - needs a NimBLE-native GAP handler, since the wrapper
+consumes the event), or make the auto window follow an explicit forget (`Action = 1`, a passkey
+change) instead of "the store reads empty", so a link-driven deletion cannot open it.
+**Evidence kind:** register read-out (`BLE Settings` fields 2/4/9-11 via `ble_settings_read.py` +
+`ble_lastlink.py`), host-side HCI transcripts (`ble_host.py`), and the air (bleak scan). The ATT-level
+refusal of the refused link was not captured - the device drops it ~6 s in, and a register read inside
+that window did not come up (`TimeoutError: BLE link did not come up`).
