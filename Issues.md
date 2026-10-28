@@ -10,7 +10,7 @@ Item codes: **B** = code-fix items (the 2026-10-09 fact check); **E** = the rema
 **B27 Script-file length validation wraps in uint32.** *(WITHDRAWN 2026-10-14 by the owner: a script file cannot approach the 32-bit limit, so the wrap is not reachable. The `474489e` change was reverted. Kept for the record - the sweep's other arithmetic findings were checked and stand.)* `ScriptProgram.h:209-217` summed four header-supplied uint32 lengths, so a crafted `SCR_XXX` header passed `Need > Size` with the running offsets ~4 GB past the buffer.
 
 **B1 Router and branch broadcast are documented and unimplemented.** - **scope settled**: after the beta. The rig has no multi-bus device to test a tree topology on. `RSBus and Packets.md:3-7` and
-`Data Formats.md:37` (`0x3FE`) describe a router tree; `Dispatcher.h:36-40` says the multi-bus topology
+`Data Formats.md:36` (`0x3FE`) describe a router tree; `Dispatcher.h:36-40` says the multi-bus topology
 is not implemented and `Docs/Services/Router.md` is a stub.
 
 **B6 The UDP framing has no code.** `App Interface.md:25-27` documents a UDP packet; the firmware
@@ -19,9 +19,9 @@ implements USB and BLE only.
 ## D. Unverifiable from code
 
 `RSBus and Packets.md:1` supply voltage and USB PD (hardware), `Data Formats.md:7` "14 byte UUID"
-(14 bytes confirmed, UUID loose), `Data Formats.md:53` the generic dictionary marker encoding,
-`Register.md:34` the Internal/External Access columns, `Register.md:48` "sorting by the whole uint32",
-`Storage.md:86-96` the dynamic block descriptor ordering (runtime only), and the Valu feature rows that
+(14 bytes confirmed, UUID loose), `Data Formats.md:52` the generic dictionary marker encoding,
+`Register.md:33` the Internal/External Access columns, `Register.md:50` "sorting by the whole uint32",
+`Register.md:86-98` the dynamic block descriptor ordering (runtime only), and the Valu feature rows that
 are hardware-only.
 
 ## Open (2026-10-06)
@@ -302,7 +302,7 @@ are hardware-only.
 
 - **E48** **`Docs/Services/Subscriptions.md` leaves two edge-trigger details unstated: which changes
   the counter counts, and that the 040x Value-update row carries two different payload shapes.** The
-  edge trigger's bullet (`Subscriptions.md:65-68`, owner-approved in `c0a0ac6`) already states the
+  edge trigger's bullet (`Subscriptions.md:74-83`, owner-approved in `c0a0ac6`) already states the
   counter-as-payload rule, parity-as-level, a jump of `n` = `n` edges, and that the requester stores
   the derived `Bool` and never the counter; `t_378cc55c` implements exactly that (the whole payload is
   the counter, `uint16` little-endian, two bytes, nothing appended; odd = true/pressed, even =
@@ -310,7 +310,7 @@ are hardware-only.
   (a) the provider's counter counts **every** level change, in both directions, while the trigger only
   selects which of those changes are sent - without that a reader cannot see why parity may be read as
   the level, since a rising-only counter would stay odd after the release;
-  (b) the "Inter-device Commands (040x)" Value-update row (`Subscriptions.md:81`) gives the response as
+  (b) the "Inter-device Commands (040x)" Value-update row (`Subscriptions.md:93`) gives the response as
   "Current value" only, which does not distinguish the edge push (exactly 2 bytes, the counter) from
   the `Change subscription` (0401) answer (1 byte, the current value, i.e. the `Bool` for an edge) -
   the two shapes stay apart precisely because they differ in length.
