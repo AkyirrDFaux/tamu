@@ -621,9 +621,15 @@ the paths that never needed the stop (a live link, a disabled radio) lose nothin
   on an empty store is a success, not a refusal). `ok=<deleteAllBonds rc>` stays in the log.
 Native: the E65 source guard in `test/native/run.sh` (the stop precedes the delete, the restart
 request follows it, both gated on advertising being up) - RED against the pre-fix `AppBLE.h`, GREEN
-after. Rig half - `Action = 1` on an idle advertising device answering without `FLAG_FAIL` with
-Bond count 0 and the window re-opened, and the passkey-change revoke with the old peer refused - is
-card t_98acbebd and is unverified here: firmware flashing was not authorised in this card.
+after. Rig-verified on 2026-10-28 (build 2026.10.28 iteration 39, card t_3215094d, cable attached,
+host hci0 as the central): with one bond stored (`Bond[0] = 4C:23:38:74:E6:F6`) and `Window 0` while
+the device was advertising, `Action = 1` answered `flags=0x0E` (no `FLAG_FAIL`) in 15 ms, `Bond
+count` read 1 -> 0 with the Bond texts cleared, the air carried `Akyirr` again 0.010 s after the
+reply, and the old peer's stored key no longer authenticated (`LE.Disconnected -
+org.bluez.Reason.Authentication, Connection terminated due to authentication failure`). The
+device's own lines from the same session: `bonds forgotten: 1 -> 0 (ok=1)` and `advertisement
+returns: the bond delete is done (E65)`. A fresh pair after the forget still succeeds (the window
+re-opens), so the stop/restart leaves the device repairable.
 
 **E66 The whitelist-only connect filter refuses the bonded peer it exists to admit.** Same build and
 card. With one bond stored and the window closed (boot log: `connect filter: whitelist-only=1`,
