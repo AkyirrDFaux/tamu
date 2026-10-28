@@ -239,12 +239,26 @@ void main() {
       );
     });
 
-    test('a closed window with no bonds names the boot window', () {
+    test('a closed window with no bonds says any phone may pair', () {
       final snapshot = BleSecuritySnapshot.fromReads(block());
       expect(conditionOf(snapshot), BleSecurityCondition.closedNoBonds);
+      // E64 ruling C: an empty store is on the air and admits any phone - it is the state a
+      // first pairing is made in, not a device off the air.
+      expect(
+        bleSecurityHeadline(snapshot.condition),
+        'No bonds: any phone may pair',
+      );
+      expect(
+        bleSecurityDetail(snapshot.condition, snapshot),
+        contains('any phone may pair'),
+      );
       expect(
         bleSecurityDetail(snapshot.condition, snapshot),
         contains('five-minute window by itself'),
+      );
+      expect(
+        bleSecurityDetail(snapshot.condition, snapshot),
+        isNot(contains('off the air')),
       );
     });
 
@@ -413,13 +427,16 @@ void main() {
       expect(guidance.symptom, BleLinkSymptom.unreachable);
       expect(guidance.likelyStaleBond, isFalse);
       expect(guidance.headline, 'The device did not answer this phone');
-      // E64 ruling C: a bonded core ignores a stranger's connect request, which reads from the
-      // phone exactly like a dead device - so the refusal is named first, not "off the air".
+      // E64 ruling C: a bonded core drops a stranger's connect request in the link layer, and
+      // from the phone that reads like a device that is off or out of range - so the refusal is
+      // named first, and an empty-store device is never called unreachable.
       expect(guidance.detail, contains('admits only the phones it holds'));
       expect(
         guidance.detail.indexOf('holds bonds for'),
-        lessThan(guidance.detail.indexOf('off the air')),
+        lessThan(guidance.detail.indexOf('out of range')),
       );
+      expect(guidance.detail, isNot(contains('off the air')));
+      expect(guidance.detail, contains('admits any phone'));
       expect(guidance.steps.join(' '), contains('pairing window'));
     });
 
@@ -430,6 +447,10 @@ void main() {
       );
       expect(guidance.symptom, BleLinkSymptom.unknown);
       expect(guidance.likelyStaleBond, isFalse);
+      // The second cause is a device that is off or has its radio off, never an empty store
+      // (E64 ruling C: an empty store admits any phone, so it can always be found).
+      expect(guidance.detail, isNot(contains('off the air')));
+      expect(guidance.detail, contains('admits any phone'));
       expect(guidance.steps.join(' '), contains('pairing window'));
       expect(guidance.steps.join(' '), contains('Forget'));
     });

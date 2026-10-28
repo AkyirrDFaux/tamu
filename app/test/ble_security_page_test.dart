@@ -264,6 +264,25 @@ void main() {
       );
     });
 
+    testWidgets('an empty store and a closed window invite a pairing', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        fields: defaultBlock(bondCount: 0, bonds: const [], windowMs: 0),
+      );
+
+      // E64 ruling C: the device is on the air and admits any phone, so the banner is the
+      // discoverable one instead of the old disabled-Bluetooth warning.
+      expect(find.text('No bonds: any phone may pair'), findsOneWidget);
+      expect(find.textContaining('pair from your phone'), findsOneWidget);
+      expect(find.byIcon(Icons.bluetooth_disabled), findsNothing);
+      final icon = tester.widget<Icon>(
+        find.byIcon(Icons.bluetooth_searching).first,
+      );
+      expect(icon.color, kSuccess);
+    });
+
     testWidgets('prints - for a field the device did not answer', (
       tester,
     ) async {

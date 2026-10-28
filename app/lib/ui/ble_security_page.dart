@@ -22,10 +22,12 @@ import 'widgets.dart';
 ///  - **Every write to this block is refused unless the frame arrived over USB.** Over a BLE link
 ///    the panel is therefore a read-out: the notice above the card says so up front, and a write
 ///    the device refuses comes back as a sentence naming the reason rather than a no-op.
-///  - **A radio that holds a bond advertises for those phones only** (E64 ruling C), so a bonded
-///    phone reconnects on its own, with no USB host and no window. The pairing window therefore
-///    governs new pairings only, and only USB can open one. The panel shows the countdown, the
-///    bond list and the state as one story so "it will not connect" has a visible cause.
+///  - **Advertising is on whenever the radio is up and enabled and no session is up** (E64 ruling
+///    C); the bond store and the pairing window decide who may CONNECT instead. A bonded phone
+///    reconnects on its own, with no USB host and no window; any phone may connect while a window
+///    is open or while the store is still empty; only USB can open a window. The panel shows the
+///    countdown, the bond list and the state as one story so "it will not connect" has a visible
+///    cause.
 ///
 /// The block is compiled into the core only, so like the WiFi panel this page is reached only for
 /// a device whose own block enumeration carries it, and it renders nothing when it does not.
@@ -687,7 +689,9 @@ class _BleConditionBanner extends StatelessWidget {
       BleSecurityCondition.windowOpen => kSuccess,
       BleSecurityCondition.radioOff => kWarning,
       BleSecurityCondition.closedBonded => kTextSecondary,
-      BleSecurityCondition.closedNoBonds => kWarning,
+      // E64 ruling C: an empty store is on the air and admits any phone, which is the state a
+      // first pairing is made in - never a warning.
+      BleSecurityCondition.closedNoBonds => kSuccess,
       BleSecurityCondition.noRadio => kWarning,
       BleSecurityCondition.incomplete => kWarning,
     };
@@ -695,7 +699,7 @@ class _BleConditionBanner extends StatelessWidget {
       BleSecurityCondition.windowOpen => Icons.bluetooth_searching,
       BleSecurityCondition.radioOff => Icons.bluetooth_disabled,
       BleSecurityCondition.closedBonded => Icons.bluetooth,
-      BleSecurityCondition.closedNoBonds => Icons.bluetooth_disabled,
+      BleSecurityCondition.closedNoBonds => Icons.bluetooth_searching,
       BleSecurityCondition.noRadio => Icons.help_outline,
       BleSecurityCondition.incomplete => Icons.help_outline,
     };
