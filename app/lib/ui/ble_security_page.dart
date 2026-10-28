@@ -398,11 +398,21 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   }
 
   /// What the passkey row prints. `000000` is not a code the user has to remember, it is the
-  /// block's "no passkey" value, so the panel says what it means.
+  /// block's "no passkey" value, so the panel says what it means. A field the device did not
+  /// answer prints `-`: the default it fell back to is not a fact about the device.
   String _passkeyText(BleSecuritySnapshot snapshot) {
+    if (!snapshot.answeredField(bleFieldPasskey)) return '-';
     if (!snapshot.passkeySet) return 'Not set - pairing uses Just Works';
     if (snapshot.passkey.isEmpty) return '-';
     return _revealPasskey ? snapshot.passkey : kSecretMask;
+  }
+
+  /// The mode row: the device's own `Mode`, or `-` when it did not answer it.
+  String _modeText(BleSecuritySnapshot snapshot) {
+    if (!snapshot.answeredField(bleFieldMode)) return '-';
+    return snapshot.passkeySet
+        ? '${bleModeLabel(snapshot.mode)} - a code is required'
+        : '${bleModeLabel(snapshot.mode)} - no code required';
   }
 
   @override
@@ -454,13 +464,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
           InfoCard(
             title: 'Pairing',
             children: [
-              InfoRow(
-                'Mode',
-                snapshot.passkeySet
-                    ? '${bleModeLabel(snapshot.mode)} - a code is required'
-                    : '${bleModeLabel(snapshot.mode)} - no code required',
-                labelWidth: 120,
-              ),
+              InfoRow('Mode', _modeText(snapshot), labelWidth: 120),
               ListTile(
                 dense: true,
                 contentPadding: const EdgeInsets.symmetric(
@@ -504,7 +508,9 @@ class _BleSecurityPageState extends State<BleSecurityPage>
               ),
               InfoRow(
                 'Pairing window',
-                bleWindowText(snapshot.windowMs),
+                snapshot.answeredField(bleFieldWindow)
+                    ? bleWindowText(snapshot.windowMs)
+                    : '-',
                 labelWidth: 120,
               ),
               Padding(
@@ -541,7 +547,13 @@ class _BleSecurityPageState extends State<BleSecurityPage>
           InfoCard(
             title: 'Bonded devices',
             children: [
-              InfoRow('Bond count', '${snapshot.bondCount}', labelWidth: 120),
+              InfoRow(
+                'Bond count',
+                snapshot.answeredField(bleFieldBondCount)
+                    ? '${snapshot.bondCount}'
+                    : '-',
+                labelWidth: 120,
+              ),
               if (snapshot.bonds.isEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
@@ -551,7 +563,9 @@ class _BleSecurityPageState extends State<BleSecurityPage>
                     Spacing.md,
                   ),
                   child: Text(
-                    snapshot.bondCount == 0
+                    !snapshot.answeredField(bleFieldBondCount)
+                        ? 'The device did not answer the bond count.'
+                        : snapshot.bondCount == 0
                         ? 'No phone is paired with this device.'
                         : 'The device reports ${snapshot.bondCount} bonds but did not read '
                               'their addresses back.',
@@ -576,7 +590,9 @@ class _BleSecurityPageState extends State<BleSecurityPage>
                 ),
                 title: const Text('Enabled'),
                 subtitle: Text(
-                  snapshot.enabled
+                  !snapshot.answeredField(bleFieldEnabled)
+                      ? '-'
+                      : snapshot.enabled
                       ? 'The device uses its radio'
                       : 'The radio is off: nothing is advertised and nobody can connect',
                 ),
@@ -590,7 +606,9 @@ class _BleSecurityPageState extends State<BleSecurityPage>
                 ),
                 title: const Text('Display name'),
                 subtitle: Text(
-                  snapshot.displayName.isEmpty
+                  !snapshot.answeredField(bleFieldDisplayName)
+                      ? '-'
+                      : snapshot.displayName.isEmpty
                       ? 'not set - the device uses its own name'
                       : snapshot.displayName,
                 ),
@@ -667,6 +685,7 @@ class _BleConditionBanner extends StatelessWidget {
       BleSecurityCondition.closedBonded => kTextSecondary,
       BleSecurityCondition.closedNoBonds => kWarning,
       BleSecurityCondition.noRadio => kWarning,
+      BleSecurityCondition.incomplete => kWarning,
     };
     final icon = switch (condition) {
       BleSecurityCondition.windowOpen => Icons.bluetooth_searching,
@@ -674,6 +693,7 @@ class _BleConditionBanner extends StatelessWidget {
       BleSecurityCondition.closedBonded => Icons.bluetooth,
       BleSecurityCondition.closedNoBonds => Icons.bluetooth_disabled,
       BleSecurityCondition.noRadio => Icons.help_outline,
+      BleSecurityCondition.incomplete => Icons.help_outline,
     };
     return Card(
       color: kSurfaceAlt,

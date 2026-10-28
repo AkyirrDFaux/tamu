@@ -71,9 +71,13 @@ class _ConnectionPageState extends State<ConnectionPage>
     if (!mounted || !trouble.isBle) return;
     final symptom = classifyBleLinkFailure(
       errorText: trouble.errorText,
-      droppedSoonAfterConnect: trouble.droppedDuringSecuring,
+      droppedWhileSecuring: trouble.droppedDuringSecuring,
     );
-    if (symptom == BleLinkSymptom.unknown && !trouble.droppedDuringSecuring) {
+    if (symptom == BleLinkSymptom.unknown) {
+      // The session outlived both securing budgets, so the device is not refusing a pairing it
+      // never got to finish: the link itself went away (range, a reset, the user's own settings).
+      // A snack is the honest amount of alarm; the two-cause guidance would be a diagnosis the
+      // evidence does not support.
       showSnack(context, 'Bluetooth link lost');
       return;
     }
@@ -82,13 +86,16 @@ class _ConnectionPageState extends State<ConnectionPage>
     );
   }
 
-  Future<void> _explainBleFailure(String? errorText, bool droppedSoon) async {
+  Future<void> _explainBleFailure(
+    String? errorText,
+    bool droppedWhileSecuring,
+  ) async {
     if (!mounted) return;
     await showBleLinkGuidance(
       context,
       bleLinkGuidance(
         errorText: errorText,
-        droppedSoonAfterConnect: droppedSoon,
+        droppedWhileSecuring: droppedWhileSecuring,
       ),
       linkError: errorText,
     );

@@ -257,6 +257,29 @@ void main() {
       expect(find.text('Not discoverable'), findsOneWidget);
       expect(find.textContaining('advertises nothing'), findsOneWidget);
     });
+
+    testWidgets('prints - for a field the device did not answer', (
+      tester,
+    ) async {
+      // The device skipped the passkey, the mode and the window. Their defaults would read as
+      // "no passkey, Just Works, closed" - three claims about a device that never said so.
+      final fields = defaultBlock()
+        ..remove((bleFieldPasskey, 0))
+        ..remove((bleFieldMode, 0))
+        ..remove((bleFieldWindow, 0));
+      await pump(tester, fields: fields);
+
+      expect(
+        find.text('The device did not answer every field'),
+        findsOneWidget,
+      );
+      expect(find.text('Not set - pairing uses Just Works'), findsNothing);
+      expect(find.text('Just Works - no code required'), findsNothing);
+      expect(find.text('0:48 left'), findsNothing);
+      // Passkey, mode and the pairing window each print the dash; the bond count was answered.
+      expect(find.text('-'), findsNWidgets(3));
+      expect(find.text('1'), findsOneWidget);
+    });
   });
 
   group('setting the passkey', () {

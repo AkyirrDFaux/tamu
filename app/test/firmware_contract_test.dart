@@ -231,6 +231,31 @@ List<({int field, String type, int size})>? _bleSettingsEntries() {
   return null;
 }
 
+/// The BLE securing budgets the firmware states (`constexpr uint32_t BleSecureBudget*Ms = N;` in
+/// `src/Blocks/BleSecurityPolicy.h`), keyed by name.
+///
+/// The app restates both because the failure classifier judges a dropped link against them and has
+/// no other evidence: a wrong figure would either miss the passkey band (5-30 s) or start calling
+/// ordinary link losses pairing refusals. Returns null when the firmware tree is not checked out
+/// next to the app, and an empty map when the file exists but nothing could be parsed.
+Map<String, int>? _bleSecureBudgets() {
+  for (final path in [
+    '../firmware/src/Blocks/BleSecurityPolicy.h',
+    '../../firmware/src/Blocks/BleSecurityPolicy.h',
+  ]) {
+    final file = File(path);
+    if (!file.existsSync()) continue;
+    final source = file.readAsStringSync();
+    return {
+      for (final m in RegExp(
+        r'constexpr\s+uint32_t\s+(BleSecureBudget\w+Ms)\s*=\s*(\d+)\s*;',
+      ).allMatches(source))
+        m.group(1)!: int.parse(m.group(2)!),
+    };
+  }
+  return null;
+}
+
 /// Compares an app enum (`name -> value`) against a firmware enum.
 ///
 /// [alias] maps app names onto the firmware spelling where they differ; [firmwareOnly] lists
@@ -735,6 +760,31 @@ void main() {
       expect(ble.field(bleFieldMode)!.enumValues, bleModeLabels);
       expect(ble.field(bleFieldAction)!.enumValues, bleActionLabels);
       expect(ble.field(bleFieldDisplayName)!.maxChars, bleDisplayNameWidth);
+    });
+
+    // The securing budgets the app's failure classifier restates. The card's stale-bond guidance
+    // turns on a link that died inside the firmware's deadline, and the app has no other evidence
+    // on the drop path: it must not judge a passkey pairing (30 s to type six digits) by the Just
+    // Works figure, and it must not call a long-lived session a pairing refusal either.
+    test('the BLE securing budgets match BleSecurityPolicy.h', () {
+      final budgets = _bleSecureBudgets();
+      if (budgets == null) {
+        return; // firmware source not available next to the app
+      }
+      expect(
+        budgets,
+        isNotEmpty,
+        reason:
+            'the BleSecureBudget*Ms constants were not parsed - guard is broken',
+      );
+      expect(budgets['BleSecureBudgetJustWorksMs'], bleSecureBudgetJustWorksMs);
+      expect(budgets['BleSecureBudgetPasskeyMs'], bleSecureBudgetPasskeyMs);
+      expect(
+        bleSecureBudgetPasskeyMs,
+        greaterThan(bleSecureBudgetJustWorksMs),
+        reason:
+            'a passkey budget smaller than Just Works would drop every typed code',
+      );
     });
   }, skip: skipReason);
 

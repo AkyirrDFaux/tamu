@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/ble_security.dart';
 import 'package:tamuapp/core/block_registry.dart';
+import 'package:tamuapp/core/connection.dart' show LinkTrouble;
 import 'package:tamuapp/core/types.dart';
 
 /// The `BLE Settings` block's app half, off-device: the field map, the reading rules, the two
@@ -156,6 +157,28 @@ void main() {
       expect(snapshot.isEmpty, isTrue);
     });
 
+    test('records which fields the device actually answered', () {
+      final answered = BleSecuritySnapshot.fromReads({
+        bleFieldPasskey: read(
+          DataType.text.value,
+          text('246810', blePasskeyLength),
+        ),
+        bleFieldMode: read(DataType.enum_.value, [bleModePasskey]),
+        // Window, Enabled, Bond count and the names are not answered.
+      });
+      expect(answered.answeredField(bleFieldPasskey), isTrue);
+      expect(answered.answeredField(bleFieldMode), isTrue);
+      expect(answered.answeredField(bleFieldWindow), isFalse);
+      expect(answered.answeredField(bleFieldEnabled), isFalse);
+      expect(answered.answeredField(bleFieldBondCount), isFalse);
+      // A field that was skipped is not the same as a field the device reported as empty.
+      expect(answered.passkey, '246810');
+      expect(answered.answeredField(bleFieldDisplayName), isFalse);
+      // A hand-stated snapshot claims every field, so nothing is "unknown" about it.
+      const stated = BleSecuritySnapshot(enabled: true);
+      expect(stated.answeredField(bleFieldWindow), isTrue);
+    });
+
     test('reads the window as an unsigned 32-bit millisecond count', () {
       // 300000 ms is the device's own five-minute recovery window - above 16 bits, which is the
       // value a two-byte read would truncate.
@@ -209,6 +232,31 @@ void main() {
     test('a block that describes no radio is named as such', () {
       final snapshot = BleSecuritySnapshot.fromReads(const {});
       expect(conditionOf(snapshot), BleSecurityCondition.noRadio);
+    });
+
+    test('a partial read says so instead of drawing a state from defaults', () {
+      // The device answered the passkey and the mode but not Enabled/Window/Bond count. Those
+      // defaults would read as "radio off, no window, no bonds" - a claim about the device.
+      final snapshot = BleSecuritySnapshot.fromReads({
+        bleFieldPasskey: read(
+          DataType.text.value,
+          text('246810', blePasskeyLength),
+        ),
+        bleFieldMode: read(DataType.enum_.value, [bleModePasskey]),
+      });
+      expect(snapshot.missingStateField, isTrue);
+      expect(conditionOf(snapshot), BleSecurityCondition.incomplete);
+      expect(
+        bleSecurityHeadline(snapshot.condition),
+        'The device did not answer every field',
+      );
+      expect(bleSecurityDetail(snapshot.condition, snapshot), contains('"-"'));
+    });
+
+    test('a reading that answered the state fields is classified normally', () {
+      final snapshot = BleSecuritySnapshot.fromReads(block(windowMs: 30000));
+      expect(snapshot.missingStateField, isFalse);
+      expect(conditionOf(snapshot), BleSecurityCondition.windowOpen);
     });
   });
 
@@ -294,10 +342,50 @@ void main() {
     });
 
     test('a link that comes up and dies is the same stale bond', () {
-      final guidance = bleLinkGuidance(droppedSoonAfterConnect: true);
+      final guidance = bleLinkGuidance(droppedWhileSecuring: true);
       expect(guidance.symptom, BleLinkSymptom.securityRefused);
       expect(guidance.likelyStaleBond, isTrue);
     });
+
+    test('a drop inside the passkey budget is still a securing drop', () {
+      // The firmware gives a passkey pairing 30 s (a person types six digits) and Just Works 5 s.
+      // A drop at 8 s is therefore a pairing that did not complete, not a link that went away -
+      // and it is the band a passkey change (which revokes the phone's bond) lands in.
+      for (final lasted in [0, 4999, 5000, 8000, 29999]) {
+        expect(
+          LinkTrouble(
+            linkName: 'Tamu',
+            isBle: true,
+            lastedMs: lasted,
+          ).droppedDuringSecuring,
+          isTrue,
+          reason: 'a $lasted ms BLE session died inside the securing budget',
+        );
+      }
+    });
+
+    test(
+      'a session that outlives both budgets is a lost link, not a refusal',
+      () {
+        expect(
+          LinkTrouble(
+            linkName: 'Tamu',
+            isBle: true,
+            lastedMs: bleSecureBudgetPasskeyMs,
+          ).droppedDuringSecuring,
+          isFalse,
+        );
+        // USB never pairs, so a short USB session is just a dead cable.
+        expect(
+          LinkTrouble(
+            linkName: '/dev/ttyACM0',
+            isBle: false,
+            lastedMs: 300,
+          ).droppedDuringSecuring,
+          isFalse,
+        );
+      },
+    );
 
     test('a timeout is the device not answering, not a bond problem', () {
       final guidance = bleLinkGuidance(
@@ -327,7 +415,7 @@ void main() {
       );
       expect(classifyBleLinkFailure(), BleLinkSymptom.unknown);
       expect(
-        classifyBleLinkFailure(droppedSoonAfterConnect: true),
+        classifyBleLinkFailure(droppedWhileSecuring: true),
         BleLinkSymptom.droppedDuringSecuring,
       );
     });

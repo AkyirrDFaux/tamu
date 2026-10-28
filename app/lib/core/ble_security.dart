@@ -108,11 +108,16 @@ class BleSecuritySnapshot {
     this.enabled = false,
     this.displayName = '',
     this.advertisedName = '',
+    this.answered = const <int>{},
   });
 
   /// Builds the snapshot from the field reads: [fields] keyed by field number (key 0), and
-  /// [bonds] keyed by the Bond field's key (0..2). Fields the device did not answer keep the
-  /// empty default, which the panel shows as `-`.
+  /// [bonds] keyed by the Bond field's key (0..2).
+  ///
+  /// A field the device did not answer keeps its empty default here (an unanswered passkey stays
+  /// `''`, not `000000`) and is NOT recorded in [answered]. The defaults alone cannot be told
+  /// apart from a device really reporting "no passkey, closed, off", so the panel asks
+  /// [answeredField] before printing a field and shows `-` for one it never heard about.
   factory BleSecuritySnapshot.fromReads(
     Map<int, BleFieldRead> fields, {
     Map<int, BleFieldRead> bonds = const <int, BleFieldRead>{},
@@ -135,6 +140,10 @@ class BleSecuritySnapshot {
       enabled: bytesOf(bleFieldEnabled).any((b) => b != 0),
       displayName: decodePaddedString(bytesOf(bleFieldDisplayName)),
       advertisedName: decodePaddedString(bytesOf(bleFieldAdvertisedName)),
+      answered: {
+        for (final entry in fields.entries)
+          if (entry.value != null) entry.key,
+      },
     );
   }
 
@@ -163,6 +172,24 @@ class BleSecuritySnapshot {
 
   /// The resolved name actually on the air (set by the device, not computed here).
   final String advertisedName;
+
+  /// The field numbers the device actually answered in this reading, from
+  /// [BleSecuritySnapshot.fromReads]. Empty for a snapshot that was stated rather than read (a
+  /// hand-built one), which is the same as "nothing is missing": there is nothing to be unsure
+  /// about when the caller names every field itself.
+  final Set<int> answered;
+
+  /// True when the device answered [field] in this reading, i.e. the value beside it came from the
+  /// device rather than from the empty default.
+  bool answeredField(int field) => answered.isEmpty || answered.contains(field);
+
+  /// True when the reading missed one of the fields the state is derived from, so the panel cannot
+  /// say what the radio is doing ([BleSecurityCondition.incomplete]).
+  bool get missingStateField =>
+      answered.isNotEmpty &&
+      !(answered.contains(bleFieldEnabled) &&
+          answered.contains(bleFieldWindow) &&
+          answered.contains(bleFieldBondCount));
 
   /// True when a passkey protects pairing (the device's own `Mode` says so).
   bool get passkeySet => mode == bleModePasskey;
@@ -209,11 +236,20 @@ enum BleSecurityCondition {
   /// A reading of nothing at all ([BleSecuritySnapshot.isEmpty]): the block exists but describes
   /// no radio.
   noRadio,
+
+  /// The device answered only part of the block, so the fields the state is derived from
+  /// (`Enabled`, `Window`, `Bond count`) are not all there: what the radio is doing cannot be
+  /// said, and the panel says that instead of drawing a state from defaults.
+  incomplete,
 }
 
-/// Classifies one reading. `Enabled` decides first (a switched-off radio has no window whatever
-/// the other fields say), then the window, then what the store holds.
+/// Classifies one reading. A reading that missed one of the fields the state is derived from has
+/// no state to classify — the defaults would read as "radio off, no window, no bonds", which is a
+/// claim about the device rather than a fact about the read. Otherwise `Enabled` decides first (a
+/// switched-off radio has no window whatever the other fields say), then the window, then what the
+/// store holds.
 BleSecurityCondition bleSecurityCondition(BleSecuritySnapshot snapshot) {
+  if (snapshot.missingStateField) return BleSecurityCondition.incomplete;
   if (!snapshot.enabled) {
     return snapshot.isEmpty
         ? BleSecurityCondition.noRadio
@@ -233,6 +269,8 @@ String bleSecurityHeadline(BleSecurityCondition condition) =>
       BleSecurityCondition.closedBonded => 'Not discoverable',
       BleSecurityCondition.closedNoBonds => 'No bonds and no window',
       BleSecurityCondition.noRadio => 'No radio described by this block',
+      BleSecurityCondition.incomplete =>
+        'The device did not answer every field',
     };
 
 /// The line under the headline: why the device is in that state, in the device's own terms.
@@ -260,6 +298,9 @@ String bleSecurityDetail(
   BleSecurityCondition.noRadio =>
     'The block reports no passkey, no bonds, no window and no name, which is a block a build '
         'reports without driving a radio.',
+  BleSecurityCondition.incomplete =>
+    'The device answered only part of its Bluetooth settings, so what its radio is doing right '
+        'now cannot be said. The rows it skipped show "-": read the block again to fill them in.',
 };
 
 /// A countdown as `m:ss`, rounding up so a sub-second remainder still reads as a second.
@@ -304,14 +345,30 @@ String bleWriteRefusal({required bool overUsb, String? valueHint}) {
       : 'The device refused the change: $valueHint';
 }
 
+/// How long the firmware lets a new link stay unsecured before it drops it, from
+/// `firmware/src/Blocks/BleSecurityPolicy.h` (`BleSecureBudgetJustWorksMs` /
+/// `BleSecureBudgetPasskeyMs`, pinned against that header by
+/// `test/firmware_contract_test.dart`).
+///
+/// The budget is policy-shaped because the phone's half is: Just Works is one tap — or nothing at
+/// all — and is over in well under a second, while a passkey makes the phone show a dialog and a
+/// person type six digits. A drop is judged against the LARGER figure: after a link is gone the app
+/// cannot tell which policy was in force (there is no link to read `Mode` over, and the two cases
+/// look identical from here), and judging against the Just Works figure would miss every drop in
+/// the 5-30 s band — exactly the band a passkey pairing lives in, and the case where a passkey
+/// change has just revoked the phone's bond.
+const int bleSecureBudgetJustWorksMs = 5000;
+const int bleSecureBudgetPasskeyMs = 30000;
+
 /// Why a BLE attempt did not produce a session.
 enum BleLinkSymptom {
   /// The pairing or its encryption failed: the phone's stored bond is stale (the device no
   /// longer holds it) or the device now asks for a code the phone does not have.
   securityRefused,
 
-  /// The link came up and died within seconds. The device drops a link that never became secure
-  /// (`BLE_SECURE_DEADLINE_MS`), which is the stale-bond case seen from the app's side.
+  /// The link came up and died before the firmware's securing budget ran out
+  /// ([bleSecureBudgetPasskeyMs], the larger of the two), which is the stale-bond case seen from
+  /// the app's side.
   droppedDuringSecuring,
 
   /// The device never answered: normally it is not advertising, i.e. no pairing window is open.
@@ -398,11 +455,11 @@ const List<String> _unreachableTokens = [
 /// the likely cause and gives the window case too when the evidence is ambiguous.
 BleLinkGuidance bleLinkGuidance({
   String? errorText,
-  bool droppedSoonAfterConnect = false,
+  bool droppedWhileSecuring = false,
 }) {
   final symptom = _classifyBleFailure(
     errorText: errorText,
-    droppedSoonAfterConnect: droppedSoonAfterConnect,
+    droppedWhileSecuring: droppedWhileSecuring,
   );
   switch (symptom) {
     case BleLinkSymptom.securityRefused:
@@ -461,22 +518,22 @@ BleLinkGuidance bleLinkGuidance({
 /// The symptom alone, for callers that want to branch without building the copy.
 BleLinkSymptom classifyBleLinkFailure({
   String? errorText,
-  bool droppedSoonAfterConnect = false,
+  bool droppedWhileSecuring = false,
 }) => _classifyBleFailure(
   errorText: errorText,
-  droppedSoonAfterConnect: droppedSoonAfterConnect,
+  droppedWhileSecuring: droppedWhileSecuring,
 );
 
 BleLinkSymptom _classifyBleFailure({
   String? errorText,
-  required bool droppedSoonAfterConnect,
+  required bool droppedWhileSecuring,
 }) {
   final text = (errorText ?? '').toLowerCase();
   if (text.isNotEmpty &&
       _securityFailureTokens.any((token) => text.contains(token))) {
     return BleLinkSymptom.securityRefused;
   }
-  if (droppedSoonAfterConnect) {
+  if (droppedWhileSecuring) {
     // A link that came up and died before it was ever usable is the shape of the device's
     // secure-link deadline, not of a device out of reach.
     return BleLinkSymptom.droppedDuringSecuring;

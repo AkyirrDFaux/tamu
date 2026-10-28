@@ -14,6 +14,7 @@ import 'package:flutter_libserialport/flutter_libserialport.dart'
 import 'package:universal_ble/universal_ble.dart';
 
 import 'ble_permissions.dart';
+import 'ble_security.dart';
 import 'diagnostics.dart';
 import 'device_db.dart';
 import 'fragment_reassembler.dart';
@@ -66,11 +67,16 @@ class LinkTrouble {
   /// The platform's own words, when it gave any.
   final String? errorText;
 
-  /// The firmware allows a link five seconds to become secure before dropping it, so anything
-  /// under this is "it never got as far as a session".
-  static const int secureDeadlineMs = 5000;
-
-  bool get droppedDuringSecuring => isBle && lastedMs < secureDeadlineMs;
+  /// Whether the session died before it could plausibly have become secure.
+  ///
+  /// The device drops a link that has not finished pairing by its deadline, and that deadline is
+  /// policy-shaped: `bleSecureBudgetJustWorksMs` for Just Works, `bleSecureBudgetPasskeyMs` with a
+  /// passkey (`firmware/src/Blocks/BleSecurityPolicy.h`). Which one was in force is unknowable
+  /// here — the link is gone, so `Mode` cannot be read over it, and from the app's side the two
+  /// look identical — so the LARGER budget is the test. Using the Just Works figure would drop
+  /// every 5-30 s failure, which is exactly where a phone showing a passkey dialog lives.
+  bool get droppedDuringSecuring =>
+      isBle && lastedMs < bleSecureBudgetPasskeyMs;
 
   @override
   String toString() =>
