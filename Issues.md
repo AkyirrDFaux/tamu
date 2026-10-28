@@ -671,6 +671,57 @@ bond, who may hold a session) plus the E64/E66 source guard in `test/native/run.
 bond and `Window 0` connecting and reading a field, a stranger getting no session - is card
 t_98acbebd and is unverified here: flashing was not authorised in this card.
 
+**The evidence half (2026-10-28, card t_0b1cd623).** The mechanism is settled and its cost stated:
+the fix is the DEVICE-SIDE identity gate, not a programmed resolving list, because the resolving-list
+route is not available on this silicon - the controller resolves an RPA for the *connection* (which
+is how the stored bond authenticates) but `lld_wl_rpa_res` never runs on the connect-request path, so
+an accept-list entry on the identity cannot match a privacy-enabled central. Programming the list is
+already automatic and needs no app code: `ble_hs_misc_restore_irks()` adds every bond whose `peer_irk`
+is present (`ble_hs_pvcy_add_entry()` -> `HCI_LE_Add_Device_To_Resolving_List` +
+`HCI_LE_Set_Privacy_Mode(device)`), and the peer MUST distribute its IRK (SMP IdKey) - the host does,
+which is why the resolution happens at all. The cost of the device-side gate is the one already
+stated: a stranger's CONNECT_REQ is answered and the link refused at the security procedure instead of
+being ignored in the link layer.
+**Read-out.** `BLE Settings` gained three read-only fields: `Last peer` (9, the identity the gate
+compared with the bond store, `ConnInfo.getIdAddress()`), `Last air` (10, the address the peer
+connected from, `ConnInfo.getAddress()`), `Last link` (11, the verdict - 0 none, 1 pending, 2
+admitted, 3 refused: not a bond, 4 refused: paired outside the window, 5 refused: unsecured, 6
+refused: busy). The two addresses differ exactly when the controller resolved an RPA
+(`ble_hs_conn_addrs()` keeps the event's identity on `peer_id_addr` and its peer-RPA on
+`peer_ota_addr`), so the pair IS the resolution, and the verdict separates "refused as a stranger"
+from "the address was not recognised" - the gap this entry was opened for. It has to be a register
+read rather than a log line: E67.
+**Measured on the rig (2026-10-28 19:20-19:40 UTC, core on USB, image `26.10.28` iteration 27 - the
+build BEFORE the fix; the fix is iteration 34 in the tree).**
+- `btmgmt info`: one controller, `current settings: ... ll-privacy ...` - the peer host runs LE
+  privacy, as this entry says.
+- Paired the host inside a window opened over USB (`pairing SUCCEEDED after 14.1 s`, Just Works); the
+  block then read `Bond count 1`, `Bond[0] = 4C:23:38:74:E6:F6` (the host's own public address) and
+  `Window 30984`.
+- A connect 40 s later took 0.60 s - the advertisement had been rebuilt while the window was still
+  open, so it carried no filter. ~3 minutes on, with the window closed and the advertisement rebuilt
+  since, two connects timed out (bleak `TimeoutError`, no link) while a scan still showed `Akyirr`
+  advertising and the bond store still read 1. That is this entry's symptom, reproduced on demand.
+  (The filter's presence lagging the window is the consistent explanation - it is decided when the
+  advertisement is rebuilt - but it is an inference: the log is unreadable, see E67.)
+- A second identity cannot be produced on this host: `btmgmt static-addr 42:11:22:33:44:55` answers
+  `Set static address failed with status 0x14 (Permission Denied)` and `btmgmt privacy on <irk>`
+  answers `Set Privacy for hci0 failed with status 0x14 (Permission Denied)`, with a single
+  controller. The "a genuine second IRK is refused" half is therefore UNPROVEN, not passed.
+- The acceptance itself needs the fixed image on the device and flashing was not authorised in this
+  card. Recipe: `firmware/.pio/probe/ble_lastlink.py --connect 3 --addr <ADV ADDR>` (prints
+  `Last peer` / `Last air` / `Last link` after every link; the air address must change between
+  iterations while the identity holds and the verdict reads 2).
+**Still to land outside `firmware/`.** (a) `Docs/Services/App Interface.md`'s BLE Settings table has
+no rows for fields 9-11; proposed rows - `Last peer | 0 | Text | RO | the identity the admission
+decision used, empty before the first link`; `Last air | 0 | Text | RO | the address the peer
+connected from; it differs from Last peer when the controller resolved a rotating private address`;
+`Last link | 0 | Enum | RO | 0 none, 1 pending, 2 admitted, 3 refused (not a bond), 4 refused (paired
+outside the window), 5 refused (unsecured), 6 refused (busy)`. (b)
+`app/lib/core/ble_security.dart` needs the same three labels and `bleFieldCount = 12`:
+`app/test/firmware_contract_test.dart` compares the app's label list with the firmware table field by
+field and fails until it does.
+
 
 **E67 `DeviceLog` is suppressed whenever a host holds the USB port, so rig evidence has to come from
 the register read-out or the air.** `Core/Functions/AppInterface.h` sets `Connected =

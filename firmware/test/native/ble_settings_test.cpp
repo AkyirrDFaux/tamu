@@ -220,6 +220,35 @@ static void TestBlockTable()
     CHECK(R.Descriptor.Size == BLE_DISPLAY_NAME_LEN);
     CHECK(ValueIsReadOnly(R.Descriptor));
 
+    // The E66 read-out: the identity the admission used, the address the peer came from, and the
+    // verdict. All three are read-only and in the volatile space (nothing of a link is persisted),
+    // and the two addresses are the same width as a Bond text so a rig can read them all the same way.
+    R = Blk.Get(BLE_SET_FIELD_LASTPEER, 0);
+    CHECK(R.Data == &Vol.LastPeer);
+    CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Text);
+    CHECK(R.Descriptor.Size == BLE_BOND_TEXT_LEN);
+    CHECK(ValueIsReadOnly(R.Descriptor));
+    CHECK(!ValueIsPersistent(R.Descriptor));
+
+    R = Blk.Get(BLE_SET_FIELD_LASTAIR, 0);
+    CHECK(R.Data == &Vol.LastAir);
+    CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Text);
+    CHECK(R.Descriptor.Size == BLE_BOND_TEXT_LEN);
+    CHECK(ValueIsReadOnly(R.Descriptor));
+    CHECK(!ValueIsPersistent(R.Descriptor));
+
+    R = Blk.Get(BLE_SET_FIELD_LASTLINK, 0);
+    CHECK(R.Data == &Vol.LastLink);
+    CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Enum);
+    CHECK(R.Descriptor.Size == 1);
+    CHECK(ValueIsReadOnly(R.Descriptor));
+
+    // A fresh device has judged no link: both addresses read empty and the verdict says so, so a
+    // rig cannot mistake "nothing connected yet" for "connected and refused".
+    CHECK(Vol.LastPeer[0] == '\0');
+    CHECK(Vol.LastAir[0] == '\0');
+    CHECK(Vol.LastLink == BleLinkNone);
+
     // --- the defaults a device with a zero .SV tail gets ---
     CHECK(Per.Enabled == 1);                        // radio on out of the box
     CHECK(memcmp(Per.ScrubbedPasskey, "000000", BLE_PASSKEY_LEN) == 0); // nothing inherited

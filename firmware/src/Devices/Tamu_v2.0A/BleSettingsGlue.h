@@ -76,6 +76,28 @@ void BlePasskeyInit()
 // avoided by caching at all (a formatting allocation every ~2 ms pass).
 #define BLE_BOND_TEXT_CHECK_MS 1000
 
+// One address of the last judged link, formatted "AA:BB:CC:DD:EE:FF". NimBLEAddress keeps the six
+// bytes least-significant first, which is why they are printed in reverse (same order the bond texts
+// come out in, so the two read-outs line up by eye).
+static void BleAddrText(const uint8_t *Val, char *Out, size_t Len)
+{
+    snprintf(Out, Len, "%02X:%02X:%02X:%02X:%02X:%02X",
+             Val[5], Val[4], Val[3], Val[2], Val[1], Val[0]);
+}
+
+// Copies a fixed-width text field only when it actually differs, so a read-out that changed once is
+// not rewritten every pass (the rule the Bond texts above follow).
+static void BleTextFieldSet(char *Field, size_t Len, const char *Text)
+{
+    if (strncmp(Field, Text, Len) == 0)
+        return;
+    size_t N = strlen(Text);
+    if (N > Len)
+        N = Len;
+    memset(Field, 0x00, Len);
+    memcpy(Field, Text, N);
+}
+
 // Called from the main loop. Everything the block owns is applied from here, so a register write
 // takes effect within one loop iteration and the block stays the single source of truth:
 //   - Enabled / Display name -> the radio (AppBLESettingsApply; the pairing policy is read at
@@ -145,6 +167,22 @@ void BleSettingsSync()
         if (Len > BLE_DISPLAY_NAME_LEN)
             Len = BLE_DISPLAY_NAME_LEN;
         memcpy(Vol->AdvertisedName, Name, Len);
+    }
+
+    // The last judged link (Issues.md E66): the identity the admission used, the address the peer came
+    // from, and how the link ended. Written by the radio callbacks and copied here, so the block is
+    // only ever written from this task. LastPeer != LastAir is the controller having resolved a
+    // rotating private address - the fact E66 turns on and the log cannot show (E67).
+    BleLastLinkRecord LastLink;
+    if (AppBLELastLink(&LastLink))
+    {
+        char PeerText[BLE_BOND_TEXT_LEN];
+        char AirText[BLE_BOND_TEXT_LEN];
+        BleAddrText(LastLink.Id, PeerText, sizeof(PeerText));
+        BleAddrText(LastLink.Air, AirText, sizeof(AirText));
+        BleTextFieldSet(Vol->LastPeer, BLE_BOND_TEXT_LEN, PeerText);
+        BleTextFieldSet(Vol->LastAir, BLE_BOND_TEXT_LEN, AirText);
+        Vol->LastLink = LastLink.Verdict;
     }
 
     // The command byte is a trigger, never a stored value; keep it clear so a read-back cannot

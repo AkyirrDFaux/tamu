@@ -324,6 +324,71 @@ static bool BlePeerWasBonded(const NimBLEAddress &Addr)
     return false;
 }
 
+// ===== The last link, as something a rig can read (Issues.md E66) =====
+//
+// E66's second half is evidence, and the device log cannot supply it: DeviceLog is dropped whenever a
+// host holds the link (E67), which is exactly when a connect happens, so "the bonded peer came back
+// from a rotating private address and the controller resolved it" left no trace anywhere a host can
+// see. The last judged link is therefore kept in RAM - both addresses and the verdict - and the
+// `BLE Settings` block publishes it (fields 9..11, BleSettingsSync reads it through AppBLELastLink).
+//
+// The pair of addresses IS the E66 mechanism: `Id` is the identity the gate compared with the bond
+// store and `Air` is what the peer connected from. `ble_hs_conn_addrs()` takes the connection
+// complete event's identity address as peer_id_addr and its peer-RPA field as peer_ota_addr, so the
+// two differ exactly when the controller resolved an RPA (BleCameInResolved). A read-out showing
+// Id = the stored bond and Air = a random address that changes between connects is the resolution
+// working; with the old accept-list design that same link was dropped at the link layer.
+//
+// Written from the NimBLE host task (the callbacks) and read from the app task, so it is published
+// through a sequence counter: an odd value means a write is in flight and the reader retries rather
+// than serving half an address.
+struct BleLastLinkRecord
+{
+    uint8_t Air[6];     // the address the peer connected from
+    uint8_t AirType;    // ... and its type (0/1 = an on-air address, i.e. an unresolved RPA)
+    uint8_t Id[6];      // the identity the admission decision used
+    uint8_t IdType;
+    uint8_t Verdict;    // BleLinkVerdict
+    bool Valid;         // false until a link has been judged: a zeroed record is NOT a link
+};
+static BleLastLinkRecord BleLastLink;
+static volatile uint32_t BleLastLinkSeq; // even = a stable record, odd = being written
+
+static void BleLastLinkSet(const NimBLEAddress &Air, const NimBLEAddress &Id, uint8_t Verdict)
+{
+    BleLastLinkSeq = BleLastLinkSeq + 1;
+    memcpy(BleLastLink.Air, Air.getVal(), 6);
+    BleLastLink.AirType = Air.getType();
+    memcpy(BleLastLink.Id, Id.getVal(), 6);
+    BleLastLink.IdType = Id.getType();
+    BleLastLink.Verdict = Verdict;
+    BleLastLink.Valid = true;
+    BleLastLinkSeq = BleLastLinkSeq + 1;
+}
+
+// Copies the last link record. False when no link has been judged since boot (so the block's fields
+// stay empty instead of reading as the all-zero address), or when a write kept winning (never seen -
+// the writer's critical section is a handful of stores, so three attempts always succeed).
+bool AppBLELastLink(BleLastLinkRecord *Out)
+{
+    if (!Out)
+        return false;
+    for (uint8_t Attempt = 0; Attempt < 3; Attempt++)
+    {
+        const uint32_t Before = BleLastLinkSeq;
+        if (Before & 1u)
+            continue;
+        BleLastLinkRecord Copy;
+        memcpy(&Copy, (const void *)&BleLastLink, sizeof(Copy));
+        if (BleLastLinkSeq == Before)
+        {
+            *Out = Copy;
+            return Copy.Valid;
+        }
+    }
+    return false;
+}
+
 // ===== Bonds vs the passkey they were made under =====
 //
 // A bond is only worth anything under the passkey that created it: the phone comes back encrypted
@@ -508,6 +573,7 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         {
             DeviceLog("APPBLE", "refused a second peer: a link is already live (handle %u)",
                       (unsigned)BleConnHandle);
+            BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkRefusedBusy);
             PServer->disconnect(ConnInfo.getConnHandle());
             return;
         }
@@ -528,6 +594,7 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         if (!BleEnabled)
         {
             DeviceLog("APPBLE", "refused: the radio is disabled");
+            BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkRefusedBusy);
             PServer->disconnect(ConnInfo.getConnHandle());
             return;
         }
@@ -543,10 +610,23 @@ class BleServerCallbacks : public NimBLEServerCallbacks
             !BlePeerWasBonded(ConnInfo.getIdAddress()) &&
             (ConnInfo.getIdAddress().getType() & 0x01) == 0)
         {
-            DeviceLog("APPBLE", "refused a stranger: the pairing window is closed");
+            DeviceLog("APPBLE", "refused a stranger at %s: the pairing window is closed",
+                      ConnInfo.getIdAddress().toString().c_str());
+            BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkRefusedNotBonded);
             PServer->disconnect(ConnInfo.getConnHandle());
             return;
         }
+
+        // From here the link is judged, not yet admitted: the security procedure decides. The record
+        // says so, because a link that never completes it (the deadline in AppBLETick) is neither an
+        // admission nor one of the refusals below.
+        BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkPending);
+        DeviceLog("APPBLE", "link up: peer=%s air=%s%s", ConnInfo.getIdAddress().toString().c_str(),
+                  ConnInfo.getAddress().toString().c_str(),
+                  BleCameInResolved(ConnInfo.getAddress().getVal(), ConnInfo.getAddress().getType(),
+                                    ConnInfo.getIdAddress().getVal(),
+                                    ConnInfo.getIdAddress().getType())
+                      ? " (resolved from a private address)" : "");
 
         // A pairing on this link may not create a bond unless a window is open (or the store is
         // still empty, which is how the first bond is made). Without this a stranger could pair
@@ -601,6 +681,7 @@ class BleServerCallbacks : public NimBLEServerCallbacks
             DeviceLog("APPBLE", "link refused (enc=%u bonded=%u%s): dropping",
                       ConnInfo.isEncrypted(), ConnInfo.isBonded(),
                       BleLinkBondingClosed ? ", no pairing window" : "");
+            BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkRefusedUnsecured);
             BleSecured = false;
             BleConnected = false;
             if (BleServer)
@@ -613,6 +694,7 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         if (Policy.Mitm && !ConnInfo.isAuthenticated())
         {
             DeviceLog("APPBLE", "unauthenticated link refused: a passkey is set");
+            BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkRefusedUnsecured);
             BleSecured = false;
             BleConnected = false;
             if (BleServer)
@@ -630,6 +712,7 @@ class BleServerCallbacks : public NimBLEServerCallbacks
                                BlePeerWasBonded(ConnInfo.getIdAddress())))
         {
             DeviceLog("APPBLE", "refused a link that paired outside the pairing window: forgetting its bond");
+            BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkRefusedOutsideWindow);
             if (!NimBLEDevice::deleteBond(ConnInfo.getIdAddress()))
                 DeviceLog("APPBLE", "could not forget the bond of %s: it still admits this peer",
                           ConnInfo.getIdAddress().toString().c_str());
@@ -643,6 +726,7 @@ class BleServerCallbacks : public NimBLEServerCallbacks
 
         BleSecured = true;
         BleConnected = true;
+        BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkAdmitted);
         BleMtu = ConnInfo.getMTU();
         BleSecureDeadlineMs = 0;
         // Prefer 2M PHY when the central supports it: halves air time per packet
@@ -657,9 +741,11 @@ class BleServerCallbacks : public NimBLEServerCallbacks
             BleServer->updateConnParams(ConnInfo.getConnHandle(), 6, 12, 0, 400);
         }
 
-        DeviceLog("APPBLE", "link secured: enc=%u bonded=%u auth=%u bonds=%d bits=%u",
+        DeviceLog("APPBLE", "link secured: enc=%u bonded=%u auth=%u bonds=%d bits=%u peer=%s air=%s",
                   ConnInfo.isEncrypted(), ConnInfo.isBonded(), ConnInfo.isAuthenticated(),
-                  NimBLEDevice::getNumBonds(), ConnInfo.getSecKeySize());
+                  NimBLEDevice::getNumBonds(), ConnInfo.getSecKeySize(),
+                  ConnInfo.getIdAddress().toString().c_str(),
+                  ConnInfo.getAddress().toString().c_str());
 
         // A bond exists that did not before - including the case where this pairing overflowed
         // the store and the stack evicted the oldest entry inside the same callback, which leaves

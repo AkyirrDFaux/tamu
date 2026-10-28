@@ -33,9 +33,12 @@
 constexpr uint8_t BleAddrRandom = 1;
 
 // The two halves of an identity address - the six bytes and whether they are public or random -
-// are the same. The controller reports a peer whose RPA it resolved with type 2 (public identity)
-// or 3 (random identity), while the bond store keeps the same address as type 0 or 1, so comparing
-// the raw type would never match the owner of the device.
+// are the same. A peer whose RPA the controller resolved arrives as an *identity*: the HCI
+// connection-complete event carries type 2 (public identity) or 3 (random identity), and NimBLE's
+// `ble_hs_conn_addrs()` normalises that to 0/1 on `peer_id_addr` while keeping the address the peer
+// actually used in `peer_ota_addr`. The bond store keeps the same address as 0/1, so this comparison
+// has to be right in BOTH type spaces: a raw type comparison fails whenever the two sides disagree
+// on the byte, and that would lock the owner of the device out.
 inline bool BleSameIdentity(const uint8_t A[6], uint8_t AType, const uint8_t B[6], uint8_t BType)
 {
     if ((AType & 0x01) != (BType & 0x01))
@@ -47,6 +50,35 @@ inline bool BleSameIdentity(const uint8_t A[6], uint8_t AType, const uint8_t B[6
     }
     return true;
 }
+
+// The peer connected from an address that is NOT the identity the admission decision used - i.e. the
+// controller resolved a rotating private address (RPA) back to it, which is the E66 mechanism seen
+// from the host: `ble_hs_conn_addrs()` keeps the event's identity address as `peer_id_addr` and its
+// peer-RPA field as `peer_ota_addr`, so the two differ exactly when a resolution happened. This is
+// the one fact that tells "the owner came back from a new RPA" apart from "an address arrived and the
+// bond happened to match".
+inline bool BleCameInResolved(const uint8_t Air[6], uint8_t AirType, const uint8_t Id[6], uint8_t IdType)
+{
+    return !BleSameIdentity(Air, AirType, Id, IdType);
+}
+
+// How the admission of one link ended, published as the `BLE Settings` block's "Last link" field
+// (Blocks/BleSettings.h, field 11) so the verdict can be READ on a rig. The log cannot carry it:
+// DeviceLog is dropped while a host holds the link (Issues.md E67), which is exactly when a connect
+// happens. E66's open gap was that "a stranger was refused" could not be told apart from "the bonded
+// peer's address was not recognised" - these values answer that question separately.
+// The numbers are wire values (the app decodes them), so they are pinned by
+// test/native/ble_admission_test.cpp and must not be reordered.
+enum BleLinkVerdict : uint8_t
+{
+    BleLinkNone = 0,                // no link judged since boot
+    BleLinkPending = 1,             // connected and not judged yet (the security deadline is what ends these)
+    BleLinkAdmitted = 2,            // a session: encrypted, bonded, and one of the bonds from before the link
+    BleLinkRefusedNotBonded = 3,    // this identity is not a bond and no window is open: a stranger, at connect
+    BleLinkRefusedOutsideWindow = 4,// it paired on a link that may not make a bond; that bond was forgotten
+    BleLinkRefusedUnsecured = 5,    // the link failed the security policy (no bond, or a passkey not used)
+    BleLinkRefusedBusy = 6,         // a session was already live, or the block switched the radio off
+};
 
 // A new bond may only be made inside a pairing window, or while the store is still empty (the
 // first bond, which is how a headless device is set up without a USB host). This is the pairing

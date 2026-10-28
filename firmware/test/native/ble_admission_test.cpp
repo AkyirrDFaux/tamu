@@ -131,9 +131,53 @@ static void TestStrangerCannotBeAdmittedWhereBondingIsClosed()
     }
 }
 
+// The peer came in on a DIFFERENT address from the identity the admission used - the controller
+// resolved a rotating private address (RPA) back to it. This is the E66 mechanism as the host sees
+// it (`ble_hs_conn_addrs`: peer_id_addr = the event's identity address, peer_ota_addr = its RPA), and
+// it is the fact the "Last air" / "Last peer" read-out carries to a rig.
+static void TestCameInResolved()
+{
+    // A resolved peer: identity is the bonded public address, the address on the air is a random one.
+    CHECK(BleCameInResolved(Other, Random, Phone, Public));
+    // A peer that connected from its own address is NOT resolved - the same six bytes and type.
+    CHECK(!BleCameInResolved(Phone, Public, Phone, Public));
+    // The identity half can be either type space: `ble_hs_conn_addrs` normalises the event's 2/3 to
+    // 0/1 on peer_id_addr, so a comparison that only worked on one space would be a landmine.
+    CHECK(!BleCameInResolved(Phone, Random, Phone, Random));
+    // Same bytes but a different public/random axis is still a different address.
+    CHECK(BleCameInResolved(Phone, Random, Phone, Public));
+}
+
+// The verdict numbers are wire values: the "Last link" field is read by a rig (and by the app), so a
+// reorder would silently mean something else. Pinned here, where changing one is visible.
+static void TestVerdictNumbers()
+{
+    CHECK(BleLinkNone == 0);
+    CHECK(BleLinkPending == 1);
+    CHECK(BleLinkAdmitted == 2);
+    CHECK(BleLinkRefusedNotBonded == 3);
+    CHECK(BleLinkRefusedOutsideWindow == 4);
+    CHECK(BleLinkRefusedUnsecured == 5);
+    CHECK(BleLinkRefusedBusy == 6);
+    // Every "refused" value is distinct from every other and from the two non-verdicts, so a read-out
+    // can never be ambiguous about what happened.
+    const uint8_t Refusals[] = {BleLinkRefusedNotBonded, BleLinkRefusedOutsideWindow,
+                                BleLinkRefusedUnsecured, BleLinkRefusedBusy};
+    for (size_t i = 0; i < sizeof(Refusals); i++)
+    {
+        CHECK(Refusals[i] != BleLinkNone);
+        CHECK(Refusals[i] != BleLinkPending);
+        CHECK(Refusals[i] != BleLinkAdmitted);
+        for (size_t j = i + 1; j < sizeof(Refusals); j++)
+            CHECK(Refusals[i] != Refusals[j]);
+    }
+}
+
 int main()
 {
     TestSameIdentity();
+    TestCameInResolved();
+    TestVerdictNumbers();
     TestBondingAllowed();
     TestSessionAllowed();
     TestStrangerCannotBeAdmittedWhereBondingIsClosed();

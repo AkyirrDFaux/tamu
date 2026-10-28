@@ -16,6 +16,16 @@
 //   Enabled         (6, 0)    Bool, Persistent       false = the radio is not used at all
 //   Display name    (7, 0)    Text(16), Persistent   advertised name, empty = System.Name
 //   Advertised name (8, 0)    Text(16), RO           the name actually advertised (Display name resolved)
+//   Last peer       (9, 0)    Text, RO               identity the admission decision used (E66)
+//   Last air        (10, 0)   Text, RO               the address that peer connected from (an RPA when resolved)
+//   Last link       (11, 0)   Enum, RO               how the last link ended (BleLinkVerdict)
+//
+// Fields 9-11 are the E66 read-out, and they exist because the log cannot carry the answer: DeviceLog
+// is dropped while a host holds the link (Issues.md E67), and a connect happens exactly then. "Last
+// peer" is the identity the session gate compared with the bond store, "Last air" is where the peer
+// actually came from, and the two differing is what a controller-resolved rotating private address
+// looks like - the mechanism E66 is about. Before them a rig could not tell a refused stranger from a
+// bonded peer whose address was not recognised; the verdict names which one happened.
 //
 // Field numbers run in the order of that table (the owner's table lists the keys, not the field
 // indexes; this is the one place they are fixed). Writes are restricted - see the triggers and the
@@ -44,6 +54,7 @@
 #include <cstdint>
 #include "Core/Functions/MemoryTypes.h"
 #include "Blocks/BleSecurityPolicy.h"
+#include "Blocks/BleAdmissionPolicy.h" // BleLinkVerdict, the "Last link" field's vocabulary
 
 // Bond slots: one per CONFIG_BT_NIMBLE_MAX_BONDS (3). The read-only Bond field exposes that many
 // keys; a device with more bonds than slots would silently hide the extras, so the two numbers
@@ -66,6 +77,9 @@
 #define BLE_SET_FIELD_ENABLED      6
 #define BLE_SET_FIELD_DISPLAYNAME  7
 #define BLE_SET_FIELD_ADVERTISED   8
+#define BLE_SET_FIELD_LASTPEER     9
+#define BLE_SET_FIELD_LASTAIR      10
+#define BLE_SET_FIELD_LASTLINK     11
 
 #define BLE_SET_MODE_JUST_WORKS 0
 #define BLE_SET_MODE_PASSKEY    1
@@ -125,6 +139,13 @@ struct BleSettingsVolatile
     // What the advertisement really carries: the Display name, or System.Name when that is empty.
     // Read-only, so the app can show the resolved name without re-implementing the rule.
     alignas(4) char AdvertisedName[BLE_DISPLAY_NAME_LEN] = {};        // field 8, offset 76
+    // The E66 read-out: the last judged link. Both addresses are "AA:BB:CC:DD:EE:FF" (17 chars), or
+    // empty while no link has been judged since boot; LastLink is a BleLinkVerdict. They differ
+    // exactly when the controller resolved a rotating private address to the identity, so a read-out
+    // with LastPeer = the bonded identity and LastAir = a random address is the resolution itself.
+    alignas(4) char LastPeer[BLE_BOND_TEXT_LEN] = {};                 // field 9, offset 92
+    alignas(4) char LastAir[BLE_BOND_TEXT_LEN] = {};                  // field 10, offset 112
+    uint8_t  LastLink = BleLinkNone;                                  // field 11, offset 132
 };
 
 // The entry table addresses the value spaces by byte offset, so the structs and the offsets above
@@ -141,6 +162,9 @@ static_assert(offsetof(BleSettingsVolatile, Bond[2]) == 48, "Bond[2] offset");
 static_assert(offsetof(BleSettingsVolatile, WindowMs) == 68, "Window offset");
 static_assert(offsetof(BleSettingsVolatile, Action) == 72, "Action offset");
 static_assert(offsetof(BleSettingsVolatile, AdvertisedName) == 76, "Advertised name offset");
+static_assert(offsetof(BleSettingsVolatile, LastPeer) == 92, "Last peer offset");
+static_assert(offsetof(BleSettingsVolatile, LastAir) == 112, "Last air offset");
+static_assert(offsetof(BleSettingsVolatile, LastLink) == 132, "Last link offset");
 
 // Defined in the board glue: the write side of the block (Devices/Tamu_v2.0A/BleSettingsGlue.h).
 bool OnBlePasskeyWrite(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t Length);
@@ -180,6 +204,15 @@ const BlockEntry BleSettings_Entries[] = {
     // The resolved name, kept level with the radio by the main-loop hook.
     { MakeFieldKey(BLE_SET_FIELD_ADVERTISED, 0), 76,
       { (uint16_t)DataType::Text, BLE_DISPLAY_NAME_LEN, ValueReadOnly } },
+    // The E66 read-out: the last judged link, both addresses and the verdict. Read-only, and copied
+    // from RAM (AppBLE.h) once per loop pass; the two texts differ exactly when the controller
+    // resolved a rotating private address to the identity the gate compared with the bond store.
+    { MakeFieldKey(BLE_SET_FIELD_LASTPEER, 0), 92,
+      { (uint16_t)DataType::Text, BLE_BOND_TEXT_LEN, ValueReadOnly } },
+    { MakeFieldKey(BLE_SET_FIELD_LASTAIR, 0), 112,
+      { (uint16_t)DataType::Text, BLE_BOND_TEXT_LEN, ValueReadOnly } },
+    { MakeFieldKey(BLE_SET_FIELD_LASTLINK, 0), 132,
+      { (uint16_t)DataType::Enum, 1, ValueReadOnly } },
 };
 
 const BlockTrigger BleSettings_Triggers[] = {

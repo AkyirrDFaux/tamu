@@ -355,6 +355,53 @@ fi
 [ $adv_guard_fail = 0 ] && echo "PASS: advertising runs whenever no device is connected; the session gate admits the bonded peer with no window and refuses a stranger"
 fail=$((fail + adv_guard_fail))
 echo
+
+# t_0b1cd623 (Issues.md E66), evidence half: the verdict of a link and the two addresses it turned on
+# have to be READABLE, because DeviceLog never reaches a host that holds the link (E67) - which is
+# exactly when a connect happens. So every place the admission can end is recorded (BleLastLinkSet)
+# and the `BLE Settings` block publishes it (BleSettingsSync -> fields 9..11). What must hold:
+#   - each verdict the enum defines is actually recorded somewhere in AppBLE.h: a path that ends
+#     without a record would leave the rig reading the previous link's verdict;
+#   - the record carries BOTH addresses and the verdict in one published snapshot, and the identity
+#     half is the one the session gate compared with the bond store (`getIdAddress()`);
+#   - the block is only written from the app task, through AppBLELastLink(), never from the callback.
+echo "### source guard: the last judged link is recorded and published (E66)"
+BLE_GLUE_SRC="src/Devices/Tamu_v2.0A/BleSettingsGlue.h"
+e66_ro_fail=0
+for verdict in BleLinkPending BleLinkAdmitted BleLinkRefusedNotBonded BleLinkRefusedOutsideWindow \
+               BleLinkRefusedUnsecured BleLinkRefusedBusy; do
+    if ! grep -q "BleLastLinkSet(.*, $verdict)" "$APPBLE_SRC"; then
+        echo "FAIL $APPBLE_SRC: $verdict is never recorded - the read-out would show a stale link"
+        e66_ro_fail=1
+    fi
+done
+# The gate's verdict and the identity it was decided on must come from the same pair of addresses as
+# the record, or the read-out could show an admission over an address the gate never saw.
+if ! grep -q 'BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress()' "$APPBLE_SRC"; then
+    echo "FAIL $APPBLE_SRC: the record must carry the air address AND the identity the gate used"
+    e66_ro_fail=1
+fi
+if ! grep -q 'BleLastLinkSet(.*BleLinkAdmitted)' "$APPBLE_SRC"; then
+    echo "FAIL $APPBLE_SRC: an admitted session must be recorded as such"
+    e66_ro_fail=1
+fi
+# The block's half: published from the main-loop sync only, from the record accessor.
+if ! grep -q 'AppBLELastLink(&LastLink)' "$BLE_GLUE_SRC"; then
+    echo "FAIL $BLE_GLUE_SRC: the block must publish the last link record (fields 9..11)"
+    e66_ro_fail=1
+fi
+if ! grep -q 'Vol->LastLink = LastLink.Verdict;' "$BLE_GLUE_SRC"; then
+    echo "FAIL $BLE_GLUE_SRC: the published verdict must be the recorded one"
+    e66_ro_fail=1
+fi
+# ... and the callback side must never touch the block's buffers directly (they are read by the app
+# task; the record's sequence counter is what makes the copy safe).
+if grep -Eq 'StaticVol\.BleSet\.(LastPeer|LastAir|LastLink)' "$APPBLE_SRC"; then
+    echo "FAIL $APPBLE_SRC: the radio callbacks must not write the block - publish through the record"
+    e66_ro_fail=1
+fi
+[ $e66_ro_fail = 0 ] && echo "PASS: every way a link can end is recorded with both addresses, and the block publishes it"
+fail=$((fail + e66_ro_fail))
 echo
 
 echo "### native WiFi Settings tests (block table, write-only password, configuration-only State, field-8 bits)"
