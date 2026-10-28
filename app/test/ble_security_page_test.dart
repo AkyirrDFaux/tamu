@@ -248,14 +248,20 @@ void main() {
       expect(find.text('123456'), findsOneWidget);
     });
 
-    testWidgets('a closed window says so instead of a countdown', (
+    testWidgets('a closed window with bonds promises the reconnect', (
       tester,
     ) async {
       await pump(tester, fields: defaultBlock(windowMs: 0));
 
       expect(find.text('closed'), findsOneWidget);
-      expect(find.text('Not discoverable'), findsOneWidget);
-      expect(find.textContaining('advertises nothing'), findsOneWidget);
+      expect(find.text('Bonded phones only'), findsOneWidget);
+      expect(
+        find.text(
+          'Bonded devices can reconnect at any time. New pairings need a window, which only '
+          'USB can open.',
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets('prints - for a field the device did not answer', (

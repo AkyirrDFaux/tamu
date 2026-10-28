@@ -208,15 +208,34 @@ void main() {
         bleSecurityDetail(snapshot.condition, snapshot),
         contains('waiting for its first phone to pair'),
       );
-    });
-
-    test('a closed window with bonds is not discoverable, and says why', () {
-      final snapshot = BleSecuritySnapshot.fromReads(block(bondCount: 2));
-      expect(conditionOf(snapshot), BleSecurityCondition.closedBonded);
-      expect(bleSecurityHeadline(snapshot.condition), 'Not discoverable');
       expect(
         bleSecurityDetail(snapshot.condition, snapshot),
-        contains('advertises nothing outside a pairing window'),
+        endsWith('Any device may pair until the window closes.'),
+      );
+    });
+
+    test('an open window with bonds says the window is for new pairings', () {
+      final snapshot = BleSecuritySnapshot.fromReads(
+        block(bondCount: 2, windowMs: 45000),
+      );
+      expect(conditionOf(snapshot), BleSecurityCondition.windowOpen);
+      // E64 ruling C: the window governs who may PAIR, never who may reconnect.
+      expect(
+        bleSecurityDetail(snapshot.condition, snapshot),
+        'Any device may pair until the window closes.',
+      );
+    });
+
+    test('a closed window with bonds says bonded phones still reconnect', () {
+      final snapshot = BleSecuritySnapshot.fromReads(block(bondCount: 2));
+      expect(conditionOf(snapshot), BleSecurityCondition.closedBonded);
+      // The device keeps advertising for its bonded phones (whitelist-only), so it is not
+      // "not discoverable" - it is closed to anyone it holds no bond for.
+      expect(bleSecurityHeadline(snapshot.condition), 'Bonded phones only');
+      expect(
+        bleSecurityDetail(snapshot.condition, snapshot),
+        'Bonded devices can reconnect at any time. New pairings need a window, which only USB '
+        'can open.',
       );
     });
 
@@ -387,13 +406,20 @@ void main() {
       },
     );
 
-    test('a timeout is the device not answering, not a bond problem', () {
+    test('a timeout reports the device refusing a phone it holds no bond for', () {
       final guidance = bleLinkGuidance(
         errorText: 'BLE connect failed: TimeoutException after 0:00:30',
       );
       expect(guidance.symptom, BleLinkSymptom.unreachable);
       expect(guidance.likelyStaleBond, isFalse);
-      expect(guidance.headline, 'The device did not answer');
+      expect(guidance.headline, 'The device did not answer this phone');
+      // E64 ruling C: a bonded core ignores a stranger's connect request, which reads from the
+      // phone exactly like a dead device - so the refusal is named first, not "off the air".
+      expect(guidance.detail, contains('admits only the phones it holds'));
+      expect(
+        guidance.detail.indexOf('holds bonds for'),
+        lessThan(guidance.detail.indexOf('off the air')),
+      );
       expect(guidance.steps.join(' '), contains('pairing window'));
     });
 

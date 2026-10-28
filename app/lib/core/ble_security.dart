@@ -23,12 +23,14 @@
 ///    the passkey it is protecting. So over a BLE link the panel is a read-out plus an explanation
 ///    of why the controls cannot work — and a refused write is a normal `FLAG_FAIL` reply, which
 ///    the app surfaces as a sentence rather than leaving a control that silently does nothing.
-///  - **The device is discoverable only inside a pairing window.** Outside one it advertises
-///    nothing at all, so a connect attempt fails (or the device never appears in a scan). A window
-///    is opened by `Action = 0`, and the device opens a five-minute one by itself whenever its
-///    bond store is empty. That is why "it does not connect" has two entirely different causes,
-///    and why the app must not present the stale-bond case as a broken device
-///    ([bleLinkGuidance]).
+///  - **A radio that holds a bond advertises for those phones only** (whitelist-only, E64 ruling
+///    C): a bonded phone reconnects at any time, with no host and no window, and a connect
+///    request from any other phone is simply ignored. A **pairing window** therefore governs NEW
+///    pairings only - a phone the device holds no bond for gets in by pairing inside one, and only
+///    USB can open it (`Action = 0`). A device with an empty bond store is the other shape: it is
+///    off the air unless it opens its own five-minute window, which it does once per boot and
+///    again after `Action = 1`. Both shapes of "it does not connect" look the same from a phone,
+///    and neither is a broken device ([bleLinkGuidance]).
 library;
 
 import 'types.dart';
@@ -266,7 +268,7 @@ String bleSecurityHeadline(BleSecurityCondition condition) =>
     switch (condition) {
       BleSecurityCondition.radioOff => 'Bluetooth is off',
       BleSecurityCondition.windowOpen => 'Discoverable now',
-      BleSecurityCondition.closedBonded => 'Not discoverable',
+      BleSecurityCondition.closedBonded => 'Bonded phones only',
       BleSecurityCondition.closedNoBonds => 'No bonds and no window',
       BleSecurityCondition.noRadio => 'No radio described by this block',
       BleSecurityCondition.incomplete =>
@@ -284,13 +286,13 @@ String bleSecurityDetail(
   BleSecurityCondition.windowOpen =>
     snapshot.bondCount == 0
         ? 'The device holds no bonds, so it is waiting for its first phone to pair. '
-              'Anyone in range can pair while the window is open.'
-        : 'Anyone in range can pair until the window closes. Phones that are already bonded '
-              'can connect while it is open.',
+              'Any device may pair until the window closes.'
+        : 'Any device may pair until the window closes.',
+  // E64 ruling C: a bonded core keeps its advert on the air for its bonded phones, so the
+  // closed window is about strangers, never about the phone that already paired.
   BleSecurityCondition.closedBonded =>
-    'The device advertises nothing outside a pairing window, so even a bonded phone cannot '
-        'connect until one is opened from a USB link (Open pairing window below). It does not '
-        'open a window by itself while it holds bonds.',
+    'Bonded devices can reconnect at any time. New pairings need a window, which only USB '
+        'can open.',
   BleSecurityCondition.closedNoBonds =>
     'The device holds no bonds and no window is open, so it is off the air. It opens a '
         'five-minute window by itself when it boots; open one over USB if it has been up '
@@ -371,7 +373,10 @@ enum BleLinkSymptom {
   /// the app's side.
   droppedDuringSecuring,
 
-  /// The device never answered: normally it is not advertising, i.e. no pairing window is open.
+  /// The device never answered. Two shapes look identical from here, because a whitelist-only
+  /// advert is silent to a stranger: a device that holds bonds ignores a connect request from a
+  /// phone it holds no bond for, and a device whose bond store is empty is really off the air
+  /// whenever no window is open (E64 ruling C).
   unreachable,
 
   /// Anything else. The panel then lists both causes instead of guessing between them.
@@ -474,8 +479,10 @@ BleLinkGuidance bleLinkGuidance({
         steps: [
           "Open your phone's Bluetooth settings and find this device in the paired list.",
           'Choose "Forget" (or "Unpair") for it.',
-          'Come back here and connect again. With no bonds stored the device makes itself '
-              'discoverable for five minutes, so the pairing can go through.',
+          'Come back here and connect again. Pairing again is a new pairing, so it needs a '
+              'pairing window: open one from the device\'s Bluetooth panel over USB, and on a '
+              'device whose bond list is now empty a power cycle opens a five-minute one by '
+              'itself.',
         ],
         likelyStaleBond: true,
       );
@@ -483,16 +490,20 @@ BleLinkGuidance bleLinkGuidance({
     case BleLinkSymptom.unreachable:
       return const BleLinkGuidance(
         symptom: BleLinkSymptom.unreachable,
-        headline: 'The device did not answer',
+        headline: 'The device did not answer this phone',
         detail:
-            'The device is only discoverable inside a pairing window; outside one it advertises '
-            'nothing, so a connection cannot even start.',
+            'A device that holds bonds admits only the phones it holds bonds for: a connect '
+            'request from any other phone is ignored, and from the phone that refusal looks '
+            'exactly like a device that is off the air. A device whose bond list is empty really '
+            'is off the air while no window is open.',
         steps: [
           'Make sure the device is powered.',
-          'If this app can reach it over USB, open the pairing window from its Bluetooth panel '
-              'and connect over Bluetooth within the time it shows.',
-          'A device that holds no bonds opens a five-minute window by itself every time it '
-              'boots, so a power cycle also works while its bond list is empty.',
+          'If this app can reach the device over USB, its Bluetooth panel says whether it holds '
+              'bonds and whether a pairing window is open.',
+          'A phone the device holds no bond for needs a pairing window: open one from that panel '
+              '(only USB can) and connect again within the time it shows.',
+          'A device whose bond list is empty opens a five-minute window by itself on every boot, '
+              'so a power cycle also works while it holds no bonds.',
         ],
       );
 
@@ -502,14 +513,18 @@ BleLinkGuidance bleLinkGuidance({
         headline: 'Connection failed',
         detail:
             'A Bluetooth connection can fail in two ways that look alike from the phone: the '
-            'device is not advertising (no pairing window is open), or it no longer holds a bond '
-            'for this phone.',
+            'device holds no bond for this phone and ignores it (it advertises for its bonded '
+            'phones only), or it holds no bonds at all and is off the air while no window is '
+            'open.',
         steps: [
-          'If this app can reach the device over USB, open the pairing window from its Bluetooth '
-              'panel and try again within the time it shows.',
+          'If this app can reach the device over USB, its Bluetooth panel says which of the two '
+              'it is.',
+          'Open a pairing window from that panel (only USB can) and connect again within the '
+              'time it shows: pairing is the only way in for a phone the device holds no bond '
+              'for.',
           "Otherwise open your phone's Bluetooth settings, choose \"Forget\" for this device and "
               'connect again - that clears a bond the device no longer has. It is the normal step '
-              'after a firmware update.',
+              'after a firmware update, and pairing again then needs a window too.',
         ],
       );
   }

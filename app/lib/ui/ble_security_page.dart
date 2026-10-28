@@ -22,9 +22,10 @@ import 'widgets.dart';
 ///  - **Every write to this block is refused unless the frame arrived over USB.** Over a BLE link
 ///    the panel is therefore a read-out: the notice above the card says so up front, and a write
 ///    the device refuses comes back as a sentence naming the reason rather than a no-op.
-///  - **The device is discoverable only inside a pairing window**, and it opens one by itself for
-///    five minutes whenever it holds no bonds. The panel shows the countdown, the bond list and
-///    the state as one story so "it will not connect" has a visible cause.
+///  - **A radio that holds a bond advertises for those phones only** (E64 ruling C), so a bonded
+///    phone reconnects on its own, with no USB host and no window. The pairing window therefore
+///    governs new pairings only, and only USB can open one. The panel shows the countdown, the
+///    bond list and the state as one story so "it will not connect" has a visible cause.
 ///
 /// The block is compiled into the core only, so like the WiFi panel this page is reached only for
 /// a device whose own block enumeration carries it, and it renders nothing when it does not.
@@ -341,9 +342,9 @@ class _BleSecurityPageState extends State<BleSecurityPage>
               ? 'The device holds no bonds, so there is nothing to forget. The command still '
                     'resets its store.'
               : 'Every phone paired with this device ($count today) must pair again: each one has '
-                    'to be forgotten in that phone\'s Bluetooth settings before it can connect. '
-                    'The device opens a five-minute pairing window by itself afterwards, so it '
-                    'stays reachable.') +
+                    'to be forgotten in that phone\'s Bluetooth settings before it can pair '
+                    'again. With the store empty the device opens a five-minute pairing window '
+                    'by itself afterwards, so the next pairing can go through.') +
           (_overUsb
               ? ''
               : '\n\nThis app is connected over Bluetooth, so the device will refuse the write. '
@@ -637,10 +638,13 @@ class _BleSecurityPageState extends State<BleSecurityPage>
           ),
           const SizedBox(height: Spacing.md),
           // The stale-bond story, in the place the user is already looking when a phone will not
-          // connect: it is the normal outcome of a firmware update, not a broken device.
+          // connect: it is the normal outcome of a firmware update, not a broken device - and
+          // pairing again is a new pairing, so it needs a window (E64 ruling C).
           Text(
-            'If this phone stops connecting: the device may no longer hold a bond for it. '
-            'Forget the device in your phone\'s Bluetooth settings and pair again.',
+            'If this phone stops connecting: the device may no longer hold a bond for it, and a '
+            'device that holds bonds ignores phones it has no bond for. Forget the device in '
+            "your phone's Bluetooth settings, then pair again from a pairing window - open one "
+            'below over USB while the device still holds bonds.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
