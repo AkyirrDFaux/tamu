@@ -867,10 +867,8 @@ therefore not passed. Recipe once authorised: `esptool.py ... write_flash 0x7000
 .pio/build/Tamu_v2_0A/firmware.bin` + a `read_flash`/`cmp` read-back, then `.pio/probe/ble_settings_read.py`
 (Bond count before/after) around a USB `Passkey` write, and a `bluetoothctl` re-pair with the old
 code (it must be refused) plus one with the new code inside a window (it must succeed).
-**Still to land outside `firmware/`:** `Docs/Services/App Interface.md:44` ends with "`Action = 1` is
-the only way to clear them", and `app/lib/ui/ble_security_page.dart` (closing paragraph of the
-panel) says the bonds "can only be cleared with \"Forget all bonds\"" - both now disagree with the
-device. Proposed doc clause in place of that one: "a changed passkey revokes them as well - the store
-is kept under the code it was built with, and writing a different code forgets the bonds the old one
-made."; proposed app sentence: "the bonds do too, so they are cleared by \"Forget all bonds\" or by
-changing the passkey."
+**Landed outside `firmware/`, both closed on 2026-10-28:** `Docs/Services/App Interface.md:44` now
+says "`Action = 1` clears them, and so does changing the passkey" (docs commit `e6162da`, reviewed on
+`t_944a5f2d`), and the closing paragraph of the panel in `app/lib/ui/ble_security_page.dart:704` now
+says the bonds are "cleared by \"Forget all bonds\" or by changing the passkey" (`7064526`, reviewed
+on `t_dd5f927c`). Neither text disagrees with the device any more.
