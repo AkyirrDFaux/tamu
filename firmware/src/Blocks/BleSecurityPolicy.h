@@ -1,16 +1,19 @@
 #pragma once
 
-// The BLE link security policy, derived from ONE place: the `BLE Security` block's Passkey
-// field (field 0, Text(6), Persistent; "000000" = disabled = Just Works). Both the radio's
-// pairing configuration and the GATT attribute permissions are computed here from that text,
-// so the two can never disagree and the BLE link keeps no second copy of the policy.
+// The BLE link security policy, derived from ONE place: the `BLE Settings` block's Passkey
+// field (field 0, Text(6); "000000" = disabled = Just Works). Both the radio's pairing
+// configuration and the GATT attribute permissions are computed here from that text, so the two
+// can never disagree and the BLE link keeps no second copy of the policy. The text itself is
+// stored in NVS rather than in the register file (Devices/Tamu_v2.0A/BlePasskeyStore.h), so the
+// policy's source is a register field that is readable and writable but never persisted to `.SV`.
 //
 // Host-clean on purpose (no NimBLE, no ESP-IDF): test/native/ble_security_test.cpp drives the
 // same decisions the device makes, which is the only part of this feature that can be verified
 // without a phone on the air.
 //
 // The passkey always reaches the device over USB (the block's write rule refuses it on a BLE
-// session) - it is never typed on the device, which has no display.
+// session) - it is never typed on the device, which has no display. `Mode` is derived from this
+// text, never stored, so "which policy is in force" has exactly one answer.
 
 #include <cstdint>
 

@@ -40,6 +40,7 @@ static int checks = 0, failures = 0;
 static int PasskeyTriggerCalls = 0;
 static int ActionTriggerCalls = 0;
 static int EnabledTriggerCalls = 0;
+static int DisplayNameTriggerCalls = 0;
 static char PasskeyTriggerText[BLE_PASSKEY_LEN + 1] = {0};
 static uint8_t ActionTriggerValue = 0xFF;
 
@@ -50,6 +51,17 @@ bool OnBlePasskeyWrite(const StaticBlockDescriptor &, uint16_t, const void *Data
         return false;
     memcpy(PasskeyTriggerText, Data, BLE_PASSKEY_LEN);
     PasskeyTriggerText[BLE_PASSKEY_LEN] = '\0';
+    return true;
+}
+
+// The block's Display name write is USB-only in the glue; the stub copies it so the table's wiring
+// can be checked.
+bool OnBleDisplayNameWrite(const StaticBlockDescriptor &Block, uint16_t, const void *Data, uint16_t Length)
+{
+    DisplayNameTriggerCalls++;
+    if (Length != BLE_DISPLAY_NAME_LEN)
+        return false;
+    memcpy(((BleSettingsPersistent *)Block.PersistentData)->DisplayName, Data, BLE_DISPLAY_NAME_LEN);
     return true;
 }
 
@@ -152,11 +164,14 @@ static void TestBlockTable()
     StaticBlockDescriptor Blk = {&Vol, &Per, &BleSettingsSchema, "BLE Settings", nullptr};
 
     // --- the fields resolve to the struct members the offsets claim ---
+    // The passkey is readable and writable, but NOT persistent: it lives in NVS, so the register
+    // file (.SV) never carries the secret. Its wire copy is the volatile field.
     FieldResult R = Blk.Get(BLE_SET_FIELD_PASSKEY, 0);
-    CHECK(R.Data == &Per.Passkey);
+    CHECK(R.Data == &Vol.Passkey);
     CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Text);
     CHECK(R.Descriptor.Size == BLE_PASSKEY_LEN);
-    CHECK(ValueIsPersistent(R.Descriptor));
+    CHECK(!ValueIsPersistent(R.Descriptor));
+    CHECK(!ValueIsReadOnly(R.Descriptor)); // readable back: the app may show the user their code
 
     R = Blk.Get(BLE_SET_FIELD_MODE, 0);
     CHECK(R.Data == &Vol.Mode);
@@ -198,9 +213,17 @@ static void TestBlockTable()
     CHECK(R.Descriptor.Size == BLE_DISPLAY_NAME_LEN);
     CHECK(ValueIsPersistent(R.Descriptor));
 
+    // The resolved advertised name is a read-out of the rule "empty Display name = System.Name".
+    R = Blk.Get(BLE_SET_FIELD_ADVERTISED, 0);
+    CHECK(R.Data == &Vol.AdvertisedName);
+    CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Text);
+    CHECK(R.Descriptor.Size == BLE_DISPLAY_NAME_LEN);
+    CHECK(ValueIsReadOnly(R.Descriptor));
+
     // --- the defaults a device with a zero .SV tail gets ---
     CHECK(Per.Enabled == 1);                        // radio on out of the box
-    CHECK(memcmp(Per.Passkey, "000000", 6) == 0);   // Just Works
+    CHECK(memcmp(Per.ScrubbedPasskey, "000000", BLE_PASSKEY_LEN) == 0); // nothing inherited
+    CHECK(memcmp(Vol.Passkey, "000000", BLE_PASSKEY_LEN) == 0);         // Just Works
     CHECK(Per.DisplayName[0] == '\0');              // empty = use System.Name
     CHECK(Vol.Mode == BLE_SET_MODE_JUST_WORKS);
     CHECK(Vol.WindowMs == 0);                       // closed
@@ -215,15 +238,17 @@ static void TestBlockTable()
     ValueInfo TextDesc = {(uint16_t)DataType::Text, BLE_BOND_TEXT_LEN, 0};
     CHECK(!Blk.Set(BLE_SET_FIELD_BOND, 0, "X", 1, TextDesc));
 
-    // --- the two settable fields ---
-    // Display name copies through the generic path...
+    // --- the settable fields ---
+    // Display name reaches its trigger (the whole block is USB-only, so a plain copy path would
+    // bypass the rule)...
     ValueInfo NameDesc = {(uint16_t)DataType::Text, BLE_DISPLAY_NAME_LEN, 0};
     CHECK(Blk.Set(BLE_SET_FIELD_DISPLAYNAME, 0, "Tamu desk", 9, NameDesc));
+    CHECK(DisplayNameTriggerCalls == 1);
     CHECK(memcmp(Per.DisplayName, "Tamu desk", 9) == 0);
     CHECK(Per.DisplayName[9] == '\0');   // null-padded to the field width
     CHECK(Per.DisplayName[15] == '\0');
 
-    // ...Enabled belongs to its trigger (the USB-only rule lives there, not in the copy path).
+    // ...Enabled belongs to its trigger as well.
     uint8_t Off = 0;
     CHECK(Blk.Set(BLE_SET_FIELD_ENABLED, 0, &Off, 1, BoolDesc));
     CHECK(EnabledTriggerCalls == 1);
@@ -235,7 +260,7 @@ static void TestBlockTable()
     CHECK(Blk.Set(BLE_SET_FIELD_PASSKEY, 0, "654321", BLE_PASSKEY_LEN, PassDesc));
     CHECK(PasskeyTriggerCalls == 1);
     CHECK(strcmp(PasskeyTriggerText, "654321") == 0);
-    CHECK(memcmp(Per.Passkey, "654321", 6) != 0); // the trigger applies it, not Set()
+    CHECK(memcmp(Vol.Passkey, "654321", BLE_PASSKEY_LEN) != 0); // the trigger applies it, not Set()
     // A shorter value is null-padded to the field width and reaches the trigger that way, so the
     // glue's "not six digits" refusal is what stops it - not a silent truncation here.
     CHECK(Blk.Set(BLE_SET_FIELD_PASSKEY, 0, "12", 2, PassDesc));

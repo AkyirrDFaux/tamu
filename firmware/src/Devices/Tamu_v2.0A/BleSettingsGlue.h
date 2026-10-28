@@ -1,53 +1,89 @@
 #pragma once
 
-// The device half of the `BLE Settings` block (Blocks/BleSettings.h): the two write triggers and
-// the per-loop hook that keeps the block's read-only fields level with the radio. Included from
-// Main.h AFTER AppBLE.h, because it drives the link.
+// The device half of the `BLE Settings` block (Blocks/BleSettings.h): the write triggers, the boot
+// load of the passkey store and the per-loop hook that keeps the block's read-only fields level
+// with the radio. Included from Main.h AFTER AppBLE.h, because it drives the link.
 //
-// Who may change the policy: the passkey and "forget all bonds" are accepted only while the USB
-// link is the live app interface. A bonded phone that could rotate the key would defeat the
-// reason the key exists, and the register service cannot see which link a write arrived on, so
-// the rule is stated in terms of the interface that is up: a BLE-only session is refused. The
-// cost of that proxy is the case "USB host attached but silent for USB_TX_SILENCE_MS" - a write
-// from the phone then waits for the next USB transaction, which costs nothing in practice and
-// errs on the safe side. Opening the window is accepted from any link: it grants nothing but the
-// chance to pair, and pairing still meets the current policy.
+// Who may change the block: EVERY write to it is refused unless the frame arrived over the USB
+// link. The source is not inferred from which interfaces happen to be up - AppInterface publishes
+// the link a frame arrived on while it is dispatched (Core/Functions/AppInterface.h,
+// AppFrameCameOverUsb), so a write from a bonded, authenticated phone is refused with a normal
+// FLAG_FAIL reply the app can show. A bonded phone must not be able to rotate the key, wipe the
+// bonds, rename the device or switch its radio off; renaming therefore needs USB.
 
 #include "Blocks/BleSettings.h"
+#include "BlePasskeyStore.h"
 
 static_assert(BLE_SETTINGS_BOND_SLOTS == CONFIG_BT_NIMBLE_MAX_BONDS,
               "the Bond field must expose exactly the bond store's capacity");
 
-// True while the USB link is the one carrying app traffic (see the note above).
-static bool BleProvisioningLink()
+// The block's one write rule. `AppFrameCameOverUsb` is true only for a frame that arrived on the
+// USB link: a BLE frame, a bus frame and a locally generated write all fail it.
+static bool BleBlockWritable()
 {
-    return AppUSBActive() && !AppUsbSilent();
+    return AppFrameCameOverUsb();
+}
+
+// Boot: prime the passkey from NVS and purge any secret an older build persisted in `.SV`.
+//
+// The passkey used to be a Persistent register field. That put it in `.SV`, in the storage
+// partition, where the Storage service will stream it out by name - so it moved to NVS
+// (BlePasskeyStore.h). The retired bytes are kept in the struct only to keep the `.SV` layout
+// (Enabled at 6, Display name at 8) readable, and this function is what makes sure they hold no
+// secret: a key left there by an older build is carried into NVS (so an upgrade does not silently
+// drop the owner's code) and the mirror is rewritten without it.
+void BlePasskeyInit()
+{
+    BleSettingsPersistent *Per = &StaticPer.BleSet;
+    BleSettingsVolatile *Vol = &StaticVol.BleSet;
+
+    const bool RetiredHoldsSecret = BlePasskeyDigits(Per->ScrubbedPasskey) &&
+                                    BlePasskeyEnabled(Per->ScrubbedPasskey);
+
+    BlePasskeyStoreLoad(Vol->Passkey); // "000000" when nothing is stored
+
+    if (RetiredHoldsSecret && !BlePasskeyEnabled(Vol->Passkey))
+    {
+        if (BlePasskeyStoreSave(Per->ScrubbedPasskey))
+        {
+            memcpy(Vol->Passkey, Per->ScrubbedPasskey, BLE_PASSKEY_LEN);
+            DeviceLog("BLESEC", "passkey migrated from .SV to NVS");
+        }
+    }
+
+    const bool LegalRemoval = memcmp(Per->ScrubbedPasskey, "000000", BLE_PASSKEY_LEN) != 0;
+    // Not necessarily a secret (a device whose space was never normalised can hold six NULs), but
+    // anything but the sentinel means the mirror predates this build - rewrite it either way.
+    if (LegalRemoval)
+    {
+        memcpy(Per->ScrubbedPasskey, "000000", BLE_PASSKEY_LEN);
+        // StaticSaveAll is the service's own path and is private; this is the same one-write
+        // mirror it performs (RegisterPersist.h), plus the live net-ID it snapshots on the way.
+        // Writing the file is the point: scrubbing only RAM would leave the old key in `.SV`
+        // until the app happened to save.
+#ifdef TYPE_CORE
+        StaticPer.System.NetId = DeviceStatus.NetId;
+#endif
+        if (!WriteBackupFile(StaticValuesName(), (const uint8_t *)&StaticPer, sizeof(StaticPer)))
+            DeviceLog("STORAGE", "could not rewrite .SV after scrubbing the retired passkey");
+    }
+
+    DeviceLog("BLESEC", "passkey source: %s", BlePasskeyEnabled(Vol->Passkey) ? "nvs (set)" : "none (just works)");
 }
 
 // Called from the main loop. Everything the block owns is applied from here, so a register write
 // takes effect within one loop iteration and the block stays the single source of truth:
 //   - Enabled / Display name -> the radio (AppBLESettingsApply; the pairing policy is read at
 //     every use by AppBLE.h, so it needs no push);
-//   - the read-only fields <- the radio.
+//   - the read-only fields <- the radio and the displayed name <- the block.
 void BleSettingsSync()
 {
-    BleSettingsPersistent *Per = &StaticPer.BleSet;
     BleSettingsVolatile *Vol = &StaticVol.BleSet;
-
-    // A persistent space written by an older build (or one whose new tail was never saved)
-    // carries a non-digit passkey - and, in that same zero tail, Enabled = 0, which would read as
-    // "radio off" for a device nobody ever configured. The passkey is the marker: a saved space
-    // always holds six digits. Normalise the whole tail to the block's defaults (Just Works, radio
-    // on) so a read-back shows "no passkey" instead of six NULs.
-    if (!BlePasskeyDigits(Per->Passkey))
-    {
-        memcpy(Per->Passkey, "000000", BLE_PASSKEY_LEN);
-        Per->Enabled = 1;
-    }
 
     AppBLESettingsApply();
 
-    Vol->Mode = BlePasskeyEnabled(Per->Passkey) ? BLE_SET_MODE_PASSKEY : BLE_SET_MODE_JUST_WORKS;
+    // Mode is derived from the passkey every pass, never stored: the two cannot disagree.
+    Vol->Mode = BlePasskeyEnabled(Vol->Passkey) ? BLE_SET_MODE_PASSKEY : BLE_SET_MODE_JUST_WORKS;
 
     const int Bonds = AppBLEBondCount();
     Vol->BondCount = (uint8_t)(Bonds < 0 ? 0 : (Bonds > 255 ? 255 : Bonds));
@@ -67,51 +103,69 @@ void BleSettingsSync()
 
     Vol->WindowMs = AppBLEWindowLeftMs();
 
+    // The resolved advertised name: the Display name, or System.Name when that is empty. Kept in
+    // the block so the app can show what is actually on the air without re-implementing the rule.
+    char Name[SYSTEM_NAME_LEN + 1];
+    BleEffectiveName(Name);
+    if (strncmp(Vol->AdvertisedName, Name, BLE_DISPLAY_NAME_LEN) != 0)
+    {
+        memset(Vol->AdvertisedName, 0x00, BLE_DISPLAY_NAME_LEN);
+        size_t Len = strlen(Name);
+        if (Len > BLE_DISPLAY_NAME_LEN)
+            Len = BLE_DISPLAY_NAME_LEN;
+        memcpy(Vol->AdvertisedName, Name, Len);
+    }
+
     // The command byte is a trigger, never a stored value; keep it clear so a read-back cannot
     // claim a command is still pending.
     Vol->Action = 0;
 }
 
-// Field 0: the passkey text - the single source of truth for the pairing policy. Writing it
-// takes effect on the next pairing; the attribute permissions baked into the GATT table at init
-// only catch up after a reboot, which the connect gate covers in the meantime (AppBLE.h).
+// Field 0: the passkey text. 6 ASCII digits, "000000" = Just Works. The write is stored in NVS
+// (never in `.SV`) and applied at once: the next advertising cycle already carries the new policy,
+// no reboot needed. The *_AUTHEN bits baked into the GATT table at init only catch up after a
+// reboot, which the connect gate covers in the meantime (AppBLE.h re-checks the policy on every
+// link, so a Just Works session is dropped the moment a passkey is set).
 bool OnBlePasskeyWrite(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t Length)
 {
     (void)Index;
+    (void)Block;
     const char *Text = (const char *)Data;
     if (Length != BLE_PASSKEY_LEN || !BlePasskeyDigits(Text))
     {
         DeviceLog("BLESEC", "passkey refused: not %u ASCII digits", (unsigned)BLE_PASSKEY_LEN);
         return false;
     }
-    if (!BleProvisioningLink())
+    if (!BleBlockWritable())
     {
-        DeviceLog("BLESEC", "passkey refused: the USB link is not the live interface");
+        DeviceLog("BLESEC", "passkey refused: the block is written over USB only");
         return false;
     }
+    if (!BlePasskeyStoreSave(Text))
+        return false; // NVS refused: the policy is not changed either
 
-    // The trigger applies the write itself (the generic path does not copy when a trigger runs).
-    BleSettingsPersistent *Per = (BleSettingsPersistent *)Block.PersistentData;
-    memcpy(Per->Passkey, Text, BLE_PASSKEY_LEN);
+    memcpy(StaticVol.BleSet.Passkey, Text, BLE_PASSKEY_LEN);
 
     BleSettingsSync();
     AppBLEApplySecurityPolicy();
     DeviceLog("BLESEC", "passkey written: mode=%s",
-              BlePasskeyEnabled(Per->Passkey) ? "passkey (MITM)" : "just works");
+              BlePasskeyEnabled(StaticVol.BleSet.Passkey) ? "passkey (MITM)" : "just works");
     return true;
 }
 
-// Field 6: the radio's enable state. USB-only for the same reason as the passkey: switching the
-// radio off is exactly the kind of change a bonded phone must not be able to make, because it
-// takes the device off the air it is being reached through.
+// Field 6: the radio's enable state. USB-only like the rest of the block: switching the radio off
+// is exactly the change a bonded phone must not be able to make, because it takes the device off
+// the air it is being reached through. USB writes keep working with the radio down (the register
+// path and the NVS store never depend on NimBLE), so an accidental `Enabled = false` is undone by
+// one USB write - no reflash, no erase.
 bool OnBleEnabledWrite(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t Length)
 {
     (void)Index;
     if (Length != 1)
         return false;
-    if (!BleProvisioningLink())
+    if (!BleBlockWritable())
     {
-        DeviceLog("BLESEC", "Enabled refused: the USB link is not the live interface");
+        DeviceLog("BLESEC", "Enabled refused: the block is written over USB only");
         return false;
     }
 
@@ -122,32 +176,60 @@ bool OnBleEnabledWrite(const StaticBlockDescriptor &Block, uint16_t Index, const
     return true;
 }
 
+// Field 7: the advertised name. USB-only as well - a device whose name a phone can change is a
+// device that can be made to impersonate another. The value is a plain copy into the persistent
+// space (the generic path does not copy when a trigger runs), applied on the next advertising
+// start by BleSettingsSync -> AppBLESettingsApply. An empty value means "use System.Name".
+bool OnBleDisplayNameWrite(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t Length)
+{
+    (void)Index;
+    if (Length != BLE_DISPLAY_NAME_LEN)
+        return false;
+    if (!BleBlockWritable())
+    {
+        DeviceLog("BLESEC", "Display name refused: the block is written over USB only");
+        return false;
+    }
+
+    BleSettingsPersistent *Per = (BleSettingsPersistent *)Block.PersistentData;
+    memcpy(Per->DisplayName, Data, BLE_DISPLAY_NAME_LEN);
+    BleSettingsSync(); // the advertised name follows within this loop
+    // The field is a fixed 16-byte text with no terminator: log a C string of the resolved name.
+    char Name[SYSTEM_NAME_LEN + 1];
+    BleEffectiveName(Name);
+    DeviceLog("BLESEC", "display name written: advertised as '%s'", Name);
+    return true;
+}
+
 // Field 5: the only command surface. 0 opens the pairing window, 1 forgets every bond; anything
-// else is refused rather than ignored.
+// else is refused rather than ignored. USB-only like every other write to the block - the phone
+// cannot open its own pairing window, and for the same reason the forget cannot be triggered from
+// a phone that would then re-pair itself.
 bool OnBleActionWrite(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t Length)
 {
     (void)Block;
     (void)Index;
     if (Length != 1)
         return false;
+    if (!BleBlockWritable())
+    {
+        DeviceLog("BLESEC", "Action refused: the block is written over USB only");
+        return false;
+    }
 
     const uint8_t Action = *(const uint8_t *)Data;
     switch (Action)
     {
     case BLE_SET_ACTION_OPEN_WINDOW:
-        // Accepted from any link: the whole point is to open the window from the phone.
         if (!AppBLEOpenWindow())
             return false;
         BleSettingsSync();
         return true;
 
     case BLE_SET_ACTION_FORGET_BONDS:
-        // Destructive: every paired phone has to pair again. USB only, like the passkey itself.
-        if (!BleProvisioningLink())
-        {
-            DeviceLog("BLESEC", "forget bonds refused: the USB link is not the live interface");
-            return false;
-        }
+        // Destructive: every paired phone has to pair again. The empty bond store re-opens the
+        // window automatically for its 5-minute recovery period (AppBLE.h), so the device is
+        // immediately pairable again without a second command.
         if (!AppBLEForgetAllBonds())
             return false;
         BleSettingsSync();

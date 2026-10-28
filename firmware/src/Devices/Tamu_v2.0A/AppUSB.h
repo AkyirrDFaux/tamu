@@ -176,7 +176,7 @@ static void AppRxStream(const uint8_t *Data, uint16_t Len)
     {
         if (WireParser.Feed(Data[i]))
         {
-            AppInterface.Enqueue(WireParser.Frame);
+            AppInterface.Enqueue(WireParser.Frame, AppLinkSource::USB);
             WireParser.Reset();
         }
         else if (WireParser.Full || WireParser.Got > sizeof(PacketFrame))

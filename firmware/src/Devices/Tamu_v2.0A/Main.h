@@ -67,14 +67,14 @@ struct StaticPersistent {
     PWMPersistent Fan[2];         // BlockType 4
     AccGyrPersistent Accgyr;      // BlockType 5
     Vysi1Persistent Display[2];   // BlockType 6
-    BleSettingsPersistent BleSet; // BlockType 0x0B: BLE passkey/enable/name (tail - see RegisterPersist.h)
+    BleSettingsPersistent BleSet; // BlockType 0x0B: BLE enable/display name + the retired passkey bytes
 };
 struct StaticVolatile {
     LEDButtonVolatile LedButton;  // BlockType 3
     PWMVolatile Fan[2];           // BlockType 4
     AccGyrVolatile Accgyr;        // BlockType 5
     Vysi1Volatile Display[2];     // BlockType 6
-    BleSettingsVolatile BleSet;   // BlockType 0x0B: the radio's security state, read-only
+    BleSettingsVolatile BleSet;   // BlockType 0x0B: the passkey text and the radio's state, read-only
 };
 StaticPersistent StaticPer = {
     // Name is a fixed 16-char null-padded field.
@@ -138,6 +138,10 @@ if (!AppInterface.Connected) { ESP_LOGI("INIT","b1 storage"); }
     Storage.Init();
 if (!AppInterface.Connected) { ESP_LOGI("INIT","b2 backups"); }
     LoadAllBackups(); // restores name + net-id from .SV too
+    // The passkey lives in NVS, not in `.SV` (it is a secret and the Storage service streams
+    // files out by name). Load it before the radio starts, and purge any key an older build left
+    // in the persistent space.
+    BlePasskeyInit();
 Script.BootLoad();         // loads SCR_XXX scripts flagged load-on-boot (Docs/Services/Script.md)
 // The Vysi layout is not touched at boot: the layout file and the LayoutFile field belong to the
 // setup. A restore writes both, and the field's write trigger loads the layout as it lands, so a

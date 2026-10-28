@@ -46,6 +46,25 @@ bool AppUsbSilent();
 // frames when an app fired 8 parallel requests (observed on hardware).
 #define APP_RX_QUEUE_DEPTH 12
 
+// Which physical link a frame arrived on.
+//
+// The dispatcher runs every frame on one task and the handlers cannot see the link, so the
+// source is carried WITH the frame through the inbound queue and published while the frame is
+// being dispatched. A service that has to refuse a write coming over the radio (the `BLE
+// Settings` block: a bonded phone must not rotate the passkey or switch the radio off) reads it
+// here instead of guessing from which interfaces happen to be up.
+//
+// None means "not the app link": a frame that the bus delivered (ProcessBus -> DispatchPacket)
+// or a locally generated one. Only an explicit USB source satisfies a USB-only rule.
+enum class AppLinkSource : uint8_t { None = 0, USB = 1, BLE = 2 };
+
+// The link the frame currently being dispatched arrived on. Written by Pump() for each queued
+// app frame and reset to None afterwards; None whenever no app frame is in flight.
+AppLinkSource AppFrameSource = AppLinkSource::None;
+
+// True only while the frame being handled was received over the USB link.
+inline bool AppFrameCameOverUsb() { return AppFrameSource == AppLinkSource::USB; }
+
 // Link hooks (implemented per device: Devices/Tamu_v2.0A/AppUSB.h + AppBLE.h).
 bool AppUSBActive();
 bool AppBLEActive();
@@ -62,7 +81,7 @@ class AppInterfaceService
 public:
     void Init();
     bool Send(const PacketFrame &Frame);
-    bool Enqueue(const PacketFrame &Frame);
+    bool Enqueue(const PacketFrame &Frame, AppLinkSource From);
     void RouteIn(PacketFrame &Frame);
     void Pump();
     uint16_t TxPeek(uint8_t *Dst, uint16_t Max);
@@ -87,6 +106,7 @@ public:
     portMUX_TYPE TxMux = portMUX_INITIALIZER_UNLOCKED;
 
     PacketFrame RxQueue[APP_RX_QUEUE_DEPTH];
+    AppLinkSource RxFrom[APP_RX_QUEUE_DEPTH] = {}; // the link each queued frame arrived on
     volatile uint8_t RxCount = 0;
     volatile uint8_t RxTail = 0; // dequeue position (ring; avoids shifting the queue)
     portMUX_TYPE RxMux = portMUX_INITIALIZER_UNLOCKED;
@@ -224,7 +244,8 @@ inline uint16_t AppInterfaceService::TxPop(uint8_t *Dst, uint16_t Max)
 
 // Called by the link readers (USB console task / BLE RX drain) to hand over a fully
 // parsed frame. Returns false when the queue is full (caller should drop the frame).
-inline bool AppInterfaceService::Enqueue(const PacketFrame &Frame)
+// `From` is the link it arrived on and is published again while the frame is dispatched.
+inline bool AppInterfaceService::Enqueue(const PacketFrame &Frame, AppLinkSource From)
 {
     bool Ok = false;
     portENTER_CRITICAL(&RxMux);
@@ -232,6 +253,7 @@ inline bool AppInterfaceService::Enqueue(const PacketFrame &Frame)
     {
         uint8_t Head = (uint8_t)((RxTail + RxCount) % APP_RX_QUEUE_DEPTH);
         RxQueue[Head] = Frame;
+        RxFrom[Head] = From;
         RxCount = (uint8_t)(RxCount + 1);
         Ok = true;
     }
@@ -263,6 +285,7 @@ void AppInterfaceService::Pump()
     for (;;)
     {
         PacketFrame Frame;
+        AppLinkSource From;
         portENTER_CRITICAL(&RxMux);
         if (RxCount == 0) // read inside the lock so an enqueue can't corrupt the pop
         {
@@ -270,10 +293,15 @@ void AppInterfaceService::Pump()
             break;
         }
         Frame = RxQueue[RxTail];
+        From = RxFrom[RxTail];
         RxTail = (uint8_t)((RxTail + 1) % APP_RX_QUEUE_DEPTH);
         RxCount = (uint8_t)(RxCount - 1);
         portEXIT_CRITICAL(&RxMux);
+        // Publish the link while this frame is handled: a service that must refuse a write from
+        // the radio (the BLE Settings block) reads it, and it is None again once the frame is done.
+        AppFrameSource = From;
         RouteIn(Frame);
+        AppFrameSource = AppLinkSource::None;
     }
 
     TxFlush();

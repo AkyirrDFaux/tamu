@@ -473,10 +473,13 @@ are hardware-only.
 lists "Static block types | ..." and leaves the per-type list to the module documents; no document
 numbers type `0x0B` or describes the `BLE Settings` fields. The block was specified by the owner as
 a card (t_a9cda0b9) and implemented from that table, with field numbers fixed in
-`firmware/src/Blocks/BleSettings.h` (0 Passkey, 1 Mode, 2 Bond count, 3 Bond keyed, 4 Window,
-5 Action, 6 Enabled, 7 Display name). Proposed doc change (parent only): a `BLE Settings` section
-in the block tables with those fields and type `0x0B`, and `0x0B` added to the block-type list.
-Not a code defect - the app's registry entry (t_1d304c9c) needs the same numbers.
+`firmware/src/Blocks/BleSettings.h` (0 Passkey Text(6), readable+writable, NVS-backed and NOT
+persistent; 1 Mode Enum RO; 2 Bond count Index RO; 3 Bond Text RO keyed 0..2; 4 Window Uint32 RO;
+5 Action Enum write; 6 Enabled Bool Persistent; 7 Display name Text(16) Persistent; 8 Advertised
+name Text(16) RO). Every write to the block is refused unless the frame arrived over USB. Proposed
+doc change (parent only): a `BLE Settings` section in the block tables with those fields and type
+`0x0B`, and `0x0B` added to the block-type list. Not a code defect - the app's registry entry
+(t_1d304c9c) needs the same numbers.
 
 **E59 `NimBLEDevice::setScanFilterMode()` does not restrict who may connect.** Card t_367f86d0
 named it as the connect filter to apply while the pairing window is closed. In esp-nimble-cpp 2.5.0
@@ -497,3 +500,12 @@ path cannot ask for authentication. `NOTIFY_INDICATE_ENC` is used instead: with 
 MITM pairing makes encryption and authentication the same event, and `AppBLE.h`'s connect gate
 re-checks `isAuthenticated()` on every link, so an unauthenticated peer cannot reach the notify
 path either way.
+
+**E62 The BLE passkey is not part of `.SV`, so a backup/restore or a setup upload does not carry it.**
+The passkey lives in NVS (namespace `ble`, key `passkey`) rather than in the persistent register
+space, because `.SV` sits in the `storage` partition and the Storage service streams files out by
+name - a persistent field is not a place for a secret. Consequences the app side (t_1d304c9c) has
+to live with: `Passkey` reads back as the stored value or `000000`, but it is never in a `.SV`
+mirror, so an archive that copies `.SV` restores `Enabled` and `Display name` and leaves the code
+where it was; and a storage `Format()` wipes `Enabled`/`Display name` while NVS keeps the passkey.
+No code defect - recorded so the asymmetry is not mistaken for a missing persistence flag.

@@ -44,7 +44,8 @@ static volatile uint16_t BleMtu = 23;  // negotiated ATT MTU (ATT default)
 // The policy itself is NOT stored here: it is derived from the `BLE Settings` block's Passkey
 // field on every use (BlePolicyNow), so the register field is the single source of truth. The
 // same block owns the radio's enable state and the advertised name (AppBLESettingsApply).
-#define BLE_WINDOW_MS 60000           // connectable window opened by a button press / the block
+#define BLE_WINDOW_MS 60000           // connectable window opened by the block's Action field
+#define BLE_AUTO_WINDOW_MS 300000     // ... and opened by itself for 5 min while no bond is stored
 #define BLE_SECURE_DEADLINE_MS 5000   // a link that has not become secure by then is dropped
 
 static volatile bool BleSecured = false;      // current link encrypted, bonded (and authenticated)
@@ -52,6 +53,10 @@ static uint32_t BleWindowEndMs = 0;           // 0 = the connectable window is c
 static uint32_t BleSecureDeadlineMs = 0;      // 0 = no unsecured link pending
 static uint16_t BleConnHandle = 0xFFFF;
 static bool BleWindowApplied = false;         // advertising/filter state matches the window
+// The recovery window is opened once per "bond store is empty" episode: set when it has been
+// opened, cleared again as soon as a bond exists (or the radio is switched off and back on), so it
+// is not a permanent advertisement.
+static bool BleAutoWindowDone = false;
 
 // Radio state, straight from the block's Enabled/Display name fields. `BleRadioUp` means the
 // NimBLE host and the GATT table exist; `BleEnabled` means the block wants the radio usable. A
@@ -61,11 +66,13 @@ static volatile bool BleEnabled = false;
 static char BleFallbackName[SYSTEM_NAME_LEN + 1] = {0}; // System.Name, used when Display name is empty
 static char BleAppliedName[SYSTEM_NAME_LEN + 1] = {0};  // the name the advertisement carries now
 
-// The passkey text -> the whole radio+attribute policy. Cheap (6 bytes), so it is re-derived
-// instead of cached: a written passkey is then in force immediately, with no stale copy around.
+// The passkey text -> the whole radio+attribute policy. The text is the block's live Passkey
+// field, which the NVS-backed store loads at boot and every accepted write updates, so the
+// register field is the single source of truth and there is no cached policy here. Cheap (6
+// bytes), so it is re-derived instead of cached: a written passkey is in force immediately.
 static BleSecurityPolicy BlePolicyNow()
 {
-    return BleSecurityPolicyFrom(StaticPer.BleSet.Passkey);
+    return BleSecurityPolicyFrom(StaticVol.BleSet.Passkey);
 }
 
 // The advertised/device name: the block's Display name when it has one, else System.Name. The
@@ -144,9 +151,14 @@ struct BleRxAssembler
 //
 // The device is discoverable and connectable only while a window is open: it advertises nothing
 // at all outside one, so a scan finds no Tamu and even a bonded phone cannot start a connection.
-// A window is opened by the frame's button (AppBLETick) or by the `BLE Settings` block's Action
-// field, and closes on its own after BLE_WINDOW_MS. A radio that the block has disabled has no
-// window at all.
+// A window is opened by the `BLE Settings` block's Action field (USB), and it opens BY ITSELF for
+// BLE_AUTO_WINDOW_MS whenever the bond store is empty - first use, or straight after an
+// Action = 1 forget - so a headless device is always recoverable. The core's button is not a
+// trigger: Button.h shares LED_NOTIFICATION_PIN with the notification LED and forces the button
+// state false while the LED is driven, so a press is invisible exactly when it blinks.
+// A radio that the block has disabled has no window at all.
+
+int AppBLEBondCount(); // defined with the bond read-out below
 
 bool AppBLEWindowOpen()
 {
@@ -163,8 +175,8 @@ uint32_t AppBLEWindowLeftMs()
     return Left > 0 ? (uint32_t)Left : 0;
 }
 
-// Opens (or extends) the connectable window. Called from the button and from the block's
-// Action field, both in the app task. Returns false when the radio cannot be discovered at all.
+// Opens (or extends) the connectable window for the manual period. Called from the block's
+// Action field, in the app task. Returns false when the radio cannot be discovered at all.
 bool AppBLEOpenWindow()
 {
     if (!BleRadioUp || !BleEnabled)
@@ -177,7 +189,34 @@ bool AppBLEOpenWindow()
     return true;
 }
 
+// The recovery window: with no bond stored, the device makes itself discoverable for five minutes
+// without being asked. Driven by the bond store, never by a button (see above).
+bool AppBLEAutoWindow()
+{
+    if (!BleRadioUp || !BleEnabled || AppBLEBondCount() != 0)
+        return false;
+    const uint32_t NewEnd = TimeFromBoot() + BLE_AUTO_WINDOW_MS;
+    if (BleWindowEndMs != 0 && (int32_t)(NewEnd - BleWindowEndMs) <= 0)
+        return true; // a longer window is already open
+    BleWindowEndMs = NewEnd;
+    DeviceLog("APPBLE", "no bonds stored: window open for %u ms", (unsigned)BLE_AUTO_WINDOW_MS);
+    return true;
+}
+
 // ===== Bond store read-out / erasure (the block's Bond fields and Action=1) =====
+//
+// Order and eviction (the card's rules, settled against this build's NimBLE):
+//   - The store keeps entries in the order they were added (ble_store_config_peer_secs is an
+//     append array, re-sorted by bond_count at boot), so key 0 is the OLDEST bond and
+//     getBondedAddress(i) walks oldest first - what the block's Bond fields promise.
+//   - Capacity is CONFIG_BT_NIMBLE_MAX_BONDS = 3 (static_assert'd against the field's key count).
+//     When a fourth phone pairs, the config store answers BLE_HS_ESTORE_CAP, and the default
+//     store-status handler that esp-nimble-cpp installs (ble_store_util_status_rr via
+//     NimBLEDeviceCallbacks) calls ble_gap_unpair_oldest_peer() and retries: the OLDEST bond is
+//     evicted, so the phone that paired first is the one that has to pair again. Nothing is
+//     silently dropped - the store is full, one entry goes, and the block's Bond count follows
+//     getNumBonds() on the next main-loop pass (BleSettingsSync), so the app sees the new count
+//     within one ~2 ms iteration.
 
 int AppBLEBondCount()
 {
@@ -251,6 +290,21 @@ class BleServerCallbacks : public NimBLEServerCallbacks
     // refuse every read and write at the ATT layer.
     void onConnect(NimBLEServer *PServer, NimBLEConnInfo &ConnInfo) override
     {
+        // One live connection at a time. The Tamu protocol has a single receive stream and one
+        // session state, so a second peer would interleave with the first app's traffic rather
+        // than get its own session. The controller allows three connections
+        // (CONFIG_BT_NIMBLE_MAX_CONNECTIONS=3 because that is what the stack is built for), so
+        // the refusal has to be here: the second phone is disconnected immediately and its GATT
+        // access never reaches a handler. The phone sees a normal "disconnected by the device",
+        // and the log names the reason.
+        if (BleConnHandle != 0xFFFF && BleConnHandle != ConnInfo.getConnHandle())
+        {
+            DeviceLog("APPBLE", "refused a second peer: a link is already live (handle %u)",
+                      (unsigned)BleConnHandle);
+            PServer->disconnect(ConnInfo.getConnHandle());
+            return;
+        }
+
         BleConnHandle = ConnInfo.getConnHandle();
         BleMtu = 23;
         BleSecured = false;
@@ -412,7 +466,7 @@ class BleTxCallbacks : public NimBLECharacteristicCallbacks
             // complete frames are queued for the pump (no intermediate buffer).
             if (BleParser.Feed(Byte))
             {
-                AppInterface.Enqueue(BleParser.Frame);
+                AppInterface.Enqueue(BleParser.Frame, AppLinkSource::BLE);
                 BleParser.Reset();
             }
             else if (BleParser.Full)
@@ -580,6 +634,7 @@ void AppBLESettingsApply()
             BleWindowEndMs = 0;
             BleSecureDeadlineMs = 0;
             BleAdvRestart = false;
+            BleAutoWindowDone = false; // a later re-enable gets its recovery window again
             if (BleServer && BleConnHandle != 0xFFFF)
                 BleServer->disconnect(BleConnHandle);
             NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
@@ -649,13 +704,23 @@ void AppBLETick()
         DeviceLog("APPBLE", "connectable window closed");
     }
 
-    // The frame's button opens it. A press, not a level: the state is sampled once per loop by
-    // ButtonUpdate, and holding the button open must not keep extending the window.
-    static bool ButtonPrev = false;
-    const bool ButtonNow = StaticVol.LedButton.ButtonState;
-    if (ButtonNow && !ButtonPrev && BleEnabled)
-        AppBLEOpenWindow();
-    ButtonPrev = ButtonNow;
+    // Recovery window: while the bond store is empty the device opens the window by itself for
+    // BLE_AUTO_WINDOW_MS (first use, or straight after Action=1 forgot the bonds), so a headless
+    // device can always be paired to. It is opened once per empty episode, not kept open: when it
+    // expires the device goes quiet again until a bond exists or the block asks for a window.
+    // The core's button is NOT a trigger - Button.h shares LED_NOTIFICATION_PIN with the
+    // notification LED and forces the button state false while the LED is driven, so a press is
+    // invisible exactly when it blinks (owner ruling, 2026-10-28).
+    if (AppBLEBondCount() == 0)
+    {
+        if (!BleAutoWindowDone)
+        {
+            BleAutoWindowDone = true; // one window per empty episode, not a permanent advert
+            AppBLEAutoWindow();
+        }
+    }
+    else
+        BleAutoWindowDone = false;
 
     const bool WindowOpen = AppBLEWindowOpen();
     if (WindowOpen != BleWindowApplied)
