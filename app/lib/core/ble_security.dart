@@ -14,9 +14,17 @@
 ///   6 Enabled          Bool, persistent+write    false = the radio is not used at all
 ///   7 Display name     Text(16), persistent+write advertised name, empty = the System `Name`
 ///   8 Advertised name  Text(16), read-only       the name actually on the air
-///   9 Last peer        Text(20), read-only       identity the last admission decision used (E66)
-///  10 Last air         Text(20), read-only       address that peer connected from (an RPA when resolved)
+///   9 Last peer        Text(20), read-only       identity the last admission used (E66), "AA:BB:CC:DD:EE:FF/N"
+///  10 Last air         Text(20), read-only       address the same link came in on, "AA:BB:CC:DD:EE:FF/N"
 ///  11 Last link        Enum, read-only           how the last judged link ended ([bleVerdictLabels])
+///
+/// Fields 9 and 10 are read as a PAIR, and the pair is the witness: they differ when the controller
+/// resolved a rotating private address to the identity in `Last peer`, which is the reading E66
+/// exists for ([BleSecuritySnapshot.lastAddressResolved]). **Equal addresses are the correct
+/// reading** for a peer that connects from its own public or static address — this rig's host does
+/// exactly that — and are never a sign that the read-out failed. The `/N` suffix is information
+/// only (NimBLE normalises the controller's resolved types 2 and 3 to 0 and 1, so it never reads 2
+/// or 3), and it is never part of the comparison.
 ///
 /// Two properties shape everything the panel does, and both come from the firmware
 /// (`Devices/Tamu_v2.0A/BleSettingsGlue.h`, `Devices/Tamu_v2.0A/AppBLE.h`):
@@ -153,6 +161,17 @@ String bleVerdictDetail(int verdict) => switch (verdict) {
 bool hasBleSettingsBlock(Iterable<({int type, int maxInstance})> types) =>
     types.any((t) => t.type == bleSettingsBlockTypeValue);
 
+/// The address part of a `Last peer` / `Last air` reading: the `AA:BB:CC:DD:EE:FF` before the
+/// `/N` address type, or the whole text when the device sent no suffix.
+///
+/// The type is **information only** — NimBLE normalises the controller's resolved types 2/3 to
+/// 0/1 — so two readings of the same address must compare equal however their types differ. This
+/// is the one place that split happens for the app.
+String bleAddressPart(String text) {
+  final slash = text.indexOf('/');
+  return slash < 0 ? text : text.substring(0, slash);
+}
+
 /// One field read as the device answered it, or null when it did not answer.
 typedef BleFieldRead = ({ValueInfo meta, List<int> value})?;
 
@@ -245,12 +264,14 @@ class BleSecuritySnapshot {
   final String advertisedName;
 
   /// The identity the last admission decision used (`Last peer`), or empty while no link has been
-  /// judged since boot. An address only: the block carries no peer name.
+  /// judged since boot. An address only, `AA:BB:CC:DD:EE:FF/N`: the block carries no peer name.
   final String lastPeer;
 
-  /// The address the last judged peer connected from (`Last air`). It differs from [lastPeer]
-  /// exactly when the controller resolved a rotating private address to the identity the gate
-  /// compared with the bond store - the read-out E66 exists for.
+  /// The address the last judged peer connected from (`Last air`), `AA:BB:CC:DD:EE:FF/N`, or empty
+  /// while no link has been judged since boot. It differs from [lastPeer] exactly when the
+  /// controller resolved a rotating private address to the identity the gate compared with the bond
+  /// store — the read-out E66 exists for ([lastAddressResolved]). Equal addresses are the expected
+  /// reading for a peer that connects from its own public or static address, not a failed read.
   final String lastAir;
 
   /// How the last judged link ended, as one of the `bleVerdict*` values.
@@ -281,10 +302,18 @@ class BleSecuritySnapshot {
   bool get windowOpen => windowMs > 0;
 
   /// True when the last judged link came from a different address than the identity the device
-  /// judged: the controller resolved a rotating private address to the bonded identity. Both
+  /// judged: the controller resolved a rotating private address to the bonded identity.
+  ///
+  /// "Resolved" means exactly this: [lastPeer] carries the peer's identity and [lastAir] a
+  /// DIFFERENT address on the air, for the same link. Only the address parts are compared
+  /// ([bleAddressPart]) — the `/N` type suffix is information NimBLE normalises, so it can never
+  /// fabricate a difference. Equal addresses mean the peer connected from its own public or static
+  /// address, which is the normal reading (this rig's host) and not a failed read-out. Both
   /// addresses must have been read, so an unanswered field is never read as "resolved".
   bool get lastAddressResolved =>
-      lastPeer.isNotEmpty && lastAir.isNotEmpty && lastPeer != lastAir;
+      lastPeer.isNotEmpty &&
+      lastAir.isNotEmpty &&
+      bleAddressPart(lastPeer) != bleAddressPart(lastAir);
 
   /// True when the radio is on but nothing else is known: no passkey, no bonds, no window and no
   /// name. That is a block a build reports without driving a radio, and the panel says so instead

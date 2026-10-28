@@ -220,6 +220,51 @@ void main() {
       expect(skipped.lastAddressResolved, isFalse);
     });
 
+    test('compares the address part of the last-link pair, never its type suffix', () {
+      // The device writes both fields as "AA:BB:CC:DD:EE:FF/N". NimBLE normalises the
+      // controller's resolved types 2/3 to 0/1, so the suffix is information only: two readings
+      // of one address must not read as "resolved" just because their types differ.
+      BleSecuritySnapshot readPair(String peer, String air) =>
+          BleSecuritySnapshot.fromReads({
+            bleFieldLastPeer: read(DataType.text.value, text(peer, 20)),
+            bleFieldLastAir: read(DataType.text.value, text(air, 20)),
+            bleFieldLastLink: read(DataType.enum_.value, [bleVerdictAdmitted]),
+          });
+
+      // Same address, different type: not resolved.
+      expect(
+        readPair(
+          '4C:23:38:74:E6:F6/0',
+          '4C:23:38:74:E6:F6/1',
+        ).lastAddressResolved,
+        isFalse,
+      );
+
+      // The rig's own reading: a peer connecting from its public address is equal addresses, and
+      // that is the correct result rather than a failed read-out.
+      expect(
+        readPair(
+          '4C:23:38:74:E6:F6/0',
+          '4C:23:38:74:E6:F6/0',
+        ).lastAddressResolved,
+        isFalse,
+      );
+
+      // A different address on the air IS the resolution, whatever the types say.
+      expect(
+        readPair(
+          '4C:23:38:74:E6:F6/0',
+          '5E:9A:1B:2C:3D:4E/1',
+        ).lastAddressResolved,
+        isTrue,
+      );
+
+      expect(bleAddressPart('5E:9A:1B:2C:3D:4E/1'), '5E:9A:1B:2C:3D:4E');
+      // A reading with no suffix compares as the whole text, so an older firmware still works.
+      expect(bleAddressPart('5E:9A:1B:2C:3D:4E'), '5E:9A:1B:2C:3D:4E');
+      expect(bleAddressPart(''), '');
+    });
+
     test('the verdict vocabulary is the firmware BleLinkVerdict numbering', () {
       // BleAdmissionPolicy.h: 0 unjudged, 1 pending, 2 admitted, 3-6 the four refusals. The
       // numbers are wire values, so a re-ordered firmware enum must fail here rather than label
