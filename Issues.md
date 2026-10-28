@@ -367,7 +367,7 @@ are hardware-only.
   and the run names every row it created or re-created. A dictionary field's key-0 marker has no
   value to write and is left as structure, never written."
 
-- **E52** **`Docs/Services/Subscriptions.md:74` still says the requester writes the derived `Bool`
+- **E52** **`Docs/Services/Subscriptions.md:80` still says the requester writes the derived `Bool`
   into the target, which the owner's pulse ruling supersedes.** The doc's edge bullet reads "The
   requester writes the derived `Bool` into the target; the counter is never stored as a value" - the
   counter half is exactly right and unchanged, but the value half now describes the old behaviour.
