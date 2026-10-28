@@ -332,12 +332,16 @@ static bool BlePeerWasBonded(const NimBLEAddress &Addr)
 // see. The last judged link is therefore kept in RAM - both addresses and the verdict - and the
 // `BLE Settings` block publishes it (fields 9..11, BleSettingsSync reads it through AppBLELastLink).
 //
-// The pair of addresses IS the E66 mechanism: `Id` is the identity the gate compared with the bond
-// store and `Air` is what the peer connected from. `ble_hs_conn_addrs()` takes the connection
-// complete event's identity address as peer_id_addr and its peer-RPA field as peer_ota_addr, so the
-// two differ exactly when the controller resolved an RPA (BleCameInResolved). A read-out showing
-// Id = the stored bond and Air = a random address that changes between connects is the resolution
-// working; with the old accept-list design that same link was dropped at the link layer.
+// The card's claim in the first cut of this read-out - "Id and Air differ exactly when the controller
+// resolved an RPA" - is WRONG on a controller-based-privacy build and is corrected here: with
+// `CONFIG_BT_NIMBLE_HS_PVCY` (and host-based privacy off) `ble_hs_conn_addrs()` assigns
+// `peer_ota_addr = peer_id_addr` (ble_hs_conn.c, the host-based-privacy override is compiled out), so
+// `getIdAddress()` and `getAddress()` are the same address and can never differ. What the controller
+// DOES reveal is the TYPE it reports for the peer: 0/1 = the address as it came off the air, 2/3 = the
+// identity the controller resolved an RPA back to (ble_gap.c stores the HCI event's peer_addr_type
+// verbatim). So the read-out carries `addr/tN` and the log names the type; a `t2`/`t3` with the bond
+// authenticating is the resolution, and the air address itself is not available through NimBLE's
+// public GAP API on this configuration (bhc_peer_rpa_addr lives in the private conn struct).
 //
 // Written from the NimBLE host task (the callbacks) and read from the app task, so it is published
 // through a sequence counter: an odd value means a write is in flight and the reader retries rather
@@ -640,13 +644,18 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         // From here the link is judged, not yet admitted: the security procedure decides. The record
         // says so, because a link that never completes it (the deadline in AppBLETick) is neither an
         // admission nor one of the refusals below.
+        // The reported TYPE is the resolution witness on this build (see the comment on
+        // BleLastLinkRecord): 0/1 = the address as it came off the air, 2/3 = the identity the
+        // controller resolved an RPA back to. The address pair alone cannot show it, because
+        // `getAddress()` and `getIdAddress()` are the same address under controller-based privacy.
         BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkPending);
-        DeviceLog("APPBLE", "link up: peer=%s air=%s%s", ConnInfo.getIdAddress().toString().c_str(),
+        DeviceLog("APPBLE", "link up: peer=%s t=%u air=%s t=%u%s",
+                  ConnInfo.getIdAddress().toString().c_str(),
+                  (unsigned)ConnInfo.getIdAddress().getType(),
                   ConnInfo.getAddress().toString().c_str(),
-                  BleCameInResolved(ConnInfo.getAddress().getVal(), ConnInfo.getAddress().getType(),
-                                    ConnInfo.getIdAddress().getVal(),
-                                    ConnInfo.getIdAddress().getType())
-                      ? " (resolved from a private address)" : "");
+                  (unsigned)ConnInfo.getAddress().getType(),
+                  BleReportedAsIdentity(ConnInfo.getIdAddress().getType())
+                      ? " (the controller reported the identity: an RPA was resolved)" : "");
 
         // A pairing on this link may not create a bond unless a window is open (or the store is
         // still empty, which is how the first bond is made). Without this a stranger could pair
@@ -761,11 +770,13 @@ class BleServerCallbacks : public NimBLEServerCallbacks
             BleServer->updateConnParams(ConnInfo.getConnHandle(), 6, 12, 0, 400);
         }
 
-        DeviceLog("APPBLE", "link secured: enc=%u bonded=%u auth=%u bonds=%d bits=%u peer=%s air=%s",
+        DeviceLog("APPBLE", "link secured: enc=%u bonded=%u auth=%u bonds=%d bits=%u peer=%s t=%u air=%s t=%u",
                   ConnInfo.isEncrypted(), ConnInfo.isBonded(), ConnInfo.isAuthenticated(),
                   NimBLEDevice::getNumBonds(), ConnInfo.getSecKeySize(),
                   ConnInfo.getIdAddress().toString().c_str(),
-                  ConnInfo.getAddress().toString().c_str());
+                  (unsigned)ConnInfo.getIdAddress().getType(),
+                  ConnInfo.getAddress().toString().c_str(),
+                  (unsigned)ConnInfo.getAddress().getType());
 
         // A bond exists that did not before - including the case where this pairing overflowed
         // the store and the stack evicted the oldest entry inside the same callback, which leaves

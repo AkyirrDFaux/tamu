@@ -173,10 +173,25 @@ static void TestVerdictNumbers()
     }
 }
 
+// The controller's own witness of a resolution: types 2/3 are IDENTITY addresses, which is exactly
+// what it reports when it resolved a peer's RPA; 0/1 is the address as it came off the air
+// (public / random, an unresolved RPA included). On this build the address PAIR cannot show the
+// difference - NimBLE sets peer_ota_addr = peer_id_addr under controller-based privacy - so the
+// reported type is the only thing the E66 read-out can key on, and these four values are what it
+// distinguishes.
+static void TestReportedAsIdentity()
+{
+    CHECK(!BleReportedAsIdentity(0)); // public, no resolution
+    CHECK(!BleReportedAsIdentity(1)); // random: a static address, or an RPA nobody resolved
+    CHECK(BleReportedAsIdentity(2));  // public identity: the controller resolved an RPA to it
+    CHECK(BleReportedAsIdentity(3));  // random identity: same, identity on a random-type bond
+}
+
 int main()
 {
     TestSameIdentity();
     TestCameInResolved();
+    TestReportedAsIdentity();
     TestVerdictNumbers();
     TestBondingAllowed();
     TestSessionAllowed();

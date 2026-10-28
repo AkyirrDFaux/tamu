@@ -76,13 +76,26 @@ void BlePasskeyInit()
 // avoided by caching at all (a formatting allocation every ~2 ms pass).
 #define BLE_BOND_TEXT_CHECK_MS 1000
 
-// One address of the last judged link, formatted "AA:BB:CC:DD:EE:FF". NimBLEAddress keeps the six
-// bytes least-significant first, which is why they are printed in reverse (same order the bond texts
-// come out in, so the two read-outs line up by eye).
-static void BleAddrText(const uint8_t *Val, char *Out, size_t Len)
+// One address of the last judged link, with the TYPE the controller reported for it:
+// "AA:BB:CC:DD:EE:FF/N". NimBLEAddress keeps the six bytes least-significant first, which is why they
+// are printed in reverse (same order the bond texts come out in, so the two read-outs line up by eye).
+// 19 characters, so it fits BLE_BOND_TEXT_LEN (20 with the terminator) and the wire layout does not
+// move. N=0/1 is the address as it came off the air (public / random, an unresolved RPA included);
+// N=2/3 is an IDENTITY the controller resolved a rotating private address back to, which is the only
+// resolution witness NimBLE exposes on a controller-based-privacy build (Issues.md E66:
+// `getAddress()` and `getIdAddress()` are the same address there, so an address PAIR can never show
+// it). Formatted into a wider buffer and clamped: GCC cannot bound a promoted uint8_t through a %X
+// directive, so a direct snprintf into the 20-byte field trips -Werror=format-truncation.
+static void BleAddrTypeText(const uint8_t *Val, uint8_t Type, char *Out, size_t Len)
 {
-    snprintf(Out, Len, "%02X:%02X:%02X:%02X:%02X:%02X",
-             Val[5], Val[4], Val[3], Val[2], Val[1], Val[0]);
+    char Full[32];
+    snprintf(Full, sizeof(Full), "%02X:%02X:%02X:%02X:%02X:%02X/%u",
+             Val[5], Val[4], Val[3], Val[2], Val[1], Val[0], (unsigned)(Type % 10));
+    size_t N = strlen(Full);
+    if (N >= Len)
+        N = Len - 1;
+    memcpy(Out, Full, N);
+    Out[N] = '\0';
 }
 
 // Copies a fixed-width text field only when it actually differs, so a read-out that changed once is
@@ -178,8 +191,8 @@ void BleSettingsSync()
     {
         char PeerText[BLE_BOND_TEXT_LEN];
         char AirText[BLE_BOND_TEXT_LEN];
-        BleAddrText(LastLink.Id, PeerText, sizeof(PeerText));
-        BleAddrText(LastLink.Air, AirText, sizeof(AirText));
+        BleAddrTypeText(LastLink.Id, LastLink.IdType, PeerText, sizeof(PeerText));
+        BleAddrTypeText(LastLink.Air, LastLink.AirType, AirText, sizeof(AirText));
         BleTextFieldSet(Vol->LastPeer, BLE_BOND_TEXT_LEN, PeerText);
         BleTextFieldSet(Vol->LastAir, BLE_BOND_TEXT_LEN, AirText);
         Vol->LastLink = LastLink.Verdict;

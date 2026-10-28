@@ -718,14 +718,57 @@ build BEFORE the fix; the fix is iteration 34 in the tree).**
   controller. The "a genuine second IRK is refused" half is therefore UNPROVEN, not passed.
 - The acceptance itself needs the fixed image on the device and flashing was not authorised in this
   card. Recipe: `firmware/.pio/probe/ble_lastlink.py --connect 3 --addr <ADV ADDR>` (prints
-  `Last peer` / `Last air` / `Last link` after every link; the air address must change between
-  iterations while the identity holds and the verdict reads 2).
+  `Last peer` / `Last air` / `Last link` after every link).
+
+**Measured with the fix ON THE DEVICE (2026-10-28 21:09-21:20, core on USB, `Tamu_v2_0A` iteration 39
+and then 43 - the fix is iteration 34; card t_0b1cd623, owner-authorised flashing).** The device was
+already running a fixed image (the E65 card flashed iteration 39), so nothing had to be forced: the
+running image was proven to be the tree's image by reading flash 0x70000 back and comparing it
+byte-for-byte with `.pio/build/Tamu_v2_0A/firmware.bin` (`cmp` silent, sha256 `6b4c823e…`). The
+type-carrying read-out below was then built and flashed once (iteration 43, `cmp` silent, sha256
+`985fe306…`, read-back `Read 687296 bytes`).
+- **The bonded central reconnects with the window CLOSED.** Block: `Bond count 1`,
+  `Bond[0] = 4C:23:38:74:E6:F6`, `Window 0`. Three reconnects (`ble_lastlink.py --connect 3`):
+  each `Last peer=4C:23:38:74:E6:F6/0 Last air=4C:23:38:74:E6:F6/0 LastLink=2 (ADMITTED)`, bond count
+  still 1 afterwards. On the pre-fix image the same peer timed out twice in exactly that state.
+- **The device's own log names the identity** (E67 ring, read within a second of the link):
+  `[27621] APPBLE: link up: peer=4C:23:38:74:E6:F6 t=0 air=4C:23:38:74:E6:F6 t=0`,
+  `[27678] APPBLE: link secured: enc=1 bonded=1 auth=0 bonds=1 bits=16 peer=… t=0 air=… t=0`, then
+  `adv restart: uuid=1 name=1 started=1 filter=none` - the accept list is gone from the advertisement.
+- **A link that cannot prove the bond is refused while advertising continues.** With the device's
+  bond kept and `Window 0`, the host forgot its keys (`bluetoothctl remove`); the connect came up and
+  was dropped at 6.0 s → `LastLink=5 (refused: unsecured (no bond, or a passkey not used))`, the log
+  line `link refused (enc=0 bonded=0): dropping`, and a scan immediately after still answered
+  `ADVERTISING (1 match(es) for 'Akyirr')`. The bond was then re-made inside a 60 s window
+  (`pairing SUCCEEDED after 13.1 s`) and the rig left bonded with `Window 0`.
+- **Correction to this entry's premise (measured, not inferred): on today's rig the central does NOT
+  connect from an RPA.** The read-out reports type `0` (public) for the peer on every link.
+  `btmgmt info` shows `ll-privacy` but not `privacy`, and turning it on is refused to an unprivileged
+  user: `Set Privacy for hci0 failed with status 0x14 (Permission Denied)` (also with the adapter
+  powered off), `btmgmt static-addr …` likewise, and `btmon` answers `Failed to bind channel:
+  Operation not permitted`. So "a bonded central reconnects from rotating RPAs with the resolved
+  identity shown" stays **UNPROVEN** - the fix that was proven here is the one this entry needed
+  operationally: the same peer that timed out twice on iteration 27 is admitted with no filter.
+- **The first cut of the read-out could not have shown a resolution even with an RPA.** NimBLE with
+  controller-based privacy sets `peer_ota_addr = peer_id_addr` (`ble_hs_conn_addrs()`, the
+  host-based-privacy override is compiled out), so `ConnInfo.getAddress()` and
+  `ConnInfo.getIdAddress()` are the SAME address and "Last peer != Last air" can never fire. The
+  witness is the reported address TYPE: the controller reports 2/3 when it resolved an RPA and 0/1
+  for the address as it came off the air (`ble_gap.c` stores the event's `peer_addr_type` verbatim).
+  Fields 9/10 therefore read `AA:BB:CC:DD:EE:FF/N` and both log lines carry `t=N`;
+  `BleReportedAsIdentity(Type)` is the host-clean predicate (`ble admission: 69 checks`).
+- **A genuine second identity (a different IRK) remains IMPOSSIBLE on this host** - one controller,
+  `static-addr` and `privacy` both `Permission Denied` - so that half is UNPROVEN, as the card
+  allows.
+
 **Still to land outside `firmware/`.** (a) `Docs/Services/App Interface.md`'s BLE Settings table has
 no rows for fields 9-11; proposed rows - `Last peer | 0 | Text | RO | the identity the admission
-decision used, empty before the first link`; `Last air | 0 | Text | RO | the address the peer
-connected from; it differs from Last peer when the controller resolved a rotating private address`;
-`Last link | 0 | Enum | RO | 0 none, 1 pending, 2 admitted, 3 refused (not a bond), 4 refused (paired
-outside the window), 5 refused (unsecured), 6 refused (busy)`.
+decision used as "AA:BB:CC:DD:EE:FF/N", where N is the address type the controller reported (0/1 the
+address as it came off the air, 2/3 an identity it resolved a rotating private address to), empty
+before the first link`; `Last air | 0 | Text | RO | the same link's address and type from the
+controller side (equal to Last peer on this build: NimBLE reports one address)`; `Last link | 0 |
+Enum | RO | 0 none, 1 pending, 2 admitted, 3 refused (not a bond), 4 refused (paired outside the
+window), 5 refused (unsecured), 6 refused (busy)`.
 
 
 **E67 `DeviceLog` is suppressed whenever a host holds the USB port, so rig evidence had to come from

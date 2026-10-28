@@ -17,15 +17,20 @@
 //   Display name    (7, 0)    Text(16), Persistent   advertised name, empty = System.Name
 //   Advertised name (8, 0)    Text(16), RO           the name actually advertised (Display name resolved)
 //   Last peer       (9, 0)    Text, RO               identity the admission decision used (E66)
-//   Last air        (10, 0)   Text, RO               the address that peer connected from (an RPA when resolved)
+//   Last air        (10, 0)   Text, RO               the same link from the other side (see below)
 //   Last link       (11, 0)   Enum, RO               how the last link ended (BleLinkVerdict)
 //
-// Fields 9-11 are the E66 read-out, and they exist because the log cannot carry the answer: DeviceLog
-// is dropped while a host holds the link (Issues.md E67), and a connect happens exactly then. "Last
-// peer" is the identity the session gate compared with the bond store, "Last air" is where the peer
-// actually came from, and the two differing is what a controller-resolved rotating private address
-// looks like - the mechanism E66 is about. Before them a rig could not tell a refused stranger from a
-// bonded peer whose address was not recognised; the verdict names which one happened.
+// Fields 9-11 are the E66 read-out, and they exist because the log could not carry the answer when
+// they were added: DeviceLog is dropped while a host holds the link (Issues.md E67), and a connect
+// happens exactly then. Both address fields read "AA:BB:CC:DD:EE:FF/N": the address the controller
+// reported for that link plus the TYPE it reported it with. `0`/`1` is the address as it came off the
+// air; `2`/`3` is an IDENTITY the controller resolved a rotating private address (RPA) back to,
+// and that is the resolution E66 is about - the identity is what the session gate compares with the
+// bond store. It is deliberately a type and not a second address: NimBLE on this build
+// (controller-based privacy) sets `peer_ota_addr = peer_id_addr`, so `ConnInfo.getAddress()` and
+// `ConnInfo.getIdAddress()` are the same address and their difference can never be observed. The
+// verdict names how the link ended, so "refused as a stranger" is readable apart from "not
+// recognised".
 //
 // Field numbers run in the order of that table (the owner's table lists the keys, not the field
 // indexes; this is the one place they are fixed). Writes are restricted - see the triggers and the

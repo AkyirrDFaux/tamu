@@ -52,14 +52,26 @@ inline bool BleSameIdentity(const uint8_t A[6], uint8_t AType, const uint8_t B[6
 }
 
 // The peer connected from an address that is NOT the identity the admission decision used - i.e. the
-// controller resolved a rotating private address (RPA) back to it, which is the E66 mechanism seen
-// from the host: `ble_hs_conn_addrs()` keeps the event's identity address as `peer_id_addr` and its
-// peer-RPA field as `peer_ota_addr`, so the two differ exactly when a resolution happened. This is
-// the one fact that tells "the owner came back from a new RPA" apart from "an address arrived and the
-// bond happened to match".
+// controller resolved a rotating private address (RPA) back to it. NOTE: this can never be true on
+// this build and is kept only for the comparison's own sake. With controller-based privacy
+// (`CONFIG_BT_NIMBLE_HS_PVCY`, host-based privacy off) `ble_hs_conn_addrs()` assigns
+// `peer_ota_addr = peer_id_addr`, so `ConnInfo.getAddress()` and `ConnInfo.getIdAddress()` are the
+// same address; the host-based-privacy block that would set `peer_ota_addr` from the peer RPA is
+// compiled out. The observable witness of a resolution is the reported TYPE instead (2/3 = the
+// controller resolved the peer's RPA to this identity, 0/1 = the address as it came off the air):
+// ble_gap.c stores the connection event's `peer_addr_type` verbatim and the controller reports an
+// identity address type exactly when it resolved. Use BleReportedAsIdentity on the type.
 inline bool BleCameInResolved(const uint8_t Air[6], uint8_t AirType, const uint8_t Id[6], uint8_t IdType)
 {
     return !BleSameIdentity(Air, AirType, Id, IdType);
+}
+
+// Did the controller report the peer as an IDENTITY address (type 2 = public identity, 3 = random
+// identity)? That is what a resolved RPA looks like from the host: the HCI connection-complete event
+// carries the identity instead of the on-air address, and NimBLE keeps the event's type verbatim.
+inline bool BleReportedAsIdentity(uint8_t Type)
+{
+    return (Type & 0x02) != 0;
 }
 
 // How the admission of one link ended, published as the `BLE Settings` block's "Last link" field
