@@ -487,15 +487,20 @@ Future<List<int>?> _editString(
   String title,
   String current, {
   int maxChars = 23,
+  bool secret = false,
 }) {
-  final controller = TextEditingController(text: current.trimRight());
+  // A secret is never pre-filled: the field starts empty, so nothing the device holds (or
+  // held) is echoed on screen, and an empty result means "unchanged".
+  final controller = TextEditingController(
+    text: secret ? '' : current.trimRight(),
+  );
   return showTamuDialog<List<int>>(
     context,
     title: title,
-    body: TextField(
+    body: _SecretTextField(
       controller: controller,
-      autofocus: true,
       maxLength: maxChars,
+      secret: secret,
     ),
     actions: tamuDialogActions(
       onCancel: () => Navigator.pop(context),
@@ -503,6 +508,54 @@ Future<List<int>?> _editString(
           Navigator.pop(context, controller.text.codeUnits.toList()),
     ),
   );
+}
+
+/// The string editor's input: an ordinary field, or - for a secret - an obscured one with a
+/// reveal toggle so the typist can check what was entered (the reveal dies with the dialog).
+class _SecretTextField extends StatefulWidget {
+  const _SecretTextField({
+    required this.controller,
+    required this.maxLength,
+    required this.secret,
+  });
+
+  final TextEditingController controller;
+  final int maxLength;
+  final bool secret;
+
+  @override
+  State<_SecretTextField> createState() => _SecretTextFieldState();
+}
+
+class _SecretTextFieldState extends State<_SecretTextField> {
+  bool _revealed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: widget.controller,
+      autofocus: true,
+      maxLength: widget.maxLength,
+      obscureText: widget.secret && !_revealed,
+      autocorrect: false,
+      enableSuggestions: !widget.secret,
+      decoration: widget.secret
+          ? InputDecoration(
+              hintText: 'Type the new value',
+              suffixIcon: IconButton(
+                tooltip: _revealed ? 'Hide' : 'Reveal',
+                icon: Icon(
+                  _revealed
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                  size: IconSize.sm,
+                ),
+                onPressed: () => setState(() => _revealed = !_revealed),
+              ),
+            )
+          : null,
+    );
+  }
 }
 
 Future<List<int>?> _editHex(

@@ -427,4 +427,57 @@ void main() {
     expect(out.draft!.spec.max, 10);
     expect(out.draft!.spec.step, 0.5);
   });
+
+  // A secret field (the WiFi password) is typed blind: the editor starts EMPTY however much the
+  // device holds, is obscured, and only the newly typed value is returned. That is what keeps a
+  // written password from ever coming back on screen.
+  testWidgets('a plain text field starts from the value it holds', (
+    tester,
+  ) async {
+    final out = _Recorder();
+    await _openValueEditor(
+      tester,
+      out,
+      DataType.text,
+      'TamuNet'.codeUnits,
+      info: const FieldInfo('SSID'),
+    );
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, 'TamuNet');
+    expect(field.obscureText, isFalse);
+    expect(find.byTooltip('Reveal'), findsNothing);
+
+    await tester.enterText(find.byType(TextField), 'TamuNet2');
+    await _confirm(tester);
+    expect(String.fromCharCodes(out.bytes!), 'TamuNet2');
+  });
+
+  testWidgets('a secret field starts empty, obscured, with a reveal', (
+    tester,
+  ) async {
+    final out = _Recorder();
+    await _openValueEditor(
+      tester,
+      out,
+      DataType.text,
+      'hunter2'.codeUnits,
+      info: const FieldInfo('Password', maxChars: 63, secret: true),
+    );
+
+    var field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, isEmpty, reason: 'nothing is echoed');
+    expect(field.obscureText, isTrue);
+
+    // The reveal is for what the typist is entering, not for what the device held.
+    await tester.tap(find.byTooltip('Reveal'));
+    await tester.pumpAndSettle();
+    field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.obscureText, isFalse);
+    expect(field.controller!.text, isEmpty);
+
+    await tester.enterText(find.byType(TextField), 'secret123');
+    await _confirm(tester);
+    expect(String.fromCharCodes(out.bytes!), 'secret123');
+  });
 }

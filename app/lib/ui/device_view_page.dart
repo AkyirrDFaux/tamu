@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../core/device_db.dart';
+import '../core/register_client.dart';
 import '../core/types.dart';
+import '../core/wifi_settings.dart' show hasWifiSettingsBlock;
 import 'formatters.dart';
 import 'log_page.dart';
 import 'register_page.dart';
@@ -10,7 +12,9 @@ import 'sndb_page.dart';
 import 'storage_page.dart';
 import 'subscriptions_page.dart';
 import 'theme.dart';
+import 'viewer_kit.dart';
 import 'widgets.dart';
+import 'wifi_page.dart';
 
 /// Declared size of the rename mark in the app-bar title row: an affordance, not
 /// text, so it keeps this slot whatever the text scale. The gap before it is
@@ -33,6 +37,14 @@ class _DeviceViewPageState extends State<DeviceViewPage>
   bool _renaming = false;
   bool _refreshing = false;
 
+  /// The device's own block list, asked once per page: only the WiFi tile is gated on it (the
+  /// block is a compile-in firmware option, so most devices do not carry it). The client caches
+  /// the enumeration, so an autorefresh does not re-ask.
+  late final RegisterClient _register = RegisterClient(
+    deviceId: widget.deviceId,
+  );
+  bool _hasWifiBlock = false;
+
   @override
   void initState() {
     super.initState();
@@ -53,6 +65,10 @@ class _DeviceViewPageState extends State<DeviceViewPage>
     try {
       await _db.refreshDevice(widget.deviceId);
       await _db.refreshRuntime(widget.deviceId);
+      final types = await _register.enumerateBlockTypes();
+      // A null answer means the device did not say: keep what was known instead of dropping the
+      // tile off a page that is merely mid-reconnect.
+      if (types != null) _hasWifiBlock = hasWifiSettingsBlock(types);
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
@@ -113,6 +129,22 @@ class _DeviceViewPageState extends State<DeviceViewPage>
                     ),
                     const SizedBox(height: Spacing.lg),
                   ],
+                  // The connection badge: which app interfaces THIS DEVICE reports live, read
+                  // from the System block's bit field (USB/BLE/WiFi can be live together). The
+                  // shell's own badge says whether this app has a link at all; this one is the
+                  // device's answer.
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: Spacing.md),
+                    child: Wrap(
+                      spacing: Spacing.sm,
+                      runSpacing: Spacing.xs,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        const SectionLabel('App link'),
+                        AppInterfaceBadges(entry.appActiveBits),
+                      ],
+                    ),
+                  ),
                   InfoCard(
                     title: 'Device info',
                     children: [
@@ -194,6 +226,16 @@ class _DeviceViewPageState extends State<DeviceViewPage>
                             deviceId: widget.deviceId,
                             deviceName: entry.displayName,
                           ),
+                        ),
+                      // WiFi Settings is a compile-in firmware option, off by default: the
+                      // tile exists only for a device that actually enumerates the block, so a
+                      // stock core shows no WiFi entry (and no empty panel behind one).
+                      if (_hasWifiBlock)
+                        _serviceTile(
+                          context,
+                          Icons.wifi,
+                          'WiFi',
+                          () => WifiPage(deviceId: widget.deviceId),
                         ),
                       if (entry.isCore) ...[
                         _serviceTile(

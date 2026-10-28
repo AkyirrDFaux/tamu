@@ -96,6 +96,9 @@ Future<List<int>?> showValueEditor(
         info?.name ?? (type == DataType.name ? 'Name' : 'Text'),
         String.fromCharCodes(current),
         maxChars: type == DataType.name ? 16 : (info?.maxChars ?? 23),
+        // A secret field (the WiFi password) is typed in the dark: the editor never
+        // pre-fills it with what the device holds, so the value is not echoed on screen.
+        secret: info?.secret ?? false,
       );
     case DataType.char:
       return _editString(

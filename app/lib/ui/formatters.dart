@@ -14,6 +14,8 @@
 /// because the core uses them too.
 library;
 
+import '../core/app_active.dart'
+    show appActiveBitsFromBytes, describeAppInterfaces;
 import '../core/render_dict.dart' show renderKeyFieldInfo;
 import '../core/script_file.dart' show ScriptField;
 import '../core/storage_client.dart' show normalizeFileName;
@@ -103,7 +105,12 @@ String formatValue(DataType type, List<int> bytes) {
     case DataType.text:
     case DataType.name:
     case DataType.char:
-      return bytes.isEmpty ? '-' : String.fromCharCodes(bytes).trimRight();
+      // A character field is fixed-width on the wire and NUL-padded, so the padding is dropped
+      // rather than carried into the text (a padded SSID or address would otherwise keep
+      // invisible NULs in the row, and in anything copied out of it).
+      if (bytes.isEmpty) return '-';
+      final body = bytes.where((b) => b != 0).toList();
+      return body.isEmpty ? '-' : String.fromCharCodes(body).trimRight();
     case DataType.devType:
       if (bytes.length < 2) return '-';
       return DeviceType.fromValue(bytes[0] | (bytes[1] << 8)).label;
@@ -146,8 +153,13 @@ String formatValue(DataType type, List<int> bytes) {
   }
 }
 
+/// What a secret field (the WiFi password) prints instead of its value. The row, the backup
+/// view and any other read-out go through this one mask, so a password has no display path
+/// that shows it by accident.
+const String kSecretMask = '••••••••';
+
 /// Formats a System-block field, which needs a few overrides before the shared
-/// scalar formatter applies: App Active is a 1-byte enum, Capabilities is a
+/// scalar formatter applies: App Active is a bit field, Capabilities is a
 /// bitmask, and the software version is packed YY:MM:DD:II.
 String formatSystemValue(
   DataType type,
@@ -156,9 +168,11 @@ String formatSystemValue(
   int key = -1,
 ]) {
   // System-specific overrides first, then the shared scalar formatter for the rest.
-  if (field == 8 && type == DataType.enum_ && value.isNotEmpty) {
-    // App Active: 1-byte enum No / USB / BLE.
-    return const {0: 'No', 1: 'USB', 2: 'BLE'}[value[0]] ?? '?';
+  if (field == 8 && value.isNotEmpty) {
+    // App Active is a BIT FIELD (core/app_active.dart): USB (0), BLE (1), WiFi (2). It used
+    // to be an enum index, so "a phone and the USB host at once" was not expressible; the row
+    // shows every interface the bits name, whatever the field's declared type says.
+    return describeAppInterfaces(appActiveBitsFromBytes(value));
   }
   if (field == 0 && key == 1 && value.length >= 4) {
     // Device Type -> capabilities bitmask.

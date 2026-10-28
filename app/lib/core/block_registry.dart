@@ -7,6 +7,7 @@
 library;
 
 import 'types.dart';
+import 'wifi_settings.dart' show wifiStateLabels;
 
 class FieldInfo {
   final String name;
@@ -23,6 +24,9 @@ class FieldInfo {
   /// Max character count for string fields (wire format limit).
   final int maxChars;
 
+  /// A secret string (a password): the UI masks it and an editor must not echo it.
+  final bool secret;
+
   const FieldInfo(
     this.name, {
     this.unit,
@@ -32,6 +36,7 @@ class FieldInfo {
     this.enumValues,
     this.transform = false,
     this.maxChars = 23,
+    this.secret = false,
   });
 }
 
@@ -160,6 +165,22 @@ const _resistiveMeasureFields = [
   FieldInfo('Short Circuit'),
 ];
 
+// WiFi Settings (firmware BlockType 0x0C, core/wifi_settings.dart): the WiFi link's
+// settings and its reported state. The block is a compile-in option that is off by default,
+// so a device normally reports none at all - its absence is not an error.
+//
+// Password is the one secret field in the app: the row masks it, the editor does not echo
+// it, and the block is write-only (a read answers empty), so the app must never show what it
+// once wrote. IP address is 16 raw `Undefined` bytes in network order - the panel formats it
+// (core/wifi_settings.dart `wifiAddressText`); this entry only names it.
+const _wifiSettingsFields = [
+  FieldInfo('Enabled'),
+  FieldInfo('SSID', maxChars: 32),
+  FieldInfo('Password', maxChars: 63, secret: true),
+  FieldInfo('State', enumValues: wifiStateLabels),
+  FieldInfo('IP address'),
+];
+
 const Map<BlockType, BlockInfo> _blockRegistry = {
   BlockType.button: BlockInfo('Button', _buttonFields),
   BlockType.led: BlockInfo('LED', _ledFields),
@@ -171,6 +192,7 @@ const Map<BlockType, BlockInfo> _blockRegistry = {
     'Resistive measurement',
     _resistiveMeasureFields,
   ),
+  BlockType.wifiSettings: BlockInfo('WiFi Settings', _wifiSettingsFields),
 };
 
 /// Metadata for a block type, or null for unknown/dynamic types.

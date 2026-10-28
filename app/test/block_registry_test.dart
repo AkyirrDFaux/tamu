@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/block_registry.dart';
 import 'package:tamuapp/core/types.dart';
+import 'package:tamuapp/core/wifi_settings.dart';
 
 /// Guards the app's block/field metadata against the documented schemas
 /// (Docs/Modules and blocks/*.md and Docs/Modules and blocks/Generic system blocks.md). The firmware
@@ -74,6 +75,34 @@ void main() {
       expect(info.enumValues, isNull);
       expect(info.transform, isFalse);
     }
+  });
+
+  // The WiFi Settings block (firmware BlockType 0x0C, core/wifi_settings.dart). It is a
+  // compile-in option, off by default, so the names still have to line up with the block's
+  // fixed field order for the builds that do carry it.
+  test('the WiFi Settings block names its five fields in table order', () {
+    final wifi = blockInfoFor(BlockType.wifiSettings)!;
+    expect(wifi.typeName, 'WiFi Settings');
+    expect(wifi.fields.map((f) => f.name), [
+      'Enabled',
+      'SSID',
+      'Password',
+      'State',
+      'IP address',
+    ]);
+    // Password is the app's one secret field: masked on every read-out, never pre-filled.
+    expect(wifi.field(wifiFieldPassword)!.secret, isTrue);
+    for (final index in const [
+      wifiFieldEnabled,
+      wifiFieldSsid,
+      wifiFieldState,
+      wifiFieldIp,
+    ]) {
+      expect(wifi.field(index)!.secret, isFalse);
+    }
+    // State carries the block's own enum labels, so the register row prints "Connected" and
+    // not "Enum 2".
+    expect(wifi.field(wifiFieldState)!.enumValues, wifiStateLabels);
   });
 
   // Every call site bounds-checks before naming a field (register_page_tiles.dart,

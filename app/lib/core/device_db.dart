@@ -7,6 +7,7 @@ library;
 
 import 'package:flutter/foundation.dart';
 
+import 'app_active.dart';
 import 'connection.dart';
 import 'device_identity.dart';
 import 'notifications.dart';
@@ -34,6 +35,14 @@ class DeviceEntry {
   double? maxLoopTimeMs;
   int? timeOffsetMs;
   DateTime lastSeen;
+
+  /// System field 8 `App Active`, as the BITS the device reports (core/app_active.dart):
+  /// USB (0), BLE (1), WiFi (2). Several can be live at once, which the old enum could not
+  /// say. Zero means the device reports no app interface.
+  int appActiveBits = 0;
+
+  /// The interfaces [appActiveBits] names, in bit order.
+  List<AppInterface> get activeInterfaces => activeAppInterfaces(appActiveBits);
 
   DeviceEntry({required this.id})
     : name = 'Device ${idToString(id)}',
@@ -153,6 +162,13 @@ class DeviceDatabase extends ChangeNotifier {
     }
     if (loopMax != null && loopMax.length >= 4) {
       entry.maxLoopTimeMs = numberFromBytes(loopMax, 0);
+    }
+    // System field 8 App Active: the interfaces the DEVICE reports live, as bits (a phone
+    // can be paired while the USB host is attached, so this is not one enum value). A device
+    // that answers with nothing keeps what it last reported.
+    final active = await _registerRead(id, 8, 0);
+    if (active != null && active.isNotEmpty) {
+      entry.appActiveBits = appActiveBitsFromBytes(active);
     }
 
     if (id == coreId) {

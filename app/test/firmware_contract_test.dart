@@ -7,6 +7,7 @@ import 'package:tamuapp/core/script_errors.dart';
 import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_functions.dart';
 import 'package:tamuapp/core/types.dart';
+import 'package:tamuapp/core/wifi_settings.dart';
 import 'package:tamuapp/core/script_instructions.dart';
 
 /// Guards the app<->firmware script *encoding* contract.
@@ -116,6 +117,49 @@ _firmwareBlockEntries(String relativePath, String tableName) {
       ));
     }
     return out;
+  }
+  return null;
+}
+
+/// The WiFi Settings table's `(field, type)` pairs, in table order.
+///
+/// [_firmwareBlockEntries] cannot read it: that parser expects one entry per line, a numeric
+/// field index and a `sizeof(...)` size, while this table writes each entry over two lines,
+/// names its field indexes with macros (`WIFI_SET_FIELD_ENABLED`) and declares its sizes as
+/// macros too. WiFi Settings is a compile-in option, so the header is only there when the option
+/// is enabled - null means "not checked out", `[]` means the file exists but the table was not
+/// found (a broken guard, not an absent block).
+List<({int field, String type})>? _wifiSettingsEntries() {
+  for (final path in [
+    '../firmware/src/Blocks/WifiSettings.h',
+    '../../firmware/src/Blocks/WifiSettings.h',
+  ]) {
+    final file = File(path);
+    if (!file.existsSync()) continue;
+    final source = file.readAsStringSync();
+    final defines = <String, int>{};
+    for (final m in RegExp(
+      r'^#define\s+(WIFI_SET_FIELD_\w+)\s+(\d+)',
+      multiLine: true,
+    ).allMatches(source)) {
+      defines[m.group(1)!] = int.parse(m.group(2)!);
+    }
+    final start = source.indexOf('WifiSettings_Entries[]');
+    if (start < 0) return const [];
+    final open = source.indexOf('{', start);
+    final close = source.indexOf('\n};', open);
+    if (open < 0 || close < 0) return const [];
+    final body = source.substring(open, close);
+    // `{ MakeFieldKey(FIELD, key), offset,` ... `{ (uint16_t)DataType::Type, size, flags } }`
+    final re = RegExp(
+      r'MakeFieldKey\((\w+),\s*\d+\),\s*[^,]+,\s*\{\s*\(uint16_t\)DataType::(\w+)',
+      dotAll: true,
+    );
+    return [
+      for (final m in re.allMatches(body))
+        if (defines[m.group(1)!] != null)
+          (field: defines[m.group(1)!]!, type: m.group(2)!),
+    ];
   }
   return null;
 }
@@ -534,6 +578,38 @@ void main() {
           reason: 'field $index flags',
         );
       }
+    });
+
+    // The WiFi Settings block (type 0x0C) is a compile-in firmware option, so its header only
+    // exists in a build that enables it. The guard engages as soon as it lands: the panel reads
+    // the fields by number, so a shift in the firmware table would silently read another field.
+    test('the WiFi Settings schema and the app registry name the same fields', () {
+      final entries = _wifiSettingsEntries();
+      if (entries == null) {
+        return; // firmware source not available next to the app
+      }
+      expect(
+        entries,
+        isNotEmpty,
+        reason:
+            'the WifiSettings_Entries table was not parsed - guard is broken',
+      );
+      final wifi = blockInfoFor(BlockType.wifiSettings)!;
+      expect(
+        wifi.fields.length,
+        entries.length,
+        reason: 'app field labels lag the firmware WifiSettings table',
+      );
+      // The label list is indexed by field number, so the entries must run 0..n-1 in order.
+      expect(
+        [for (final e in entries) e.field],
+        [for (var i = 0; i < entries.length; i++) i],
+      );
+      // The two fields the app treats specially: the secret password (a Text that always reads
+      // empty), and the address - 16 raw `Undefined` bytes the APP formats, never Text.
+      expect(entries[wifiFieldPassword].type, 'Text');
+      expect(entries[wifiFieldIp].type, 'Undefined');
+      expect(wifi.field(wifiFieldPassword)!.secret, isTrue);
     });
   }, skip: skipReason);
 

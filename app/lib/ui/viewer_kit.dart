@@ -16,6 +16,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../core/app_active.dart'
+    show activeAppInterfaces, unknownAppInterfaceBits;
 import 'formatters.dart';
 import 'theme.dart';
 import 'widgets.dart' show StateMessage;
@@ -99,6 +101,38 @@ class TamuChipRow extends StatelessWidget {
   Widget build(BuildContext context) {
     if (chips.isEmpty) return const SizedBox.shrink();
     return Wrap(spacing: spacing, runSpacing: runSpacing, children: chips);
+  }
+}
+
+/// The connection badge: the app interfaces a device reports live, one chip per interface.
+///
+/// System block field 8 is a bit field, not an enum index (`core/app_active.dart`), so a phone
+/// paired while the USB host is attached is `USB | BLE` and the badge shows both - which is the
+/// fact the old single-value enum could not carry. [bits] is the field's value as read; a bit
+/// this build has no name for is shown as its number rather than dropped, and a device that
+/// reports no interface at all gets one muted `No link` chip so the badge never reads as
+/// "unknown".
+class AppInterfaceBadges extends StatelessWidget {
+  const AppInterfaceBadges(this.bits, {super.key});
+
+  final int bits;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = activeAppInterfaces(bits);
+    final unknown = unknownAppInterfaceBits(bits);
+    return TamuChipRow(
+      spacing: Spacing.xs,
+      chips: [
+        for (final interface in active) TamuChip(interface.label),
+        if (unknown != 0)
+          TamuChip(
+            'unknown 0x${unknown.toRadixString(16)}',
+            tone: ChipTone.warning,
+          ),
+        if (active.isEmpty && unknown == 0) const TamuChip('No link'),
+      ],
+    );
   }
 }
 

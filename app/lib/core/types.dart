@@ -280,6 +280,15 @@ enum BlockType {
   resistiveMeasure(0x08),
   button(0x09),
   led(0x0A),
+
+  /// `BLE Settings` (firmware `Blocks/BleSettings.h`). Only the type is named here: the field
+  /// metadata belongs to the BLE Settings app card, so a device carrying the block renders its
+  /// fields unnamed until that entry lands.
+  bleSettings(0x0B),
+
+  /// `WiFi Settings` (core/wifi_settings.dart). A compile-in firmware option, off by
+  /// default, so a device usually reports no block of this type at all.
+  wifiSettings(0x0C),
   script(0x3FE), // app marker for the Scripts service (wire range 0x3F4-0x3F7)
   dynamic(0x3FF); // app marker for the Dynamic service (wire range 0x3F0-0x3F3)
 
@@ -304,6 +313,8 @@ enum BlockType {
     BlockType.resistiveMeasure => 'Resistive Measure',
     BlockType.button => 'Button',
     BlockType.led => 'LED',
+    BlockType.bleSettings => 'BLE Settings',
+    BlockType.wifiSettings => 'WiFi Settings',
     BlockType.script => 'Script',
     BlockType.dynamic => 'Dynamic',
   };

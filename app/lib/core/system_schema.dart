@@ -95,7 +95,10 @@ const Map<int, Map<int, ({DataType type, int size})>> systemStructFields = {
     1: (type: DataType.integer, size: 4), // Total FLASH
   },
   8: {
-    0: (type: DataType.enum_, size: 1), // App Active
+    // App Active: a BIT FIELD of live app interfaces (core/app_active.dart), one byte today.
+    // The type stays Enum because that is what the firmware's entry table declares; the
+    // display and the device view decode bits, never an index.
+    0: (type: DataType.enum_, size: 1),
   },
 };
 

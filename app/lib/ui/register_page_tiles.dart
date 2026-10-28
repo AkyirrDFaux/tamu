@@ -661,6 +661,13 @@ extension on _RegisterPageState {
       final blockInfo = blockInfoFor(BlockType.fromValue(blockType));
       final fieldInfo = blockInfo?.field(fieldIndex);
 
+      // A secret field (the WiFi password) has no display path: the row prints the mask, and
+      // an empty value means the device does not read it back rather than "the password is
+      // empty".
+      if (fieldInfo?.secret == true) {
+        return field.value.isEmpty ? '-' : kSecretMask;
+      }
+
       if (blockType == BlockType.resistiveMeasure.value) {
         final sensorRaw = cache?[1];
         final sensor = (sensorRaw != null && sensorRaw.value.isNotEmpty)
