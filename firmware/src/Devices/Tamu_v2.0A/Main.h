@@ -158,10 +158,6 @@ PinModeOutput(LED_NOTIFICATION_PIN);
     PinLow(LED_NOTIFICATION_PIN);
     DeviceStatus.ShortAddress = 0;
 
-// The readable runtime log (Issues.md E67) takes its storage before anything logs, so every
-// line from the first boot message onwards survives into the ring a rig session reads back.
-LogHandler.InitText();
-
 if (!AppInterface.Connected) { ESP_LOGI("INIT","b1 storage"); }
     Storage.Init();
 if (!AppInterface.Connected) { ESP_LOGI("INIT","b2 backups"); }
