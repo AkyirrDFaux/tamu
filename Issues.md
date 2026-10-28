@@ -994,7 +994,7 @@ pair again):
   start with, and a second peer is refused at connect (`BleLinkRefusedBusy`).
 - **Rig check, iteration 46** (`685482` B flash / `77876` B RAM, flashed with `./upload.sh app tamu`:
   `Wrote 686160 bytes (421298 compressed) at 0x00070000 ... Hash of data verified.`), re-runnable as
-  `bash firmware/.pio/probe/rig_e69.sh` (log `.pio/probe/rig_e69.log`, **12/12 assertions pass**):
+  `bash firmware/.pio/probe/rig_e69.sh` (log `.pio/probe/rig_e69.log`, **14/14 assertions pass**):
   bond made then the device reset -> `Bond count 1`, `Window 0`; the host forgets its own bond and
   reconnects (the E69 action) -> `Bond count 1 -> 0` and **`Window 0`**, where iteration 44 read
   `286053 / 286221 / 258310` ms for the same three-time sequence, with `LastLink=5` (the session gate
@@ -1003,10 +1003,12 @@ pair again):
 - **One behaviour deliberately given up:** switching the radio off and on again with an empty store no
   longer opens a window by itself - a re-enable is not one of the two events. Pairing is still
   admitted by the empty store, and the next boot or explicit forget grants the window.
-- **RED:** `test/native/ble_window_guard.sh` run against `HEAD`'s pre-fix `AppBLE.h` (`git show
-  HEAD:firmware/src/Devices/Tamu_v2.0A/AppBLE.h`) prints 13 FAIL lines and exits 1; against this tree
-  it passes. The native table also pins `BleAutoWindowGranted(BleWindowCauseNone, 0) == false`, the
-  exact shape the defect needed to be true.
+- **RED:** `test/native/ble_window_guard.sh` run against the **pre-fix** `AppBLE.h` - revision
+  `679480b^` (the `Issues` commit before the fix; `3a117e4` is the same file) -
+  `git show 679480b^:firmware/src/Devices/Tamu_v2.0A/AppBLE.h` prints 13 FAIL lines and exits 1;
+  against this tree it passes. Name that revision, not `HEAD`: `HEAD` is the fixed file now, so a
+  `git show HEAD:` repro silently prints PASS. The native table also pins
+  `BleAutoWindowGranted(BleWindowCauseNone, 0) == false`, the exact shape the defect needed to be true.
 
 **Evidence kind:** register read-out (`BLE Settings` fields 2/4/9-11 via `ble_settings_read.py` +
 `ble_lastlink.py`), host-side HCI transcripts (`ble_host.py`), and the air (bleak scan). The ATT-level
