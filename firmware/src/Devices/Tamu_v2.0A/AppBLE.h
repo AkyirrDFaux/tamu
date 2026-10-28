@@ -298,9 +298,12 @@ bool AppBLEBondText(int Index, char *Out, size_t Len)
 // (Blocks/BleAdmissionPolicy.h has the rule itself, and test/native/ble_admission_test.cpp the
 // table).
 //
-// NimBLEAddress compares the raw type byte, and the two sides do not use the same one: the bond
-// store keeps 0/1 (public/random) while a peer the controller resolved is reported as 2/3
-// (public/random IDENTITY). BleSameIdentity compares the six bytes and the public/random axis.
+// NimBLEAddress compares the raw type byte, and the two sides may not use the same one: the bond
+// store keeps 0/1 (public/random) while the controller's connection-complete event reports a peer
+// whose RPA it resolved as 2/3 (public/random IDENTITY). NimBLE's `ble_hs_conn_addrs()` normalises
+// 2/3 back to 0/1 on `peer_id_addr` before the host sees it, but the comparison is written for both
+// type spaces anyway - it costs nothing and keeps the gate right if that ever stops being true.
+// BleSameIdentity compares the six bytes and the public/random axis.
 static void AppBLELinkBondSnapshot()
 {
     const int Bonds = AppBLEBondCount();
@@ -332,25 +335,24 @@ static bool BlePeerWasBonded(const NimBLEAddress &Addr)
 // see. The last judged link is therefore kept in RAM - both addresses and the verdict - and the
 // `BLE Settings` block publishes it (fields 9..11, BleSettingsSync reads it through AppBLELastLink).
 //
-// The card's claim in the first cut of this read-out - "Id and Air differ exactly when the controller
-// resolved an RPA" - is WRONG on a controller-based-privacy build and is corrected here: with
-// `CONFIG_BT_NIMBLE_HS_PVCY` (and host-based privacy off) `ble_hs_conn_addrs()` assigns
-// `peer_ota_addr = peer_id_addr` (ble_hs_conn.c, the host-based-privacy override is compiled out), so
-// `getIdAddress()` and `getAddress()` are the same address and can never differ. What the controller
-// DOES reveal is the TYPE it reports for the peer: 0/1 = the address as it came off the air, 2/3 = the
-// identity the controller resolved an RPA back to (ble_gap.c stores the HCI event's peer_addr_type
-// verbatim). So the read-out carries `addr/tN` and the log names the type; a `t2`/`t3` with the bond
-// authenticating is the resolution, and the air address itself is not available through NimBLE's
-// public GAP API on this configuration (bhc_peer_rpa_addr lives in the private conn struct).
+// The card's question - "did the controller resolve this peer's rotating private address?" - is
+// answered by the PAIR of addresses, not by an address type. For a peer the controller resolved,
+// `ble_hs_conn_addrs()` leaves the identity on `peer_id_addr` and sets `peer_ota_addr` to the RPA the
+// peer used on the air, so `getIdAddress()` and `getAddress()` differ exactly when a resolution
+// happened (BleCameInResolved in Blocks/BleAdmissionPolicy.h). The `/N` type suffix that the block
+// prints on both is information only: the same function rewrites the event's 2/3 to 0/1 on
+// `peer_id_addr`, so the type the host is handed can never read 2/3 and proves nothing either way.
+// A peer that connects from its own address (public, or a static random one) reads the SAME address
+// twice - the normal case on a rig whose host cannot enable privacy, not a broken read-out.
 //
 // Written from the NimBLE host task (the callbacks) and read from the app task, so it is published
 // through a sequence counter: an odd value means a write is in flight and the reader retries rather
 // than serving half an address.
 struct BleLastLinkRecord
 {
-    uint8_t Air[6];     // the address the peer connected from
-    uint8_t AirType;    // ... and its type (0/1 = an on-air address, i.e. an unresolved RPA)
-    uint8_t Id[6];      // the identity the admission decision used
+    uint8_t Air[6];     // the address the peer connected from (peer_ota_addr: the RPA when resolved)
+    uint8_t AirType;    // ... and its type. NimBLE normalises 2/3 to 0/1, so this is 0/1 in practice
+    uint8_t Id[6];      // the identity the admission decision used (peer_id_addr)
     uint8_t IdType;
     uint8_t Verdict;    // BleLinkVerdict
     bool Valid;         // false until a link has been judged: a zeroed record is NOT a link
@@ -644,18 +646,18 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         // From here the link is judged, not yet admitted: the security procedure decides. The record
         // says so, because a link that never completes it (the deadline in AppBLETick) is neither an
         // admission nor one of the refusals below.
-        // The reported TYPE is the resolution witness on this build (see the comment on
-        // BleLastLinkRecord): 0/1 = the address as it came off the air, 2/3 = the identity the
-        // controller resolved an RPA back to. The address pair alone cannot show it, because
-        // `getAddress()` and `getIdAddress()` are the same address under controller-based privacy.
+        // `Last air` and `Last peer` differ exactly when the controller resolved a rotating private
+        // address for this link (see the comment on BleLastLinkRecord); the `/N` type suffix on both
+        // is information only, because NimBLE normalises the resolved types 2/3 to 0/1.
         BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkPending);
         DeviceLog("APPBLE", "link up: peer=%s t=%u air=%s t=%u%s",
                   ConnInfo.getIdAddress().toString().c_str(),
                   (unsigned)ConnInfo.getIdAddress().getType(),
                   ConnInfo.getAddress().toString().c_str(),
                   (unsigned)ConnInfo.getAddress().getType(),
-                  BleReportedAsIdentity(ConnInfo.getIdAddress().getType())
-                      ? " (the controller reported the identity: an RPA was resolved)" : "");
+                  BleCameInResolved(ConnInfo.getAddress().getVal(), ConnInfo.getAddress().getType(),
+                                    ConnInfo.getIdAddress().getVal(), ConnInfo.getIdAddress().getType())
+                      ? " (resolved: the address on the air is the peer's RPA, not its identity)" : "");
 
         // A pairing on this link may not create a bond unless a window is open (or the store is
         // still empty, which is how the first bond is made). Without this a stranger could pair

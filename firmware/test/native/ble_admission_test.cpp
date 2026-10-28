@@ -4,10 +4,12 @@
 // the rule that is a decision rather than a call into the stack lives in its own header and is
 // driven here. Three things are checked, all without a radio:
 //
-//  1. Identity addresses compare across the two type spaces. The controller reports a peer whose
-//     RPA it resolved as type 2/3 (public/random *identity*), while the bond store keeps the same
-//     address as type 0/1 - a raw comparison never matches the owner of the device, and E66's
-//     session gate is built on this comparison.
+//  1. Identity addresses compare across the two type spaces. The controller's connection-complete
+//     event reports a peer whose RPA it resolved as type 2/3 (public/random *identity*), while the
+//     bond store keeps the same address as type 0/1 - a raw comparison never matches the owner of
+//     the device, and E66's session gate is built on this comparison. (NimBLE normalises 2/3 to 0/1
+//     before the host sees the identity, so the tolerance is belt and braces rather than load-bearing
+//     - but it is what keeps the gate correct if that ever changes.)
 //
 //  2. A new bond may only be made inside a pairing window, or while the store is still empty. This
 //     is what keeps a stranger from making a bond and then reporting "bonded" on a later link.
@@ -131,10 +133,13 @@ static void TestStrangerCannotBeAdmittedWhereBondingIsClosed()
     }
 }
 
-// The peer came in on a DIFFERENT address from the identity the admission used - the controller
-// resolved a rotating private address (RPA) back to it. This is the E66 mechanism as the host sees
-// it (`ble_hs_conn_addrs`: peer_id_addr = the event's identity address, peer_ota_addr = its RPA), and
-// it is the fact the "Last air" / "Last peer" read-out carries to a rig.
+// The controller's vocabulary: types 2/3 are IDENTITY addresses, which is what the
+// connection-complete event carries when the controller resolved a peer's RPA; 0/1 is the address as
+// it came off the air (public / random, an unresolved RPA included). This test pins the ADDRESS-PAIR
+// witness the E66 read-out uses (`ble_hs_conn_addrs`: peer_id_addr = the identity, peer_ota_addr = the
+// RPA for a resolved peer), plus the two shape cases a rig will actually read: a peer that connects
+// from its own address reads the pair EQUAL, and a resolved peer reads it DIFFERENT. The reported
+// type is not a witness - NimBLE rewrites 2/3 to 0/1 before the host sees it.
 static void TestCameInResolved()
 {
     // A resolved peer: identity is the bonded public address, the address on the air is a random one.
@@ -175,23 +180,14 @@ static void TestVerdictNumbers()
 
 // The controller's own witness of a resolution: types 2/3 are IDENTITY addresses, which is exactly
 // what it reports when it resolved a peer's RPA; 0/1 is the address as it came off the air
-// (public / random, an unresolved RPA included). On this build the address PAIR cannot show the
-// difference - NimBLE sets peer_ota_addr = peer_id_addr under controller-based privacy - so the
-// reported type is the only thing the E66 read-out can key on, and these four values are what it
-// distinguishes.
-static void TestReportedAsIdentity()
-{
-    CHECK(!BleReportedAsIdentity(0)); // public, no resolution
-    CHECK(!BleReportedAsIdentity(1)); // random: a static address, or an RPA nobody resolved
-    CHECK(BleReportedAsIdentity(2));  // public identity: the controller resolved an RPA to it
-    CHECK(BleReportedAsIdentity(3));  // random identity: same, identity on a random-type bond
-}
+// (public / random, an unresolved RPA included). On this build the address PAIR is the witness -
+// NimBLE sets peer_ota_addr to the peer's RPA for a resolved peer - so the reported type is only
+// carried as information, and TestCameInResolved above is the check that matters.
 
 int main()
 {
     TestSameIdentity();
     TestCameInResolved();
-    TestReportedAsIdentity();
     TestVerdictNumbers();
     TestBondingAllowed();
     TestSessionAllowed();

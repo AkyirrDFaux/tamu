@@ -17,20 +17,25 @@
 //   Display name    (7, 0)    Text(16), Persistent   advertised name, empty = System.Name
 //   Advertised name (8, 0)    Text(16), RO           the name actually advertised (Display name resolved)
 //   Last peer       (9, 0)    Text, RO               identity the admission decision used (E66)
-//   Last air        (10, 0)   Text, RO               the same link from the other side (see below)
+//   Last air        (10, 0)   Text, RO               the address the peer used on the air (an RPA when resolved)
 //   Last link       (11, 0)   Enum, RO               how the last link ended (BleLinkVerdict)
 //
 // Fields 9-11 are the E66 read-out, and they exist because the log could not carry the answer when
 // they were added: DeviceLog is dropped while a host holds the link (Issues.md E67), and a connect
-// happens exactly then. Both address fields read "AA:BB:CC:DD:EE:FF/N": the address the controller
-// reported for that link plus the TYPE it reported it with. `0`/`1` is the address as it came off the
-// air; `2`/`3` is an IDENTITY the controller resolved a rotating private address (RPA) back to,
-// and that is the resolution E66 is about - the identity is what the session gate compares with the
-// bond store. It is deliberately a type and not a second address: NimBLE on this build
-// (controller-based privacy) sets `peer_ota_addr = peer_id_addr`, so `ConnInfo.getAddress()` and
-// `ConnInfo.getIdAddress()` are the same address and their difference can never be observed. The
-// verdict names how the link ended, so "refused as a stranger" is readable apart from "not
-// recognised".
+// happens exactly then. Both address fields read "AA:BB:CC:DD:EE:FF/N"; the six bytes are the
+// witness and the `/N` suffix is information only.
+//   - Last peer is the identity the session gate compared with the bond store (NimBLE's
+//     `peer_id_addr`); Last air is the address the peer actually connected from (`peer_ota_addr`).
+//     They differ exactly when the controller resolved a rotating private address (RPA) back to this
+//     identity, because that is the one case where `peer_ota_addr` holds the RPA instead of the
+//     identity. A peer that connects from its own public or static address reads the SAME address
+//     twice - including this rig's host, which cannot enable privacy - and equal is the expected
+//     reading there, not a failure.
+//   - The `/N` suffix does NOT show a resolution: NimBLE's `ble_hs_conn_addrs()` rewrites the
+//     controller's resolved-identity types (2/3) to 0/1 on `peer_id_addr`, so the type handed to the
+//     host can only read 0 or 1. It is carried because it costs nothing and names the type space.
+//   - The verdict names how the link ended, so "refused as a stranger" is readable apart from "not
+//     recognised".
 //
 // Field numbers run in the order of that table (the owner's table lists the keys, not the field
 // indexes; this is the one place they are fixed). Writes are restricted - see the triggers and the
@@ -144,10 +149,13 @@ struct BleSettingsVolatile
     // What the advertisement really carries: the Display name, or System.Name when that is empty.
     // Read-only, so the app can show the resolved name without re-implementing the rule.
     alignas(4) char AdvertisedName[BLE_DISPLAY_NAME_LEN] = {};        // field 8, offset 76
-    // The E66 read-out: the last judged link. Both addresses are "AA:BB:CC:DD:EE:FF" (17 chars), or
-    // empty while no link has been judged since boot; LastLink is a BleLinkVerdict. They differ
-    // exactly when the controller resolved a rotating private address to the identity, so a read-out
-    // with LastPeer = the bonded identity and LastAir = a random address is the resolution itself.
+    // The E66 read-out: the last judged link. Both addresses are "AA:BB:CC:DD:EE:FF/N" (19 chars), or
+    // empty while no link has been judged since boot; LastLink is a BleLinkVerdict. The six bytes
+    // differ exactly when the controller resolved a rotating private address to the identity, so a
+    // read-out with LastPeer = the bonded identity and LastAir = a random address is the resolution
+    // itself; equal addresses mean the peer connected from its own address (the expected reading for
+    // this rig's host). The `/N` suffix is information only - NimBLE normalises the resolved types
+    // 2/3 to 0/1, so it never reads 2 or 3.
     alignas(4) char LastPeer[BLE_BOND_TEXT_LEN] = {};                 // field 9, offset 92
     alignas(4) char LastAir[BLE_BOND_TEXT_LEN] = {};                  // field 10, offset 112
     uint8_t  LastLink = BleLinkNone;                                  // field 11, offset 132
@@ -210,8 +218,9 @@ const BlockEntry BleSettings_Entries[] = {
     { MakeFieldKey(BLE_SET_FIELD_ADVERTISED, 0), 76,
       { (uint16_t)DataType::Text, BLE_DISPLAY_NAME_LEN, ValueReadOnly } },
     // The E66 read-out: the last judged link, both addresses and the verdict. Read-only, and copied
-    // from RAM (AppBLE.h) once per loop pass; the two texts differ exactly when the controller
-    // resolved a rotating private address to the identity the gate compared with the bond store.
+    // from RAM (AppBLE.h) once per loop pass; their six-byte addresses differ exactly when the
+    // controller resolved a rotating private address to the identity the gate compared with the bond
+    // store. The `/N` type suffix is information only (NimBLE normalises 2/3 to 0/1).
     { MakeFieldKey(BLE_SET_FIELD_LASTPEER, 0), 92,
       { (uint16_t)DataType::Text, BLE_BOND_TEXT_LEN, ValueReadOnly } },
     { MakeFieldKey(BLE_SET_FIELD_LASTAIR, 0), 112,

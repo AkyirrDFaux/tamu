@@ -76,16 +76,18 @@ void BlePasskeyInit()
 // avoided by caching at all (a formatting allocation every ~2 ms pass).
 #define BLE_BOND_TEXT_CHECK_MS 1000
 
-// One address of the last judged link, with the TYPE the controller reported for it:
-// "AA:BB:CC:DD:EE:FF/N". NimBLEAddress keeps the six bytes least-significant first, which is why they
-// are printed in reverse (same order the bond texts come out in, so the two read-outs line up by eye).
-// 19 characters, so it fits BLE_BOND_TEXT_LEN (20 with the terminator) and the wire layout does not
-// move. N=0/1 is the address as it came off the air (public / random, an unresolved RPA included);
-// N=2/3 is an IDENTITY the controller resolved a rotating private address back to, which is the only
-// resolution witness NimBLE exposes on a controller-based-privacy build (Issues.md E66:
-// `getAddress()` and `getIdAddress()` are the same address there, so an address PAIR can never show
-// it). Formatted into a wider buffer and clamped: GCC cannot bound a promoted uint8_t through a %X
-// directive, so a direct snprintf into the 20-byte field trips -Werror=format-truncation.
+// One address of the last judged link: "AA:BB:CC:DD:EE:FF/N". NimBLEAddress keeps the six bytes
+// least-significant first, which is why they are printed in reverse (same order the bond texts come
+// out in, so the two read-outs line up by eye). 19 characters, so it fits BLE_BOND_TEXT_LEN (20 with
+// the terminator) and the wire layout does not move. The `/N` suffix is INFORMATION ONLY: it is the
+// type NimBLE handed the host, and `ble_hs_conn_addrs()` rewrites the controller's resolved-identity
+// types (2/3) to 0/1 before that, so it can only ever read 0 or 1 and proves nothing. The resolution
+// witness is the PAIR - `peer_ota_addr` is the peer's RPA when the controller resolved one, while
+// `peer_id_addr` stays the identity - so Last air != Last peer (minus the suffix) means the
+// controller resolved a rotating private address; equal means the peer used its own address, which is
+// what a host that cannot enable privacy does. Formatted into a wider buffer and clamped: GCC cannot
+// bound a promoted uint8_t through a %X directive, so a direct snprintf into the 20-byte field trips
+// -Werror=format-truncation.
 static void BleAddrTypeText(const uint8_t *Val, uint8_t Type, char *Out, size_t Len)
 {
     char Full[32];
@@ -185,7 +187,9 @@ void BleSettingsSync()
     // The last judged link (Issues.md E66): the identity the admission used, the address the peer came
     // from, and how the link ended. Written by the radio callbacks and copied here, so the block is
     // only ever written from this task. LastPeer != LastAir is the controller having resolved a
-    // rotating private address - the fact E66 turns on and the log cannot show (E67).
+    // rotating private address - the fact E66 turns on and the log cannot show (E67). Equal addresses
+    // are the normal case for a peer that connects from its own address, including this rig's host,
+    // and are NOT a sign that the read-out failed.
     BleLastLinkRecord LastLink;
     if (AppBLELastLink(&LastLink))
     {

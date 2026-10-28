@@ -652,9 +652,9 @@ resolve, and the accept-list *filter* is the defect.
   possible if the connection reports the peer's IDENTITY address: `ble_sm_ltk_req_rx` looks the LTK
   up by `ble_hs_conn_addrs`' `peer_id_addr` and `ble_sm_retrieve_ltk` matches (type, address)
   exactly against `our_sec`. An RPA cannot match a bond stored under `4C:23:38:74:E6:F6`, and the
-  host has no resolver to rewrite the address, so the controller must have resolved it (it reports a
-  resolved peer as types 2/3, and `ble_hs_conn_addrs` hands the controller's address through
-  unchanged when host-based privacy is off).
+  host has no resolver to rewrite the address, so the controller must have resolved it (the
+  connection-complete event reports a resolved peer as types 2/3; `ble_hs_conn_addrs()` normalises
+  that type to 0/1 on `peer_id_addr` and puts the peer's RPA on `peer_ota_addr`).
 - The accept list is not resolved against. The failing boot is silent exactly where a failed
   resolving-list add is loud (`ble_hs_misc_restore_one_irk` logs `failed to configure restored IRK`,
   and no such line appears with `bonds=1`), so the RL entry was added; the advertisement carried
@@ -678,6 +678,18 @@ Native: `test/native/ble_admission_test.cpp` (identity compare across the two ty
 bond, who may hold a session) plus the E64/E66 source guard in `test/native/run.sh`. Rig half - one
 bond and `Window 0` connecting and reading a field, a stranger getting no session - is card
 t_98acbebd and is unverified here: flashing was not authorised in this card.
+
+**Corrected premise (review round 1, 2026-10-28).** The "the accept-list *filter* is the defect"
+answer above still rests on a SOURCE fact that holds - decoded from `libbtdm_app.a`, the
+RPA-resolving accept-list helper `lld_wl_rpa_res` is referenced only from
+`hci_le_rmv_dev_from_wlst_cmd_handler`, never from the connect-request path - but the RIG measurement
+cannot carry it. Today this host connects from its PUBLIC address (`Last peer` = `Last air` =
+`4C:23:38:74:E6:F6`), and the pre-fix accept-list entry was
+`entry-0={addr_type=0 addr=4c:23:38:74:e6:f6}` - exactly that address - so the iteration-27 timeouts
+are NOT explained by the accept list on this rig. What the measurement does prove is narrower and
+still the operational point: with a filter in force the peer was not admitted, with the filter gone
+it is admitted 3/3 (bond count unchanged). The link-layer resolution gap stays a source fact, not a
+rig measurement.
 
 **The evidence half (2026-10-28, card t_0b1cd623).** The mechanism is settled and its cost stated:
 the fix is the DEVICE-SIDE identity gate, not a programmed resolving list, because the resolving-list
@@ -749,26 +761,78 @@ type-carrying read-out below was then built and flashed once (iteration 43, `cmp
   Operation not permitted`. So "a bonded central reconnects from rotating RPAs with the resolved
   identity shown" stays **UNPROVEN** - the fix that was proven here is the one this entry needed
   operationally: the same peer that timed out twice on iteration 27 is admitted with no filter.
-- **The first cut of the read-out could not have shown a resolution even with an RPA.** NimBLE with
-  controller-based privacy sets `peer_ota_addr = peer_id_addr` (`ble_hs_conn_addrs()`, the
-  host-based-privacy override is compiled out), so `ConnInfo.getAddress()` and
-  `ConnInfo.getIdAddress()` are the SAME address and "Last peer != Last air" can never fire. The
-  witness is the reported address TYPE: the controller reports 2/3 when it resolved an RPA and 0/1
-  for the address as it came off the air (`ble_gap.c` stores the event's `peer_addr_type` verbatim).
-  Fields 9/10 therefore read `AA:BB:CC:DD:EE:FF/N` and both log lines carry `t=N`;
-  `BleReportedAsIdentity(Type)` is the host-clean predicate (`ble admission: 69 checks`).
+- **The first cut of the read-out could not have shown a resolution even with an RPA, and the second
+  cut was wrong about why.** The first cut claimed "Last peer != Last air is the resolution" and was
+  said to be impossible because NimBLE sets `peer_ota_addr = peer_id_addr`. The correction in
+  iteration 43 then claimed the reported address TYPE was the witness and fields 9/10 could read
+  `2`/`3`. Both readings stop at the first two lines of `ble_hs_conn_addrs()`; the `switch` below
+  them (ble_hs_conn.c:552-565) is the part that matters: for `BLE_ADDR_PUBLIC_ID`/`_RANDOM_ID` it
+  sets `peer_id_addr.type` back to 0/1 **and** `peer_ota_addr = conn->bhc_peer_rpa_addr`. So the type
+  the host is handed can never read 2/3 (`/N` is information only), and the ADDRESS PAIR is the
+  witness: identity vs the RPA the peer actually used, differing exactly when the controller resolved
+  one. `BleCameInResolved()` is that check again (review round 1, card t_0b1cd623). A peer that
+  connects from its own address reads the pair EQUAL - the expected reading for this rig's host,
+  which cannot enable privacy, not a broken read-out.
 - **A genuine second identity (a different IRK) remains IMPOSSIBLE on this host** - one controller,
   `static-addr` and `privacy` both `Permission Denied` - so that half is UNPROVEN, as the card
   allows.
 
+**Review round 1: witness corrected, rebuilt against HEAD, flashed, re-measured (2026-10-28 22:00-22:25
+CET, card t_0b1cd623).** The review showed that the type suffix introduced above cannot be a witness
+(`ble_hs_conn_addrs()` rewrites 2/3 to 0/1; the `switch` at ble_hs_conn.c:552-565 also sets
+`peer_ota_addr = bhc_peer_rpa_addr`), so the address PAIR is the witness again and the type is carried
+as information only. Code: `BleCameInResolved()` is used again (the log now appends `(resolved: …)`
+when the pair differs), `BleReportedAsIdentity()` and its four checks are gone, and every comment that
+made the old claim is corrected (`BleAdmissionPolicy.h`, `BleSettings.h`, `AppBLE.h`,
+`BleSettingsGlue.h`, `ble_lastlink.py`). `ble_lastlink.py --spacing` now defaults to 6 s (2-4 s raced
+the post-link USB read, once finding the device reset).
+- **Built from the then-current HEAD (`29dece5`) and flashed** (owner-authorised):
+  `pio run -e Tamu_v2_0A -e DAS_v0_1` -> both SUCCESS, `Tamu_v2_0A RAM 77876/327680, Flash
+  685472/2752512`, `DAS_v0_1 RAM 2048/2048, Flash 13440/14336`; native suite exit 0
+  (`ble_settings: 180 checks, 0 failures`, `ble admission: 65 checks` - four fewer because the dead
+  predicate went). Flash: `Wrote 686144 bytes (421335 compressed) at 0x00070000 ... Hash of data
+  verified`; read-back `Read 686144 bytes at 0x00070000`, `cmp` silent, sha256
+  `5543bb1c4037d9e08710f28ee03292e192a4b9a10da7bd4b9dfe04feadd2110b` both sides, device reports
+  `2026.10.28 iteration 45` (`Version=0x355C002D`).
+- **Rig state after the flash:** `Bond count 0`, window open - E69 had fired on the previous session
+  (a repeat pairing request from a bonded identity deletes the bond and opens the window), so the host
+  re-paired inside a window (`Pairing successful`), giving `Bond count 1`,
+  `Bond[0] = 4C:23:38:74:E6:F6`; the window was then allowed to close (`Window 0`).
+- **Acceptance, measured with the window closed** (`ble_lastlink.py --connect 3 --addr
+  E4:B0:63:C8:20:72`, default 6 s spacing): three links, each `Last peer=4C:23:38:74:E6:F6/0`,
+  `Last air=4C:23:38:74:E6:F6/0`, `LastLink=2 (ADMITTED)`; `RESULT: 3 link(s) judged; ... verdicts=[2]`;
+  the bond count read 1 afterwards. The pair reading EQUAL is the CORRECT reading here and was
+  recorded deliberately: this host connects from its public address, so there is no RPA to resolve.
+  Equal is not "no read-out" - the witness only separates when a private address was resolved.
+- **Refusal still holds on this image.** With the device's bond kept and `Window 0`, the host removed
+  its own keys (`bluetoothctl remove`) and then connected: the link came up and the device dropped it
+  during discovery -> `Last peer=4C:23:38:74:E6:F6/0 Last air=.../0 LastLink=5 (refused: unsecured
+  (no bond, or a passkey not used))`, `Bond count 1`, `Window 0`, and a scan right after answered
+  `RESULT: ADVERTISING (1 match(es) for 'Akyirr')`. Re-pairing right after that failed twice
+  (`AuthenticationCanceled` / `Connection timeout`) until the device was reset - that is E69's
+  RAM-side state, not an E66 regression; after the reset the pair succeeded.
+- **The log cannot carry the resolution on this build, and the read-out is why it exists.**
+  `b01e635` withdrew the CID 3 text ring (E67), and `DeviceLog` is dropped while USB is attached, so
+  `e66_log_after_connect.py` now fails with `no GetTextLogs reply (tag 0xF001)`. The APPBLE lines
+  (`link up: peer=… air=… (resolved: …)`) do carry the pair for a console that can be read; the
+  register read-out (fields 9-11) is the evidence on this rig. The card's "log showing the resolved
+  identity" is therefore satisfied by the READ-OUT, and the resolution half itself stays UNPROVEN
+  here (type 0 on every link; privacy and static-addr both refused, one controller).
+
 **Still to land outside `firmware/`.** (a) `Docs/Services/App Interface.md`'s BLE Settings table has
-no rows for fields 9-11; proposed rows - `Last peer | 0 | Text | RO | the identity the admission
-decision used as "AA:BB:CC:DD:EE:FF/N", where N is the address type the controller reported (0/1 the
-address as it came off the air, 2/3 an identity it resolved a rotating private address to), empty
-before the first link`; `Last air | 0 | Text | RO | the same link's address and type from the
-controller side (equal to Last peer on this build: NimBLE reports one address)`; `Last link | 0 |
-Enum | RO | 0 none, 1 pending, 2 admitted, 3 refused (not a bond), 4 refused (paired outside the
-window), 5 refused (unsecured), 6 refused (busy)`.
+no rows for fields 9-11; proposed rows - `Last peer | 0 | Text | RO | the identity the last admission
+decision used, "AA:BB:CC:DD:EE:FF/N"; empty before the first link. N is the address type NimBLE handed
+the host and is INFORMATION ONLY (NimBLE normalises the controller's resolved types 2/3 to 0/1, so it
+reads 0 or 1)`; `Last air | 0 | Text | RO | the address the peer connected from, as "AA:BB:CC:DD:EE:FF/N";
+its six-byte address differs from Last peer's exactly when the controller resolved the peer's rotating
+private address - then Last air is the RPA and Last peer the identity. Equal to Last peer for a peer
+that connects from its own public/static address (the normal reading when the host has no LE privacy)` ;
+`Last link | 0 | Enum | RO | 0 none, 1 pending, 2 admitted, 3 refused (not a bond), 4 refused (paired
+outside the window), 5 refused (unsecured), 6 refused (busy)`.
+(b) `app/lib/core/ble_security.dart` still describes field 10 as "an RPA when resolved" and
+`lastAddressResolved` compares the WHOLE text, including the `/N` suffix; it should compare the address
+part (strip at `/`) so the type can never fabricate a difference. `bleFieldCount = 12` and the labels
+are already correct, so the contract test passes either way.
 
 
 **E67 `DeviceLog` is suppressed while a host holds the USB port, and its lines cannot reach the log
