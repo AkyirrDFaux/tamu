@@ -56,6 +56,9 @@ const SerialNumber &GetSerialNumber()
 #include "Blocks/PWM.h"
 #include "Blocks/AccGyr.h"
 #include "Blocks/BleSettings.h"
+#ifdef USE_WIFI_SETTINGS
+#include "Blocks/WifiSettings.h" // compile-in option, off in every shipped env (platformio.ini)
+#endif
 #include "Blocks/Vysi1Display.h"
 
 // The static memory: two flat spaces (Docs/Services/Register.md "System + Static memory
@@ -68,6 +71,12 @@ struct StaticPersistent {
     AccGyrPersistent Accgyr;      // BlockType 5
     Vysi1Persistent Display[2];   // BlockType 6
     BleSettingsPersistent BleSet; // BlockType 0x0B: BLE enable/display name + the retired passkey bytes
+#ifdef USE_WIFI_SETTINGS
+    // BlockType 0x0C, and LAST on purpose: `.SV` is this whole space mirrored 1:1, so appending keeps
+    // every other field's offset and a mirror written with the option on decodes as a valid prefix
+    // without it (the WiFi fields then fall back to their compiled-in defaults).
+    WifiSettingsPersistent WifiSet; // WiFi: enable + SSID (the password is in NVS, never here)
+#endif
 };
 struct StaticVolatile {
     LEDButtonVolatile LedButton;  // BlockType 3
@@ -75,6 +84,9 @@ struct StaticVolatile {
     AccGyrVolatile Accgyr;        // BlockType 5
     Vysi1Volatile Display[2];     // BlockType 6
     BleSettingsVolatile BleSet;   // BlockType 0x0B: the passkey text and the radio's state, read-only
+#ifdef USE_WIFI_SETTINGS
+    WifiSettingsVolatile WifiSet; // BlockType 0x0C: State/IP (read-only) + the always-empty password
+#endif
 };
 StaticPersistent StaticPer = {
     // Name is a fixed 16-char null-padded field.
@@ -83,6 +95,9 @@ StaticPersistent StaticPer = {
     .Accgyr = {},
     .Display = {},
     .BleSet = {},
+#ifdef USE_WIFI_SETTINGS
+    .WifiSet = {},
+#endif
 };
 StaticVolatile StaticVol;
 
@@ -99,7 +114,13 @@ const StaticBlockDescriptor StaticBlockRegistry[] = {
     {&StaticVol.Accgyr, &StaticPer.Accgyr, &AccGyrSchema, "AccGyr"},
     {&StaticVol.Display[0], &StaticPer.Display[0], &Vysi1Schema, "LEDDisplay"},
     {&StaticVol.Display[1], &StaticPer.Display[1], &Vysi1Schema, "LEDDisplay2"},
-    {&StaticVol.BleSet, &StaticPer.BleSet, &BleSettingsSchema, "BLE Settings"}};
+    {&StaticVol.BleSet, &StaticPer.BleSet, &BleSettingsSchema, "BLE Settings"},
+#ifdef USE_WIFI_SETTINGS
+    // Compile-in option (platformio.ini): with the flag off this entry does not exist, so the block
+    // is absent from the enumeration rather than present-but-empty, and StaticBlockNum does not grow.
+    {&StaticVol.WifiSet, &StaticPer.WifiSet, &WifiSettingsSchema, "WiFi Settings"}
+#endif
+    };
 const size_t StaticBlockNum = sizeof(StaticBlockRegistry) / sizeof(StaticBlockDescriptor);
 
 // The Subscriptions instance the main loop calls. Pulled here (not at the top) because
@@ -116,6 +137,9 @@ LEDDriver LED(3, 0); // both LED strips: pins 3 (Display1) and 0 (Display2), sen
 #include "AppUSB.h"
 #include "AppBLE.h"
 #include "BleSettingsGlue.h" // the BLE Settings block's write triggers and read-only refresh
+#ifdef USE_WIFI_SETTINGS
+#include "WifiSettingsGlue.h" // the WiFi Settings block's write triggers, NVS password, per-loop state
+#endif
 #include "RSBus.h"
 
 #ifdef TYPE_CORE
@@ -142,6 +166,11 @@ if (!AppInterface.Connected) { ESP_LOGI("INIT","b2 backups"); }
     // files out by name). Load it before the radio starts, and purge any key an older build left
     // in the persistent space.
     BlePasskeyInit();
+#ifdef USE_WIFI_SETTINGS
+    // Same rule, other secret: the WiFi password lives in NVS and the block reads it back empty, so
+    // prime its presence flag after `.SV` has been recalled (Enabled/SSID) and before the loop.
+    WifiSettingsInit();
+#endif
 Script.BootLoad();         // loads SCR_XXX scripts flagged load-on-boot (Docs/Services/Script.md)
 // The Vysi layout is not touched at boot: the layout file and the LayoutFile field belong to the
 // setup. A restore writes both, and the field's write trigger loads the layout as it lands, so a
@@ -267,6 +296,9 @@ LED.Setup();
 #endif
         AppInterface.Pump();
         BleSettingsSync(); // the BLE Settings block's read-only fields follow the radio
+#ifdef USE_WIFI_SETTINGS
+        WifiSettingsSync(); // the WiFi Settings block's State/IP follow its configuration (no radio)
+#endif
         ButtonUpdate();
 
         // Sample the IMU at its configured output data rate instead of every loop

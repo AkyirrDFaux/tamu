@@ -1,5 +1,10 @@
 #pragma once
 
+// The type vocabulary shared by the register, packet and block layers. Self-contained: the enums
+// and the App Active bit masks below are spelled in <cstdint> types, so this header owns the
+// include rather than relying on whichever header happened to come first.
+#include <cstdint>
+
 enum class DeviceType : uint16_t {
     Unknown         = 0x00,
     Tamu_v2_0A      = 0x01,
@@ -30,12 +35,27 @@ enum class TriggerType : uint8_t {
     DeltaPeriodic      = 7
 };
 
-// System block field 8 "App Active" (Docs/Services/System Block and Device Commands.md).
-enum class AppActive : uint8_t {
-    None = 0, // no app attached
-    USB  = 1,
-    BLE  = 2,
-};
+// System block field 8 "App Active" (Docs/Services/System Block and Device Commands.md) is a BIT
+// FIELD, not an enum index: one bit per app interface, and several may be set at once (the app on
+// USB while a phone is on BLE). It used to be an `enum class AppActive { None, USB, BLE }`, which
+// could only ever name ONE active interface - a device with both links up had to pick a winner
+// and report something that was not true.
+//
+// The wire type stays one byte (DataType::Enum, size 1) so a reader written against the old enum
+// still decodes it: it sees a small integer, `1` for USB, `2` for BLE and `3` for both. Nothing
+// about the field number or its width changed; only what the byte means. The app labels the bits
+// (app/lib/core/app_active.dart), so that numbering lives in one place on each side.
+namespace AppActiveBits {
+constexpr uint8_t USB  = 1u << 0; // the app is attached over USB
+constexpr uint8_t BLE  = 1u << 1; // a phone is connected over BLE
+// Reserve: the WiFi app link (the UDP transport in Docs/Services/App Interface.md) is not
+// implemented, so bit 2 is never set today. It is named here so the app can label the bit the
+// moment the firmware starts reporting it.
+constexpr uint8_t WiFi = 1u << 2;
+
+// The field's byte for the two links that exist: set at most these two bits, never WiFi.
+constexpr uint8_t Of(bool Usb, bool Ble) { return (uint8_t)((Usb ? USB : 0u) | (Ble ? BLE : 0u)); }
+} // namespace AppActiveBits
 
 enum class DataType : uint16_t {
     None           = 0x00,
@@ -74,7 +94,8 @@ enum class BlockType : uint16_t {
     ResistiveMeasure = 0x08,
     Button         = 0x09,
     LED            = 0x0A,
-    BleSettings    = 0x0B  // BLE link settings + state (Blocks/BleSettings.h)
+    BleSettings    = 0x0B, // BLE link settings + state (Blocks/BleSettings.h)
+    WifiSettings   = 0x0C  // WiFi link settings + state (Blocks/WifiSettings.h; compile-in option)
     // The banked Dynamic (0x3F0-0x3F3) and Scripts (0x3F4-0x3F7) ranges are not enum members:
     // they are addressed by BlockTypeRange (Core/Services/RegisterDefs.h).
 };

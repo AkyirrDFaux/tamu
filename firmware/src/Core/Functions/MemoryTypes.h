@@ -67,6 +67,21 @@ static inline bool ValueUpdateApplicable(uint8_t Len) { return Len != 0; }
 // decode/type complaint about its contents is still reported as one.
 static inline bool ValueReadable(const ValueInfo &Info) { return Info.Size != 0; }
 
+// Staging width for a Text/Name/Filename value that arrives SHORTER than its field: it is null-padded
+// to the field's width through this stack buffer before a trigger sees it, because a trigger is
+// handed the field-shaped value (the BLE Settings passkey and Display name both depend on that).
+//
+// Sized per target: 64 on the cores (the longest Text field any block declares is the WiFi Settings
+// password, 64 bytes), 32 on SCALAR_ONLY targets - the DAS runs on a 2 KB part whose stack is
+// hand-fitted to the static-RAM gap, and its largest Text field is 16 bytes. A field wider than this
+// is still written correctly when the value arrives at full width; only a SHORTENED write to such a
+// field is refused rather than padded.
+#ifdef SCALAR_ONLY
+#define VALUE_PAD_MAX 32
+#else
+#define VALUE_PAD_MAX 64
+#endif
+
 struct FieldResult
 {
     ValueInfo Descriptor = { (uint16_t)DataType::None, 0, 0 };
@@ -165,7 +180,7 @@ struct StaticBlockDescriptor
         if (ValueInfoType(Result.Descriptor) != ValueInfoType(Desc))
             return false;
 
-        uint8_t PadBuf[32];
+        uint8_t PadBuf[VALUE_PAD_MAX];
         const void *Data = Input;
         uint16_t DataLen = Length;
         uint16_t FieldType = ValueInfoType(Result.Descriptor);

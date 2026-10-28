@@ -37,7 +37,10 @@ static const BlockEntry SystemEntries[] = {
     { MakeFieldKey(6, 0), 0,  { (uint16_t)DataType::Name,      16, ValuePersistent } }, // Name
 #ifdef TYPE_CORE
     { MakeFieldKey(7, 0), 16, { (uint16_t)DataType::Id,         1, ValuePersistent } }, // NetID
-    { MakeFieldKey(8, 0), 0,  { (uint16_t)DataType::Enum,       1, ValueReadOnly } },   // App Active
+    // App Active: a uint8 BIT FIELD (Core/Types/Enums.h AppActiveBits), not an enum index. The type
+    // is Enum because that is the one-byte vocabulary entry, so an old client reading it as an enum
+    // still decodes it - it just sees a small integer now (1 USB, 2 BLE, 3 both).
+    { MakeFieldKey(8, 0), 0,  { (uint16_t)DataType::Enum,       1, ValueReadOnly } },
 #endif
 };
 static const uint16_t SystemEntryCount = sizeof(SystemEntries) / sizeof(SystemEntries[0]);

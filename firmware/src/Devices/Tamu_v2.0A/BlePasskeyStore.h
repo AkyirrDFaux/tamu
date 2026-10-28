@@ -11,10 +11,11 @@
 // `000000` is the "no passkey" sentinel (Just Works), and it ERASES the entry rather than storing
 // six zeroes, so an absent key and a disabled key are the same thing on the device.
 //
-// This is deliberately the opposite treatment to the WiFi password (write-only, with a `Password
-// set` flag): a pairing code guards a local radio link and the owner wants the app to be able to
-// show the user their own code, while a WiFi password is a network credential. The asymmetry is a
-// decision, not an oversight.
+// This is deliberately the same treatment as the WiFi password (Devices/Tamu_v2.0A/WifiPasswordStore.h,
+// Blocks/WifiSettings.h) - both live in NVS and never in `.SV` - but the opposite reader policy: a
+// pairing code guards a local radio link and the owner wants the app to be able to show the user
+// their own code, while a WiFi password is a network credential and is write-only (its register
+// field always reads back empty). The asymmetry is a decision, not an oversight.
 
 #include <cstring>
 #include "Core/Functions/Log.h"

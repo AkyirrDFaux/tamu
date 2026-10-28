@@ -75,9 +75,11 @@ inline bool RegisterService::SystemFillValue(uint8_t Field, uint8_t *Vbuf) {
     }
 #ifdef TYPE_CORE
     case 8:
-        // Docs/Services/System Block and Device Commands.md: App Active (No/USB/BLE), RO.
-        Vbuf[0] = AppBLEActive() ? (uint8_t)AppActive::BLE
-                : (AppUSBActive() ? (uint8_t)AppActive::USB : (uint8_t)AppActive::None);
+        // Docs/Services/System Block and Device Commands.md: App Active is a BIT FIELD, one bit per
+        // live app interface (Core/Types/Enums.h AppActiveBits) - the app on USB while a phone is on
+        // BLE reports both. Bit 2 (WiFi) is reserved and never set: the UDP app transport is not
+        // implemented, so there is nothing that could raise it.
+        Vbuf[0] = AppActiveBits::Of(AppUSBActive(), AppBLEActive());
         break;
 #endif
     default:

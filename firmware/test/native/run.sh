@@ -22,6 +22,10 @@
 #                     branch of RequesterSet
 #   meas_transform_test.cpp  the Raw Resistance unit transform over the whole usable ADC window
 #                     (Core/Devices/MeasuringResistance.h), in both Number shapes
+#   wifi_settings_test.cpp  the WiFi Settings block's entry table (types/offsets/flags/triggers), the
+#                     write-only password (a read answers empty, never the stored text) and the
+#                     configuration-only State rule; plus System field 8 as an interface BIT FIELD
+#                     (Core/Types/Enums.h AppActiveBits)
 #
 # The numeric core is built in three shapes: the core (64-bit) and the DAS (32-bit, no
 # Vector/Matrix) are the real targets; the third - 32-bit *with* Vector/Matrix - is a
@@ -114,6 +118,100 @@ echo
 
 echo "### native BLE Settings tests (Just Works vs passkey policy, and the block table's offsets)"
 build_run "blesettings" "ble_settings_test.cpp"
+echo
+
+echo "### native WiFi Settings tests (block table, write-only password, configuration-only State, field-8 bits)"
+build_run "wifisettings" "wifi_settings_test.cpp"
+echo
+
+# t_ce642f02, structural half: the WiFi Settings block is a compile-in option (absent when off), its
+# password is a secret that must never reach the register file, and every write is gated on the USB
+# link. The registry, the dead-link gate and the write path all live in headers the host cannot link
+# (they pull the board's static memory, the app interface and NVS), so the facts are asserted on the
+# source:
+#   - NO environment defines USE_WIFI_SETTINGS: the block is off by default, and off means absent
+#     (no registry entry, so it cannot appear in an enumeration) rather than present-but-empty;
+#   - the block's registry entry, and its two value spaces, exist only inside `#ifdef
+#     USE_WIFI_SETTINGS` in the board's Main.h;
+#   - the password's entry is a Trigger with NO Persistent flag (it lives in NVS, not `.SV`), and the
+#     glue never copies the text into the volatile register buffer - the field reads back empty;
+#   - the write rule is `AppFrameCameOverUsb()`, not "which links are up", and all three writable
+#     fields go through it;
+#   - System field 8 is built from AppActiveBits (both bits may be set), and the old single-value
+#     `AppActive` enum is gone.
+echo "### source guard: WiFi Settings is an option (absent when off), write-only password, USB-only writes"
+WIFI_BLOCK_SRC="src/Blocks/WifiSettings.h"
+WIFI_STORE_SRC="src/Devices/Tamu_v2.0A/WifiPasswordStore.h"
+WIFI_GLUE_SRC="src/Devices/Tamu_v2.0A/WifiSettingsGlue.h"
+WIFI_MAIN_SRC="src/Devices/Tamu_v2.0A/Main.h"
+APPACT_READ_SRC="src/Core/Services/RegisterRead.h"
+PIO_SRC="platformio.ini"
+wifi_guard_fail=0
+
+# Default off, every environment: no uncommented `-D USE_WIFI_SETTINGS` anywhere in platformio.ini.
+if [ "$(grep -cE '^[[:space:]]*-D[[:space:]]+USE_WIFI_SETTINGS' "$PIO_SRC")" != 0 ]; then
+    echo "FAIL $PIO_SRC: USE_WIFI_SETTINGS must stay off in every shipped env (it is a compile-in option)"
+    wifi_guard_fail=1
+fi
+
+# The block is registered exactly once, inside the flag, and so are its two value spaces.
+reg_body=$(sed -n '/^const StaticBlockDescriptor StaticBlockRegistry\[\] = {/,/^ *};/p' "$WIFI_MAIN_SRC")
+if [ "$(printf '%s\n' "$reg_body" | grep -c '&WifiSettingsSchema')" != 1 ]; then
+    echo "FAIL $WIFI_MAIN_SRC: the WiFi Settings block must be registered exactly once"
+    wifi_guard_fail=1
+fi
+if ! printf '%s\n' "$reg_body" | grep -q '^#ifdef USE_WIFI_SETTINGS'; then
+    echo "FAIL $WIFI_MAIN_SRC: the registry entry must be guarded - with the flag off the block is ABSENT"
+    wifi_guard_fail=1
+fi
+if [ "$(grep -c 'WifiSettingsPersistent WifiSet' "$WIFI_MAIN_SRC")" != 1 ] ||
+   [ "$(grep -c 'WifiSettingsVolatile WifiSet' "$WIFI_MAIN_SRC")" != 1 ]; then
+    echo "FAIL $WIFI_MAIN_SRC: both value spaces must carry the block (behind the same flag)"
+    wifi_guard_fail=1
+fi
+
+# The password: a Trigger and NOT persistent (a Persistent field would be mirrored into `.SV`, in the
+# storage partition the Storage service streams out by name), and the text goes to NVS.
+if ! grep -q 'DataType::Text, WIFI_PASSWORD_LEN, (uint8_t)ValueTrigger' "$WIFI_BLOCK_SRC"; then
+    echo "FAIL $WIFI_BLOCK_SRC: the password entry must be a plain Trigger (no ValuePersistent)"
+    wifi_guard_fail=1
+fi
+if ! grep -q 'MakeFieldKey(WIFI_SET_FIELD_PASSWORD, 0), OnWifiPasswordWrite' "$WIFI_BLOCK_SRC"; then
+    echo "FAIL $WIFI_BLOCK_SRC: the password write must reach its trigger"
+    wifi_guard_fail=1
+fi
+if [ "$(grep -c 'nvs_set_blob' "$WIFI_STORE_SRC")" != 1 ]; then
+    echo "FAIL $WIFI_STORE_SRC: the password must be stored with one nvs_set_blob (NVS, not the register file)"
+    wifi_guard_fail=1
+fi
+# Nothing may copy the text back into the register buffer: the field is write-only.
+if [ "$(grep -cE '(memcpy|strncpy|strcpy)\((Vol|StaticVol)\.WifiSet\.Password' "$WIFI_GLUE_SRC")" != 0 ] ||
+   [ "$(grep -c 'Vol->Password' "$WIFI_GLUE_SRC")" != 1 ]; then
+    echo "FAIL $WIFI_GLUE_SRC: the password buffer may only be cleared (one memset), never filled"
+    wifi_guard_fail=1
+fi
+
+# Who may write: the real link the frame arrived on, and every writable field goes through it.
+if [ "$(grep -c 'return AppFrameCameOverUsb();' "$WIFI_GLUE_SRC")" != 1 ]; then
+    echo "FAIL $WIFI_GLUE_SRC: the write rule must be the frame's own link (AppFrameCameOverUsb)"
+    wifi_guard_fail=1
+fi
+if [ "$(grep -c 'if (!WifiBlockWritable())' "$WIFI_GLUE_SRC")" != 3 ]; then
+    echo "FAIL $WIFI_GLUE_SRC: Enabled, SSID and Password must each be gated on WifiBlockWritable"
+    wifi_guard_fail=1
+fi
+
+# System field 8: both interface bits, and the old single-value enum is gone.
+if [ "$(grep -c 'AppActiveBits::Of(AppUSBActive(), AppBLEActive())' "$APPACT_READ_SRC")" != 1 ]; then
+    echo "FAIL $APPACT_READ_SRC: field 8 must be composed from AppActiveBits (USB and BLE can both be set)"
+    wifi_guard_fail=1
+fi
+if [ "$(grep -rc 'AppActive::' src --include=*.h | grep -vc ':0$')" != 0 ]; then
+    echo "FAIL: the old single-value AppActive enum is back (field 8 is a bit field now)"
+    wifi_guard_fail=1
+fi
+[ $wifi_guard_fail = 0 ] && echo "PASS: option off by default, password write-only in NVS, writes USB-only, field 8 a bit field"
+fail=$((fail + wifi_guard_fail))
 echo
 
 # t_e57a9667, structural half: RegisterGetByBlockInfo and the script read instruction both pull the
