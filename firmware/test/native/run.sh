@@ -120,6 +120,10 @@ echo "### native BLE Settings tests (Just Works vs passkey policy, and the block
 build_run "blesettings" "ble_settings_test.cpp"
 echo
 
+echo "### native BLE admission tests (identity compare across type spaces, who may bond, who may hold a session)"
+build_run "bleadmission" "ble_admission_test.cpp"
+echo
+
 # t_367f86d0 round 2, structural half. Two rules the radio code owns, neither of which the host can
 # link (AppBLE.h pulls NimBLE, the host task and NVS), asserted on the source:
 #   - a link's security deadline comes from the policy, not from one fixed figure: a passkey pairing
@@ -225,21 +229,22 @@ fi
 fail=$((fail + blessec_guard_fail))
 echo
 
-# E64 ruling C (owner, 2026-10-28), restated in review round 1: advertising is ONE condition - no
-# live connection - and does not depend on the bond store or on a window; who may CONNECT is the
-# separate rule (bonded always, a new phone only while a window is open or while the store is still
-# empty). AppBLE.h cannot be linked on the host (NimBLE, the host task, NVS), so the rule is
-# asserted on the source. What must hold:
+# E64 ruling C (owner, 2026-10-28), with E66 (2026-10-28) on top: advertising is ONE condition - no
+# live connection - and does not depend on the bond store or on a window. Who may HOLD A SESSION is
+# the separate rule, and E66 moved it out of the controller: the accept list is matched against the
+# address the peer uses on the air, so a phone under LE privacy (a rotating RPA the controller
+# resolves for the connection but not for the filter) is dropped by the very list that exists to
+# admit it. AppBLE.h therefore uses no accept list at all. AppBLE.h cannot be linked on the host
+# (NimBLE, the host task, NVS), so the rules are asserted on the source. What must hold:
 #   - advertising is wanted whenever the radio is up and enabled, with NO bond or window term;
-#   - the connect filter is whitelist-only exactly when no window is open AND a bond is stored;
-#   - the filter is CONNECT-only: scan requests are never filtered, so the name stays visible;
-#   - every (re)start carries that filter - it is a ble_gap_adv_start() parameter, so a start that
-#     relaxes it inline would silently re-admit anyone;
-#   - the connect gate itself admits an unknown peer while the store is empty (the first bond);
-#   - the advertisement is rebuilt when the filter changes and only dropped when the radio is off;
-#   - the whitelist is re-synced from the store BEFORE the filter is re-aimed, and it follows the
-#     bond store; its entries are IDENTITY addresses.
-echo "### source guard: advertising runs whenever no device is connected - window, bonds or none (E64 C)"
+#   - no advertising filter policy is set anywhere, and the accept list is never programmed (E66);
+#   - a new bond may only be made inside a pairing window or while the store is empty, decided per
+#     link (BleBondingAllowed) and handed to the stack before the security procedure starts - so a
+#     stranger cannot pair outside a window and come back bonded;
+#   - the session gate refuses a link that is encrypted and bonded but is NOT one of the bonds from
+#     before the link (BleSessionAllowed), and forgets the bond such a link made;
+#   - the advertisement is rebuilt when it has to start and only dropped when the radio is off.
+echo "### source guard: advertising runs whenever no device is connected - window, bonds or none (E64 C/E66)"
 adv_guard_fail=0
 
 advwanted_body=$(sed -n '/^static bool BleAdvWanted()/,/^}/p' "$APPBLE_SRC")
@@ -249,42 +254,51 @@ if ! printf '%s\n' "$advwanted_body" | grep -q 'return BleRadioUp && BleEnabled;
     adv_guard_fail=1
 fi
 
-filter_rule=$(sed -n '/^static bool ConnectFilterWhitelistOnly(bool WindowOpen)/,/^}/p' "$APPBLE_SRC")
-if ! printf '%s\n' "$filter_rule" | grep -q 'return !WindowOpen && AppBLEBondCount() > 0;'; then
-    echo "FAIL $APPBLE_SRC: the whitelist must guard a stored bond, and only while no window is open"
+# E66: no accept list, in either direction. Nothing may set an advertising filter policy (the
+# controller matches the list against the on-air address), and nothing may program the white list.
+if [ "$(grep -c 'setScanFilter' "$APPBLE_SRC")" != 0 ]; then
+    echo "FAIL $APPBLE_SRC: an advertising filter policy is set again - it drops an LE-privacy peer (E66)"
+    adv_guard_fail=1
+fi
+if [ "$(grep -c 'whiteList' "$APPBLE_SRC")" != 0 ]; then
+    echo "FAIL $APPBLE_SRC: the accept list is programmed again - nothing may filter on it (E66)"
     adv_guard_fail=1
 fi
 
-filter_body=$(sed -n '/^static void ApplyConnectFilter(bool WhitelistOnly)/,/^}/p' "$APPBLE_SRC")
-if ! printf '%s\n' "$filter_body" | grep -q 'Adv->setScanFilter(false, WhitelistOnly);'; then
-    echo "FAIL $APPBLE_SRC: the connect filter must be CONNECT-only and leave scans alone"
+# The admission rule itself (Blocks/BleAdmissionPolicy.h) is driven by ble_admission_test.cpp; what
+# is asserted here is that the radio code asks it, at the two points that matter.
+connect_body=$(sed -n '/void onConnect(NimBLEServer/,/^    }$/p' "$APPBLE_SRC")
+if ! printf '%s\n' "$connect_body" | grep -q 'AppBLELinkBondSnapshot();' ||
+   ! printf '%s\n' "$connect_body" | grep -q 'NimBLEDevice::setSecurityAuth(!BleLinkBondingClosed, Policy.Mitm, true);'; then
+    echo "FAIL $APPBLE_SRC: onConnect must snapshot the store and decide whether this link may bond"
     adv_guard_fail=1
 fi
-if [ "$(grep -c 'setScanFilter(false, false)' "$APPBLE_SRC")" != 0 ]; then
-    echo "FAIL $APPBLE_SRC: an inline relaxed filter is back - it re-admits any peer outside a window"
+# ... and the snapshot comes before the security procedure, or it would describe a store the link
+# has already changed.
+snapshot_line=$(printf '%s\n' "$connect_body" | grep -n 'AppBLELinkBondSnapshot();' | head -1 | cut -d: -f1)
+bonding_line=$(printf '%s\n' "$connect_body" | grep -n 'setSecurityAuth(!BleLinkBondingClosed' | head -1 | cut -d: -f1)
+init_line=$(printf '%s\n' "$connect_body" | grep -n 'ble_gap_security_initiate' | head -1 | cut -d: -f1)
+if [ -z "$snapshot_line" ] || [ -z "$bonding_line" ] || [ -z "$init_line" ] ||
+   [ "$snapshot_line" -ge "$bonding_line" ] || [ "$bonding_line" -ge "$init_line" ]; then
+    echo "FAIL $APPBLE_SRC: the snapshot must be taken first, then the bonding rule, then security"
     adv_guard_fail=1
 fi
 
-start_body=$(sed -n '/^static void StartAppAdvertising()/,/^}/p' "$APPBLE_SRC")
-if ! printf '%s\n' "$start_body" | grep -q 'ConnectFilterWhitelistOnly(AppBLEWindowOpen())' ||
-   ! printf '%s\n' "$start_body" | grep -q 'ApplyConnectFilter(WhitelistOnly);'; then
-    echo "FAIL $APPBLE_SRC: every advertising start must carry the filter the window and the store imply"
+# The session gate: a link that is encrypted and bonded is still refused when the peer is not one of
+# the bonds this link found, and the bond it made is forgotten in the same callback.
+auth_body=$(sed -n '/void onAuthenticationComplete(NimBLEConnInfo &ConnInfo)/,/^    }$/p' "$APPBLE_SRC")
+if ! printf '%s\n' "$auth_body" | grep -q 'BleSessionAllowed(AppBLEWindowOpen(), BleLinkBondCount,'; then
+    echo "FAIL $APPBLE_SRC: onAuthenticationComplete must gate the session on BleSessionAllowed"
     adv_guard_fail=1
 fi
-
-# The connect gate answers the same question, so an unknown peer is admitted while nothing is stored.
-if ! grep -q 'if (!ConnInfo.isBonded() && !AppBLEWindowOpen() && AppBLEBondCount() > 0)' "$APPBLE_SRC"; then
-    echo "FAIL $APPBLE_SRC: the connect gate must admit a new peer while no bond is stored"
+if ! printf '%s\n' "$auth_body" | grep -q 'NimBLEDevice::deleteBond(ConnInfo.getIdAddress());'; then
+    echo "FAIL $APPBLE_SRC: a bond made on a refused link must be forgotten"
     adv_guard_fail=1
 fi
 
 tick_body=$(sed -n '/^void AppBLETick()/,/^}/p' "$APPBLE_SRC")
 if ! printf '%s\n' "$tick_body" | grep -q 'if (BleAdvRestart && !BleConnected && AdvWanted)'; then
     echo "FAIL $APPBLE_SRC: the deferred restart must follow the advertising rule, not the window"
-    adv_guard_fail=1
-fi
-if ! printf '%s\n' "$tick_body" | grep -q 'ConnectFilterWhitelistOnly(WindowOpen);'; then
-    echo "FAIL $APPBLE_SRC: the tick must re-aim the filter from the window and the bond store"
     adv_guard_fail=1
 fi
 # ... and the only stop left in the tick is the radio being switched off.
@@ -294,31 +308,13 @@ if [ "$(printf '%s\n' "$tick_body" | grep -c -- '->stop()')" != 1 ] ||
     echo "FAIL $APPBLE_SRC: the tick may only stop advertising when the radio is disabled"
     adv_guard_fail=1
 fi
-if ! printf '%s\n' "$tick_body" | grep -q 'SyncBleWhitelist();'; then
-    echo "FAIL $APPBLE_SRC: the whitelist must follow the bond store (SyncBleWhitelist on a generation bump)"
-    adv_guard_fail=1
-fi
-# The list is rebuilt before the filter is re-aimed: a filter that tightens to whitelist-only has to
-# find its entries already programmed, or the bonded phone is locked out for a tick.
-sync_line=$(printf '%s\n' "$tick_body" | grep -n 'SyncBleWhitelist();' | head -1 | cut -d: -f1)
-filter_line=$(printf '%s\n' "$tick_body" | grep -n 'ConnectFilterWhitelistOnly(WindowOpen);' | head -1 | cut -d: -f1)
-if [ -z "$sync_line" ] || [ -z "$filter_line" ] || [ "$sync_line" -ge "$filter_line" ]; then
-    echo "FAIL $APPBLE_SRC: the whitelist must be re-synced before the connect filter is re-aimed"
-    adv_guard_fail=1
-fi
-# The filter matches the controller whitelist, which has to hold the IDENTITY address: the phone
-# connects from a rotating private address.
-auth_body=$(sed -n '/void onAuthenticationComplete(NimBLEConnInfo &ConnInfo)/,/^    }$/p' "$APPBLE_SRC")
-if ! printf '%s\n' "$auth_body" | grep -q 'whiteListAdd(ConnInfo.getIdAddress())'; then
-    echo "FAIL $APPBLE_SRC: a completed bond must whitelist its identity address (RPA rotation)"
-    adv_guard_fail=1
-fi
-if ! grep -q 'whiteListAdd(NimBLEDevice::getBondedAddress(i))' "$APPBLE_SRC"; then
-    echo "FAIL $APPBLE_SRC: the radio start must restore the whitelist from the bond store"
+# Nothing re-aims a filter and nothing mirrors the store into the controller any more (E66).
+if printf '%s\n' "$tick_body" | grep -Eq 'ConnectFilterWhitelistOnly|SyncBleWhitelist|WhitelistOnly'; then
+    echo "FAIL $APPBLE_SRC: the tick re-aims a connect filter that no longer exists (E66)"
     adv_guard_fail=1
 fi
 
-[ $adv_guard_fail = 0 ] && echo "PASS: advertising runs whenever no device is connected; a bonded peer reconnects with no window, a stranger needs a window or an empty store"
+[ $adv_guard_fail = 0 ] && echo "PASS: advertising runs whenever no device is connected; the session gate admits the bonded peer with no window and refuses a stranger"
 fail=$((fail + adv_guard_fail))
 echo
 echo

@@ -8,6 +8,7 @@
 // Requires AppUSB.h to be included first (shares WireStreamParser).
 
 #include "NimBLEDevice.h"
+#include "Blocks/BleAdmissionPolicy.h"
 #include "Blocks/BleSecurityPolicy.h"
 #include "BlePasskeyStore.h" // the passkey and the policy stamp of the bond store (NVS `ble`)
 
@@ -62,8 +63,14 @@ static uint32_t BleSecureBudgetUsedMs = 0;    // the budget the pending link was
 static bool BleSecureLinkMitm = false;        // ... and whether it was granted the passkey budget
 static uint16_t BleConnHandle = 0xFFFF;
 static bool BleAdvStateApplied = false;       // the advertisement matches BleAdvWanted()
-static bool BleFilterWhitelistOnly = false;   // the connect filter the current advertisement carries
-static uint32_t BleWhitelistGen = 0;          // bond generation the controller whitelist mirrors
+// The bond store as it was when the current link came up, and whether the peer that finished the
+// security procedure is one of those bonds. The session gate asks the second question (E66;
+// Blocks/BleAdmissionPolicy.h), so the answer has to be taken before the link can change the store.
+static NimBLEAddress BleLinkBonds[CONFIG_BT_NIMBLE_MAX_BONDS];
+static uint8_t BleLinkBondCount = 0;
+// True while the current link may not create a bond: no window is open and the store is not empty,
+// so a pairing on this link is a stranger's and must not leave a bond behind.
+static bool BleLinkBondingClosed = false;
 // The recovery window is opened once per "bond store is empty" episode: set when it has been
 // opened, cleared again as soon as a bond exists (or the radio is switched off and back on), so it
 // is not a permanent advertisement.
@@ -169,12 +176,19 @@ struct BleRxAssembler
 // blinks.
 //
 // Advertising does NOT depend on a window: like any peripheral it is on the air whenever there is no
-// live connection (BleAdvWanted; owner ruling, Issues.md E64). What a window changes is who may
-// CONNECT (ConnectFilterWhitelistOnly): with a bond stored and the window closed the controller
-// admits connect requests only from the whitelist, so the phone that owns the device reconnects with
-// no USB host present, while a stranger's connect request is dropped in the link layer instead of
-// being answered and then torn down. While the store is still EMPTY there is nothing to protect, so
-// anyone may connect and make the first bond - which is also what Action = 1 returns the device to.
+// live connection (BleAdvWanted; owner ruling, Issues.md E64). What a window decides is who may
+// BOND, and with it who may hold a session: a window (or an empty store) is the only state in which
+// a pairing may create a bond (BleBondingAllowed), so with a bond stored and no window the only
+// peer that can come up encrypted AND bonded is the one that already had a key - the phone that owns
+// the device. That is how the owner reconnects with no USB host present.
+//
+// The controller's accept list was E64's way of doing this in the link layer, and E66 killed it: the
+// list is matched against the address the peer uses on the air, and a phone under LE privacy
+// connects from a rotating private address (RPA) that this controller resolves for the connection
+// but not for the filter - so the filter dropped the peer it existed to admit. The cost of dropping
+// it is that a stranger's CONNECT_REQ is answered before the link is refused at the security
+// procedure instead of being ignored by the controller. See the advertising rule below and
+// Issues.md E66.
 // A radio that the block has disabled advertises nothing at all.
 
 int AppBLEBondCount(); // defined with the bond read-out below
@@ -275,6 +289,41 @@ bool AppBLEBondText(int Index, char *Out, size_t Len)
     return true;
 }
 
+// ===== Link admission (Issues.md E66) =====
+//
+// A session needs a bond the peer can prove, and the owner of the device is the only peer that has
+// one when no window is open. The controller cannot say which peer that is - the accept list only
+// sees the address on the air (E66) - so the question is answered here, by comparing the identity
+// address the stack ends up with against the bonds that existed when the link came up
+// (Blocks/BleAdmissionPolicy.h has the rule itself, and test/native/ble_admission_test.cpp the
+// table).
+//
+// NimBLEAddress compares the raw type byte, and the two sides do not use the same one: the bond
+// store keeps 0/1 (public/random) while a peer the controller resolved is reported as 2/3
+// (public/random IDENTITY). BleSameIdentity compares the six bytes and the public/random axis.
+static void AppBLELinkBondSnapshot()
+{
+    const int Bonds = AppBLEBondCount();
+    BleLinkBondCount = (uint8_t)(Bonds > CONFIG_BT_NIMBLE_MAX_BONDS ? CONFIG_BT_NIMBLE_MAX_BONDS : Bonds);
+    for (uint8_t i = 0; i < BleLinkBondCount; i++)
+        BleLinkBonds[i] = NimBLEDevice::getBondedAddress(i);
+    // E64's pairing rule, decided once per link: a pairing on this link may only make a bond while
+    // a window is open or while the store is still empty.
+    BleLinkBondingClosed = !BleBondingAllowed(AppBLEWindowOpen(), Bonds);
+}
+
+// True when `Addr` is one of the bonds the store held when the link came up.
+static bool BlePeerWasBonded(const NimBLEAddress &Addr)
+{
+    for (uint8_t i = 0; i < BleLinkBondCount; i++)
+    {
+        if (BleSameIdentity(BleLinkBonds[i].getVal(), BleLinkBonds[i].getType(),
+                            Addr.getVal(), Addr.getType()))
+            return true;
+    }
+    return false;
+}
+
 // ===== Bonds vs the passkey they were made under =====
 //
 // A bond is only worth anything under the passkey that created it: the phone comes back encrypted
@@ -287,8 +336,8 @@ bool AppBLEBondText(int Index, char *Out, size_t Len)
 static char BleBondEpoch[BLE_PASSKEY_LEN]; // the passkey text the stored bonds were made under
 static bool BleBondEpochKnown = false;     // false = no stamp (fresh partition, or pre-rule upgrade)
 
-// Drops every bond and the whitelist that mirrors it: a phone that was bonded is a stranger
-// afterwards and has to pair again inside a window.
+// Drops every bond: a phone that was bonded is a stranger afterwards and has to pair again inside
+// a window.
 //
 // The guard is the server, not BleRadioUp: at radio start the store has to be revocable (a passkey
 // changed while the radio was off is applied there) before BleRadioUp is set at the end of that
@@ -299,15 +348,6 @@ bool AppBLEForgetAllBonds()
         return false;
     const int Before = NimBLEDevice::getNumBonds();
     const bool Ok = NimBLEDevice::deleteAllBonds();
-
-    // The whitelist is our own list, not the bond store's: remove what we added (through the
-    // API, so the local mirror and the controller stay in step).
-    while (NimBLEDevice::getWhiteListCount() > 0)
-    {
-        const NimBLEAddress Addr = NimBLEDevice::getWhiteListAddress(0);
-        if (!NimBLEDevice::whiteListRemove(Addr))
-            break;
-    }
 
     // An empty store is under whatever code is current, so stamping it here is what keeps the
     // next bond - and a reboot - from looking like a stale store (see AppBLEEnforceBondPolicy).
@@ -441,6 +481,9 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         StaticBleRxAssembler.Reset();
         BleParser.Reset();
         AppInterface.TxFlushAll();
+        // What the bond store held before this link could change it - the session gate's question
+        // (E66), and whether this link may create a bond at all.
+        AppBLELinkBondSnapshot();
 
         // The block can switch the radio off at any moment; a connection that raced the switch is
         // dropped rather than served.
@@ -451,20 +494,34 @@ class BleServerCallbacks : public NimBLEServerCallbacks
             return;
         }
 
-        // A peer the bond store does not know can only be here to pair, and pairing is allowed
-        // only inside the connectable window - or while the store is still empty, which is how the
-        // first bond is made (see ConnectFilterWhitelistOnly; outside those, the controller's
-        // connect filter already dropped the request and this line never runs). One we do know is
-        // kept: it encrypts with the key it stored right after connecting.
-        if (!ConnInfo.isBonded() && !AppBLEWindowOpen() && AppBLEBondCount() > 0)
+        // Who may HOLD a link is decided by a bond the peer can prove, not by the address it
+        // arrives on: with a bond stored and no window open, only a peer that already had a key can
+        // come up encrypted AND bonded (E66, Blocks/BleAdmissionPolicy.h). A peer that arrives from
+        // a PUBLIC address has no private address in the way, so the store can be asked here and a
+        // stranger is refused now rather than after a pairing attempt. A private one may be the
+        // owner behind an address this device cannot resolve for the filter (E66), so that case is
+        // left to the security procedure and judged in onAuthenticationComplete.
+        if (!AppBLEWindowOpen() && AppBLEBondCount() > 0 &&
+            !BlePeerWasBonded(ConnInfo.getIdAddress()) &&
+            (ConnInfo.getIdAddress().getType() & 0x01) == 0)
         {
-            DeviceLog("APPBLE", "refused an unpaired peer: the pairing window is closed");
+            DeviceLog("APPBLE", "refused a stranger: the pairing window is closed");
             PServer->disconnect(ConnInfo.getConnHandle());
             return;
         }
 
+        // A pairing on this link may not create a bond unless a window is open (or the store is
+        // still empty, which is how the first bond is made). Without this a stranger could pair
+        // outside a window, keep the bond and report itself bonded - first on this link, then on
+        // every link after it. Set per link: the window moves under a running device, and the
+        // stack reads the flag when a pairing starts.
+        const BleSecurityPolicy Policy = BlePolicyNow();
+        NimBLEDevice::setSecurityAuth(!BleLinkBondingClosed, Policy.Mitm, true);
+
         // Ask for security now instead of waiting for the first refused attribute access, so the
         // phone shows its pair dialog (and, with a passkey set, asks for the code) immediately.
+        // A bonded phone answers with the key it stored, which is the whole point: that encryption
+        // is the proof the session is gated on.
         const int Rc = ble_gap_security_initiate(ConnInfo.getConnHandle());
         if (Rc != 0)
             DeviceLog("APPBLE", "security initiate failed: rc=%d", Rc);
@@ -474,7 +531,6 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         // read the prompt and type six digits (BleSecureBudgetMs; the old single 5 s figure dropped
         // every passkey pairing mid-procedure). AppBLETick drops the link when it passes and says
         // which case it was.
-        const BleSecurityPolicy Policy = BlePolicyNow();
         BleSecureBudgetUsedMs = BleSecureBudgetMs(Policy);
         BleSecureLinkMitm = Policy.Mitm;
         BleSecureDeadlineMs = TimeFromBoot() + BleSecureBudgetUsedMs;
@@ -502,8 +558,11 @@ class BleServerCallbacks : public NimBLEServerCallbacks
 
         if (!ConnInfo.isEncrypted() || !ConnInfo.isBonded())
         {
-            DeviceLog("APPBLE", "pairing failed (enc=%u bonded=%u): dropping the link",
-                      ConnInfo.isEncrypted(), ConnInfo.isBonded());
+            // With bonding closed for this link (a bond stored, no window) this is the stranger
+            // case rather than a failed pairing: the link encrypted without a bond we could keep.
+            DeviceLog("APPBLE", "link refused (enc=%u bonded=%u%s): dropping",
+                      ConnInfo.isEncrypted(), ConnInfo.isBonded(),
+                      BleLinkBondingClosed ? ", no pairing window" : "");
             BleSecured = false;
             BleConnected = false;
             if (BleServer)
@@ -523,13 +582,24 @@ class BleServerCallbacks : public NimBLEServerCallbacks
             return;
         }
 
-        // A completed bond: remember the IDENTITY address. The phone connects from a rotating
-        // private address, while the identity address is what the bond store keeps, so a
-        // whitelist entry on the identity address survives the rotation. whiteListAdd() returns
-        // true when the address is already there, false only when the controller refused it.
-        if (!NimBLEDevice::whiteListAdd(ConnInfo.getIdAddress()))
-            DeviceLog("APPBLE", "whitelist add failed for %s",
-                      ConnInfo.getIdAddress().toString().c_str());
+        // The session gate (Issues.md E66). A link becomes a session only when it proves a bond we
+        // already had: a window is open, the store is still empty (this pairing is the first bond),
+        // or the peer is one of the bonds that existed when the link came up. Encryption alone is
+        // not enough - a stranger who paired on a closed link is encrypted and bonded too, which is
+        // exactly what the controller's accept list used to prevent and cannot (E66). Such a bond is
+        // forgotten here, so the store it tried to enter cannot admit it on the next connect.
+        if (!BleSessionAllowed(AppBLEWindowOpen(), BleLinkBondCount,
+                               BlePeerWasBonded(ConnInfo.getIdAddress())))
+        {
+            DeviceLog("APPBLE", "refused a link that paired outside the pairing window: forgetting its bond");
+            NimBLEDevice::deleteBond(ConnInfo.getIdAddress());
+            AppBLEBondStoreChanged();
+            BleSecured = false;
+            BleConnected = false;
+            if (BleServer)
+                BleServer->disconnect(ConnInfo.getConnHandle());
+            return;
+        }
 
         BleSecured = true;
         BleConnected = true;
@@ -652,92 +722,22 @@ static bool BleAdvWanted()
     return BleRadioUp && BleEnabled;
 }
 
-// Who may CONNECT - the separate question. A bonded peer always: with a bond stored and the window
-// closed the controller whitelist is the only way in, so the phone that owns the device reconnects
-// with no USB host present, while a stranger's CONNECT_REQ is dropped in the link layer instead of
-// being answered and then torn down. A new phone: while a window is open, and while the store is
-// still empty (nothing to protect yet, and it is how the first bond is made). Action = 1 empties the
-// store, so the device falls back to exactly that.
-static bool ConnectFilterWhitelistOnly(bool WindowOpen)
-{
-    return !WindowOpen && AppBLEBondCount() > 0;
-}
-
-// Applies that answer to the advertising instance and remembers it in BleFilterWhitelistOnly, so the
-// tick can push a change exactly once.
+// The controller's accept list is NOT used, and E66 is why. It was E64's link-layer gate: with a
+// bond stored and the window closed the advertising filter policy was whitelist-only, so a
+// stranger's CONNECT_REQ was ignored by the controller instead of being answered and then torn
+// down. That cannot work here. The list is matched against the address on the air, and a phone
+// under LE privacy connects from a rotating private address (RPA); this controller holds the peer's
+// IRK and resolves that RPA - which is how the stored bond authenticates on reconnect - but it does
+// not apply the resolution to the accept-list filter, so the filter dropped the peer it existed to
+// admit (`adv_filter_policy=2` with `entry-0={addr_type=0 addr=4c:23:38:74:e6:f6}` on the air,
+// Issues.md E66). Nothing sets an advertising filter policy any more, and the bond store is no
+// longer mirrored into the controller's white list: the admission question is answered by the
+// session gate instead (BleSessionAllowed in onAuthenticationComplete).
 //
-// The filter policy is a ble_gap_adv_start() parameter (NimBLEAdvertising::m_advParams), so it can
-// only be changed by (re)starting the advertiser - NimBLEAdvertising::start() returns early when
-// advertising is already active and would then keep the old policy. StartAppAdvertising applies it
-// on every start, and AppBLETick restarts once whenever the answer changes.
-//
-// Scan requests are deliberately NOT filtered (first argument false): the policy in force is
-// BLE_HCI_ADV_FILT_CONN, so a stranger still sees the name - including in the scan response, which
-// is unfiltered too - while his CONNECT_REQ is dropped by the controller instead of being answered
-// and then torn down by onConnect.
-//
-// Note on `setScanFilterMode`: in esp-nimble-cpp 2.5.0 that call (NimBLEDevice's) is the *scan
-// duplicate cache* filter type and must be made before init - it does not restrict who may
-// connect. The controller-side connect filter is the advertising filter policy set here.
-static void ApplyConnectFilter(bool WhitelistOnly)
-{
-    NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
-    if (!Adv)
-        return;
-    Adv->setScanFilter(false, WhitelistOnly);
-    static bool AppliedKnown = false;
-    const bool Changed = !AppliedKnown || BleFilterWhitelistOnly != WhitelistOnly;
-    AppliedKnown = true;
-    BleFilterWhitelistOnly = WhitelistOnly;
-    if (Changed)
-        DeviceLog("APPBLE", "connect filter: whitelist-only=%d", WhitelistOnly);
-}
-
-// Makes the controller whitelist mirror the bond store. The connect filter admits exactly what is
-// in this list, so the list has to follow the store: a completed bond adds its identity address
-// (onAuthenticationComplete), and a bond the store evicted when a fourth phone paired has to take
-// its address with it - otherwise that phone is still admitted by the controller and only refused
-// a moment later by the connect gate, which is the answered-then-dropped case the filter exists to
-// avoid. Driver: BleBondGeneration, which every bond event bumps.
-//
-// The fast path returns without touching anything when the two already agree, which is every
-// completed bond: NimBLEDevice keeps the list in a host-side vector that the NimBLE host task also
-// writes (onAuthenticationComplete), so the app task only edits it when it really must. Additions
-// come before removals, so the list is never momentarily empty and a bonded phone reconnecting in
-// the same millisecond still matches an entry.
-static void SyncBleWhitelist()
-{
-    const int Bonds = AppBLEBondCount();
-    const size_t Listed = NimBLEDevice::getWhiteListCount();
-
-    bool InSync = Listed == (size_t)Bonds;
-    for (int b = 0; b < Bonds && InSync; b++)
-    {
-        const NimBLEAddress Addr = NimBLEDevice::getBondedAddress(b);
-        bool Present = false;
-        for (size_t w = 0; w < Listed && !Present; w++)
-            Present = NimBLEDevice::getWhiteListAddress(w) == Addr;
-        InSync = Present;
-    }
-    if (InSync)
-        return;
-
-    for (int b = 0; b < Bonds; b++)
-        NimBLEDevice::whiteListAdd(NimBLEDevice::getBondedAddress(b));
-
-    for (int w = (int)NimBLEDevice::getWhiteListCount() - 1; w >= 0; w--)
-    {
-        const NimBLEAddress Addr = NimBLEDevice::getWhiteListAddress(w);
-        bool Bonded = false;
-        for (int b = 0; b < Bonds && !Bonded; b++)
-            Bonded = NimBLEDevice::getBondedAddress(b) == Addr;
-        if (!Bonded)
-            NimBLEDevice::whiteListRemove(Addr);
-    }
-
-    DeviceLog("APPBLE", "whitelist rebuilt: bonds=%d whitelist=%u", Bonds,
-              (unsigned)NimBLEDevice::getWhiteListCount());
-}
+// The trade-off, stated rather than hidden: a stranger's CONNECT_REQ is now answered, and the link
+// is refused a moment later when it cannot prove a bond. The advertisement and its scan response
+// were already unfiltered, so nothing new is visible; what is lost is that the controller no longer
+// drops the request in the link layer.
 
 // Rebuilds and starts the advertisement from scratch. Used for the initial
 // start AND every post-session restart: restarting the previous instance can
@@ -756,18 +756,14 @@ static void StartAppAdvertising()
     char AdvName[SYSTEM_NAME_LEN + 1];
     BleEffectiveName(AdvName); // the block's Display name, or System.Name
     bool NameOk = Adv->setName(AdvName);
-    // The filter policy is read at start, so every (re)start carries the answer in force now:
-    // whitelist-only while a bond is stored and no window is open, unfiltered otherwise.
-    const bool WhitelistOnly = ConnectFilterWhitelistOnly(AppBLEWindowOpen());
-    ApplyConnectFilter(WhitelistOnly);
     bool Started = Adv->start();
-    DeviceLog("APPBLE", "adv restart: uuid=%d name=%d started=%d whitelist-only=%d",
-              UuidOk, NameOk, Started, WhitelistOnly);
+    DeviceLog("APPBLE", "adv restart: uuid=%d name=%d started=%d filter=none",
+              UuidOk, NameOk, Started);
 }
 
-// Starts the radio: the NimBLE host, the pairing policy, the GATT table (built from that policy)
-// and the whitelist taken from the bond store. Called at boot when the block's Enabled is true,
-// and later if it is switched on. Idempotent per boot: BleRadioUp guards it.
+// Starts the radio: the NimBLE host, the pairing policy and the GATT table (built from that
+// policy). Called at boot when the block's Enabled is true, and later if it is switched on.
+// Idempotent per boot: BleRadioUp guards it.
 static bool AppBLERadioStart()
 {
     // The pairing policy is read from the `BLE Settings` block BEFORE the server exists, so the
@@ -816,17 +812,12 @@ static bool AppBLERadioStart()
 
     // (NimBLEService::start() is a no-op / deprecated: services start with the server.)
 
-    // The bonds already in the store are the whitelist: a bonded phone's identity address has to
-    // be there from boot, or a reconnect after a reboot would find an empty filter. NimBLE does
-    // not restore the list itself - the bond store does, not the controller's whitelist.
-    // Before that, revoke the ones the current passkey invalidates: a code changed while the radio
-    // was down (Enabled = false is a USB-only write, so the store could not be touched then) is
-    // applied here, so a stale bond is never even admitted to the whitelist.
+    // Revoke the bonds the current passkey invalidates before anything can use them: a code
+    // changed while the radio was down (Enabled = false is a USB-only write, so the store could not
+    // be touched then) is applied here.
     AppBLEEnforceBondPolicy();
 
     const int Bonds = NimBLEDevice::getNumBonds();
-    for (int i = 0; i < Bonds; i++)
-        NimBLEDevice::whiteListAdd(NimBLEDevice::getBondedAddress(i));
 
     memcpy(BleAppliedName, Name, SYSTEM_NAME_LEN + 1);
     BleRadioUp = true;
@@ -835,15 +826,10 @@ static bool AppBLERadioStart()
     // away - advertising does not wait for a bond or for a window.
     BleAdvRestart = false;
     BleWindowEndMs = 0;
-    // No window is open yet, so the advertisement the tick is about to start is whitelist-only as
-    // soon as the store holds a bond, and open to anyone while it is still empty.
-    ApplyConnectFilter(ConnectFilterWhitelistOnly(false));
     BleAdvStateApplied = false;
-    BleWhitelistGen = BleBondGeneration; // the loop above just mirrored the store
 
-    DeviceLog("APPBLE", "radio up: name='%s' mode=%s bonds=%d whitelist=%u",
-              BleAppliedName, Policy.Mitm ? "passkey" : "just works", Bonds,
-              (unsigned)NimBLEDevice::getWhiteListCount());
+    DeviceLog("APPBLE", "radio up: name='%s' mode=%s bonds=%d",
+              BleAppliedName, Policy.Mitm ? "passkey" : "just works", Bonds);
     return true;
 }
 
@@ -952,8 +938,8 @@ void AppBLETick()
     // Recovery window: while the bond store is empty the device opens the window by itself for
     // BLE_AUTO_WINDOW_MS (first use, or straight after Action=1 forgot the bonds), so a headless
     // device is easy to find and pair to. Pairing does not depend on it - an empty store already
-    // admits any peer (ConnectFilterWhitelistOnly) - but it is what the block's Window field reports
-    // and what makes the device obviously discoverable in that state. Opened once per empty episode,
+    // admits any peer (BleSessionAllowed) - but it is what the block's Window field reports and
+    // what makes the device obviously discoverable in that state. Opened once per empty episode,
     // not kept open.
     // The core's button is NOT a trigger - Button.h shares LED_NOTIFICATION_PIN with the
     // notification LED and forces the button state false while the LED is driven, so a press is
@@ -969,23 +955,11 @@ void AppBLETick()
     else
         BleAutoWindowDone = false;
 
-    // The whitelist follows the bond store (see SyncBleWhitelist). Every bond event bumps the
-    // generation - a completed bond, a forget, and the store's own eviction when a fourth phone
-    // pairs - and each of those changes who the connect filter must admit. This runs BEFORE the
-    // filter is re-aimed below, so a filter that tightens to whitelist-only always finds its
-    // entries already in the list.
-    if (BleWhitelistGen != AppBLEBondGeneration())
-    {
-        BleWhitelistGen = AppBLEBondGeneration();
-        SyncBleWhitelist();
-    }
-
-    // Advertising itself (BleAdvWanted) has one condition and is unchanged by the window: what the
-    // window and the bond store decide is who may CONNECT. The filter policy is a start parameter,
-    // so only a change of that answer - or the very first advertisement - has to rebuild.
-    const bool WindowOpen = AppBLEWindowOpen();
+    // Advertising itself (BleAdvWanted) has one condition and is unchanged by the window or by the
+    // bond store; what those decide is who may BOND and who may hold a session, which is answered
+    // per link (see onConnect/onAuthenticationComplete). Nothing re-aims here any more: the
+    // advertisement carries no filter policy (E66).
     const bool AdvWanted = BleAdvWanted();
-    const bool WhitelistOnly = ConnectFilterWhitelistOnly(WindowOpen);
     NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
 
     if (!AdvWanted)
@@ -1001,13 +975,11 @@ void AppBLETick()
             DeviceLog("APPBLE", "advertising stopped: the radio is disabled");
         }
     }
-    else if (!BleAdvStateApplied || WhitelistOnly != BleFilterWhitelistOnly)
+    else if (!BleAdvStateApplied)
     {
         BleAdvStateApplied = true;
-        // ApplyConnectFilter logs the policy when it changes; the restart below is what hands it to
-        // the controller. Rebuild, never drop: the advertisement stays on the air and only who may
-        // connect changes with the window or with the bond store.
-        ApplyConnectFilter(WhitelistOnly);
+        // Rebuild, never drop: the advertisement stays on the air across a window opening or
+        // closing, and across a bond appearing or being forgotten.
         BleAdvRestart = true;
     }
 
@@ -1039,8 +1011,7 @@ void AppBLETick()
         DeviceLog("APPBLE", "BLE session started");
 
     // Deferred restart after a clean disconnect, and the very first start. An advertisement exists
-    // whenever no session is up (BleAdvWanted), so it comes straight back the moment the link drops
-    // - with the connect filter the window and the bond store imply at that instant.
+    // whenever no session is up (BleAdvWanted), so it comes straight back the moment the link drops.
     if (BleAdvRestart && !BleConnected && AdvWanted)
     {
         BleAdvRestart = false;
