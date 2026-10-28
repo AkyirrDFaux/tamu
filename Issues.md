@@ -510,7 +510,10 @@ separate rule, `ConnectFilterWhitelistOnly()` = no window open AND a bond stored
 - **no session, no window**: advertising runs, with bonds or without. With a bond stored the CONNECT
   filter is the controller's whitelist, so the bonded phone reconnects and a stranger's connect
   request is ignored in the link layer - the advertisement and its scan response stay unfiltered, so
-  the name is still visible to a scan. With the store EMPTY there is nothing to protect: the filter
+  the name is still visible to a scan. (**Superseded by E66, 2026-10-28:** the accept list cannot
+  match a peer under LE privacy on this controller, so it is not used at all - the bonded peer is
+  admitted by the session gate and a stranger's link is refused after the CONNECT_REQ is answered.
+  See E66's fix note.) With the store EMPTY there is nothing to protect: the filter
   is relaxed and the connect gate (`onConnect`) admits an unknown peer, which is how the first bond
   is made with no USB host - and exactly what `Action = 1` returns the device to. The five-minute
   recovery window still opens by itself on an empty store, but pairing no longer depends on it; it
@@ -605,6 +608,41 @@ accept list does not match the connect address. Because the filter drops everyon
 peer reconnects with no window" and "a stranger is refused" cannot be told apart on the air today.
 Next check: an accept-list/privacy read-out (or a boot-time log naming the list) - the device log is
 not usable for this, see E67.
+**Answered and fixed (2026-10-28, card t_31e9201a).** The open question - does the device
+controller's resolving list hold the peer's IRK - is **yes**: the list holds it and the RPA does
+resolve, and the accept-list *filter* is the defect.
+- The peer's IRK is in the bond and the controller resolves the RPA. With a window open (no filter)
+  the same central connects from an RPA and the stored bond authenticates - and that is only
+  possible if the connection reports the peer's IDENTITY address: `ble_sm_ltk_req_rx` looks the LTK
+  up by `ble_hs_conn_addrs`' `peer_id_addr` and `ble_sm_retrieve_ltk` matches (type, address)
+  exactly against `our_sec`. An RPA cannot match a bond stored under `4C:23:38:74:E6:F6`, and the
+  host has no resolver to rewrite the address, so the controller must have resolved it (it reports a
+  resolved peer as types 2/3, and `ble_hs_conn_addrs` hands the controller's address through
+  unchanged when host-based privacy is off).
+- The accept list is not resolved against. The failing boot is silent exactly where a failed
+  resolving-list add is loud (`ble_hs_misc_restore_one_irk` logs `failed to configure restored IRK`,
+  and no such line appears with `bonds=1`), so the RL entry was added; the advertisement carried
+  `adv_filter_policy=2` with `entry-0={addr_type=0 addr=4c:23:38:74:e6:f6}` (NimBLE GAP log, build
+  26.10.28.27) and the connect request was still ignored - the one HCI input that differs between
+  the failing run and the working one.
+- Capability is not the limit: the C3 controller implements the whole privacy surface
+  (`hci_le_rd_rslv_list_size_cmd_handler` answers size **10**, `hci_le_add_dev_to_rslv_list_cmd_handler`,
+  `hci_le_set_addr_resol_en_cmd_handler` storing the enable flag at `llm_env+198`,
+  `hci_le_set_priv_mode_cmd_handler`, `lld_peer_rpa_res`), yet the RPA-resolving white-list helper
+  `lld_wl_rpa_res` is referenced exactly once in the whole image - from
+  `hci_le_rmv_dev_from_wlst_cmd_handler`, not from the connect-request path.
+**Fix, one line:** the accept list is gone (nothing sets an advertising filter policy, nothing is
+mirrored into the controller's white list); a link becomes a session only when it is encrypted AND
+bonded with a bond that existed before the link, and a pairing on a link with no window may not
+create one - so the bonded peer gets in and a stranger's link is dropped at the security procedure
+with the bond it just made forgotten. The cost, stated rather than hidden: a stranger's CONNECT_REQ
+is answered before the link is refused, so the drop is no longer in the link layer (E64's wording) -
+the advertisement and its scan response were unfiltered in either design, so nothing new is visible.
+Native: `test/native/ble_admission_test.cpp` (identity compare across the two type spaces, who may
+bond, who may hold a session) plus the E64/E66 source guard in `test/native/run.sh`. Rig half - one
+bond and `Window 0` connecting and reading a field, a stranger getting no session - is card
+t_98acbebd and is unverified here: flashing was not authorised in this card.
+
 
 **E67 `DeviceLog` is suppressed whenever a host holds the USB port, so rig evidence has to come from
 the register read-out or the air.** `Core/Functions/AppInterface.h` sets `Connected =
