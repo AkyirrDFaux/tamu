@@ -291,7 +291,7 @@ if ! printf '%s\n' "$auth_body" | grep -q 'BleSessionAllowed(AppBLEWindowOpen(),
     echo "FAIL $APPBLE_SRC: onAuthenticationComplete must gate the session on BleSessionAllowed"
     adv_guard_fail=1
 fi
-if ! printf '%s\n' "$auth_body" | grep -q 'NimBLEDevice::deleteBond(ConnInfo.getIdAddress());'; then
+if ! printf '%s\n' "$auth_body" | grep -q 'NimBLEDevice::deleteBond(ConnInfo.getIdAddress())'; then
     echo "FAIL $APPBLE_SRC: a bond made on a refused link must be forgotten"
     adv_guard_fail=1
 fi

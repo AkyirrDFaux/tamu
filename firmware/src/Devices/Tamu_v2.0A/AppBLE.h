@@ -592,7 +592,9 @@ class BleServerCallbacks : public NimBLEServerCallbacks
                                BlePeerWasBonded(ConnInfo.getIdAddress())))
         {
             DeviceLog("APPBLE", "refused a link that paired outside the pairing window: forgetting its bond");
-            NimBLEDevice::deleteBond(ConnInfo.getIdAddress());
+            if (!NimBLEDevice::deleteBond(ConnInfo.getIdAddress()))
+                DeviceLog("APPBLE", "could not forget the bond of %s: it still admits this peer",
+                          ConnInfo.getIdAddress().toString().c_str());
             AppBLEBondStoreChanged();
             BleSecured = false;
             BleConnected = false;
