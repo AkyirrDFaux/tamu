@@ -594,6 +594,34 @@ whenever no session is up (E64), so that is the normal state:
 Fix direction: stop advertising (and restart it) around the unpair, or delete through the store API
 (`ble_store_util_delete_peer`) instead of the GAP procedure; and do not re-stamp the epoch from a
 link authenticated with a bond older than the current code.
+**Answered and fixed (2026-10-28, card t_1b380cee).** The forget clears the air itself instead of
+being refused by it. `AppBLEForgetAllBonds()` asks the stack whether advertising is up
+(`NimBLEAdvertising::isAdvertising()` -> `ble_gap_adv_active()`), stops it (`ble_gap_adv_stop` is a
+synchronous HCI command, so the controller is idle when it returns), deletes through
+`deleteAllBonds()` -> `ble_gap_unpair()`, and then clears `BleAdvStateApplied` - which is the tick's
+own request to rebuild and restart the advertisement, in the same loop pass, because the register
+write and `AppBLETick()` both run from the app task (`AppInterface::Pump` dispatches the queued
+frame and then calls the tick). Both halves are gated on an advertisement that was actually up, so
+the paths that never needed the stop (a live link, a disabled radio) lose nothing.
+- The GAP procedure is kept on purpose. Deleting through the store API
+  (`ble_store_util_delete_peer`) needs no air, but it also skips `ble_gap_unpair`'s resolving-list
+  removal, and a revoke that leaves the peer's IRK in the controller is not a revoke - the
+  forgotten phone would still be resolvable. The stop costs microseconds.
+- The passkey change goes through the same function, so `AppBLEEnforceBondPolicy()` -> the forget
+  now revokes inside the loop the passkey is written in (`AppBLEApplySecurityPolicy`) instead of
+  failing with `BLE_HS_EBUSY` and leaving the epoch unstamped for a boot-time retry a session could
+  silence. The epoch rule is unchanged: the stamp still follows the STORE (only `After == 0`), so a
+  partial delete leaves the mismatch for the next radio start. No change was needed in
+  `onAuthenticationComplete`'s stamp: a link that reaches it authenticated can only have been
+  bonded under the code in force.
+- The reply follows that same state, not the per-entry rc: the function returns `After == 0`, so
+  `Action = 1` cannot answer `FLAG_FAIL` over a store that reads back empty (a repeat `Action = 1`
+  on an empty store is a success, not a refusal). `ok=<deleteAllBonds rc>` stays in the log.
+Native: the E65 source guard in `test/native/run.sh` (the stop precedes the delete, the restart
+request follows it, both gated on advertising being up) - RED against the pre-fix `AppBLE.h`, GREEN
+after. Rig half - `Action = 1` on an idle advertising device answering without `FLAG_FAIL` with
+Bond count 0 and the window re-opened, and the passkey-change revoke with the old peer refused - is
+card t_98acbebd and is unverified here: firmware flashing was not authorised in this card.
 
 **E66 The whitelist-only connect filter refuses the bonded peer it exists to admit.** Same build and
 card. With one bond stored and the window closed (boot log: `connect filter: whitelist-only=1`,
