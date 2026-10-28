@@ -744,9 +744,11 @@ type-carrying read-out below was then built and flashed once (iteration 43, `cmp
   each `Last peer=4C:23:38:74:E6:F6/0 Last air=4C:23:38:74:E6:F6/0 LastLink=2 (ADMITTED)`, bond count
   still 1 afterwards. On the pre-fix image the same peer timed out twice in exactly that state.
 - **The device's own log names the identity** (E67 ring, read within a second of the link; the image is
-  iteration 43 / `3288ba4` - the one recorded at the head of this section, 687,296 B, sha256
-  `985fe306…`, the build that still carried the ring. `b01e635` withdrew it, so this witness cannot be
-  re-taken on today's image; the register read-out is what replaces it):
+  `462b89a`'s tree - iteration 43, the one recorded at the head of this section, 687,296 B, sha256
+  `985fe306…`, the build that still carried the ring. The ring itself came in with `3288ba4` at
+  iteration 39 (687,040 B, sha256 `6b4c823e…`, the read-back above). `b01e635` withdrew the
+  ring, so this witness cannot be re-taken on today's image; the register read-out is what replaces
+  it):
   `[27621] APPBLE: link up: peer=4C:23:38:74:E6:F6 t=0 air=4C:23:38:74:E6:F6 t=0`,
   `[27678] APPBLE: link secured: enc=1 bonded=1 auth=0 bonds=1 bits=16 peer=… t=0 air=… t=0`, then
   `adv restart: uuid=1 name=1 started=1 filter=none` - the accept list is gone from the advertisement.
