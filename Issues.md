@@ -3,7 +3,7 @@
 Open items only. Resolved findings, the 2026-10-04 per-area audits and the doc-fact-check rulings
 that were applied are in the git history.
 
-Item codes: **B** = code-fix items (the 2026-10-09 fact check); **E** = the remaining open backlog items, numbered for later handling. Closed on 2026-10-15 and removed: **B11** (BLE large-reply drain fixed), **E12** (storage hooks converted to a class), **E19** (structurally requester-only), **E24** (Register string clamp documented), **E28** (no capability bit needed), **E4** (obsolete, replaced), **E22** (not needed), **E23** (fixed). Closed on 2026-10-27 and removed: **E54** (Raw Resistance multiplied before it divided, so every 330 kΩ reading from raw 100 up wrapped; the transform now divides first and clamps at the Q16.16 ceiling, and `firmware/test/native/meas_transform_test.cpp` pins the whole window).
+Item codes: **B** = code-fix items (the 2026-10-09 fact check); **E** = the remaining open backlog items, numbered for later handling. Closed on 2026-10-15 and removed: **B11** (BLE large-reply drain fixed), **E12** (storage hooks converted to a class), **E19** (structurally requester-only), **E24** (Register string clamp documented), **E28** (no capability bit needed), **E4** (obsolete, replaced), **E22** (not needed), **E23** (fixed). Closed on 2026-10-27 and removed: **E54** (Raw Resistance multiplied before it divided, so every 330 kΩ reading from raw 100 up wrapped; the transform now divides first and clamps at the Q16.16 ceiling, and `firmware/test/native/meas_transform_test.cpp` pins the whole window). Closed on 2026-10-28 and removed: **B5** (the 8.1 row is gone - `03a585b` replaced System field 8 with an interface bitfield - and the WiFi code is `firmware/src/Blocks/WifiSettings.h`, block `0x0C`; the missing radio is stated by the specification itself, `Docs/Services/App Interface.md:47`).
 
 ## B. Code fixes still open (the document is the specification)
 
@@ -12,9 +12,6 @@ Item codes: **B** = code-fix items (the 2026-10-09 fact check); **E** = the rema
 **B1 Router and branch broadcast are documented and unimplemented.** - **scope settled**: after the beta. The rig has no multi-bus device to test a tree topology on. `RSBus and Packets.md:3-7` and
 `Data Formats.md:37` (`0x3FE`) describe a router tree; `Dispatcher.h:36-40` says the multi-bus topology
 is not implemented and `Docs/Services/Router.md` is a stub.
-
-**B5 System block field 8.1 has no code.** `System Block...md:24` documents `WiFi connection
-information` at 8.1; there is no WiFi code in the firmware.
 
 **B6 The UDP framing has no code.** `App Interface.md:25-27` documents a UDP packet; the firmware
 implements USB and BLE only.
@@ -469,17 +466,22 @@ are hardware-only.
 
 ## BLE Settings block (2026-10-28)
 
-**E58 The `BLE Settings` block type is not in the docs' block table.** `Docs/Services/Register.md`
-lists "Static block types | ..." and leaves the per-type list to the module documents; no document
-numbers type `0x0B` or describes the `BLE Settings` fields. The block was specified by the owner as
-a card (t_a9cda0b9) and implemented from that table, with field numbers fixed in
-`firmware/src/Blocks/BleSettings.h` (0 Passkey Text(6), readable+writable, NVS-backed and NOT
-persistent; 1 Mode Enum RO; 2 Bond count Index RO; 3 Bond Text RO keyed 0..2; 4 Window Uint32 RO;
-5 Action Enum write; 6 Enabled Bool Persistent; 7 Display name Text(16) Persistent; 8 Advertised
-name Text(16) RO). Every write to the block is refused unless the frame arrived over USB. Proposed
-doc change (parent only): a `BLE Settings` section in the block tables with those fields and type
-`0x0B`, and `0x0B` added to the block-type list. Not a code defect - the app's registry entry
-(t_1d304c9c) needs the same numbers.
+**E58 The `BLE Settings` block's field numbers are not in the docs.** `Docs/Services/Register.md:24`
+keeps the `Static block types | ...` placeholder, so the block-type list numbers neither `0x0B` nor
+`0x0C`. `03a585b` has since added a `BLE Settings` section of type `0x0B`
+(`Docs/Services/App Interface.md:29`, table at `:31-40`), but its rows carry only key `0` (Bond
+`0..N`) and no field index, and there is no `Advertised name` row, so the numbers a client addresses
+the block with are still only the firmware's - and in a different order from the section's rows. The
+block was specified by the owner as a card (t_a9cda0b9) and implemented from that table, with field
+numbers fixed in `firmware/src/Blocks/BleSettings.h` (0 Passkey Text(6), readable+writable,
+NVS-backed and NOT persistent; 1 Mode Enum RO; 2 Bond count Index RO; 3 Bond Text RO keyed 0..2;
+4 Window Uint32 RO; 5 Action Enum write; 6 Enabled Bool Persistent; 7 Display name Text(16)
+Persistent; 8 Advertised name Text(16) RO). Every write to the block is refused unless the frame
+arrived over USB.
+Proposed doc change (parent only): the field indexes on that section's rows (stated the way the
+System block table states its field numbers), the missing `Advertised name` field, and both static
+types added to the block-type list. Not a code defect - the app's registry entry (t_1d304c9c) needs
+the same numbers.
 
 **E59 `NimBLEDevice::setScanFilterMode()` does not restrict who may connect.** Card t_367f86d0
 named it as the connect filter to apply while the pairing window is closed. In esp-nimble-cpp 2.5.0
