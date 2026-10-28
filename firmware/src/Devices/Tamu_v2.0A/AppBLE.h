@@ -214,9 +214,28 @@ bool AppBLEAutoWindow()
 //     store-status handler that esp-nimble-cpp installs (ble_store_util_status_rr via
 //     NimBLEDeviceCallbacks) calls ble_gap_unpair_oldest_peer() and retries: the OLDEST bond is
 //     evicted, so the phone that paired first is the one that has to pair again. Nothing is
-//     silently dropped - the store is full, one entry goes, and the block's Bond count follows
-//     getNumBonds() on the next main-loop pass (BleSettingsSync), so the app sees the new count
-//     within one ~2 ms iteration.
+//     silently dropped - the store is full, one entry goes.
+//   - Because that eviction and the new bond land inside ONE store-status callback, the size of
+//     the store reads 3 before and 3 after while its content changed entirely. The block's Bond
+//     fields therefore cannot be refreshed on the count alone (they used to be, and kept listing
+//     the evicted phone): every completed bond and every forget bumps BleBondGeneration, and
+//     BleSettingsSync re-formats on a change of it. The count and a slow content check in the
+//     glue are the safety net for a store that changes without either event.
+
+// "The bond store's content may differ from what the block last formatted". Bumped from the
+// NimBLE host task (onAuthenticationComplete) and the app task (AppBLEForgetAllBonds); read by the
+// main loop, so volatile - a 32-bit aligned word, which the C3 updates atomically.
+static volatile uint32_t BleBondGeneration;
+
+void AppBLEBondStoreChanged()
+{
+    BleBondGeneration = BleBondGeneration + 1;
+}
+
+uint32_t AppBLEBondGeneration()
+{
+    return BleBondGeneration;
+}
 
 int AppBLEBondCount()
 {
@@ -256,6 +275,7 @@ bool AppBLEForgetAllBonds()
     }
 
     DeviceLog("APPBLE", "bonds forgotten: %d -> %d (ok=%d)", Before, NimBLEDevice::getNumBonds(), Ok);
+    AppBLEBondStoreChanged(); // the block's Bond texts follow in the next loop pass
     return Ok;
 }
 
@@ -410,6 +430,11 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         DeviceLog("APPBLE", "link secured: enc=%u bonded=%u auth=%u bonds=%d bits=%u",
                   ConnInfo.isEncrypted(), ConnInfo.isBonded(), ConnInfo.isAuthenticated(),
                   NimBLEDevice::getNumBonds(), ConnInfo.getSecKeySize());
+
+        // A bond exists that did not before - including the case where this pairing overflowed
+        // the store and the stack evicted the oldest entry inside the same callback, which leaves
+        // getNumBonds() unchanged. Tell the block to re-read the entries rather than the size.
+        AppBLEBondStoreChanged();
     }
 
     // The code the user configured, for the DISPLAY_ONLY policy. NimBLE-cpp only asks here when

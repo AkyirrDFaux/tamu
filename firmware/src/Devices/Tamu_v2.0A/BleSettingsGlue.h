@@ -71,6 +71,11 @@ void BlePasskeyInit()
     DeviceLog("BLESEC", "passkey source: %s", BlePasskeyEnabled(Vol->Passkey) ? "nvs (set)" : "none (just works)");
 }
 
+// Bond text refresh period. The entries are re-formatted and compared once a second as a safety
+// net (see BleSettingsSync); three 18-byte addresses a second is nothing next to what used to be
+// avoided by caching at all (a formatting allocation every ~2 ms pass).
+#define BLE_BOND_TEXT_CHECK_MS 1000
+
 // Called from the main loop. Everything the block owns is applied from here, so a register write
 // takes effect within one loop iteration and the block stays the single source of truth:
 //   - Enabled / Display name -> the radio (AppBLESettingsApply; the pairing policy is read at
@@ -88,16 +93,42 @@ void BleSettingsSync()
     const int Bonds = AppBLEBondCount();
     Vol->BondCount = (uint8_t)(Bonds < 0 ? 0 : (Bonds > 255 ? 255 : Bonds));
 
-    // The bond texts are re-formatted only when the store's size changes: formatting an address
-    // allocates, and this runs every loop.
-    static int SyncedBonds = -1;
-    if (Bonds != SyncedBonds)
+    // The bond texts, refreshed on the store's CONTENT rather than its size. A full store is the
+    // case that makes the difference: a fourth phone makes nimble-cpp's store-status handler evict
+    // the oldest bond and retry inside one callback (AppBLE.h, "Bond store read-out"), so
+    // getNumBonds() reads 3 before and 3 after while the entries underneath are different. Keying
+    // this on the count alone kept the evicted address in the block and never showed the phone that
+    // had just paired.
+    //
+    // The predicate (BleBondRefreshDue, Blocks/BleSettings.h) is: the bond store's generation
+    // changed - bumped by every completed bond and by Action=1, so the common changes show up in
+    // the same loop pass - or the count changed, or a ~1 Hz content check is due for a store that
+    // changed without either event (a phone that removed its own bond, the stack unpairing on a
+    // failed encryption). Formatting allocates, so this never runs every pass; each entry is copied
+    // only when it actually differs. Reading the store from this task is safe: getBondedAddress()
+    // walks it through ble_store_read(), which takes the NimBLE host lock, so the 1 Hz check can
+    // never observe a half-written entry.
+    static BleBondRefresh BondRefresh;
+    const uint32_t NowMs = TimeFromBoot();
+    if (BleBondRefreshDue(BondRefresh, AppBLEBondGeneration(), Bonds, NowMs))
     {
-        SyncedBonds = Bonds;
+        BondRefresh.Generation = AppBLEBondGeneration();
+        BondRefresh.Count = Bonds;
+        BondRefresh.DueMs = NowMs + BLE_BOND_TEXT_CHECK_MS;
         for (int i = 0; i < BLE_SETTINGS_BOND_SLOTS; i++)
         {
-            if (!AppBLEBondText(i, Vol->Bond[i], BLE_BOND_TEXT_LEN))
-                Vol->Bond[i][0] = '\0';
+            // AppBLEBondText() writes a NUL-terminated address (17 chars) or leaves the buffer
+            // empty; BLE_BOND_TEXT_LEN holds either.
+            char Text[BLE_BOND_TEXT_LEN];
+            if (!AppBLEBondText(i, Text, BLE_BOND_TEXT_LEN))
+                Text[0] = '\0';
+            if (strncmp(Text, Vol->Bond[i], BLE_BOND_TEXT_LEN) == 0)
+                continue;
+            size_t Len = strlen(Text);
+            if (Len >= BLE_BOND_TEXT_LEN)
+                Len = BLE_BOND_TEXT_LEN - 1;
+            memset(Vol->Bond[i], 0x00, BLE_BOND_TEXT_LEN);
+            memcpy(Vol->Bond[i], Text, Len);
         }
     }
 

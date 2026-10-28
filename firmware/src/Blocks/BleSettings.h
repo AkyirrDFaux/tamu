@@ -41,6 +41,7 @@
 // change or a storage `Format()` wipes `.SV` (Enabled, Display name) while NVS keeps the passkey.
 
 #include <cstddef>
+#include <cstdint>
 #include "Core/Functions/MemoryTypes.h"
 #include "Blocks/BleSecurityPolicy.h"
 
@@ -71,6 +72,31 @@
 
 #define BLE_SET_ACTION_OPEN_WINDOW  0
 #define BLE_SET_ACTION_FORGET_BONDS 1
+
+// When the block's Bond texts must be re-read from the bond store (used by the board glue and
+// pinned by test/native/ble_settings_test.cpp).
+//
+// The store's SIZE is not a change signal: when a full store takes a fourth bond, the stack evicts
+// the oldest entry and adds the new one inside one callback, so getNumBonds() reads the same
+// number before and after while the entries underneath are different. The read-out is therefore
+// keyed on the store's CONTENT - a generation counter the radio code bumps on every completed bond
+// and on a forget - with the count and a slow re-format-and-compare as the safety net for a store
+// that changes without either event.
+struct BleBondRefresh
+{
+    uint32_t Generation = 0; // store generation the texts were last formatted from
+    int      Count = 0;      // getNumBonds() at that moment
+    uint32_t DueMs = 0;      // TimeFromBoot() at which the slow content check is due
+};
+
+static inline bool BleBondRefreshDue(const BleBondRefresh &State, uint32_t Generation, int Count,
+                                     uint32_t NowMs)
+{
+    // DueMs starts at 0, so the first pass after boot always formats; the signed difference keeps
+    // the 49-day TimeFromBoot() wrap from stalling the check.
+    return Generation != State.Generation || Count != State.Count ||
+           (int32_t)(NowMs - State.DueMs) >= 0;
+}
 
 struct BleSettingsPersistent
 {

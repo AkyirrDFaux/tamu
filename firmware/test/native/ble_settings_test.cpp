@@ -289,10 +289,51 @@ static void TestBlockTable()
     CHECK(ActionTriggerCalls == 2);
 }
 
+// --- the Bond read-out's refresh decision -------------------------------------
+//
+// The block's Bond texts are a cache of the NimBLE bond store. Refreshing it on the store's SIZE
+// was wrong: a fourth phone makes the stack evict the oldest bond and add the new one inside a
+// single store callback, so getNumBonds() reads 3 before and 3 after. This drives the predicate the
+// glue actually uses, so that case is the first thing checked.
+static void TestBondRefresh()
+{
+    // Boot: nothing formatted yet, the first pass must always run.
+    BleBondRefresh S;
+    CHECK(BleBondRefreshDue(S, 0, 0, 0));
+
+    // A pass just ran at t=0 with 3 bonds, generation 7: nothing is due again immediately.
+    S.Generation = 7;
+    S.Count = 3;
+    S.DueMs = 0 + 1000;
+    CHECK(!BleBondRefreshDue(S, 7, 3, 1));
+    CHECK(!BleBondRefreshDue(S, 7, 3, 999));
+
+    // THE EVICTION CASE: a fourth phone pairs, the oldest bond is evicted and the new one stored in
+    // the same callback - the count is unchanged, only the content moved. The generation is what
+    // catches it, on the very next pass.
+    CHECK(BleBondRefreshDue(S, 8, 3, 1));
+
+    // A count change alone still refreshes, so a store that emptied is reported even if the
+    // generation counter were never bumped (radio switched off, bonds gone).
+    CHECK(BleBondRefreshDue(S, 7, 2, 1));
+
+    // The slow content check: due once the period has elapsed, with neither of the other two keys
+    // (a phone that removed its own bond, a failed encryption the stack unpaired on).
+    CHECK(BleBondRefreshDue(S, 7, 3, 1000));
+    CHECK(BleBondRefreshDue(S, 7, 3, 1001));
+
+    // TimeFromBoot() is a uint32 counter that wraps after ~49 days; the comparison is signed so a
+    // wrap does not stall the check for the rest of the uptime.
+    S.DueMs = 0xFFFFFFFFu; // due "4.29 s of counter" from the wrap
+    CHECK(!BleBondRefreshDue(S, 7, 3, 0xFFFFFF00u));
+    CHECK(BleBondRefreshDue(S, 7, 3, 0x00000200u)); // wrapped past the due point
+}
+
 int main()
 {
     TestPolicy();
     TestBlockTable();
+    TestBondRefresh();
 
     printf("ble_settings: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
