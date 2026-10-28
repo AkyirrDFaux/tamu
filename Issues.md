@@ -488,8 +488,8 @@ named it as the connect filter to apply while the pairing window is closed. In e
 it sets the *scan duplicate cache* filter type (`NimBLEDevice::setScanFilterMode` -> `m_scanFilterMode`,
 `NimBLEDevice::init` rejects a call after init) and has nothing to do with connection admission. The
 connect filter is `NimBLEAdvertising::setScanFilter(scanWhitelistOnly, connectWhitelistOnly)`, which
-`AppBLE.h` now applies (whitelist-only while the window is closed, both false while it is open); the
-stronger measure is that the device does not advertise at all outside a window. No doc impact.
+`AppBLE.h` applies as CONNECT-only: whitelist-only while no window is open and a bond is stored, off
+while a window is open or the store is empty (see E64 for the advertising rule itself). No doc impact.
 
 **E60 The NimBLE bond store keeps no peer name, so a Bond entry is an address only.** Card
 t_a9cda0b9's example entry is `C4:7F:51:xx:xx:xx  Akyirr-phone`. `NimBLEDevice` exposes
@@ -503,48 +503,51 @@ unless the frame arrived over USB (`Devices/Tamu_v2.0A/BleSettingsGlue.h`, `BleB
 from any link, and the final firmware says otherwise. The core's button is deliberately not a
 trigger either, so a device that held a bond, had its window closed and had no USB host available
 was simply off the air: it advertised only inside a window, and opened one by itself only while its
-bond store was empty. Ruling C (2026-10-28) puts a bonded device back on the air and leaves every
-write rule alone:
-- **bond stored, no window**: advertising runs continuously and the CONNECT filter is the
-  controller's whitelist, so the bonded phone reconnects and a stranger's connect request is ignored
-  in the link layer - the advertisement and its scan response stay unfiltered, so the name is still
-  visible to a scan;
+bond store was empty. Ruling C (2026-10-28), in the owner's simplified form - "it advertises
+whenever no device is connected via BLE" - splits the question in two: advertising is ONE condition,
+`BleAdvWanted()` = radio up and enabled (no bond term, no window term); who may CONNECT is a
+separate rule, `ConnectFilterWhitelistOnly()` = no window open AND a bond stored.
+- **no session, no window**: advertising runs, with bonds or without. With a bond stored the CONNECT
+  filter is the controller's whitelist, so the bonded phone reconnects and a stranger's connect
+  request is ignored in the link layer - the advertisement and its scan response stay unfiltered, so
+  the name is still visible to a scan. With the store EMPTY there is nothing to protect: the filter
+  is relaxed and the connect gate (`onConnect`) admits an unknown peer, which is how the first bond
+  is made with no USB host - and exactly what `Action = 1` returns the device to. The five-minute
+  recovery window still opens by itself on an empty store, but pairing no longer depends on it; it
+  makes the device obviously discoverable and keeps the `Window` field meaningful in that state.
 - **window open**: the filter is relaxed (`BLE_HCI_ADV_FILT_NONE`), so a new phone may connect and
-  pair up to the three bonds the store holds, and bonded peers are still admitted;
+  pair up to the three bonds the store holds, and bonded peers are still admitted.
 - **window closes**: the advertisement is rebuilt inside the same loop pass with the whitelist
-  filter - it is never taken off the air, so there is no gap to recover from;
-- **no bond**: unchanged - nothing is advertised outside the five-minute recovery window a boot or
-  `Action = 1` opens, and `Action = 1` emptying the store falls back to exactly that behaviour.
+  filter (the whitelist is re-synced from the store first) - it is never taken off the air, so there
+  is no gap to recover from.
+- **connection up**: the controller stops advertising when the link comes up, and the deferred
+  restart puts it back on the first loop pass after the link drops, carrying the filter in force at
+  that moment (bonded-only if a window has since closed).
 NimBLE mechanism: `NimBLEAdvertising::setScanFilter(false, true)` sets
 `m_advParams.filter_policy = BLE_HCI_ADV_FILT_CONN`, which `NimBLEAdvertising::start()` passes to
 `ble_gap_adv_start()` - the policy is read at start only (`start()` returns early on an already
 active advertiser), which is why every (re)start in `StartAppAdvertising` applies it and why a
-window change rebuilds the advertisement. The list it matches is the controller whitelist
-programmed by `NimBLEDevice::whiteListAdd/Remove` (`ble_gap_wl_set`), and its entries are IDENTITY
-addresses: the phone connects from a rotating private address, and this build resolves it in the
-controller from the peer IRK it stored - `ble_hs_pvcy_add_entry` and `ble_hs_pvcy_ensure_started`
-are linked and `ble_hs_resolv` is not (checked with `nm` on `firmware.elf`), i.e. controller-based
-privacy, which is what lets a whitelist match survive RPA rotation. `AppBLETick` rebuilds the
-whitelist from the store whenever `BleBondGeneration` moves, so a bond the store evicted on overflow
-does not stay admitted.
+change of the filter answer rebuilds the advertisement. The list it matches is the controller
+whitelist programmed by `NimBLEDevice::whiteListAdd/Remove` (`ble_gap_wl_set`), and its entries are
+IDENTITY addresses: the phone connects from a rotating private address, and this build resolves it in
+the controller from the peer IRK it stored - `ble_hs_pvcy_add_entry` and
+`ble_hs_pvcy_ensure_started` are linked and `ble_hs_resolv` is not (checked with `nm` on
+`firmware.elf`), i.e. controller-based privacy, which is what lets a whitelist match survive RPA
+rotation. `AppBLETick` rebuilds the whitelist from the store whenever `BleBondGeneration` moves - and
+does it before re-aiming the filter - so a bond the store evicted on overflow does not stay admitted
+and a filter that tightens to whitelist-only never finds an empty list.
 Revocation on a passkey change, the policy-shaped pairing deadline, `Action = 1` clearing the bonds
 and the USB-only write rule are untouched. The block's `Window` field keeps its meaning - milliseconds
-left in the PAIRING window, 0 when closed - so a client must no longer read 0 as "the device is off
-the air": it now means "no new phone may pair, a bonded one may connect". Consequences for the app
+left in the PAIRING window, 0 when closed - so a client must not read 0 as "the device is off the
+air": 0 means no pairing window is open, and with a bond stored that is "a bonded phone may connect,
+a new one may not", while with an empty store a new phone may still pair. Consequences for the app
 (card t_1d304c9c, item 5): its "the window opens only over USB" statement stays true and stops
 mattering for a bonded device; what remains unrecoverable is a phone whose bond is stale (forget it
-in the phone's settings) and a device with no bond and no USB host (its recovery window is the only
-way in).
-**No rig evidence yet:** the build has not been flashed, so the air checks in the card (bonded peer
-reconnects with the window closed, a stranger's connect ignored, a window still pairs, and the same
-two states after it closes) are unverified on hardware.
-Proposed doc change (parent only): `7b575f3` has already restated the rule at
-`Docs/Services/App Interface.md:42` as "It advertises whenever no device is connected over BLE;
-connecting is limited to bonded peers, and a new device can pair only while a window is open (or
-while no bond is stored)." One nuance is left for a device with no bond and its window closed: it
-advertises nothing at all then (an empty filter could admit nobody), so the sentence is exact only
-as "...advertises whenever no device is connected over BLE and either a bond is stored or a window
-is open".
+in the phone's settings) - there is no longer a device that needs USB to be reachable.
+**No rig evidence yet:** the build has not been flashed, so the air checks in the card (advertising
+runs with and without a bond and with or without a window, a bonded peer reconnects with no window, a
+stranger's connect ignored outside a window, a window still pairs, the same two states after it
+closes, and advertising resuming when a link drops) are unverified on hardware.
 
 **E61 `BLE_GATT_CHR_F_NOTIFY_INDICATE_AUTHEN` cannot be carried by a NimBLE-cpp characteristic.**
 It is `0x10000` and `NimBLECharacteristic`'s `properties` argument is `uint16_t`, so the notify
