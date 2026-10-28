@@ -20,8 +20,7 @@ Basic device information and description. It shares memory internally with stati
 | Total FLASH                 | 5.0:1  | RO    | uint32             | Available to the filesystem |
 | Name                        | 6      | P     | `Name`             | Applies fully after reboot |
 | NetID                       | 7      | P     | uint8              | Core only; applies only after reboot |
-| App Active                  | 8      | RO    | Enum               | Core only (No/USB/BLE; WiFi planned) |
-| WiFi connection information | 8.1    | P     |                    | SSID and Password. WiFi devices only, autoconnects (planned; not implemented) |
+| App Active                  | 8      | RO    | Bitfield (uint8)   | Core only: one bit per active app interface — bit 0 USB, bit 1 BLE, bit 2 WiFi (reserved, never set). Several bits may be set at once. |
 
 If possible, the device name is shown in BLE advertising and on USB.
 
