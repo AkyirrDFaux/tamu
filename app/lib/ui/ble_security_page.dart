@@ -634,8 +634,8 @@ class _BleSecurityPageState extends State<BleSecurityPage>
           Text(
             'Everything above is the block\'s own: the mode, the bond list, the window and the '
             'advertised name are computed and reported by the device. The passkey is stored on '
-            'the device itself and survives a firmware update; the bonds do too, so they can '
-            'only be cleared with "Forget all bonds".',
+            'the device itself and survives a firmware update; the bonds do too, so they are '
+            'cleared by "Forget all bonds" or by changing the passkey.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: Spacing.md),

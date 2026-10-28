@@ -370,6 +370,10 @@ void main() {
       // The card's test is that this must not read as a broken device.
       expect(guidance.detail, contains('the device is working'));
       expect(guidance.detail, contains('firmware update'));
+      // E68: a changed passkey revokes every bond too, so it is named as a third cause and
+      // "Forget all bonds" is not left as the only one.
+      expect(guidance.detail, contains('changing the passkey'));
+      expect(guidance.detail, isNot(contains('only')));
       expect(guidance.steps.first, contains('Bluetooth settings'));
       expect(guidance.steps.join(' '), contains('Forget'));
     });

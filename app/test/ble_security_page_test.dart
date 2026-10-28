@@ -546,6 +546,21 @@ void main() {
     });
   });
 
+  group('the closing note', () {
+    // E68: the device revokes every bond when the passkey changes, so "Forget all bonds" is no
+    // longer the only way they are cleared and the note must not say it is.
+    testWidgets('names the passkey change beside "Forget all bonds"', (
+      tester,
+    ) async {
+      await pump(tester);
+      final note = find.textContaining('or by changing the passkey');
+      await tester.scrollUntilVisible(note, 200);
+
+      expect(note, findsOneWidget);
+      expect(find.textContaining('only be cleared'), findsNothing);
+    });
+  });
+
   group('the stale-bond guidance', () {
     // The dialog the connection page shows after a failed Bluetooth attempt: the case the card
     // says must not look like a broken device, so the wording and the pointer at the phone's own

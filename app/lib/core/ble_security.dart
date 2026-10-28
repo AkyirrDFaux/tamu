@@ -480,8 +480,8 @@ BleLinkGuidance bleLinkGuidance({
         headline: 'This phone is no longer paired with the device',
         detail:
             'The device no longer holds a bond for this phone, so it refuses the link. That is '
-            'the normal result of a firmware update or of "Forget all bonds" - the device is '
-            'working, it just has to pair with this phone again.',
+            'the normal result of a firmware update, of "Forget all bonds", or of changing the '
+            'passkey - the device is working, it just has to pair with this phone again.',
         steps: [
           "Open your phone's Bluetooth settings and find this device in the paired list.",
           'Choose "Forget" (or "Unpair") for it.',
