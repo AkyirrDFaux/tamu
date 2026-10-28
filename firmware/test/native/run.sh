@@ -225,6 +225,83 @@ fi
 fail=$((fail + blessec_guard_fail))
 echo
 
+# E64 ruling C (owner, 2026-10-28): a bonded core stays on the air with no window open, and only
+# its bonded peers may connect. AppBLE.h cannot be linked on the host (NimBLE, the host task, NVS),
+# so the rule is asserted on the source. What must hold:
+#   - advertising is wanted when a window is open OR a bond is stored (a bond-less device still has
+#     nothing to advertise to outside its recovery window);
+#   - the filter is CONNECT-only: scan requests are never filtered, so the name stays visible, and
+#     the whitelist applies exactly while the window is closed;
+#   - every (re)start carries that filter - it is a ble_gap_adv_start() parameter, so a start that
+#     relaxes it inline would silently re-admit anyone;
+#   - closing the window rebuilds the advertisement instead of stopping it (no gap, never off the
+#     air), and the deferred restart is gated on the advertising rule, not on the window;
+#   - whitelist entries are IDENTITY addresses, and the list follows the bond store.
+echo "### source guard: a bonded core advertises whitelist-only while no window is open (E64 C)"
+adv_guard_fail=0
+
+advwanted_body=$(sed -n '/^static bool BleAdvWanted()/,/^}/p' "$APPBLE_SRC")
+if ! printf '%s\n' "$advwanted_body" | grep -q 'return AppBLEWindowOpen() || AppBLEBondCount() > 0;'; then
+    echo "FAIL $APPBLE_SRC: BleAdvWanted must be window-open OR a stored bond"
+    adv_guard_fail=1
+fi
+
+filter_body=$(sed -n '/^static void ApplyConnectFilter(bool WindowOpen)/,/^}/p' "$APPBLE_SRC")
+if ! printf '%s\n' "$filter_body" | grep -q 'const bool WhitelistOnly = !WindowOpen;' ||
+   ! printf '%s\n' "$filter_body" | grep -q 'Adv->setScanFilter(false, WhitelistOnly);'; then
+    echo "FAIL $APPBLE_SRC: the connect filter must be whitelist-only when closed and leave scans alone"
+    adv_guard_fail=1
+fi
+
+start_body=$(sed -n '/^static void StartAppAdvertising()/,/^}/p' "$APPBLE_SRC")
+if ! printf '%s\n' "$start_body" | grep -q 'ApplyConnectFilter(WindowOpen);'; then
+    echo "FAIL $APPBLE_SRC: every advertising start must carry the filter the window implies"
+    adv_guard_fail=1
+fi
+if [ "$(grep -c 'setScanFilter(false, false)' "$APPBLE_SRC")" != 0 ]; then
+    echo "FAIL $APPBLE_SRC: an inline relaxed filter is back - it re-admits any peer outside a window"
+    adv_guard_fail=1
+fi
+
+tick_body=$(sed -n '/^void AppBLETick()/,/^}/p' "$APPBLE_SRC")
+if ! printf '%s\n' "$tick_body" | grep -q 'if (BleAdvRestart && !BleConnected && AdvWanted)'; then
+    echo "FAIL $APPBLE_SRC: the deferred restart must follow the advertising rule, not the window"
+    adv_guard_fail=1
+fi
+# The window-transition branch that keeps advertising (AdvWanted) must rebuild, never stop ...
+adv_branch=$(printf '%s\n' "$tick_body" | sed -n '/^        if (AdvWanted)$/,/BleAdvRestart = true;/p')
+if ! printf '%s\n' "$adv_branch" | grep -q 'BleAdvRestart = true;' ||
+   printf '%s\n' "$adv_branch" | grep -q -- '->stop()'; then
+    echo "FAIL $APPBLE_SRC: a window change must rebuild the advertisement, not take it off the air"
+    adv_guard_fail=1
+fi
+# ... and the only stop left in the tick is the bond-less, window-less state.
+if [ "$(printf '%s\n' "$tick_body" | grep -c -- '->stop()')" != 1 ] ||
+   [ "$(printf '%s\n' "$tick_body" | grep -c 'advertising stopped: no window and no bond stored')" != 1 ]; then
+    echo "FAIL $APPBLE_SRC: the tick may only stop advertising when no window AND no bond is left"
+    adv_guard_fail=1
+fi
+if ! printf '%s\n' "$tick_body" | grep -q 'SyncBleWhitelist();'; then
+    echo "FAIL $APPBLE_SRC: the whitelist must follow the bond store (SyncBleWhitelist on a generation bump)"
+    adv_guard_fail=1
+fi
+# The filter matches the controller whitelist, which has to hold the IDENTITY address: the phone
+# connects from a rotating private address.
+auth_body=$(sed -n '/void onAuthenticationComplete(NimBLEConnInfo &ConnInfo)/,/^    }$/p' "$APPBLE_SRC")
+if ! printf '%s\n' "$auth_body" | grep -q 'whiteListAdd(ConnInfo.getIdAddress())'; then
+    echo "FAIL $APPBLE_SRC: a completed bond must whitelist its identity address (RPA rotation)"
+    adv_guard_fail=1
+fi
+if ! grep -q 'whiteListAdd(NimBLEDevice::getBondedAddress(i))' "$APPBLE_SRC"; then
+    echo "FAIL $APPBLE_SRC: the radio start must restore the whitelist from the bond store"
+    adv_guard_fail=1
+fi
+
+[ $adv_guard_fail = 0 ] && echo "PASS: a bonded core advertises whitelist-only while no window is open, and never leaves the air"
+fail=$((fail + adv_guard_fail))
+echo
+echo
+
 echo "### native WiFi Settings tests (block table, write-only password, configuration-only State, field-8 bits)"
 build_run "wifisettings" "wifi_settings_test.cpp"
 echo
