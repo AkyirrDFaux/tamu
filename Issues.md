@@ -544,10 +544,15 @@ a new one may not", while with an empty store a new phone may still pair. Conseq
 (card t_1d304c9c, item 5): its "the window opens only over USB" statement stays true and stops
 mattering for a bonded device; what remains unrecoverable is a phone whose bond is stale (forget it
 in the phone's settings) - there is no longer a device that needs USB to be reachable.
-**No rig evidence yet:** the build has not been flashed, so the air checks in the card (advertising
-runs with and without a bond and with or without a window, a bonded peer reconnects with no window, a
-stranger's connect ignored outside a window, a window still pairs, the same two states after it
-closes, and advertising resuming when a link drops) are unverified on hardware.
+**Rig check, 2026-10-28 (build 26.10.28.27, card t_4fc81fc7, host hci0 as the central):** the
+advertising rule and the empty-store path behave as described. The device is visible in a scan with
+0 bonds and with 1 bond stored and no window open (rssi -37/-38, name `Akyirr`, NUS UUID); it stops
+advertising while a link is up (0 sightings in an 8 s scan taken during the connection) and is back
+on the air within 3 s of the drop (6 sightings); `Action = 0` still pairs a new peer, Just Works with
+`000000` and passkey/MITM with a code (a wrong code is refused, and a pairing left unanswered is
+dropped 30.4 s after the connect). Two things did NOT hold on the air: the connect filter does not
+admit the peer it is meant to admit (E66), and the bond forget cannot run on an idle radio, which
+also disables the passkey-change revocation (E65).
 
 **E61 `BLE_GATT_CHR_F_NOTIFY_INDICATE_AUTHEN` cannot be carried by a NimBLE-cpp characteristic.**
 It is `0x10000` and `NimBLECharacteristic`'s `properties` argument is `uint16_t`, so the notify
@@ -564,3 +569,49 @@ to live with: `Passkey` reads back as the stored value or `000000`, but it is ne
 mirror, so an archive that copies `.SV` restores `Enabled` and `Display name` and leaves the code
 where it was; and a storage `Format()` wipes `Enabled`/`Display name` while NVS keeps the passkey.
 No code defect - recorded so the asymmetry is not mistaken for a missing persistence flag.
+
+**E65 The bond forget cannot run while the device is advertising: `Action = 1` is refused, and a
+passkey change revokes nothing until the next boot - while a reconnect in between erases the
+evidence.** Found on the rig (build 26.10.28.27, card t_4fc81fc7). `AppBLEForgetAllBonds()` deletes
+through `NimBLEDevice::deleteAllBonds()` -> `ble_gap_unpair()`, and NimBLE refuses that call while
+advertising or discovery is active (`ble_gap.c`: "We cannot delete entry from resolving list if
+there is ongoing discovery or advertising in progress", `BLE_HS_EBUSY`). This firmware advertises
+whenever no session is up (E64), so that is the normal state:
+- `Action = 1` over USB with no link: reply `FLAG_FAIL` (flags `0x4E`), store unchanged (Bond count
+  1 before and after). The same write succeeds while a link is up (1 -> 0, block Bond texts
+  cleared) and deterministically with `Enabled = false` - both only because advertising is off.
+- a passkey write (`000000` -> `123456`) with the radio up: `AppBLEEnforceBondPolicy()` calls the
+  same forget, it fails the same way, and the epoch is not stamped (correctly). The old bond kept
+  full authenticated access afterwards (a complete BLE register read with the pre-change bond).
+  The next boot does revoke when the epoch still disagrees (`passkey changed since the bonds were
+  made: forgetting 1 bond(s)` / `bonds forgotten: 1 -> 0 (ok=1)`), but any session in between
+  re-stamps the epoch with the current code from `onAuthenticationComplete`
+  (`AppBLEBondEpochStamp`), which silences that retry - observed: after the change plus one
+  authenticated session, the next boot logged `radio up ... bonds=1` and nothing else.
+Fix direction: stop advertising (and restart it) around the unpair, or delete through the store API
+(`ble_store_util_delete_peer`) instead of the GAP procedure; and do not re-stamp the epoch from a
+link authenticated with a bond older than the current code.
+
+**E66 The whitelist-only connect filter refuses the bonded peer it exists to admit.** Same build and
+card. With one bond stored and the window closed (boot log: `connect filter: whitelist-only=1`,
+`radio up ... bonds=1 whitelist=1`), the bonded central's connect times out (bleak `TimeoutError`,
+no link-layer answer) while the device keeps advertising (seen in a scan immediately after). With a
+window open the same peer connects in 1.4-1.9 s and the stored bond authenticates (Bond count
+unchanged, full BLE register read). The bond and the whitelist entry are the identity address
+(`Bond[0] = 4C:23:38:74:E6:F6`, the central's public address) while the central connects from a
+resolvable private address under controller privacy (`ll-privacy` on; the image links
+`ble_hs_pvcy_*` and has no `ble_hs_resolv_*`, i.e. controller-based privacy), so the controller's
+accept list does not match the connect address. Because the filter drops everyone alike, "a bonded
+peer reconnects with no window" and "a stranger is refused" cannot be told apart on the air today.
+Next check: an accept-list/privacy read-out (or a boot-time log naming the list) - the device log is
+not usable for this, see E67.
+
+**E67 `DeviceLog` is suppressed whenever a host holds the USB port, so rig evidence has to come from
+the register read-out or the air.** `Core/Functions/AppInterface.h` sets `Connected =
+AppUSBActive() || AppBLEActive()` and `Devices/Tamu_v2.0A/Log.h` drops every message while it is
+true; `AppUSBActive()` is `usb_serial_jtag_is_connected()`, which on this board reads true within
+~0.4 s of a reset whenever the USB cable is attached to a live host - not only while a process is
+actually speaking the protocol. A rig session therefore sees the boot banner and nothing after it,
+which is why E65/E66 had to be pinned by timing and by register block reads. If a future card needs
+runtime device logs, the sink has to change (a ring the register path can read, or logs behind an
+explicit block field) - a plain `idf.py monitor` cannot show them.
