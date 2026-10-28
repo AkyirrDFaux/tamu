@@ -496,20 +496,52 @@ t_a9cda0b9's example entry is `C4:7F:51:xx:xx:xx  Akyirr-phone`. `NimBLEDevice` 
 `getNumBonds()`, `getBondedAddress(i)` and `deleteAllBonds()`; no name is stored (NimBLE keeps
 none), so the field carries `AA:BB:CC:DD:EE:FF` and the app must not promise a name.
 
-**E64 A phone-only setup cannot open a pairing window, so a bonded device with the window closed
-is off the air until a USB host writes `Action = 0`.** Every write to the `BLE Settings` block is
-refused unless the frame arrived over USB (`Devices/Tamu_v2.0A/BleSettingsGlue.h`,
-`BleBlockWritable`), `Action = 0` included - an earlier comment on card t_1d304c9c said the open
-window would be accepted from any link, and the final firmware says otherwise. The device also
-never advertises outside a window and only opens one by itself while its bond store is empty
-(`AppBLETick`, `AppBLEAutoWindow`), and the core's button is deliberately not a trigger. So card
-t_1d304c9c's item 5 ("open the pairing window for a user not near the device's button") works only
-from the desktop app over USB; the Android panel explains the refusal and points at the USB link.
-The recoverable cases are unchanged: no bonds (a boot or `Action = 1` re-opens the five-minute
-window) and a phone whose bond is stale (forget it in the phone's settings). The unrecoverable one
-is a device that holds bonds, has a closed window and has no USB host available. An owner ruling
-is needed before the firmware relaxes it (the rule exists so a paired phone cannot re-open its own
-window).
+**E64 A phone-only setup cannot open a pairing window, so a bonded device had to be reachable
+without one (owner ruling C, 2026-10-28).** Every write to the `BLE Settings` block is refused
+unless the frame arrived over USB (`Devices/Tamu_v2.0A/BleSettingsGlue.h`, `BleBlockWritable`),
+`Action = 0` included - an earlier comment on card t_1d304c9c said the open window would be accepted
+from any link, and the final firmware says otherwise. The core's button is deliberately not a
+trigger either, so a device that held a bond, had its window closed and had no USB host available
+was simply off the air: it advertised only inside a window, and opened one by itself only while its
+bond store was empty. Ruling C (2026-10-28) puts a bonded device back on the air and leaves every
+write rule alone:
+- **bond stored, no window**: advertising runs continuously and the CONNECT filter is the
+  controller's whitelist, so the bonded phone reconnects and a stranger's connect request is ignored
+  in the link layer - the advertisement and its scan response stay unfiltered, so the name is still
+  visible to a scan;
+- **window open**: the filter is relaxed (`BLE_HCI_ADV_FILT_NONE`), so a new phone may connect and
+  pair up to the three bonds the store holds, and bonded peers are still admitted;
+- **window closes**: the advertisement is rebuilt inside the same loop pass with the whitelist
+  filter - it is never taken off the air, so there is no gap to recover from;
+- **no bond**: unchanged - nothing is advertised outside the five-minute recovery window a boot or
+  `Action = 1` opens, and `Action = 1` emptying the store falls back to exactly that behaviour.
+NimBLE mechanism: `NimBLEAdvertising::setScanFilter(false, true)` sets
+`m_advParams.filter_policy = BLE_HCI_ADV_FILT_CONN`, which `NimBLEAdvertising::start()` passes to
+`ble_gap_adv_start()` - the policy is read at start only (`start()` returns early on an already
+active advertiser), which is why every (re)start in `StartAppAdvertising` applies it and why a
+window change rebuilds the advertisement. The list it matches is the controller whitelist
+programmed by `NimBLEDevice::whiteListAdd/Remove` (`ble_gap_wl_set`), and its entries are IDENTITY
+addresses: the phone connects from a rotating private address, and this build resolves it in the
+controller from the peer IRK it stored - `ble_hs_pvcy_add_entry` and `ble_hs_pvcy_ensure_started`
+are linked and `ble_hs_resolv` is not (checked with `nm` on `firmware.elf`), i.e. controller-based
+privacy, which is what lets a whitelist match survive RPA rotation. `AppBLETick` rebuilds the
+whitelist from the store whenever `BleBondGeneration` moves, so a bond the store evicted on overflow
+does not stay admitted.
+Revocation on a passkey change, the policy-shaped pairing deadline, `Action = 1` clearing the bonds
+and the USB-only write rule are untouched. Consequences for the app (card t_1d304c9c, item 5): its
+"the window opens only over USB" statement stays true and stops mattering for a bonded device; what
+remains unrecoverable is a phone whose bond is stale (forget it in the phone's settings) and a
+device with no bond and no USB host (its recovery window is the only way in).
+**No rig evidence yet:** the build has not been flashed, so the air checks in the card (bonded peer
+reconnects with the window closed, a stranger's connect ignored, a window still pairs, and the same
+two states after it closes) are unverified on hardware.
+Proposed doc change (parent only): `7b575f3` has already restated the rule at
+`Docs/Services/App Interface.md:42` as "It advertises whenever no device is connected over BLE;
+connecting is limited to bonded peers, and a new device can pair only while a window is open (or
+while no bond is stored)." One nuance is left for a device with no bond and its window closed: it
+advertises nothing at all then (an empty filter could admit nobody), so the sentence is exact only
+as "...advertises whenever no device is connected over BLE and either a bond is stored or a window
+is open".
 
 **E61 `BLE_GATT_CHR_F_NOTIFY_INDICATE_AUTHEN` cannot be carried by a NimBLE-cpp characteristic.**
 It is `0x10000` and `NimBLECharacteristic`'s `properties` argument is `uint16_t`, so the notify
