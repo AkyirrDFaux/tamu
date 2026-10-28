@@ -52,8 +52,8 @@ Block type `0x0C`, core only, **compiled in only when the WiFi option is enabled
 | SSID | 1 | `Text` | P | |
 | Password | 2 | `Text` | W | write-only: it always reads back empty and is stored in NVS outside the register file |
 | State | 3 | `Enum` | RO | see below |
-| IP address | 4 | `Uint32` | RO | The address as a 32-bit number (192.168.1.42 = 0xC0A8012A); 0 when not connected |
+| IP address | 4 | `Undefined` | RO | 16 raw bytes, the address in network order; all-zero when not connected. An IPv4 address is reported IPv4-mapped (::ffff:a.b.c.d) |
 
 `State`: `0` Disconnected (enabled, credentials present, not associated), `1` Connecting, `2` Connected, `3` No SSID, `4` No password, `5` Wrong password (association refused), `6` Error. With no radio implemented only `0`, `3` and `4` are reported, because an incomplete configuration is detectable without one.
 
-`IP address` is the numeric form of the dotted quad — 192.168.1.42 is `0xC0A8012A` — so a client formats it out of the value itself (`v >> 24`, `v >> 16 & 0xFF`, `v >> 8 & 0xFF`, `v & 0xFF`) and never out of the register's little-endian wire order. A 32-bit address makes the WiFi option IPv4 only: IPv6 takes 16 bytes, or text, so this field does not carry one. A mask, a gateway and DNS are further keys of the address field (key 0 address, 1 mask, 2 gateway, 3 DNS) rather than new fields.
+`IP address` holds 16 raw bytes of the address in network order, and all-zero means no address. An IPv4-only network reports its address IPv4-mapped (`::ffff:a.b.c.d`, bytes 10 and 11 set to `0xFF`), so one field carries both families and the app decodes it one way. The firmware does not format the value: the app renders the standard grouped-hex form. IPv6 is already enabled in this build (`CONFIG_LWIP_IPV6`, `CONFIG_LWIP_IPV6_NUM_ADDRESSES = 3`), so the 16-byte width needs no configuration change.
