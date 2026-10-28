@@ -111,3 +111,75 @@ static bool BlePasskeyStoreSave(const char *Text)
         DeviceLog("BLESEC", "passkey store write failed (rc=%d)", (int)Rc);
     return Rc == ESP_OK;
 }
+
+// ===== Which policy the stored bonds were made under =====
+//
+// A bond is only worth anything under the passkey it was created with. A phone reconnecting with
+// its stored LTK comes up encrypted and bonded but NOT authenticated, so after a passkey change the
+// connect gate refuses it - forever, because a phone does not re-pair on its own while it believes
+// it is bonded (nimble's repeat-pairing path ignores the request until the application deletes the
+// bond) and the only other way out is the USB-only Action=1. The same hole is a security one: a
+// bond made under the OLD code would survive a rotation, so rotating the code would revoke nothing.
+//
+// So the passkey the store was built under is remembered next to it, and any change forgets the
+// bonds it invalidates (AppBLEEnforceBondPolicy in Devices/Tamu_v2.0A/AppBLE.h, called when the
+// policy is applied and again at radio start).
+//
+// It has to be persistent, not RAM: `Enabled = false` is a legal USB write, so the passkey can be
+// changed while the radio - and with it the bond store's API - is down. The next radio start
+// applies the change, which for a disabled radio is the same boot.
+//
+// The stamp is the 6-byte passkey TEXT, not a hash: it is not a secret (the block serves the
+// passkey to its reader, see Blocks/BleSettings.h) and comparing texts cannot collide. Unlike the
+// passkey, the "000000" sentinel IS stored here - an absent stamp means "unknown", which is a
+// third state: a fresh partition, or a device upgraded from a build that predates this rule. The
+// reader resolves it by policy (AppBLEEnforceBondPolicy): the only build that could have written
+// such a store had no passkey at all, so its bonds are kept under Just Works and revoked once if
+// the device now runs with a passkey, which is the safe direction.
+#define BLE_BOND_EPOCH_NVS_KEY "bondpass"
+
+// Reads the stamp. False when none is stored (see above); the caller treats that as "the bonds do
+// not match the current policy".
+static bool BleBondEpochLoad(char *Out)
+{
+    if (!BlePasskeyStoreReady())
+        return false;
+
+    nvs_handle_t H;
+    if (nvs_open(BLE_PASSKEY_NVS_NS, NVS_READONLY, &H) != ESP_OK)
+        return false;
+
+    char Buf[BLE_PASSKEY_LEN];
+    size_t Len = sizeof(Buf);
+    const esp_err_t Rc = nvs_get_blob(H, BLE_BOND_EPOCH_NVS_KEY, Buf, &Len);
+    nvs_close(H);
+
+    // A key that is not a whole passkey text is not a stamp either: treat it as unknown.
+    if (Rc != ESP_OK || Len != BLE_PASSKEY_LEN || !BlePasskeyDigits(Buf))
+        return false;
+    memcpy(Out, Buf, BLE_PASSKEY_LEN);
+    return true;
+}
+
+// Records `Text` as the policy the bond store is under. False when the partition refused it; the
+// caller keeps the value in RAM, so the comparison stays right until the next boot re-reads it.
+static bool BleBondEpochSave(const char *Text)
+{
+    if (!BlePasskeyDigits(Text))
+        return false;
+    if (!BlePasskeyStoreReady())
+        return false;
+
+    nvs_handle_t H;
+    if (nvs_open(BLE_PASSKEY_NVS_NS, NVS_READWRITE, &H) != ESP_OK)
+        return false;
+
+    esp_err_t Rc = nvs_set_blob(H, BLE_BOND_EPOCH_NVS_KEY, Text, BLE_PASSKEY_LEN);
+    if (Rc == ESP_OK)
+        Rc = nvs_commit(H);
+    nvs_close(H);
+
+    if (Rc != ESP_OK)
+        DeviceLog("BLESEC", "bond policy stamp write failed (rc=%d)", (int)Rc);
+    return Rc == ESP_OK;
+}

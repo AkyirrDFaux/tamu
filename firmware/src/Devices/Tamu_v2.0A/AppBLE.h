@@ -9,6 +9,7 @@
 
 #include "NimBLEDevice.h"
 #include "Blocks/BleSecurityPolicy.h"
+#include "BlePasskeyStore.h" // the passkey and the policy stamp of the bond store (NVS `ble`)
 
 #define BLE_SERVICE_UUID "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define BLE_RX_CHAR_UUID "6E400002-B5A3-F393-E0A9-E50E24DCCA9E" // app writes here
@@ -46,11 +47,19 @@ static volatile uint16_t BleMtu = 23;  // negotiated ATT MTU (ATT default)
 // same block owns the radio's enable state and the advertised name (AppBLESettingsApply).
 #define BLE_WINDOW_MS 60000           // connectable window opened by the block's Action field
 #define BLE_AUTO_WINDOW_MS 300000     // ... and opened by itself for 5 min while no bond is stored
-#define BLE_SECURE_DEADLINE_MS 5000   // a link that has not become secure by then is dropped
+// A link that has not completed pairing by its deadline is dropped (AppBLETick). The budget itself
+// is policy-shaped and lives with the policy (Blocks/BleSecurityPolicy.h, BleSecureBudgetMs): Just
+// Works waits for one tap, a passkey waits for a person to read a prompt and type six digits. Both
+// fit inside the connectable window the pairing was started in, which is why the passkey figure has
+// to stay below BLE_WINDOW_MS - pinned here so the two numbers cannot drift apart again.
+static_assert(BleSecureBudgetPasskeyMs < BLE_WINDOW_MS,
+              "a passkey pairing must fit inside the window that opened it");
 
 static volatile bool BleSecured = false;      // current link encrypted, bonded (and authenticated)
 static uint32_t BleWindowEndMs = 0;           // 0 = the connectable window is closed
 static uint32_t BleSecureDeadlineMs = 0;      // 0 = no unsecured link pending
+static uint32_t BleSecureBudgetUsedMs = 0;    // the budget the pending link was granted (for the log)
+static bool BleSecureLinkMitm = false;        // ... and whether it was granted the passkey budget
 static uint16_t BleConnHandle = 0xFFFF;
 static bool BleWindowApplied = false;         // advertising/filter state matches the window
 // The recovery window is opened once per "bond store is empty" episode: set when it has been
@@ -256,11 +265,27 @@ bool AppBLEBondText(int Index, char *Out, size_t Len)
     return true;
 }
 
+// ===== Bonds vs the passkey they were made under =====
+//
+// A bond is only worth anything under the passkey that created it: the phone comes back encrypted
+// and bonded but NOT authenticated, and the connect gate refuses that - permanently, because a
+// phone does not re-pair while it still believes it is bonded. So the code the store was built under
+// is stamped (NVS, right beside the passkey; BlePasskeyStore.h), a completed bond stamps it, and any
+// change of code forgets the bonds it invalidates. Without this the owner's own upgrade path -
+// pair Just Works, then set a passkey - leaves the phone locked out, and rotating the code would
+// revoke nothing.
+static char BleBondEpoch[BLE_PASSKEY_LEN]; // the passkey text the stored bonds were made under
+static bool BleBondEpochKnown = false;     // false = no stamp (fresh partition, or pre-rule upgrade)
+
 // Drops every bond and the whitelist that mirrors it: a phone that was bonded is a stranger
 // afterwards and has to pair again inside a window.
+//
+// The guard is the server, not BleRadioUp: at radio start the store has to be revocable (a passkey
+// changed while the radio was off is applied there) before BleRadioUp is set at the end of that
+// function. A created server means NimBLE is initialised, which is all the bond API needs.
 bool AppBLEForgetAllBonds()
 {
-    if (!BleRadioUp)
+    if (!BleServer)
         return false;
     const int Before = NimBLEDevice::getNumBonds();
     const bool Ok = NimBLEDevice::deleteAllBonds();
@@ -274,9 +299,63 @@ bool AppBLEForgetAllBonds()
             break;
     }
 
+    // An empty store is under whatever code is current, so stamping it here is what keeps the
+    // next bond - and a reboot - from looking like a stale store (see AppBLEEnforceBondPolicy).
+    memcpy(BleBondEpoch, StaticVol.BleSet.Passkey, BLE_PASSKEY_LEN);
+    BleBondEpochKnown = true;
+    BleBondEpochSave(BleBondEpoch);
+
     DeviceLog("APPBLE", "bonds forgotten: %d -> %d (ok=%d)", Before, NimBLEDevice::getNumBonds(), Ok);
     AppBLEBondStoreChanged(); // the block's Bond texts follow in the next loop pass
     return Ok;
+}
+
+// Records the policy the store is under. Cheap and idempotent: only a genuine change reaches NVS,
+// which is why a reconnect does not wear the partition.
+void AppBLEBondEpochStamp()
+{
+    if (BleBondEpochKnown && memcmp(BleBondEpoch, StaticVol.BleSet.Passkey, BLE_PASSKEY_LEN) == 0)
+        return;
+    memcpy(BleBondEpoch, StaticVol.BleSet.Passkey, BLE_PASSKEY_LEN);
+    BleBondEpochKnown = true;
+    // A refusal only costs a comparison after the next boot (the store is then forgotten once);
+    // the RAM copy keeps this boot's decision correct either way.
+    BleBondEpochSave(BleBondEpoch);
+}
+
+// Called whenever the policy can have changed - AppBLEApplySecurityPolicy (a passkey written while
+// the radio is up) and AppBLERadioStart (one written while the radio was off, which is the same
+// boot). Forgets the bonds if they were made under a different code.
+void AppBLEEnforceBondPolicy()
+{
+    // The bond store's API needs the host; before createServer() there is nothing to compare
+    // against, and the radio start calls this again once the store exists.
+    if (!BleServer)
+        return;
+
+    if (!BleBondEpochKnown)
+        BleBondEpochKnown = BleBondEpochLoad(BleBondEpoch);
+
+    const char *Now = StaticVol.BleSet.Passkey;
+    const bool Unknown = !BleBondEpochKnown;
+    if (!Unknown && memcmp(BleBondEpoch, Now, BLE_PASSKEY_LEN) == 0)
+        return;
+
+    // An unstamped store predates this rule, and the only build that could have written it had no
+    // passkey at all - its bonds are Just Works bonds. Under a passkey they can never authenticate,
+    // so they go; under Just Works they are exactly what the current policy asks for, so they are
+    // kept and merely stamped (no re-pairing for every device that upgrades).
+    const int Bonds = NimBLEDevice::getNumBonds();
+    const bool Invalidated = !Unknown || BlePasskeyEnabled(Now);
+    if (Bonds > 0 && Invalidated)
+    {
+        // The phone that paired under the old code cannot produce an authenticated link, and its
+        // stored key would keep it connecting - it has to pair again inside a window.
+        DeviceLog("APPBLE", "passkey changed since the bonds were made: forgetting %d bond(s)", Bonds);
+        AppBLEForgetAllBonds(); // re-stamps the epoch with the current code
+        return;
+    }
+    AppBLEBondEpochStamp(); // nothing to revoke: just record which code the store is under now
 }
 
 // Applies a changed passkey policy to the radio. Effective for the next pairing; the ATT
@@ -300,6 +379,11 @@ void AppBLEApplySecurityPolicy()
         DeviceLog("APPBLE", "dropping the Just Works session: a passkey is now set");
         BleServer->disconnect(BleConnHandle);
     }
+
+    // The links that were paired under the previous code are worthless now - and would keep the
+    // phone connecting with a bond it can never authenticate. Done after the policy is in force, so
+    // the next connection inside a window pairs fresh and gets the prompt.
+    AppBLEEnforceBondPolicy();
 }
 
 class BleServerCallbacks : public NimBLEServerCallbacks
@@ -357,7 +441,16 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         const int Rc = ble_gap_security_initiate(ConnInfo.getConnHandle());
         if (Rc != 0)
             DeviceLog("APPBLE", "security initiate failed: rc=%d", Rc);
-        BleSecureDeadlineMs = TimeFromBoot() + BLE_SECURE_DEADLINE_MS;
+
+        // The pairing has to complete before this deadline. The budget comes from the policy being
+        // enforced: with just works it waits for one tap, with a passkey it waits for a person to
+        // read the prompt and type six digits (BleSecureBudgetMs; the old single 5 s figure dropped
+        // every passkey pairing mid-procedure). AppBLETick drops the link when it passes and says
+        // which case it was.
+        const BleSecurityPolicy Policy = BlePolicyNow();
+        BleSecureBudgetUsedMs = BleSecureBudgetMs(Policy);
+        BleSecureLinkMitm = Policy.Mitm;
+        BleSecureDeadlineMs = TimeFromBoot() + BleSecureBudgetUsedMs;
     }
 
     void onDisconnect(NimBLEServer *PServer, NimBLEConnInfo &ConnInfo, int Reason) override
@@ -435,6 +528,10 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         // the store and the stack evicted the oldest entry inside the same callback, which leaves
         // getNumBonds() unchanged. Tell the block to re-read the entries rather than the size.
         AppBLEBondStoreChanged();
+
+        // The store is now under the code this bond was just made with. A reconnect only compares
+        // (AppBLEBondEpochStamp is idempotent), so the partition is not written per connection.
+        AppBLEBondEpochStamp();
     }
 
     // The code the user configured, for the DISPLAY_ONLY policy. NimBLE-cpp only asks here when
@@ -610,6 +707,11 @@ static bool AppBLERadioStart()
     // The bonds already in the store are the whitelist: a bonded phone's identity address has to
     // be there from boot, or a reconnect after a reboot would find an empty filter. NimBLE does
     // not restore the list itself - the bond store does, not the controller's whitelist.
+    // Before that, revoke the ones the current passkey invalidates: a code changed while the radio
+    // was down (Enabled = false is a USB-only write, so the store could not be touched then) is
+    // applied here, so a stale bond is never even admitted to the whitelist.
+    AppBLEEnforceBondPolicy();
+
     const int Bonds = NimBLEDevice::getNumBonds();
     for (int i = 0; i < Bonds; i++)
         NimBLEDevice::whiteListAdd(NimBLEDevice::getBondedAddress(i));
@@ -770,12 +872,17 @@ void AppBLETick()
 
     // A connection that has not become encrypted+bonded by its deadline belongs to a peer that
     // never started - or never completed - pairing. Drop it; a session is only ever established
-    // by onAuthenticationComplete.
+    // by onAuthenticationComplete. The log names the case, because the two have different causes:
+    // with a passkey the phone had a dialog up and nobody typed the code in time, without one the
+    // peer simply never paired.
     if (!BleSecured && BleSecureDeadlineMs != 0 &&
         (int32_t)(TimeFromBoot() - BleSecureDeadlineMs) >= 0)
     {
         BleSecureDeadlineMs = 0;
-        DeviceLog("APPBLE", "dropping a link that did not become secure");
+        DeviceLog("APPBLE", "dropping a link that did not become secure within %u ms (%s)",
+                  (unsigned)BleSecureBudgetUsedMs,
+                  BleSecureLinkMitm ? "passkey set: the code was not entered"
+                                    : "just works: pairing never completed");
         if (BleServer && BleConnHandle != 0xFFFF)
             BleServer->disconnect(BleConnHandle);
     }

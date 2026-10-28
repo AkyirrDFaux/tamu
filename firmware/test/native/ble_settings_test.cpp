@@ -329,11 +329,44 @@ static void TestBondRefresh()
     CHECK(BleBondRefreshDue(S, 7, 3, 0x00000200u)); // wrapped past the due point
 }
 
+// --- how long a link may stay unsecured ---------------------------------------
+//
+// The deadline the device grants a fresh link is selected by the policy (AppBLE.h's onConnect asks
+// AppBLETick for it through BleSecureBudgetMs). The unit that matters: Just Works has one tap to
+// wait for, a passkey has a person reading a prompt and typing six digits, and one short figure for
+// both drops every passkey pairing mid-procedure - the failure that looks like a wrong code.
+static void TestSecureBudget()
+{
+    const BleSecurityPolicy JustWorks = BleSecurityPolicyFrom("000000");
+    const BleSecurityPolicy Passkey = BleSecurityPolicyFrom("123456");
+
+    CHECK(BleSecureBudgetMs(JustWorks) == BleSecureBudgetJustWorksMs);
+    CHECK(BleSecureBudgetMs(Passkey) == BleSecureBudgetPasskeyMs);
+
+    // The passkey budget has to be the generous one: it covers a human step ...
+    CHECK(BleSecureBudgetPasskeyMs > BleSecureBudgetJustWorksMs);
+    CHECK(BleSecureBudgetPasskeyMs >= 20000);
+
+    // ... and it still has to fit inside the 60 s connectable window (BLE_WINDOW_MS in AppBLE.h,
+    // which static_asserts the pair stays ordered), so one window always holds the whole procedure.
+    CHECK(BleSecureBudgetPasskeyMs < 60000);
+    CHECK(BleSecureBudgetJustWorksMs <= 60000);
+
+    // Any policy shape resolves, and a malformed text is Just Works (never a third budget).
+    const char *Texts[] = {"000000", "000001", "999999", "12a456", ""};
+    for (const char *Text : Texts)
+    {
+        const BleSecurityPolicy P = BleSecurityPolicyFrom(Text);
+        CHECK(BleSecureBudgetMs(P) == (P.Mitm ? BleSecureBudgetPasskeyMs : BleSecureBudgetJustWorksMs));
+    }
+}
+
 int main()
 {
     TestPolicy();
     TestBlockTable();
     TestBondRefresh();
+    TestSecureBudget();
 
     printf("ble_settings: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;

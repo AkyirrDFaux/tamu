@@ -110,3 +110,27 @@ inline BleSecurityPolicy BleSecurityPolicyFrom(const char *PasskeyText)
     Policy.TxFlags = (uint16_t)(BleAttNotify | BleAttNotifyEncrypted);
     return Policy;
 }
+
+// ===== How long a new link may stay unsecured =====
+//
+// The device drops a link that has not completed pairing by its deadline (AppBLETick in
+// Devices/Tamu_v2.0A/AppBLE.h). The budget is policy-shaped because the phone's half of the
+// procedure is: Just Works is one tap - or nothing at all on iOS - and is over in well under a
+// second, while a passkey makes the phone show a dialog and a PERSON type six digits. One short
+// deadline for both drops every passkey pairing half-finished, which from the phone's side looks
+// exactly like "the code was wrong".
+//
+// The clock is granted at connect and not restarted when pairing starts, because there is no
+// application-visible "pairing started" event to restart it from: nimble-cpp injects the
+// configured passkey straight out of the BLE_GAP_EVENT_PASSKEY_ACTION handler
+// (NimBLEServer.cpp:669-683, ble_sm_inject_io) and only calls onPassKeyDisplay() when the static
+// passkey is still its 123456 default. The procedure begins as soon as onConnect asks for
+// security, so "from connect" is "from the prompt" for all practical purposes - the passkey
+// figure is simply sized for a human, and both figures stay inside one connectable window.
+constexpr uint32_t BleSecureBudgetJustWorksMs = 5000;
+constexpr uint32_t BleSecureBudgetPasskeyMs = 30000;
+
+inline uint32_t BleSecureBudgetMs(const BleSecurityPolicy &Policy)
+{
+    return Policy.Mitm ? BleSecureBudgetPasskeyMs : BleSecureBudgetJustWorksMs;
+}

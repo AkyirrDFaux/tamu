@@ -120,6 +120,62 @@ echo "### native BLE Settings tests (Just Works vs passkey policy, and the block
 build_run "blesettings" "ble_settings_test.cpp"
 echo
 
+# t_367f86d0 round 2, structural half. Two rules the radio code owns, neither of which the host can
+# link (AppBLE.h pulls NimBLE, the host task and NVS), asserted on the source:
+#   - a link's security deadline comes from the policy, not from one fixed figure: a passkey pairing
+#     is a person typing six digits, so the 5 s budget that suits Just Works dropped it mid-pairing;
+#   - a passkey change revokes the bonds it invalidates. A phone reconnecting with a bond made under
+#     the old code comes up encrypted and bonded but NOT authenticated, which the connect gate
+#     refuses forever, so the change has to forget the store - at the write (policy applied) AND at
+#     radio start (the passkey can be changed while the radio is off, where the store is unreachable).
+echo "### source guard: policy-shaped secure deadline, and a passkey change revokes its bonds"
+APPBLE_SRC="src/Devices/Tamu_v2.0A/AppBLE.h"
+BLESTORE_SRC="src/Devices/Tamu_v2.0A/BlePasskeyStore.h"
+blessec_guard_fail=0
+
+# The fixed 5 s deadline is gone, and onConnect grants the budget the policy selects.
+if [ "$(grep -c 'BLE_SECURE_DEADLINE_MS' "$APPBLE_SRC")" != 0 ]; then
+    echo "FAIL $APPBLE_SRC: the single fixed secure deadline is back (it must come from the policy)"
+    blessec_guard_fail=1
+fi
+connect_body=$(sed -n '/void onConnect(NimBLEServer/,/^    }$/p' "$APPBLE_SRC")
+if ! printf '%s\n' "$connect_body" | grep -q 'BleSecureBudgetUsedMs = BleSecureBudgetMs(Policy);' ||
+   ! printf '%s\n' "$connect_body" | grep -q 'BleSecureDeadlineMs = TimeFromBoot() + BleSecureBudgetUsedMs;'; then
+    echo "FAIL $APPBLE_SRC: onConnect must grant the policy's budget (BleSecureBudgetMs)"
+    blessec_guard_fail=1
+fi
+# ... and the drop says which case it was, so a dropped passkey pairing is not silent.
+if ! sed -n '/^void AppBLETick()/,/^}/p' "$APPBLE_SRC" | grep -q 'the code was not entered'; then
+    echo "FAIL $APPBLE_SRC: the secure-deadline drop must name the passkey case"
+    blessec_guard_fail=1
+fi
+
+# The bond revocation is reached from both places a passkey can change, and it really forgets.
+apply_body=$(sed -n '/^void AppBLEApplySecurityPolicy()/,/^}/p' "$APPBLE_SRC")
+if ! printf '%s\n' "$apply_body" | grep -q 'AppBLEEnforceBondPolicy();'; then
+    echo "FAIL $APPBLE_SRC: AppBLEApplySecurityPolicy must revoke bonds the new passkey invalidates"
+    blessec_guard_fail=1
+fi
+radio_body=$(sed -n '/^static bool AppBLERadioStart()/,/^}/p' "$APPBLE_SRC")
+if ! printf '%s\n' "$radio_body" | grep -q 'AppBLEEnforceBondPolicy();'; then
+    echo "FAIL $APPBLE_SRC: the radio start must apply a passkey change made while the radio was down"
+    blessec_guard_fail=1
+fi
+enforce_body=$(sed -n '/^void AppBLEEnforceBondPolicy()/,/^}/p' "$APPBLE_SRC")
+if ! printf '%s\n' "$enforce_body" | grep -q 'AppBLEForgetAllBonds();'; then
+    echo "FAIL $APPBLE_SRC: AppBLEEnforceBondPolicy must forget the invalidated bonds"
+    blessec_guard_fail=1
+fi
+# The stamp of "which code the bonds were made under" has to be persistent: a passkey can be changed
+# with the radio off, and the store cannot be touched then.
+if [ "$(grep -c 'nvs_set_blob(H, BLE_BOND_EPOCH_NVS_KEY' "$BLESTORE_SRC")" != 1 ]; then
+    echo "FAIL $BLESTORE_SRC: the bond-policy stamp must be written to NVS"
+    blessec_guard_fail=1
+fi
+[ $blessec_guard_fail = 0 ] && echo "PASS: deadline from the policy, passkey change revokes its bonds (stamp in NVS)"
+fail=$((fail + blessec_guard_fail))
+echo
+
 echo "### native WiFi Settings tests (block table, write-only password, configuration-only State, field-8 bits)"
 build_run "wifisettings" "wifi_settings_test.cpp"
 echo
