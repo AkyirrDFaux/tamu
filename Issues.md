@@ -509,17 +509,3 @@ to live with: `Passkey` reads back as the stored value or `000000`, but it is ne
 mirror, so an archive that copies `.SV` restores `Enabled` and `Display name` and leaves the code
 where it was; and a storage `Format()` wipes `Enabled`/`Display name` while NVS keeps the passkey.
 No code defect - recorded so the asymmetry is not mistaken for a missing persistence flag.
-
-**E63 `App Active` is now a bit field and WiFi has its own block, neither of which the docs carry.**
-`Docs/Services/System Block and Device Commands.md:23` still describes field 8 as an `Enum`
-(No/USB/BLE) and `:24` keeps `WiFi connection information` at 8.1. The owner's spec makes field 8 a
-**uint8 bit field** - bit 0 USB, bit 1 BLE, bit 2 WiFi (reserved, never set), several may be true
-at once - and gives WiFi a static block of its own: `WiFi Settings`, type `0x0C`, **compile-in and
-absent on a stock core**: 0 `Enabled` Bool P; 1 `SSID` Text P; 2 `Password` Text write-only (a read
-answers empty); 3 `State` Enum RO - 0 Disconnected, 1 Connecting, 2 Connected, 3 No SSID,
-4 No password, 5 Wrong password, 6 Error; 4 `IP address` `Undefined`, 16 bytes RO, network order,
-all-zero = no address, IPv4 reported IPv4-mapped (`::ffff:a.b.c.d`). Proposed doc change (parent
-only): rewrite the field-8 row as the bit field, replace the 8.1 row with a `WiFi Settings` section
-in the block tables, and add `0x0C` to the block-type list (`TODO.md`, "App Active enum: add
-`WiFi`", is superseded by the bit field and can go). The app side is implemented (t_41876f06); the
-firmware block is a separate card, so `B5` above stays open until it lands.

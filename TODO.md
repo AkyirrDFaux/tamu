@@ -502,8 +502,6 @@ Open:
   UX pass (doc-conformance gap, not a plan change).
 
 - Router capability bit: reserve one for the router service so the documented capability can be set.
-- App Active enum: add `WiFi` (`Enums.h:34-38`) when that work starts. E10 dropped `LegacyBt` from
-  the documents, so it is no longer listed as a planned state.
 - [ ] **Valu app works standalone but NOT when launched by the bootloader (open; candidate fix
       applied, unverified).** Verified
       2026-10-07: the identical app image, ISP-flashed at 0x0 (no bootloader), runs and enumerates
