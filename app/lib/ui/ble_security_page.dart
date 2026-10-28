@@ -418,6 +418,17 @@ class _BleSecurityPageState extends State<BleSecurityPage>
         : '${bleModeLabel(snapshot.mode)} - no code required';
   }
 
+  /// One of the two E66 addresses: the device's own text, `no link judged yet` when it answered
+  /// with an empty field, and `-` when it did not answer at all.
+  String _lastAddressText(
+    BleSecuritySnapshot snapshot,
+    int field,
+    String address,
+  ) {
+    if (!snapshot.answeredField(field)) return '-';
+    return address.isEmpty ? 'no link judged yet' : address;
+  }
+
   @override
   Widget build(BuildContext context) {
     final actions = [
@@ -631,9 +642,63 @@ class _BleSecurityPageState extends State<BleSecurityPage>
             ],
           ),
           const SizedBox(height: Spacing.lg),
+          // The E66 read-out: which link the device judged last and how it ended. The phone could
+          // not tell a refused stranger from a bonded peer whose address it did not recognise,
+          // and the device's log is dropped while a host holds the link, so this card is the only
+          // place that answer survives a connect.
+          InfoCard(
+            title: 'Last judged link',
+            children: [
+              InfoRow(
+                'Verdict',
+                snapshot.answeredField(bleFieldLastLink)
+                    ? bleVerdictLabel(snapshot.lastLink)
+                    : '-',
+                labelWidth: 120,
+              ),
+              if (snapshot.answeredField(bleFieldLastLink))
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    Spacing.xl,
+                    Spacing.xs,
+                    Spacing.xl,
+                    Spacing.sm,
+                  ),
+                  child: Text(
+                    bleVerdictDetail(snapshot.lastLink),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              InfoRow(
+                'Identity judged',
+                _lastAddressText(snapshot, bleFieldLastPeer, snapshot.lastPeer),
+                labelWidth: 120,
+              ),
+              InfoRow(
+                'Connected from',
+                _lastAddressText(snapshot, bleFieldLastAir, snapshot.lastAir),
+                labelWidth: 120,
+              ),
+              if (bleLastLinkDetail(snapshot) != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    Spacing.xl,
+                    Spacing.xs,
+                    Spacing.xl,
+                    Spacing.md,
+                  ),
+                  child: Text(
+                    bleLastLinkDetail(snapshot)!,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: Spacing.lg),
           Text(
-            'Everything above is the block\'s own: the mode, the bond list, the window and the '
-            'advertised name are computed and reported by the device. The passkey is stored on '
+            'Everything above is the block\'s own: the mode, the bond list, the window, the '
+            'advertised name and the last judged link are computed and reported by the device. '
+            'The passkey is stored on '
             'the device itself and survives a firmware update; the bonds do too, so they are '
             'cleared by "Forget all bonds" or by changing the passkey.',
             style: Theme.of(context).textTheme.bodySmall,

@@ -6,7 +6,8 @@
 /// what the firmware code defines for each block type.
 library;
 
-import 'ble_security.dart' show bleActionLabels, bleModeLabels;
+import 'ble_security.dart'
+    show bleActionLabels, bleModeLabels, bleVerdictLabels;
 import 'types.dart';
 import 'wifi_settings.dart' show wifiStateLabels;
 
@@ -201,6 +202,12 @@ const _bleSettingsFields = [
   FieldInfo('Enabled'),
   FieldInfo('Display name', maxChars: 16),
   FieldInfo('Advertised name', maxChars: 16),
+  // The E66 read-out of the last judged link (fields 9-11). Both addresses are the block's own
+  // 20-byte texts; `Last link` is the verdict, and its labels are the firmware's `BleLinkVerdict`
+  // vocabulary (`core/ble_security.dart` `bleVerdictLabels`), which the panel spells out.
+  FieldInfo('Last peer', maxChars: 20),
+  FieldInfo('Last air', maxChars: 20),
+  FieldInfo('Last link', enumValues: bleVerdictLabels),
 ];
 
 const Map<BlockType, BlockInfo> _blockRegistry = {

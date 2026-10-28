@@ -109,7 +109,7 @@ void main() {
   // The BLE Settings block (firmware BlockType 0x0B, core/ble_security.dart). The panel reads the
   // fields by number and the register page names them from here, so both the order and the two
   // enum label sets matter.
-  test('the BLE Settings block names its nine fields in table order', () {
+  test('the BLE Settings block names its twelve fields in table order', () {
     final ble = blockInfoFor(BlockType.bleSettings)!;
     expect(ble.typeName, 'BLE Settings');
     expect(ble.fields.map((f) => f.name), [
@@ -122,6 +122,9 @@ void main() {
       'Enabled',
       'Display name',
       'Advertised name',
+      'Last peer',
+      'Last air',
+      'Last link',
     ]);
     // The passkey is a secret in the app's sense: masked on every read-out, never pre-filled.
     expect(ble.field(bleFieldPasskey)!.secret, isTrue);
@@ -132,6 +135,10 @@ void main() {
     expect(ble.field(bleFieldWindow)!.unit, 'ms');
     // Address only: the device's bond store keeps no peer name (Issues.md E60).
     expect(ble.field(bleFieldBond)!.name, 'Bond address');
+    // The E66 read-out's verdict prints the firmware's own vocabulary, never "Enum 4".
+    expect(ble.field(bleFieldLastLink)!.enumValues, bleVerdictLabels);
+    expect(ble.field(bleFieldLastPeer)!.maxChars, 20);
+    expect(ble.field(bleFieldLastAir)!.maxChars, 20);
   });
 
   // Every call site bounds-checks before naming a field (register_page_tiles.dart,

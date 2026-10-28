@@ -76,6 +76,9 @@ void main() {
           bleFieldEnabled,
           bleFieldDisplayName,
           bleFieldAdvertisedName,
+          bleFieldLastPeer,
+          bleFieldLastAir,
+          bleFieldLastLink,
         ],
         [for (var i = 0; i < bleFieldCount; i++) i],
       );
@@ -184,6 +187,59 @@ void main() {
       // value a two-byte read would truncate.
       final snapshot = BleSecuritySnapshot.fromReads(block(windowMs: 300000));
       expect(snapshot.windowMs, 300000);
+    });
+
+    test('reads the E66 last-link read-out and the verdict it names', () {
+      final snapshot = BleSecuritySnapshot.fromReads({
+        bleFieldLastPeer: read(
+          DataType.text.value,
+          text('C4:7F:51:AA:BB:CC', 20),
+        ),
+        bleFieldLastAir: read(
+          DataType.text.value,
+          text('5E:9A:1B:2C:3D:4E', 20),
+        ),
+        bleFieldLastLink: read(DataType.enum_.value, [bleVerdictAdmitted]),
+      });
+
+      expect(snapshot.lastPeer, 'C4:7F:51:AA:BB:CC');
+      expect(snapshot.lastAir, '5E:9A:1B:2C:3D:4E');
+      expect(snapshot.lastLink, bleVerdictAdmitted);
+      // The two differing is the resolved rotating address, which is what E66 exists to show.
+      expect(snapshot.lastAddressResolved, isTrue);
+      expect(bleVerdictLabel(snapshot.lastLink), 'Admitted');
+
+      // An unanswered verdict is not a device state: it keeps the `None` default and the panel
+      // prints `-` for it rather than "No link judged" (a snapshot that answered *something* is
+      // the only one that can carry a missing field).
+      final skipped = BleSecuritySnapshot.fromReads({
+        bleFieldMode: read(DataType.enum_.value, [bleModeJustWorks]),
+      });
+      expect(skipped.lastLink, bleVerdictNone);
+      expect(skipped.answeredField(bleFieldLastLink), isFalse);
+      expect(skipped.lastAddressResolved, isFalse);
+    });
+
+    test('the verdict vocabulary is the firmware BleLinkVerdict numbering', () {
+      // BleAdmissionPolicy.h: 0 unjudged, 1 pending, 2 admitted, 3-6 the four refusals. The
+      // numbers are wire values, so a re-ordered firmware enum must fail here rather than label
+      // a refusal as an admission.
+      expect(
+        bleVerdictLabels.keys.toList()..sort(),
+        List.generate(7, (i) => i),
+      );
+      expect(
+        bleVerdictLabel(bleVerdictRefusedNotBonded),
+        'Refused: not bonded',
+      );
+      expect(bleVerdictDetail(bleVerdictNone), contains('booted'));
+      expect(
+        bleVerdictDetail(bleVerdictRefusedNotBonded),
+        contains('stranger'),
+      );
+      // A value this build does not know is named, never dropped.
+      expect(bleVerdictLabel(9), 'Verdict 9');
+      expect(bleVerdictDetail(9), contains('does not know'));
     });
   });
 

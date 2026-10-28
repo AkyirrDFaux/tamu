@@ -719,8 +719,8 @@ void main() {
             'the BleSettings_Entries table was not parsed - guard is broken',
       );
       final ble = blockInfoFor(BlockType.bleSettings)!;
-      // The table carries one row per key, and the Bond field is keyed three times: 9 fields,
-      // 11 rows. The app labels fields by number, so the DISTINCT fields must run 0..8 in order.
+      // The table carries one row per key, and the Bond field is keyed three times: 12 fields,
+      // 14 rows. The app labels fields by number, so the DISTINCT fields must run 0..11 in order.
       final fields = [for (final e in entries) e.field];
       expect(
         fields.toSet().toList()..sort(),
@@ -760,6 +760,28 @@ void main() {
       expect(ble.field(bleFieldMode)!.enumValues, bleModeLabels);
       expect(ble.field(bleFieldAction)!.enumValues, bleActionLabels);
       expect(ble.field(bleFieldDisplayName)!.maxChars, bleDisplayNameWidth);
+      // The E66 read-out (fields 9-11): two addresses at the bond text's width, and the verdict.
+      // The app labels that Enum with its own vocabulary, so a re-numbered `BleLinkVerdict` would
+      // name the wrong outcome; the values are pinned to the firmware enum here.
+      expect(at(bleFieldLastPeer).type, 'Text');
+      expect(at(bleFieldLastPeer).size, 20);
+      expect(at(bleFieldLastAir).type, 'Text');
+      expect(at(bleFieldLastAir).size, 20);
+      expect(ble.field(bleFieldLastPeer)!.maxChars, 20);
+      expect(at(bleFieldLastLink).type, 'Enum');
+      expect(at(bleFieldLastLink).size, 1);
+      final verdicts = _firmwareEnum(
+        'src/Blocks/BleAdmissionPolicy.h',
+        'BleLinkVerdict',
+      );
+      if (verdicts.isNotEmpty) {
+        expect(
+          bleVerdictLabels.keys.toList()..sort(),
+          verdicts.values.toList()..sort(),
+          reason: 'the app labels a BleLinkVerdict value it must not guess at',
+        );
+        expect(ble.field(bleFieldLastLink)!.enumValues, bleVerdictLabels);
+      }
     });
 
     // The securing budgets the app's failure classifier restates. The card's stale-bond guidance

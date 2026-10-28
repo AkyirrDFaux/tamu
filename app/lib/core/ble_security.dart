@@ -14,6 +14,9 @@
 ///   6 Enabled          Bool, persistent+write    false = the radio is not used at all
 ///   7 Display name     Text(16), persistent+write advertised name, empty = the System `Name`
 ///   8 Advertised name  Text(16), read-only       the name actually on the air
+///   9 Last peer        Text(20), read-only       identity the last admission decision used (E66)
+///  10 Last air         Text(20), read-only       address that peer connected from (an RPA when resolved)
+///  11 Last link        Enum, read-only           how the last judged link ended ([bleVerdictLabels])
 ///
 /// Two properties shape everything the panel does, and both come from the firmware
 /// (`Devices/Tamu_v2.0A/BleSettingsGlue.h`, `Devices/Tamu_v2.0A/AppBLE.h`):
@@ -50,9 +53,12 @@ const int bleFieldAction = 5;
 const int bleFieldEnabled = 6;
 const int bleFieldDisplayName = 7;
 const int bleFieldAdvertisedName = 8;
+const int bleFieldLastPeer = 9;
+const int bleFieldLastAir = 10;
+const int bleFieldLastLink = 11;
 
-/// How many fields the block carries (0..8).
-const int bleFieldCount = 9;
+/// How many fields the block carries (0..11).
+const int bleFieldCount = 12;
 
 /// The block type the firmware assigns to `BLE Settings` (`BlockType::BleSettings`).
 const int bleSettingsBlockTypeValue = 0x0B;
@@ -91,6 +97,55 @@ const Map<int, String> bleActionLabels = {
   bleActionForgetBonds: 'Forget all bonds',
 };
 
+/// `Last link` values: the verdict of the last judged link, exactly as the firmware numbers
+/// `BleLinkVerdict` (`firmware/src/Blocks/BleAdmissionPolicy.h`). E66 added the field because the
+/// log cannot answer the question it settles: while a host holds the link the device's log is
+/// dropped (Issues.md E67), and a connect happens exactly then.
+///
+/// The distinction that matters is between a stranger being refused and a bonded peer whose
+/// address was not recognised — two links that look identical from the phone.
+const int bleVerdictNone = 0;
+const int bleVerdictPending = 1;
+const int bleVerdictAdmitted = 2;
+const int bleVerdictRefusedNotBonded = 3;
+const int bleVerdictRefusedOutsideWindow = 4;
+const int bleVerdictRefusedUnsecured = 5;
+const int bleVerdictRefusedBusy = 6;
+
+const Map<int, String> bleVerdictLabels = {
+  bleVerdictNone: 'No link judged',
+  bleVerdictPending: 'Not judged yet',
+  bleVerdictAdmitted: 'Admitted',
+  bleVerdictRefusedNotBonded: 'Refused: not bonded',
+  bleVerdictRefusedOutsideWindow: 'Refused: not in a window',
+  bleVerdictRefusedUnsecured: 'Refused: not secured',
+  bleVerdictRefusedBusy: 'Refused: radio busy',
+};
+
+/// The label for a `Last link` value, `Verdict N` for one this build does not know.
+String bleVerdictLabel(int verdict) =>
+    bleVerdictLabels[verdict] ?? 'Verdict $verdict';
+
+/// What a `Last link` verdict means, in one sentence. The two refusals are spelled out because
+/// telling them apart is the whole reason E66 added the field: a stranger refused at connect and a
+/// bonded phone whose address the device did not recognise look identical from the phone.
+String bleVerdictDetail(int verdict) => switch (verdict) {
+  bleVerdictNone => 'No connect has been judged since the device booted.',
+  bleVerdictPending =>
+    'A link came up and the device has not finished judging it yet.',
+  bleVerdictAdmitted => 'A bonded phone connected and the session was secured.',
+  bleVerdictRefusedNotBonded =>
+    'The identity is not in the bond store and no pairing window was open: this was a '
+        "stranger's connect request.",
+  bleVerdictRefusedOutsideWindow =>
+    'The phone paired on a link that may not make a bond, so that bond was forgotten.',
+  bleVerdictRefusedUnsecured =>
+    'The link failed the security policy: no bond, or a passkey that was not used.',
+  bleVerdictRefusedBusy =>
+    'A session was already live, or the block had the radio switched off.',
+  _ => 'The device reported a verdict this build does not know.',
+};
+
 /// Whether the device's block enumeration carries the BLE Settings block. It is compiled into the
 /// core only, so a node's absence of it is the normal case rather than an error.
 bool hasBleSettingsBlock(Iterable<({int type, int maxInstance})> types) =>
@@ -114,6 +169,9 @@ class BleSecuritySnapshot {
     this.enabled = false,
     this.displayName = '',
     this.advertisedName = '',
+    this.lastPeer = '',
+    this.lastAir = '',
+    this.lastLink = bleVerdictNone,
     this.answered = const <int>{},
   });
 
@@ -146,6 +204,11 @@ class BleSecuritySnapshot {
       enabled: bytesOf(bleFieldEnabled).any((b) => b != 0),
       displayName: decodePaddedString(bytesOf(bleFieldDisplayName)),
       advertisedName: decodePaddedString(bytesOf(bleFieldAdvertisedName)),
+      lastPeer: decodePaddedString(bytesOf(bleFieldLastPeer)),
+      lastAir: decodePaddedString(bytesOf(bleFieldLastAir)),
+      lastLink: bytesOf(bleFieldLastLink).isEmpty
+          ? bleVerdictNone
+          : bytesOf(bleFieldLastLink)[0],
       answered: {
         for (final entry in fields.entries)
           if (entry.value != null) entry.key,
@@ -179,6 +242,18 @@ class BleSecuritySnapshot {
   /// The resolved name actually on the air (set by the device, not computed here).
   final String advertisedName;
 
+  /// The identity the last admission decision used (`Last peer`), or empty while no link has been
+  /// judged since boot. An address only: the block carries no peer name.
+  final String lastPeer;
+
+  /// The address the last judged peer connected from (`Last air`). It differs from [lastPeer]
+  /// exactly when the controller resolved a rotating private address to the identity the gate
+  /// compared with the bond store - the read-out E66 exists for.
+  final String lastAir;
+
+  /// How the last judged link ended, as one of the `bleVerdict*` values.
+  final int lastLink;
+
   /// The field numbers the device actually answered in this reading, from
   /// [BleSecuritySnapshot.fromReads]. Empty for a snapshot that was stated rather than read (a
   /// hand-built one), which is the same as "nothing is missing": there is nothing to be unsure
@@ -202,6 +277,12 @@ class BleSecuritySnapshot {
 
   /// True while the device is discoverable and connectable.
   bool get windowOpen => windowMs > 0;
+
+  /// True when the last judged link came from a different address than the identity the device
+  /// judged: the controller resolved a rotating private address to the bonded identity. Both
+  /// addresses must have been read, so an unanswered field is never read as "resolved".
+  bool get lastAddressResolved =>
+      lastPeer.isNotEmpty && lastAir.isNotEmpty && lastPeer != lastAir;
 
   /// True when the radio is on but nothing else is known: no passkey, no bonds, no window and no
   /// name. That is a block a build reports without driving a radio, and the panel says so instead
@@ -320,6 +401,30 @@ String bleWindowCountdown(int ms) {
 /// The `Window` field in words: `closed`, or the countdown left.
 String bleWindowText(int ms) =>
     ms <= 0 ? 'closed' : '${bleWindowCountdown(ms)} left';
+
+/// The line under the last-link read-out: what the three E66 fields add up to, or null when the
+/// device did not answer enough of them for the app to say anything (the panel then prints `-`
+/// and makes no claim).
+String? bleLastLinkDetail(BleSecuritySnapshot snapshot) {
+  if (!snapshot.answeredField(bleFieldLastPeer) ||
+      !snapshot.answeredField(bleFieldLastAir) ||
+      !snapshot.answeredField(bleFieldLastLink)) {
+    return null;
+  }
+  if (snapshot.lastPeer.isEmpty || snapshot.lastAir.isEmpty) {
+    return snapshot.lastPeer.isEmpty && snapshot.lastAir.isEmpty
+        ? 'No connect has been judged since the device booted: a power cycle clears these '
+              'fields.'
+        : null;
+  }
+  if (snapshot.lastAddressResolved) {
+    return 'The two addresses differ: the phone connects from a private address the controller '
+        'rotates, and the device judged it as the identity above. That is a bonded phone '
+        'working normally.';
+  }
+  return 'The phone connected from the address the device knows it by: no address resolution '
+      'was needed.';
+}
 
 /// True when [text] is exactly six ASCII digits — the only shape the device accepts for the
 /// passkey (`OnBlePasskeyWrite` refuses anything else).

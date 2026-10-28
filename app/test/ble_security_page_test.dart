@@ -116,6 +116,9 @@ void main() {
     bool enabled = true,
     String displayName = '',
     String advertisedName = 'Tamu',
+    String lastPeer = 'D1:22:33:44:55:66',
+    String lastAir = '5E:9A:1B:2C:3D:4E',
+    int lastLink = bleVerdictAdmitted,
   }) => {
     (bleFieldPasskey, 0): read(
       DataType.text.value,
@@ -159,6 +162,21 @@ void main() {
       flags: ValueFlags.readOnly,
       size: bleDisplayNameWidth,
     ),
+    (bleFieldLastPeer, 0): read(
+      DataType.text.value,
+      text(lastPeer, 20),
+      flags: ValueFlags.readOnly,
+      size: 20,
+    ),
+    (bleFieldLastAir, 0): read(
+      DataType.text.value,
+      text(lastAir, 20),
+      flags: ValueFlags.readOnly,
+      size: 20,
+    ),
+    (bleFieldLastLink, 0): read(DataType.enum_.value, [
+      lastLink,
+    ], flags: ValueFlags.readOnly),
   };
 
   Future<_FakeBleDevice> pump(
@@ -304,6 +322,51 @@ void main() {
       // Passkey, mode and the pairing window each print the dash; the bond count was answered.
       expect(find.text('-'), findsNWidgets(3));
       expect(find.text('1'), findsOneWidget);
+    });
+
+    testWidgets('shows the last judged link, both addresses and the verdict', (
+      tester,
+    ) async {
+      await pump(tester);
+      await tester.scrollUntilVisible(find.text('Last judged link'), 200);
+
+      expect(find.text('Admitted'), findsOneWidget);
+      // The identity the gate judged and the address the phone actually connected from. They
+      // differ, which is the resolved rotating private address E66 exists to expose.
+      expect(find.text('D1:22:33:44:55:66'), findsOneWidget);
+      expect(find.text('5E:9A:1B:2C:3D:4E'), findsOneWidget);
+      expect(find.textContaining('The two addresses differ'), findsOneWidget);
+    });
+
+    testWidgets('names a refused stranger instead of admitting it', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        fields: defaultBlock(lastLink: bleVerdictRefusedNotBonded),
+      );
+      await tester.scrollUntilVisible(find.text('Last judged link'), 200);
+
+      expect(find.text('Refused: not bonded'), findsOneWidget);
+      expect(find.textContaining("stranger's connect request"), findsOneWidget);
+      expect(find.text('Admitted'), findsNothing);
+    });
+
+    testWidgets('prints - for the last-link read-out the device skipped', (
+      tester,
+    ) async {
+      final fields = defaultBlock()
+        ..remove((bleFieldLastPeer, 0))
+        ..remove((bleFieldLastAir, 0))
+        ..remove((bleFieldLastLink, 0));
+      await pump(tester, fields: fields);
+      await tester.scrollUntilVisible(find.text('Last judged link'), 200);
+
+      // Three dashes: the verdict and both addresses. Nothing is claimed about a link the app
+      // was not told about, and an unanswered verdict is not the device saying "no link judged".
+      expect(find.text('-'), findsNWidgets(3));
+      expect(find.text('No link judged'), findsNothing);
+      expect(find.text('no link judged yet'), findsNothing);
     });
   });
 
