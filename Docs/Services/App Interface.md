@@ -41,7 +41,7 @@ Block type `0x0B`, core only: the link's configuration and state. **Every write 
 
 - It advertises whenever no device is connected over BLE; connecting is limited to bonded peers, and a new device can pair only while a window is open (or while no bond is stored).
 - Characteristics require an encrypted link; with a passkey set they also require an authenticated (MITM-protected) one.
-- Bonds and the passkey live in NVS, not in the register file: they survive a firmware reflash, and `Action = 1` is the only way to clear them.
+- Bonds and the passkey live in NVS, not in the register file: they survive a firmware reflash; `Action = 1` clears them, and so does changing the passkey.
 - The store holds `CONFIG_BT_NIMBLE_MAX_BONDS` bonds (three today) and the device accepts one live connection at a time.
 ### WiFi Settings
 Block type `0x0C`, core only, **compiled in only when the WiFi option is enabled** — it is absent from a stock device, and absent means the device has no WiFi. The radio itself is not implemented yet.
