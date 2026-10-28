@@ -61,8 +61,8 @@ static uint32_t BleSecureDeadlineMs = 0;      // 0 = no unsecured link pending
 static uint32_t BleSecureBudgetUsedMs = 0;    // the budget the pending link was granted (for the log)
 static bool BleSecureLinkMitm = false;        // ... and whether it was granted the passkey budget
 static uint16_t BleConnHandle = 0xFFFF;
-static bool BleWindowApplied = false;         // advertising/filter state matches the window
 static bool BleAdvStateApplied = false;       // the advertisement matches BleAdvWanted()
+static bool BleFilterWhitelistOnly = false;   // the connect filter the current advertisement carries
 static uint32_t BleWhitelistGen = 0;          // bond generation the controller whitelist mirrors
 // The recovery window is opened once per "bond store is empty" episode: set when it has been
 // opened, cleared again as soon as a bond exists (or the radio is switched off and back on), so it
@@ -160,22 +160,22 @@ struct BleRxAssembler
 
 // ===== Connectable window =====
 //
-// A window is the PAIRING state. While one is open the device advertises with the connect filter
-// relaxed, so any phone may connect and pair (up to the three bonds the store holds). A window is
-// opened by the `BLE Settings` block's Action field (USB), and it opens BY ITSELF for
-// BLE_AUTO_WINDOW_MS whenever the bond store is empty - first use, or straight after an
-// Action = 1 forget - so a headless device is always recoverable. The core's button is not a
-// trigger: Button.h shares LED_NOTIFICATION_PIN with the notification LED and forces the button
-// state false while the LED is driven, so a press is invisible exactly when it blinks.
+// A window is the PAIRING state. While one is open any phone may connect and pair (up to the three
+// bonds the store holds). A window is opened by the `BLE Settings` block's Action field (USB), and
+// it opens BY ITSELF for BLE_AUTO_WINDOW_MS whenever the bond store is empty - first use, or
+// straight after an Action = 1 forget - so a headless device is easy to find and pair to. The
+// core's button is not a trigger: Button.h shares LED_NOTIFICATION_PIN with the notification LED and
+// forces the button state false while the LED is driven, so a press is invisible exactly when it
+// blinks.
 //
-// Outside a window a device that HOLDS A BOND keeps advertising, and the controller admits connect
-// requests only from the whitelist (ApplyConnectFilter) - so the phone that owns the device can
-// reconnect with no USB host present to open a window, while a stranger's connect request is
-// dropped in the link layer instead of being answered and then torn down. Closing the window only
-// changes who may connect; it never takes the advertisement off the air (owner ruling, Issues.md
-// E64). A device with NO bond has nobody the filter could admit, so outside a window it advertises
-// nothing at all - the recovery window above is what makes it reachable.
-// A radio that the block has disabled has no window at all.
+// Advertising does NOT depend on a window: like any peripheral it is on the air whenever there is no
+// live connection (BleAdvWanted; owner ruling, Issues.md E64). What a window changes is who may
+// CONNECT (ConnectFilterWhitelistOnly): with a bond stored and the window closed the controller
+// admits connect requests only from the whitelist, so the phone that owns the device reconnects with
+// no USB host present, while a stranger's connect request is dropped in the link layer instead of
+// being answered and then torn down. While the store is still EMPTY there is nothing to protect, so
+// anyone may connect and make the first bond - which is also what Action = 1 returns the device to.
+// A radio that the block has disabled advertises nothing at all.
 
 int AppBLEBondCount(); // defined with the bond read-out below
 
@@ -452,9 +452,11 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         }
 
         // A peer the bond store does not know can only be here to pair, and pairing is allowed
-        // only inside the connectable window. One we do know is kept: it encrypts with the key
-        // it stored right after connecting.
-        if (!ConnInfo.isBonded() && !AppBLEWindowOpen())
+        // only inside the connectable window - or while the store is still empty, which is how the
+        // first bond is made (see ConnectFilterWhitelistOnly; outside those, the controller's
+        // connect filter already dropped the request and this line never runs). One we do know is
+        // kept: it encrypts with the key it stored right after connecting.
+        if (!ConnInfo.isBonded() && !AppBLEWindowOpen() && AppBLEBondCount() > 0)
         {
             DeviceLog("APPBLE", "refused an unpaired peer: the pairing window is closed");
             PServer->disconnect(ConnInfo.getConnHandle());
@@ -640,24 +642,34 @@ static void SystemNameCString(char *Out)
 
 // ===== Advertising rule =====
 //
-// Advertising is on the air whenever a window is open, or whenever a bond is stored and it is not:
-// a bonded Tamu has to stay reachable when no USB host is around to open a window (owner ruling,
-// Issues.md E64). A device with no bond still advertises nothing outside a window - an empty
-// whitelist would admit nobody, and its recovery window is what makes it reachable.
+// One condition: advertising is on the air whenever the radio is up and enabled and there is no live
+// connection - it does not depend on the bond store or on a window (owner ruling, Issues.md E64).
+// A peripheral that is not connected is discoverable; anything else leaves a phone staring at a
+// device that cannot be found. The "no connection" half is the deferred restart below: advertising
+// is only started while `!BleConnected`, and a dropped link restarts it on the next tick.
 static bool BleAdvWanted()
 {
-    if (!BleRadioUp || !BleEnabled)
-        return false;
-    return AppBLEWindowOpen() || AppBLEBondCount() > 0;
+    return BleRadioUp && BleEnabled;
 }
 
-// Connect filter for the advertising instance: the controller admits connect requests only from
-// the whitelist while the window is closed, and from any peer while it is open.
+// Who may CONNECT - the separate question. A bonded peer always: with a bond stored and the window
+// closed the controller whitelist is the only way in, so the phone that owns the device reconnects
+// with no USB host present, while a stranger's CONNECT_REQ is dropped in the link layer instead of
+// being answered and then torn down. A new phone: while a window is open, and while the store is
+// still empty (nothing to protect yet, and it is how the first bond is made). Action = 1 empties the
+// store, so the device falls back to exactly that.
+static bool ConnectFilterWhitelistOnly(bool WindowOpen)
+{
+    return !WindowOpen && AppBLEBondCount() > 0;
+}
+
+// Applies that answer to the advertising instance and remembers it in BleFilterWhitelistOnly, so the
+// tick can push a change exactly once.
 //
 // The filter policy is a ble_gap_adv_start() parameter (NimBLEAdvertising::m_advParams), so it can
 // only be changed by (re)starting the advertiser - NimBLEAdvertising::start() returns early when
 // advertising is already active and would then keep the old policy. StartAppAdvertising applies it
-// on every start, and AppBLETick restarts once when the window opens or closes.
+// on every start, and AppBLETick restarts once whenever the answer changes.
 //
 // Scan requests are deliberately NOT filtered (first argument false): the policy in force is
 // BLE_HCI_ADV_FILT_CONN, so a stranger still sees the name - including in the scan response, which
@@ -667,21 +679,18 @@ static bool BleAdvWanted()
 // Note on `setScanFilterMode`: in esp-nimble-cpp 2.5.0 that call (NimBLEDevice's) is the *scan
 // duplicate cache* filter type and must be made before init - it does not restrict who may
 // connect. The controller-side connect filter is the advertising filter policy set here.
-static void ApplyConnectFilter(bool WindowOpen)
+static void ApplyConnectFilter(bool WhitelistOnly)
 {
     NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
     if (!Adv)
         return;
-    const bool WhitelistOnly = !WindowOpen;
     Adv->setScanFilter(false, WhitelistOnly);
     static bool AppliedKnown = false;
-    static bool AppliedWhitelistOnly = false;
-    if (!AppliedKnown || AppliedWhitelistOnly != WhitelistOnly)
-    {
-        AppliedKnown = true;
-        AppliedWhitelistOnly = WhitelistOnly;
+    const bool Changed = !AppliedKnown || BleFilterWhitelistOnly != WhitelistOnly;
+    AppliedKnown = true;
+    BleFilterWhitelistOnly = WhitelistOnly;
+    if (Changed)
         DeviceLog("APPBLE", "connect filter: whitelist-only=%d", WhitelistOnly);
-    }
 }
 
 // Makes the controller whitelist mirror the bond store. The connect filter admits exactly what is
@@ -747,13 +756,13 @@ static void StartAppAdvertising()
     char AdvName[SYSTEM_NAME_LEN + 1];
     BleEffectiveName(AdvName); // the block's Display name, or System.Name
     bool NameOk = Adv->setName(AdvName);
-    // The filter policy is read at start, so every (re)start carries the one the window implies:
-    // relaxed while it is open, whitelist-only once it has closed.
-    const bool WindowOpen = AppBLEWindowOpen();
-    ApplyConnectFilter(WindowOpen);
+    // The filter policy is read at start, so every (re)start carries the answer in force now:
+    // whitelist-only while a bond is stored and no window is open, unfiltered otherwise.
+    const bool WhitelistOnly = ConnectFilterWhitelistOnly(AppBLEWindowOpen());
+    ApplyConnectFilter(WhitelistOnly);
     bool Started = Adv->start();
     DeviceLog("APPBLE", "adv restart: uuid=%d name=%d started=%d whitelist-only=%d",
-              UuidOk, NameOk, Started, !WindowOpen);
+              UuidOk, NameOk, Started, WhitelistOnly);
 }
 
 // Starts the radio: the NimBLE host, the pairing policy, the GATT table (built from that policy)
@@ -822,15 +831,13 @@ static bool AppBLERadioStart()
     memcpy(BleAppliedName, Name, SYSTEM_NAME_LEN + 1);
     BleRadioUp = true;
     BleEnabled = true;
-    // Do NOT start advertising here: AppBLETick owns that, and it starts one on its first pass as
-    // soon as one is wanted - immediately when the store holds a bond, otherwise when the recovery
-    // window opens.
+    // Do NOT start advertising here: AppBLETick owns that, and its first pass starts one straight
+    // away - advertising does not wait for a bond or for a window.
     BleAdvRestart = false;
     BleWindowEndMs = 0;
-    // No window is open yet, so the advertisement the tick is about to start is whitelist-only
-    // until a window opens and relaxes it.
-    ApplyConnectFilter(false);
-    BleWindowApplied = false;
+    // No window is open yet, so the advertisement the tick is about to start is whitelist-only as
+    // soon as the store holds a bond, and open to anyone while it is still empty.
+    ApplyConnectFilter(ConnectFilterWhitelistOnly(false));
     BleAdvStateApplied = false;
     BleWhitelistGen = BleBondGeneration; // the loop above just mirrored the store
 
@@ -870,7 +877,6 @@ void AppBLESettingsApply()
             BleAdvRestart = false;
             BleAutoWindowDone = false; // a later re-enable gets its recovery window again
             // The advertisement was stopped here, so the tick must not look for a transition.
-            BleWindowApplied = false;
             BleAdvStateApplied = false;
             if (BleServer && BleConnHandle != 0xFFFF)
                 BleServer->disconnect(BleConnHandle);
@@ -945,10 +951,10 @@ void AppBLETick()
 
     // Recovery window: while the bond store is empty the device opens the window by itself for
     // BLE_AUTO_WINDOW_MS (first use, or straight after Action=1 forgot the bonds), so a headless
-    // device can always be paired to. It is opened once per empty episode, not kept open: when it
-    // expires the device advertises nothing at all until a bond exists or the block asks for a
-    // window - with no bond there is nobody the connect filter could admit, which is why a bonded
-    // device is the only one that stays on the air (see BleAdvWanted).
+    // device is easy to find and pair to. Pairing does not depend on it - an empty store already
+    // admits any peer (ConnectFilterWhitelistOnly) - but it is what the block's Window field reports
+    // and what makes the device obviously discoverable in that state. Opened once per empty episode,
+    // not kept open.
     // The core's button is NOT a trigger - Button.h shares LED_NOTIFICATION_PIN with the
     // notification LED and forces the button state false while the LED is driven, so a press is
     // invisible exactly when it blinks (owner ruling, 2026-10-28).
@@ -963,41 +969,46 @@ void AppBLETick()
     else
         BleAutoWindowDone = false;
 
-    const bool WindowOpen = AppBLEWindowOpen();
-    const bool AdvWanted = BleAdvWanted();
-    if (WindowOpen != BleWindowApplied || AdvWanted != BleAdvStateApplied)
-    {
-        BleWindowApplied = WindowOpen;
-        BleAdvStateApplied = AdvWanted;
-        // The filter policy travels with the advertisement's start parameters, so the restart
-        // below is what actually hands it to the controller.
-        ApplyConnectFilter(WindowOpen);
-        if (AdvWanted)
-        {
-            // Window opened: relax the filter so a new phone may pair. Window closed with a bond
-            // stored: tighten it to the whitelist. Either way the advertisement is REBUILT, never
-            // dropped - a bonded device stays on the air, only who may connect changes.
-            BleAdvRestart = true;
-        }
-        else
-        {
-            // Nothing to advertise to: no window, and no bond the filter could admit. (This is the
-            // bond-count-0 case, unchanged: the recovery window that follows is its advertisement.)
-            NimBLEAdvertising *ClosedAdv = NimBLEDevice::getAdvertising();
-            if (ClosedAdv)
-                ClosedAdv->stop();
-            BleAdvRestart = false;
-            DeviceLog("APPBLE", "advertising stopped: no window and no bond stored");
-        }
-    }
-
     // The whitelist follows the bond store (see SyncBleWhitelist). Every bond event bumps the
     // generation - a completed bond, a forget, and the store's own eviction when a fourth phone
-    // pairs - and each of those changes who the connect filter must admit.
+    // pairs - and each of those changes who the connect filter must admit. This runs BEFORE the
+    // filter is re-aimed below, so a filter that tightens to whitelist-only always finds its
+    // entries already in the list.
     if (BleWhitelistGen != AppBLEBondGeneration())
     {
         BleWhitelistGen = AppBLEBondGeneration();
         SyncBleWhitelist();
+    }
+
+    // Advertising itself (BleAdvWanted) has one condition and is unchanged by the window: what the
+    // window and the bond store decide is who may CONNECT. The filter policy is a start parameter,
+    // so only a change of that answer - or the very first advertisement - has to rebuild.
+    const bool WindowOpen = AppBLEWindowOpen();
+    const bool AdvWanted = BleAdvWanted();
+    const bool WhitelistOnly = ConnectFilterWhitelistOnly(WindowOpen);
+    NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
+
+    if (!AdvWanted)
+    {
+        // Off means off: the block switched Enabled off (AppBLESettingsApply already stopped the
+        // advertisement; this is the safety net for the state arriving any other way).
+        if (BleAdvStateApplied)
+        {
+            BleAdvStateApplied = false;
+            BleAdvRestart = false;
+            if (Adv)
+                Adv->stop();
+            DeviceLog("APPBLE", "advertising stopped: the radio is disabled");
+        }
+    }
+    else if (!BleAdvStateApplied || WhitelistOnly != BleFilterWhitelistOnly)
+    {
+        BleAdvStateApplied = true;
+        // ApplyConnectFilter logs the policy when it changes; the restart below is what hands it to
+        // the controller. Rebuild, never drop: the advertisement stays on the air and only who may
+        // connect changes with the window or with the bond store.
+        ApplyConnectFilter(WhitelistOnly);
+        BleAdvRestart = true;
     }
 
     // A connection that has not become encrypted+bonded by its deadline belongs to a peer that
@@ -1027,12 +1038,9 @@ void AppBLETick()
     else if (!WasConnected && BleConnected)
         DeviceLog("APPBLE", "BLE session started");
 
-    NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
-
     // Deferred restart after a clean disconnect, and the very first start. An advertisement exists
-    // whenever one is wanted - a window is open, or a bond is stored and it has closed - so a
-    // session that ends after the window closed comes back whitelist-only instead of leaving the
-    // device off the air.
+    // whenever no session is up (BleAdvWanted), so it comes straight back the moment the link drops
+    // - with the connect filter the window and the bond store imply at that instant.
     if (BleAdvRestart && !BleConnected && AdvWanted)
     {
         BleAdvRestart = false;
@@ -1045,8 +1053,8 @@ void AppBLETick()
     //  - stack admits the outage (isAdvertising()==false): rebuild promptly;
     //  - stale advertising instance claiming to run with no session ever
     //    arriving: one conservative rebuild as a last resort (long interval).
-    // Both only apply while an advertisement is wanted: with no window and no bond there is
-    // deliberately nothing on the air to heal.
+    // Both only apply while an advertisement is wanted: a radio the block has
+    // switched off has nothing on the air to heal.
     static uint32_t IdleSince = 0;
     if (AdvWanted && !BleConnected && !BleOldConnected)
     {
