@@ -229,6 +229,44 @@ fi
 fail=$((fail + blessec_guard_fail))
 echo
 
+# t_1b380cee (Issues.md E65), structural half: `ble_gap_unpair()` refuses with `BLE_HS_EBUSY` while
+# advertising or discovery is active, and since E64 this device advertises whenever no session is up
+# - which is the state a USB `Action = 1` arrives in. So the forget itself has to take the
+# advertisement down for the call, and the tick has to put it back. On the source because AppBLE.h
+# pulls NimBLE, the host task and NVS (the host cannot link it). What must hold:
+#   - the stop comes BEFORE deleteAllBonds(): a stop after it is no stop at all, the unpair has
+#     already been refused;
+#   - both the stop and the restart are gated on an advertisement that is actually up, so the paths
+#     that never needed one (a live link, a disabled radio) lose nothing;
+#   - the restart request (`BleAdvStateApplied = false`) comes AFTER the delete, and it is what makes
+#     AppBLETick rebuild the advertisement - a forget that leaves it stopped takes the device off
+#     the air for good, which is the opposite of E64's rule.
+echo "### source guard: a bond forget works on an idle, advertising device (E65)"
+e65_guard_fail=0
+forget_body=$(sed -n '/^bool AppBLEForgetAllBonds()/,/^}/p' "$APPBLE_SRC")
+adv_stop_line=$(printf '%s\n' "$forget_body" | grep -n 'Adv->stop()' | head -1 | cut -d: -f1)
+del_line=$(printf '%s\n' "$forget_body" | grep -n 'NimBLEDevice::deleteAllBonds()' | head -1 | cut -d: -f1)
+restart_line=$(printf '%s\n' "$forget_body" | grep -n 'BleAdvStateApplied = false;' | head -1 | cut -d: -f1)
+if [ -z "$adv_stop_line" ] || [ -z "$del_line" ] || [ "$adv_stop_line" -ge "$del_line" ]; then
+    echo "FAIL $APPBLE_SRC: the advertisement must be stopped BEFORE deleteAllBonds() (the unpair refuses on the air, E65)"
+    e65_guard_fail=1
+fi
+if [ -z "$restart_line" ] || [ "$restart_line" -le "$del_line" ]; then
+    echo "FAIL $APPBLE_SRC: the advertisement must be requested back AFTER the delete (BleAdvStateApplied = false)"
+    e65_guard_fail=1
+fi
+if [ "$(printf '%s\n' "$forget_body" | grep -c 'if (AdvWasUp')" -lt 2 ]; then
+    echo "FAIL $APPBLE_SRC: the stop and the restart must both be gated on an advertisement that is up"
+    e65_guard_fail=1
+fi
+if ! printf '%s\n' "$forget_body" | grep -q 'Adv->isAdvertising()'; then
+    echo "FAIL $APPBLE_SRC: the forget must ask the stack whether advertising is up, not assume it"
+    e65_guard_fail=1
+fi
+[ $e65_guard_fail = 0 ] && echo "PASS: the bond forget clears the air first, then asks the tick to rebuild the advertisement"
+fail=$((fail + e65_guard_fail))
+echo
+
 # E64 ruling C (owner, 2026-10-28), with E66 (2026-10-28) on top: advertising is ONE condition - no
 # live connection - and does not depend on the bond store or on a window. Who may HOLD A SESSION is
 # the separate rule, and E66 moved it out of the controller: the accept list is matched against the

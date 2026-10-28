@@ -342,10 +342,33 @@ static bool BleBondEpochKnown = false;     // false = no stamp (fresh partition,
 // The guard is the server, not BleRadioUp: at radio start the store has to be revocable (a passkey
 // changed while the radio was off is applied there) before BleRadioUp is set at the end of that
 // function. A created server means NimBLE is initialised, which is all the bond API needs.
+//
+// The advertisement is taken OFF THE AIR for the call (Issues.md E65). `ble_gap_unpair()` refuses
+// with `BLE_HS_EBUSY` while advertising or discovery is active (ble_gap.c: "We cannot delete entry
+// from resolving list if there is ongoing discovery or advertising in progress"), and since E64
+// this device advertises whenever no session is up - which is the state a USB command arrives in.
+// Without this, an idle device could not forget at all: `Action = 1` answered FLAG_FAIL and kept
+// the store, and the passkey-change revoke (AppBLEEnforceBondPolicy) revoked nothing. The delete
+// runs on the GAP procedure on purpose - `ble_store_util_delete_peer` would sidestep the air, but
+// it also skips the controller resolving-list removal that makes a forgotten peer unlinkable
+// again, and a revoke has to do both. The advertisement is rebuilt straight afterwards by the
+// tick's own path, so the air is empty for microseconds, not for a loop.
 bool AppBLEForgetAllBonds()
 {
     if (!BleServer)
         return false;
+
+    NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
+    const bool AdvWasUp = Adv != nullptr && Adv->isAdvertising();
+    bool AdvStopped = !AdvWasUp;
+    if (AdvWasUp)
+    {
+        Adv->stop(); // a synchronous HCI command: the controller is idle once it returns
+        AdvStopped = !Adv->isAdvertising();
+        if (!AdvStopped)
+            DeviceLog("APPBLE", "advertising would not stop: the bond delete will be refused (E65)");
+    }
+
     const int Before = NimBLEDevice::getNumBonds();
     const bool Ok = NimBLEDevice::deleteAllBonds();
 
@@ -372,7 +395,22 @@ bool AppBLEForgetAllBonds()
 
     DeviceLog("APPBLE", "bonds forgotten: %d -> %d (ok=%d)", Before, After, Ok);
     AppBLEBondStoreChanged(); // the block's Bond texts follow in the next loop pass
-    return Ok;
+
+    // The advertisement goes back up through AppBLETick's own rebuild path, in this same loop pass:
+    // the register write that asked for the forget and the tick both run from the app task
+    // (AppInterface::Pump dispatches the frame and then calls AppBLETick). Clearing the applied flag
+    // IS the request - the tick rebuilds and starts the advertisement as soon as the air is free.
+    if (AdvWasUp && AdvStopped)
+    {
+        BleAdvStateApplied = false;
+        DeviceLog("APPBLE", "advertisement returns: the bond delete is done (E65)");
+    }
+
+    // The caller is told the STATE, not the per-entry result: an empty store afterwards is the
+    // forget having happened, and it is also what the block's Bond fields will read back, so the
+    // reply cannot disagree with the read-out. `Ok` stays in the log for the case where one unpair
+    // reported an error over an entry the store had already lost.
+    return After == 0;
 }
 
 // Records the policy the store is under. Cheap and idempotent: only a genuine change reaches NVS,
