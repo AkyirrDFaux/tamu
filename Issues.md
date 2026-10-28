@@ -1054,3 +1054,45 @@ pair again):
 `ble_lastlink.py`), host-side HCI transcripts (`ble_host.py`), and the air (bleak scan). The ATT-level
 refusal of the refused link was not captured - the device drops it ~6 s in, and a register read inside
 that window did not come up (`TimeoutError: BLE link did not come up`).
+
+**E70 A line a WRITE triggers cannot reach the console: the write is the frame that silences it.**
+Measured 2026-10-28 on build `26.10.28 iteration 49` (`185fa31`, the route-(d) tree), card `t_cb221e2e`.
+Route (d) (`Core/Functions/AppConsole.h`, `AppConsoleBusy`) drops a `DeviceLog` while the host is
+TALKING - an app frame arrived inside the ~500 ms `AppUsbSilent()` window - and while a frame still sits
+in the TX ring. Every write to `BLE Settings` arrives over that same USB link, so the line the write
+triggers (`radio disabled by the BLE Settings block`, `radio up: ...`, `advertised name -> '...'`,
+`passkey written: mode=...`) is emitted microseconds after `UsbLastRx` moved (`AppUSB.h:181`) and is
+dropped by construction. Measured, not inferred: a 10 s console capture taken **in the process that
+sent** `Enabled = 0` (`.pio/probe/bleset_probe.py writecap 6 0 10`, log `.pio/probe/cap_enabled_off.log`)
+recorded 76 text lines, **every one** tag `DISP` (the core's own dispatch chatter), and no
+`BLESEC`/`APPBLE` line at all - while the same image prints those tags at boot
+(`.pio/probe/cap_boot_name_passkey.log`: `I (352) BLESEC: passkey source: nvs (set)`,
+`I (442) APPBLE: radio up: name='Akyirr' mode=passkey bonds=0`,
+`I (1012) APPBLE: adv restart: uuid=1 name=1 started=1 filter=none`), because nothing has been received
+on the link since boot. So a rig session can read the radio's own events and the boot path, but never
+the line a USB write produces.
+Consequence for evidence plans: for a setting the app or a probe writes over USB, the device log cannot
+be the witness - the field read-back plus the air are (see the `t_cb221e2e` rig round, 0 failures).
+Options if the owner wants write-triggered lines visible (a ruling, not an agent's call): (a) accept as
+is; (b) defer the line into a small ring that `AppBLETick` flushes once the link has been idle for the
+`USB_TX_SILENCE_MS` window (~100 B RAM plus a flush point); (c) have the trigger arm a flag and let the
+loop log the state once, >=500 ms later. Not implemented - route (d) is the owner's ruling of
+2026-10-28 and this is its measured blind spot.
+
+**E71 A write to a `Persistent` static field lives in RAM until the app saves: a reset drops it.**
+Measured 2026-10-28, card `t_cb221e2e`, build `26.10.28 iteration 49`. `Display name = "Tamu Desk"`
+read back from the block immediately after the write (field 7 and the resolved `Advertised name`), then
+one reset: the boot log says `APPBLE: radio up: name='Akyirr' mode=just works bonds=0` and the block
+reads `Display name` empty and `Advertised name = Akyirr`. The same for `Enabled`: written `false`,
+read back `false`, reset -> reads `true` and the radio starts (`radio up` + `adv restart ... started=1`).
+This is by design, not a defect: `Docs/Services/Register.md:56` - "The device can only overwrite or load
+the whole file; targeted saves and recalls are handled by the app" - and `.SV` is written only by
+`RegisterService::StaticSaveAll()` (`Core/Services/RegisterPersist.h:20`, CID 4 Save All), which a field
+write never reaches; the `Persistent` flag on a static field names the memory space, not an
+auto-save-on-write.
+Two consequences worth having written down: (1) a mistaken `Enabled = false` is undone by one USB
+write (measured, `Enabled` false -> true, uptime monotonic, no reboot) **and** by a plain reset, so the
+device is never USB-rescue-only; (2) a client that changes `Enabled` or `Display name` must follow with
+Save All or the change is gone at the next reset - the app's settings page is the place that decides it
+(card `t_1d304c9c`'s territory, not the firmware's). The passkey is unaffected either way: it lives in
+NVS (`BlePasskeyStore.h`) and survived the same reset (`BLESEC: passkey source: nvs (set)`).
