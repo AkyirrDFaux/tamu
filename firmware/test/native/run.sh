@@ -128,6 +128,10 @@ echo "### native BLE window tests (the automatic window follows an owner event, 
 build_run "blewindow" "ble_window_test.cpp"
 echo
 
+echo "### native app-console guard tests (idle link writes the line, a busy one suppresses it - E67)"
+build_run "appconsole" "appconsole_test.cpp"
+echo
+
 # t_367f86d0 round 2, structural half. Two rules the radio code owns, neither of which the host can
 # link (AppBLE.h pulls NimBLE, the host task and NVS), asserted on the source:
 #   - a link's security deadline comes from the policy, not from one fixed figure: a passkey pairing
@@ -474,6 +478,24 @@ echo
 #   bash test/native/ble_window_guard.sh src/Devices/Tamu_v2.0A/AppBLE.h
 echo "### source guard: the automatic window follows an owner event, never 'the store reads empty' (E69)"
 if bash "$ROOT/test/native/ble_window_guard.sh" "$APPBLE_SRC"; then
+    :
+else
+    fail=$((fail + 1))
+fi
+echo
+
+# Issues.md E67, route (d) (owner ruling 2026-10-28, "D is sufficient"). The console copy is
+# suppressed while the USB link is BUSY, not while a cable is ATTACHED: `AppInterface.Connected`
+# is true ~0.4 s after a reset whenever a host merely holds the port, which is why a rig session
+# read the boot banner only. Log.h and the device USB glue cannot be linked on the host (esp_log.h,
+# the USJ driver), so the guard's shape is asserted on the source; the guard script re-runs against
+# the pre-fix header and is watched to FAIL:
+#   bash test/native/log_guard.sh src/Devices/Tamu_v2.0A/Log.h src/Devices/Tamu_v2.0A/AppUSB.h \
+#       src/Core/Functions/AppConsole.h
+echo "### source guard: the console copy follows the USB link being idle, not a cable being attached (E67)"
+APPUSB_SRC="src/Devices/Tamu_v2.0A/AppUSB.h"
+APPCONSOLE_SRC="src/Core/Functions/AppConsole.h"
+if bash "$ROOT/test/native/log_guard.sh" "src/Devices/Tamu_v2.0A/Log.h" "$APPUSB_SRC" "$APPCONSOLE_SRC"; then
     :
 else
     fail=$((fail + 1))

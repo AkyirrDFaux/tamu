@@ -30,13 +30,20 @@
 // CLOSED its USB port but left the cable plugged in: the SOF-based
 // usb_serial_jtag_is_connected() stays true, so without this the TX pump would keep draining
 // responses into the dead port.
+//
+// It is also the "is this link busy" test the console copy in Log.h gates on (Issues.md E67): a
+// port nobody has spoken on is idle, which is what lets a rig session read runtime lines while a
+// host merely holds the port.
 static uint32_t UsbLastRx = 0;
 #define USB_TX_SILENCE_MS 500
 
-// True when no app frame has arrived over USB for a while (the port is open but the app is
-// gone). Only meaningful as a TX guard.
+// True when no app frame has arrived over USB for a while (the port is open but the app is gone),
+// or when none has arrived at all since boot - nothing received means nothing to be in the middle
+// of. Guards the TX pump against a dead port, and the console copy in Log.h against a live one.
 bool AppUsbSilent()
 {
+    if (UsbLastRx == 0)
+        return true;
     return (uint32_t)(TimeFromBoot() - UsbLastRx) > USB_TX_SILENCE_MS;
 }
 
