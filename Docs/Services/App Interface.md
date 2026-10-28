@@ -39,7 +39,7 @@ Block type `0x0B`, core only: the link's configuration and state. **Every write 
 | Window | 0 | `Uint32` | RO | milliseconds left in the connectable window, 0 when closed |
 | Action | 0 | `Enum` | W | 0 opens the pairing window, 1 forgets every bond. USB only |
 
-- The device is connectable only inside a window: opened by `Action = 0`, or automatically for five minutes after boot when no bond is stored.
+- It advertises whenever no device is connected over BLE; connecting is limited to bonded peers, and a new device can pair only while a window is open (or while no bond is stored).
 - Characteristics require an encrypted link; with a passkey set they also require an authenticated (MITM-protected) one.
 - Bonds and the passkey live in NVS, not in the register file: they survive a firmware reflash, and `Action = 1` is the only way to clear them.
 - The store holds `CONFIG_BT_NIMBLE_MAX_BONDS` bonds (three today) and the device accepts one live connection at a time.
