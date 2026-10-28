@@ -225,41 +225,56 @@ fi
 fail=$((fail + blessec_guard_fail))
 echo
 
-# E64 ruling C (owner, 2026-10-28): a bonded core stays on the air with no window open, and only
-# its bonded peers may connect. AppBLE.h cannot be linked on the host (NimBLE, the host task, NVS),
-# so the rule is asserted on the source. What must hold:
-#   - advertising is wanted when a window is open OR a bond is stored (a bond-less device still has
-#     nothing to advertise to outside its recovery window);
-#   - the filter is CONNECT-only: scan requests are never filtered, so the name stays visible, and
-#     the whitelist applies exactly while the window is closed;
+# E64 ruling C (owner, 2026-10-28), restated in review round 1: advertising is ONE condition - no
+# live connection - and does not depend on the bond store or on a window; who may CONNECT is the
+# separate rule (bonded always, a new phone only while a window is open or while the store is still
+# empty). AppBLE.h cannot be linked on the host (NimBLE, the host task, NVS), so the rule is
+# asserted on the source. What must hold:
+#   - advertising is wanted whenever the radio is up and enabled, with NO bond or window term;
+#   - the connect filter is whitelist-only exactly when no window is open AND a bond is stored;
+#   - the filter is CONNECT-only: scan requests are never filtered, so the name stays visible;
 #   - every (re)start carries that filter - it is a ble_gap_adv_start() parameter, so a start that
 #     relaxes it inline would silently re-admit anyone;
-#   - closing the window rebuilds the advertisement instead of stopping it (no gap, never off the
-#     air), and the deferred restart is gated on the advertising rule, not on the window;
-#   - whitelist entries are IDENTITY addresses, and the list follows the bond store.
-echo "### source guard: a bonded core advertises whitelist-only while no window is open (E64 C)"
+#   - the connect gate itself admits an unknown peer while the store is empty (the first bond);
+#   - the advertisement is rebuilt when the filter changes and only dropped when the radio is off;
+#   - the whitelist is re-synced from the store BEFORE the filter is re-aimed, and it follows the
+#     bond store; its entries are IDENTITY addresses.
+echo "### source guard: advertising runs whenever no device is connected - window, bonds or none (E64 C)"
 adv_guard_fail=0
 
 advwanted_body=$(sed -n '/^static bool BleAdvWanted()/,/^}/p' "$APPBLE_SRC")
-if ! printf '%s\n' "$advwanted_body" | grep -q 'return AppBLEWindowOpen() || AppBLEBondCount() > 0;'; then
-    echo "FAIL $APPBLE_SRC: BleAdvWanted must be window-open OR a stored bond"
+if ! printf '%s\n' "$advwanted_body" | grep -q 'return BleRadioUp && BleEnabled;' ||
+   printf '%s\n' "$advwanted_body" | grep -Eq 'AppBLEWindowOpen|BondCount'; then
+    echo "FAIL $APPBLE_SRC: BleAdvWanted must be radio-up && enabled - no window or bond term"
     adv_guard_fail=1
 fi
 
-filter_body=$(sed -n '/^static void ApplyConnectFilter(bool WindowOpen)/,/^}/p' "$APPBLE_SRC")
-if ! printf '%s\n' "$filter_body" | grep -q 'const bool WhitelistOnly = !WindowOpen;' ||
-   ! printf '%s\n' "$filter_body" | grep -q 'Adv->setScanFilter(false, WhitelistOnly);'; then
-    echo "FAIL $APPBLE_SRC: the connect filter must be whitelist-only when closed and leave scans alone"
+filter_rule=$(sed -n '/^static bool ConnectFilterWhitelistOnly(bool WindowOpen)/,/^}/p' "$APPBLE_SRC")
+if ! printf '%s\n' "$filter_rule" | grep -q 'return !WindowOpen && AppBLEBondCount() > 0;'; then
+    echo "FAIL $APPBLE_SRC: the whitelist must guard a stored bond, and only while no window is open"
     adv_guard_fail=1
 fi
 
-start_body=$(sed -n '/^static void StartAppAdvertising()/,/^}/p' "$APPBLE_SRC")
-if ! printf '%s\n' "$start_body" | grep -q 'ApplyConnectFilter(WindowOpen);'; then
-    echo "FAIL $APPBLE_SRC: every advertising start must carry the filter the window implies"
+filter_body=$(sed -n '/^static void ApplyConnectFilter(bool WhitelistOnly)/,/^}/p' "$APPBLE_SRC")
+if ! printf '%s\n' "$filter_body" | grep -q 'Adv->setScanFilter(false, WhitelistOnly);'; then
+    echo "FAIL $APPBLE_SRC: the connect filter must be CONNECT-only and leave scans alone"
     adv_guard_fail=1
 fi
 if [ "$(grep -c 'setScanFilter(false, false)' "$APPBLE_SRC")" != 0 ]; then
     echo "FAIL $APPBLE_SRC: an inline relaxed filter is back - it re-admits any peer outside a window"
+    adv_guard_fail=1
+fi
+
+start_body=$(sed -n '/^static void StartAppAdvertising()/,/^}/p' "$APPBLE_SRC")
+if ! printf '%s\n' "$start_body" | grep -q 'ConnectFilterWhitelistOnly(AppBLEWindowOpen())' ||
+   ! printf '%s\n' "$start_body" | grep -q 'ApplyConnectFilter(WhitelistOnly);'; then
+    echo "FAIL $APPBLE_SRC: every advertising start must carry the filter the window and the store imply"
+    adv_guard_fail=1
+fi
+
+# The connect gate answers the same question, so an unknown peer is admitted while nothing is stored.
+if ! grep -q 'if (!ConnInfo.isBonded() && !AppBLEWindowOpen() && AppBLEBondCount() > 0)' "$APPBLE_SRC"; then
+    echo "FAIL $APPBLE_SRC: the connect gate must admit a new peer while no bond is stored"
     adv_guard_fail=1
 fi
 
@@ -268,21 +283,27 @@ if ! printf '%s\n' "$tick_body" | grep -q 'if (BleAdvRestart && !BleConnected &&
     echo "FAIL $APPBLE_SRC: the deferred restart must follow the advertising rule, not the window"
     adv_guard_fail=1
 fi
-# The window-transition branch that keeps advertising (AdvWanted) must rebuild, never stop ...
-adv_branch=$(printf '%s\n' "$tick_body" | sed -n '/^        if (AdvWanted)$/,/BleAdvRestart = true;/p')
-if ! printf '%s\n' "$adv_branch" | grep -q 'BleAdvRestart = true;' ||
-   printf '%s\n' "$adv_branch" | grep -q -- '->stop()'; then
-    echo "FAIL $APPBLE_SRC: a window change must rebuild the advertisement, not take it off the air"
+if ! printf '%s\n' "$tick_body" | grep -q 'ConnectFilterWhitelistOnly(WindowOpen);'; then
+    echo "FAIL $APPBLE_SRC: the tick must re-aim the filter from the window and the bond store"
     adv_guard_fail=1
 fi
-# ... and the only stop left in the tick is the bond-less, window-less state.
+# ... and the only stop left in the tick is the radio being switched off.
 if [ "$(printf '%s\n' "$tick_body" | grep -c -- '->stop()')" != 1 ] ||
-   [ "$(printf '%s\n' "$tick_body" | grep -c 'advertising stopped: no window and no bond stored')" != 1 ]; then
-    echo "FAIL $APPBLE_SRC: the tick may only stop advertising when no window AND no bond is left"
+   [ "$(printf '%s\n' "$tick_body" | grep -c 'advertising stopped: the radio is disabled')" != 1 ] ||
+   printf '%s\n' "$tick_body" | grep -q 'advertising stopped: no window and no bond stored'; then
+    echo "FAIL $APPBLE_SRC: the tick may only stop advertising when the radio is disabled"
     adv_guard_fail=1
 fi
 if ! printf '%s\n' "$tick_body" | grep -q 'SyncBleWhitelist();'; then
     echo "FAIL $APPBLE_SRC: the whitelist must follow the bond store (SyncBleWhitelist on a generation bump)"
+    adv_guard_fail=1
+fi
+# The list is rebuilt before the filter is re-aimed: a filter that tightens to whitelist-only has to
+# find its entries already programmed, or the bonded phone is locked out for a tick.
+sync_line=$(printf '%s\n' "$tick_body" | grep -n 'SyncBleWhitelist();' | head -1 | cut -d: -f1)
+filter_line=$(printf '%s\n' "$tick_body" | grep -n 'ConnectFilterWhitelistOnly(WindowOpen);' | head -1 | cut -d: -f1)
+if [ -z "$sync_line" ] || [ -z "$filter_line" ] || [ "$sync_line" -ge "$filter_line" ]; then
+    echo "FAIL $APPBLE_SRC: the whitelist must be re-synced before the connect filter is re-aimed"
     adv_guard_fail=1
 fi
 # The filter matches the controller whitelist, which has to hold the IDENTITY address: the phone
@@ -297,7 +318,7 @@ if ! grep -q 'whiteListAdd(NimBLEDevice::getBondedAddress(i))' "$APPBLE_SRC"; th
     adv_guard_fail=1
 fi
 
-[ $adv_guard_fail = 0 ] && echo "PASS: a bonded core advertises whitelist-only while no window is open, and never leaves the air"
+[ $adv_guard_fail = 0 ] && echo "PASS: advertising runs whenever no device is connected; a bonded peer reconnects with no window, a stranger needs a window or an empty store"
 fail=$((fail + adv_guard_fail))
 echo
 echo
