@@ -172,7 +172,56 @@ if [ "$(grep -c 'nvs_set_blob(H, BLE_BOND_EPOCH_NVS_KEY' "$BLESTORE_SRC")" != 1 
     echo "FAIL $BLESTORE_SRC: the bond-policy stamp must be written to NVS"
     blessec_guard_fail=1
 fi
-[ $blessec_guard_fail = 0 ] && echo "PASS: deadline from the policy, passkey change revokes its bonds (stamp in NVS)"
+
+# t_df5c6520: the epoch is stamped only when the store is actually EMPTY after the delete. Stamping
+# regardless of the outcome records a surviving bond as made under the current code, so the next
+# AppBLEEnforceBondPolicy finds them equal and never retries - the phone a passkey change was meant
+# to free stays locked out. Checked structurally (brace depth, not a literal snippet) so a re-ment
+# of the body cannot sneak the stamp back out of the guard:
+#   - the count the guard tests is read back with getNumBonds() AFTER deleteAllBonds();
+#   - every stamp (memcpy into BleBondEpoch / BleBondEpochSave) sits inside an `if (<that count> == 0)`
+#     block that comes after the delete;
+#   - a surviving-count log line exists, so the operator sees why the retry is coming.
+forget_body=$(sed -n '/^bool AppBLEForgetAllBonds()/,/^}/p' "$APPBLE_SRC")
+forget_verdict=$(printf '%s\n' "$forget_body" | awk '
+    BEGIN { depth = 0; del = 0; guard_line = 0; guard_depth = -1; guard_pending = 0;
+            bad = 0; stamps = 0; counted = 0; n = 0 }
+    {
+        n++
+        line = $0
+        # The opening brace of the guard, on its own line (Allman style in this file).
+        if (guard_pending && line ~ /^[ \t]*\{[ \t]*$/) {
+            guard_depth = depth + 1; guard_line = n; guard_pending = 0
+        }
+        if (del > 0 && match(line, /^[ \t]*if \([A-Za-z_][A-Za-z0-9_]* == 0\)[ \t]*$/)) {
+            v = line; sub(/^[ \t]*if \(/, "", v); sub(/ == 0\).*$/, "", v)
+            if ((v in readback) && readback[v] > del) guard_pending = 1
+        }
+        if (match(line, /[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*NimBLEDevice::getNumBonds\(\)/)) {
+            v = substr(line, RSTART, RLENGTH); sub(/[ \t]*=.*$/, "", v); readback[v] = n
+        }
+        if (line ~ /NimBLEDevice::deleteAllBonds\(\)/) del = n
+        if (line ~ /memcpy\(BleBondEpoch/ || line ~ /BleBondEpochSave\(BleBondEpoch\)/) {
+            stamps++
+            if (guard_depth < 0 || depth < guard_depth || n < guard_line) bad = 1
+        }
+        if (n > del && del > 0 && line ~ /bond\(s\)/ && line ~ /%d/) counted = 1
+        o = gsub(/\{/, "{", line); c = gsub(/\}/, "}", line); depth += o - c
+    }
+    END {
+        if (del == 0) print "the function no longer calls deleteAllBonds()"
+        else if (guard_depth < 0) print "no `if (<count> == 0)` guard on a count read back after the delete"
+        else if (guard_line <= del) print "the empty-store guard sits before the delete"
+        else if (bad) print "a stamp sits outside the empty-store guard"
+        else if (stamps < 2) print "the store is no longer stamped at all"
+        else if (!counted) print "a surviving store is not logged with its count"
+        else print "ok"
+    }')
+if [ "$forget_verdict" != "ok" ]; then
+    echo "FAIL $APPBLE_SRC: a failed bond forget must leave the epoch alone - $forget_verdict"
+    blessec_guard_fail=1
+fi
+[ $blessec_guard_fail = 0 ] && echo "PASS: deadline from the policy, passkey change revokes its bonds (stamp in NVS), and a failed forget is not stamped"
 fail=$((fail + blessec_guard_fail))
 echo
 

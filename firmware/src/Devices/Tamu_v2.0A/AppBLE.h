@@ -301,11 +301,26 @@ bool AppBLEForgetAllBonds()
 
     // An empty store is under whatever code is current, so stamping it here is what keeps the
     // next bond - and a reboot - from looking like a stale store (see AppBLEEnforceBondPolicy).
-    memcpy(BleBondEpoch, StaticVol.BleSet.Passkey, BLE_PASSKEY_LEN);
-    BleBondEpochKnown = true;
-    BleBondEpochSave(BleBondEpoch);
+    //
+    // The stamp follows the STORE, not the attempt: a delete that left entries behind (a corrupt
+    // or unwritable bond store) must not be recorded as done. Stamping then would tell the next
+    // AppBLEEnforceBondPolicy that those bonds were made under the current code, so it would never
+    // retry them and the phone the passkey change was meant to free would stay locked out. With
+    // the epoch left as it was, the next radio start sees the mismatch and tries again.
+    const int After = NimBLEDevice::getNumBonds();
+    if (After == 0)
+    {
+        memcpy(BleBondEpoch, StaticVol.BleSet.Passkey, BLE_PASSKEY_LEN);
+        BleBondEpochKnown = true;
+        BleBondEpochSave(BleBondEpoch);
+    }
+    else
+    {
+        DeviceLog("APPBLE", "bond forget left %d bond(s): epoch not stamped, the next radio start retries",
+                  After);
+    }
 
-    DeviceLog("APPBLE", "bonds forgotten: %d -> %d (ok=%d)", Before, NimBLEDevice::getNumBonds(), Ok);
+    DeviceLog("APPBLE", "bonds forgotten: %d -> %d (ok=%d)", Before, After, Ok);
     AppBLEBondStoreChanged(); // the block's Bond texts follow in the next loop pass
     return Ok;
 }
@@ -352,7 +367,7 @@ void AppBLEEnforceBondPolicy()
         // The phone that paired under the old code cannot produce an authenticated link, and its
         // stored key would keep it connecting - it has to pair again inside a window.
         DeviceLog("APPBLE", "passkey changed since the bonds were made: forgetting %d bond(s)", Bonds);
-        AppBLEForgetAllBonds(); // re-stamps the epoch with the current code
+        AppBLEForgetAllBonds(); // re-stamps the epoch only if the store really came up empty
         return;
     }
     AppBLEBondEpochStamp(); // nothing to revoke: just record which code the store is under now
