@@ -970,15 +970,44 @@ and this wrapper offers no override point (no `onRepeatPairing` in `NimBLEServer
 pairing fires whenever a peer the store already has a bond for asks to pair again, which is exactly
 what a phone that discarded its keys (OS reset, "forget this device") or a peer using a spoofed public
 identity address does after our `ble_gap_security_initiate`.
-The consequence is in the interaction with the empty-store rule, not in the refusal: `AppBLETick`
-opens `BLE_AUTO_WINDOW_MS` (300 s) as soon as `AppBLEBondCount() == 0` (AppBLE.h:1113-1123), and inside
+The consequence is in the interaction with the empty-store rule, not in the refusal: at iteration 44
+`AppBLETick` opened `BLE_AUTO_WINDOW_MS` (300 s) as soon as `AppBLEBondCount() == 0`
+(AppBLE.h:1113-1123 as it then read), and inside
 a window `BleSessionAllowed` admits **any** peer that pairs. So a peer able to present the owner's
 identity address can turn a locked device into a 5-minute open pairing window and then bond to it. The
 benign half of the same path: an owner's phone whose OS drops the bond silently wipes the device's
-bond and makes the device offer itself to the room. Directions, not implemented: judge repeat pairing
-in the app (ignore while no window is open - needs a NimBLE-native GAP handler, since the wrapper
-consumes the event), or make the auto window follow an explicit forget (`Action = 1`, a passkey
-change) instead of "the store reads empty", so a link-driven deletion cannot open it.
+bond and makes the device offer itself to the room.
+**Resolved 2026-10-28** - card `t_c1a0678e`; Akyirr ruled for the first of the two directions ("go
+with the option you recommended"): the window follows an EVENT the owner caused, not a reading of the
+store, and the repeat-pairing deletion itself is left alone (the peer still loses its bond and has to
+pair again):
+- **Two events, and only two.** The radio coming up with an empty bond store (headless first use) and
+  an explicit forget that emptied the store - `Action = 1`, a passkey change, the epoch revoke, all
+  three of which run through `AppBLEForgetAllBonds`. The rule is `BleAutoWindowGranted` in
+  `Blocks/BleWindowPolicy.h` (host-tested, `test/native/ble_window_test.cpp`, 13 checks), the event is
+  a `BleWindowCause` that `AppBLETick` consumes once per pass, and the count-driven
+  `BleAutoWindowDone` machinery is gone. A store that merely reads empty grants nothing, which is the
+  whole of E69.
+- **The residual, on purpose.** After a link-driven deletion the store IS empty, so the deleting peer
+  - which by construction had to present a bonded identity - may re-pair without a window
+  (`BleBondingAllowed`'s empty-store term). No stranger can reach that state: it takes a bond to
+  start with, and a second peer is refused at connect (`BleLinkRefusedBusy`).
+- **Rig check, iteration 46** (`685482` B flash / `77876` B RAM, flashed with `./upload.sh app tamu`:
+  `Wrote 686160 bytes (421298 compressed) at 0x00070000 ... Hash of data verified.`), re-runnable as
+  `bash firmware/.pio/probe/rig_e69.sh` (log `.pio/probe/rig_e69.log`, **12/12 assertions pass**):
+  bond made then the device reset -> `Bond count 1`, `Window 0`; the host forgets its own bond and
+  reconnects (the E69 action) -> `Bond count 1 -> 0` and **`Window 0`**, where iteration 44 read
+  `286053 / 286221 / 258310` ms for the same three-time sequence, with `LastLink=5` (the session gate
+  refused the link - nothing leaked); `Action = 1` -> `Bond count 0`, `Window 299953` (the forget's
+  own recovery period, unchanged); reset with an empty store -> `Window 293659` (first use, unchanged).
+- **One behaviour deliberately given up:** switching the radio off and on again with an empty store no
+  longer opens a window by itself - a re-enable is not one of the two events. Pairing is still
+  admitted by the empty store, and the next boot or explicit forget grants the window.
+- **RED:** `test/native/ble_window_guard.sh` run against `HEAD`'s pre-fix `AppBLE.h` (`git show
+  HEAD:firmware/src/Devices/Tamu_v2.0A/AppBLE.h`) prints 13 FAIL lines and exits 1; against this tree
+  it passes. The native table also pins `BleAutoWindowGranted(BleWindowCauseNone, 0) == false`, the
+  exact shape the defect needed to be true.
+
 **Evidence kind:** register read-out (`BLE Settings` fields 2/4/9-11 via `ble_settings_read.py` +
 `ble_lastlink.py`), host-side HCI transcripts (`ble_host.py`), and the air (bleak scan). The ATT-level
 refusal of the refused link was not captured - the device drops it ~6 s in, and a register read inside

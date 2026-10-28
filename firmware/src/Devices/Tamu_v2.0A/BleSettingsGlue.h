@@ -313,9 +313,9 @@ bool OnBleActionWrite(const StaticBlockDescriptor &Block, uint16_t Index, const 
         return true;
 
     case BLE_SET_ACTION_FORGET_BONDS:
-        // Destructive: every paired phone has to pair again. The empty bond store re-opens the
-        // window automatically for its 5-minute recovery period (AppBLE.h), so the device is
-        // immediately pairable again without a second command.
+        // Destructive: every paired phone has to pair again. The forget itself is the explicit
+        // event the automatic window is owed to (AppBLE.h, Blocks/BleWindowPolicy.h), so the device
+        // is immediately pairable again for its 5-minute period without a second command.
         if (!AppBLEForgetAllBonds())
             return false;
         BleSettingsSync();

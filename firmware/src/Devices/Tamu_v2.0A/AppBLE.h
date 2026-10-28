@@ -10,6 +10,7 @@
 #include "NimBLEDevice.h"
 #include "Blocks/BleAdmissionPolicy.h"
 #include "Blocks/BleSecurityPolicy.h"
+#include "Blocks/BleWindowPolicy.h"
 #include "BlePasskeyStore.h" // the passkey and the policy stamp of the bond store (NVS `ble`)
 
 #define BLE_SERVICE_UUID "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -71,10 +72,14 @@ static uint8_t BleLinkBondCount = 0;
 // True while the current link may not create a bond: no window is open and the store is not empty,
 // so a pairing on this link is a stranger's and must not leave a bond behind.
 static bool BleLinkBondingClosed = false;
-// The recovery window is opened once per "bond store is empty" episode: set when it has been
-// opened, cleared again as soon as a bond exists (or the radio is switched off and back on), so it
-// is not a permanent advertisement.
-static bool BleAutoWindowDone = false;
+// The automatic window's trigger: an EVENT the owner caused, consumed by the next AppBLETick pass.
+// Never "the bond store reads empty" - a deletion a LINK drove (repeat pairing, E69) empties the
+// store too, and that must not make a locked device offer itself. Blocks/BleWindowPolicy.h has the
+// rule, and the only two events are the radio starting with no bond (headless first use) and an
+// explicit forget emptying the store (`Action = 1`, a passkey change, the epoch revoke - all three
+// run through AppBLEForgetAllBonds). App task only: written by the register/USB path and by the
+// radio start, read by the tick in the same task.
+static BleWindowCause BleAutoWindowCause = BleWindowCauseNone;
 
 // Radio state, straight from the block's Enabled/Display name fields. `BleRadioUp` means the
 // NimBLE host and the GATT table exist; `BleEnabled` means the block wants the radio usable. A
@@ -168,11 +173,17 @@ struct BleRxAssembler
 // ===== Connectable window =====
 //
 // A window is the PAIRING state. While one is open any phone may connect and pair (up to the three
-// bonds the store holds). A window is opened by the `BLE Settings` block's Action field (USB), and
-// it opens BY ITSELF for BLE_AUTO_WINDOW_MS whenever the bond store is empty - first use, or
-// straight after an Action = 1 forget - so a headless device is easy to find and pair to. The
-// core's button is not a trigger: Button.h shares LED_NOTIFICATION_PIN with the notification LED and
-// forces the button state false while the LED is driven, so a press is invisible exactly when it
+// bonds the store holds). Two things open one:
+//   - the `BLE Settings` block's Action field (USB, `Action = 0`) for BLE_WINDOW_MS;
+//   - the device itself, unattended, for BLE_AUTO_WINDOW_MS - but only after an EVENT the owner
+//     caused: the radio coming up with no bond stored (headless first use), or an explicit forget
+//     emptying the store (`Action = 1`, a passkey change, the epoch revoke). It is deliberately NOT
+//     "the bond store reads empty" any more (Issues.md E69): the vendored stack deletes a bond when
+//     a peer that it already has a bond for asks to pair again, before any application callback
+//     runs, so a link could empty the store and make this device offer itself to the room for five
+//     minutes. Blocks/BleWindowPolicy.h holds that rule; AppBLETick consumes the event.
+// The core's button is not a trigger: Button.h shares LED_NOTIFICATION_PIN with the notification LED
+// and forces the button state false while the LED is driven, so a press is invisible exactly when it
 // blinks.
 //
 // Advertising does NOT depend on a window: like any peripheral it is on the air whenever there is no
@@ -222,8 +233,10 @@ bool AppBLEOpenWindow()
     return true;
 }
 
-// The recovery window: with no bond stored, the device makes itself discoverable for five minutes
-// without being asked. Driven by the bond store, never by a button (see above).
+// The automatic window: five minutes of discoverability the device owes to an explicit event - a
+// radio that came up with no bond stored, or a forget that emptied the store (Blocks/BleWindowPolicy.h,
+// Issues.md E69). Never opened because the store merely reads empty: the caller decides that with
+// BleAutoWindowGranted, and the store is asked again here so a bond made in the meantime wins.
 bool AppBLEAutoWindow()
 {
     if (!BleRadioUp || !BleEnabled || AppBLEBondCount() != 0)
@@ -457,6 +470,14 @@ bool AppBLEForgetAllBonds()
         memcpy(BleBondEpoch, StaticVol.BleSet.Passkey, BLE_PASSKEY_LEN);
         BleBondEpochKnown = true;
         BleBondEpochSave(BleBondEpoch);
+
+        // This IS the explicit event the automatic window is owed to (`Action = 1`, a passkey change,
+        // the epoch revoke - every one of them comes through here): every phone that was paired has
+        // to pair again, so the device offers itself for BLE_AUTO_WINDOW_MS without being asked.
+        // Gated on the store really coming up empty, like the stamp above: a delete that left an
+        // entry behind has no peers to invite back.
+        if (BleAutoWindowGranted(BleWindowCauseForgotten, After))
+            BleAutoWindowCause = BleWindowCauseForgotten;
     }
     else
     {
@@ -997,6 +1018,14 @@ static bool AppBLERadioStart()
     BleWindowEndMs = 0;
     BleAdvStateApplied = false;
 
+    // Headless first use: a radio that came up with no bond stored offers itself for the automatic
+    // period, so a device nobody has paired with yet is usable from the phone alone. This is an
+    // EVENT (the radio starting), not a reading of the store - a store emptied by a link is not one
+    // (Issues.md E69, Blocks/BleWindowPolicy.h). AppBLEEnforceBondPolicy above may already have
+    // emptied the store, in which case its forget left the event behind and this is the same one.
+    if (BleAutoWindowGranted(BleWindowCauseRadioStart, Bonds))
+        BleAutoWindowCause = BleWindowCauseRadioStart;
+
     DeviceLog("APPBLE", "radio up: name='%s' mode=%s bonds=%d",
               BleAppliedName, Policy.Mitm ? "passkey" : "just works", Bonds);
     return true;
@@ -1030,7 +1059,6 @@ void AppBLESettingsApply()
             BleWindowEndMs = 0;
             BleSecureDeadlineMs = 0;
             BleAdvRestart = false;
-            BleAutoWindowDone = false; // a later re-enable gets its recovery window again
             // The advertisement was stopped here, so the tick must not look for a transition.
             BleAdvStateApplied = false;
             if (BleServer && BleConnHandle != 0xFFFF)
@@ -1104,25 +1132,19 @@ void AppBLETick()
         DeviceLog("APPBLE", "connectable window closed");
     }
 
-    // Recovery window: while the bond store is empty the device opens the window by itself for
-    // BLE_AUTO_WINDOW_MS (first use, or straight after Action=1 forgot the bonds), so a headless
-    // device is easy to find and pair to. Pairing does not depend on it - an empty store already
-    // admits any peer (BleSessionAllowed) - but it is what the block's Window field reports and
-    // what makes the device obviously discoverable in that state. Opened once per empty episode,
-    // not kept open.
+    // Automatic window, owed to an explicit event only (Issues.md E69, Blocks/BleWindowPolicy.h):
+    // the radio starting with no bond stored, or an explicit forget that emptied the store. The
+    // store reading empty on its own grants nothing - the vendored stack deletes a bond when a peer
+    // that already has one asks to pair again, before any application callback runs, so a window
+    // hung off the count let a link make this device offer itself. The event is consumed here, once,
+    // so a window is opened per event and never per loop pass; AppBLEAutoWindow asks the store again
+    // and refuses if a bond has appeared in the meantime.
     // The core's button is NOT a trigger - Button.h shares LED_NOTIFICATION_PIN with the
     // notification LED and forces the button state false while the LED is driven, so a press is
     // invisible exactly when it blinks (owner ruling, 2026-10-28).
-    if (AppBLEBondCount() == 0)
-    {
-        if (!BleAutoWindowDone)
-        {
-            BleAutoWindowDone = true; // one window per empty episode, not a permanent advert
-            AppBLEAutoWindow();
-        }
-    }
-    else
-        BleAutoWindowDone = false;
+    if (BleAutoWindowGranted(BleAutoWindowCause, AppBLEBondCount()))
+        AppBLEAutoWindow();
+    BleAutoWindowCause = BleWindowCauseNone;
 
     // Advertising itself (BleAdvWanted) has one condition and is unchanged by the window or by the
     // bond store; what those decide is who may BOND and who may hold a session, which is answered

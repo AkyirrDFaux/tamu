@@ -124,6 +124,10 @@ echo "### native BLE admission tests (identity compare across type spaces, who m
 build_run "bleadmission" "ble_admission_test.cpp"
 echo
 
+echo "### native BLE window tests (the automatic window follows an owner event, never the bond count - E69)"
+build_run "blewindow" "ble_window_test.cpp"
+echo
+
 # t_367f86d0 round 2, structural half. Two rules the radio code owns, neither of which the host can
 # link (AppBLE.h pulls NimBLE, the host task and NVS), asserted on the source:
 #   - a link's security deadline comes from the policy, not from one fixed figure: a passkey pairing
@@ -456,6 +460,24 @@ if grep -Eq 'StaticVol\.BleSet\.(LastPeer|LastAir|LastLink)' "$APPBLE_SRC"; then
 fi
 [ $e66_ro_fail = 0 ] && echo "PASS: every way a link can end is recorded with both addresses, and the block publishes it"
 fail=$((fail + e66_ro_fail))
+echo
+
+# t_c1a0678e (Issues.md E69), structural half: the automatic pairing window follows an EVENT, not a
+# reading of the bond store. Measured on the rig: a peer that presents a bonded identity and asks to
+# pair makes the vendored stack delete that bond (NimBLEServer.cpp, BLE_GAP_EVENT_REPEAT_PAIRING ->
+# ble_store_util_delete_peer + RETRY, before any application callback), and the then-empty store used
+# to make AppBLETick open 300 s of window in which any peer that pairs is admitted - a locked device
+# could be made to offer itself. The rule now lives in Blocks/BleWindowPolicy.h and is driven by
+# ble_window_test.cpp; this asserts the radio code goes through it, at exactly the two owner events
+# (the radio starting with no bond, an explicit forget that emptied the store) and nowhere else. The
+# guard is its own script so it can be re-run against the pre-fix source and watched to FAIL:
+#   bash test/native/ble_window_guard.sh src/Devices/Tamu_v2.0A/AppBLE.h
+echo "### source guard: the automatic window follows an owner event, never 'the store reads empty' (E69)"
+if bash "$ROOT/test/native/ble_window_guard.sh" "$APPBLE_SRC"; then
+    :
+else
+    fail=$((fail + 1))
+fi
 echo
 
 echo "### native WiFi Settings tests (block table, write-only password, configuration-only State, field-8 bits)"
