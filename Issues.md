@@ -611,9 +611,11 @@ the paths that never needed the stop (a live link, a disabled radio) lose nothin
   now revokes inside the loop the passkey is written in (`AppBLEApplySecurityPolicy`) instead of
   failing with `BLE_HS_EBUSY` and leaving the epoch unstamped for a boot-time retry a session could
   silence. The epoch rule is unchanged: the stamp still follows the STORE (only `After == 0`), so a
-  partial delete leaves the mismatch for the next radio start. No change was needed in
-  `onAuthenticationComplete`'s stamp: a link that reaches it authenticated can only have been
-  bonded under the code in force.
+  partial delete leaves the mismatch for the next radio start. (**Corrected by E68, 2026-10-28:** the
+  claim that followed here - "no change was needed in `onAuthenticationComplete`'s stamp: a link that
+  reaches it authenticated can only have been bonded under the code in force" - is false. A bond made
+  under the old passkey authenticates from its stored LTK, and stamping on that reconnect is what
+  silenced the retry in the observation two bullets above. The stamp is gone from that path.)
 - The reply follows that same state, not the per-entry rc: the function returns `After == 0`, so
   `Action = 1` cannot answer `FLAG_FAIL` over a store that reads back empty (a repeat `Action = 1`
   on an empty store is a success, not a refusal). `ok=<deleteAllBonds rc>` stays in the log.
@@ -732,3 +734,50 @@ actually speaking the protocol. A rig session therefore sees the boot banner and
 which is why E65/E66 had to be pinned by timing and by register block reads. If a future card needs
 runtime device logs, the sink has to change (a ring the register path can read, or logs behind an
 explicit block field) - a plain `idf.py monitor` cannot show them.
+
+**E68 A changed passkey still revoked nothing after E65, and the code that was meant to revoke had
+two holes of its own.** Card t_c1376256, from the rig session in t_4fc81fc7 (build 26.10.28.27):
+after a passkey change the old bond kept full authenticated access and the store still read Bond
+count 1. The path looked complete - epoch comparison, `AppBLEForgetAllBonds`, session drop - so the
+gap is in the details, and there are three, one per way the rule "a passkey write revokes exactly
+what a CHANGED code invalidates" can leak:
+- **The delete itself could not run** on an advertising device (`ble_gap_unpair` -> `BLE_HS_EBUSY`),
+  which since E64 is the idle state. E65 fixed exactly that by taking the advertisement down around
+  the delete, and the passkey path calls the same function, so it inherits it. Nothing to do here
+  beyond keeping that path single-sourced.
+- **A no-op write dropped a live session, and a real change in the `passkey -> 000000` direction kept
+  it.** The drop was gated on `Policy.Mitm`, i.e. on the policy *after* the write: re-writing the same
+  code disconnected a correctly authenticated peer for nothing, while removing the passkey left the
+  peer that authenticated with the old code sitting in a session over a bond the same apply had just
+  deleted. The drop is now decided by the revocation answer itself (`BleBondsInvalidated`, reached
+  through `AppBLEEnforceBondPolicy`) and by nothing else: no change -> no forget and no drop, any
+  change -> forget, then drop whatever link is up.
+- **A reconnect erased the retry.** `onAuthenticationComplete` stamped the epoch on every admitted
+  session, on the theory that a link that reaches it authenticated "can only have been bonded under
+  the code in force" (the sentence E65 wrote). The rig disproves it: a bond made under the old
+  passkey authenticates from its stored LTK and comes back with full access. After a revoke that
+  failed, one such session rewrote the epoch, the next radio start found the stamp equal and never
+  retried, and the rotated code left that bond in place for good - observed as `radio up ...
+  bonds=1` and nothing else. The stamp is gone from that path: the epoch only moves where the STORE
+  is known to be wholly under the current code, i.e. an empty store after a forget, or a store with
+  nothing to revoke.
+- The decision is now one host-tested helper, `BleBondsInvalidated(EpochKnown, Epoch, Now)`
+  (`Blocks/BleSecurityPolicy.h`), so "the bonds are revoked" and "the link they authenticated is
+  dropped" are the same answer by construction; `test/native/ble_settings_test.cpp` drives it (180
+  checks) and the E68 source guard in `test/native/run.sh` pins the three rules on `AppBLE.h` - RED
+  on the pre-fix source (five predicates, log in `.pio/probe/`), GREEN after.
+**UNPROVEN on the air: the device runs 2026.10.28 iteration 27** (read-only System field 0,
+`.pio/probe/dev_version.py`), the fix is iteration 36 in the tree, and firmware flashing was not
+authorised in this card. The acceptance - one bond plus a connected peer, change the passkey, `Bond
+count == 0`, the old peer refused on reconnect, a peer that only had the old code cannot pair - is
+therefore not passed. Recipe once authorised: `esptool.py ... write_flash 0x70000
+.pio/build/Tamu_v2_0A/firmware.bin` + a `read_flash`/`cmp` read-back, then `.pio/probe/ble_settings_read.py`
+(Bond count before/after) around a USB `Passkey` write, and a `bluetoothctl` re-pair with the old
+code (it must be refused) plus one with the new code inside a window (it must succeed).
+**Still to land outside `firmware/`:** `Docs/Services/App Interface.md:44` ends with "`Action = 1` is
+the only way to clear them", and `app/lib/ui/ble_security_page.dart` (closing paragraph of the
+panel) says the bonds "can only be cleared with \"Forget all bonds\"" - both now disagree with the
+device. Proposed doc clause in place of that one: "a changed passkey revokes them as well - the store
+is kept under the code it was built with, and writing a different code forgets the bonds the old one
+made."; proposed app sentence: "the bonds do too, so they are cleared by \"Forget all bonds\" or by
+changing the passkey."

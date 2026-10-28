@@ -111,6 +111,37 @@ inline BleSecurityPolicy BleSecurityPolicyFrom(const char *PasskeyText)
     return Policy;
 }
 
+// ===== Does a passkey write invalidate the stored bonds? =====
+//
+// The bond store is stamped with the passkey TEXT it was built under
+// (Devices/Tamu_v2.0A/BlePasskeyStore.h), and this is the comparison the device makes on every
+// policy apply and again at radio start (AppBLEEnforceBondPolicy in AppBLE.h). It is also the
+// answer that decides whether a LIVE session is dropped, so "revokes the bonds" and "drops the
+// link they authenticated" can never disagree.
+//
+// `EpochKnown == false` is the "no stamp yet" third state: a fresh partition, or a device upgraded
+// from a build that predates the stamp. The only build that could have written such a store had no
+// passkey at all, so its bonds are Just Works bonds - kept while the device is still on Just Works
+// (no re-pairing for every upgrade) and revoked once under a passkey, which is the safe direction.
+//
+// Every other difference is a change of credential, in EITHER direction: the bonds and any live
+// session were authenticated with a code that no longer exists, so `000000` (Just Works) is a
+// change like any other - a one-way "is MITM now required" test would miss it. A write of the SAME
+// text is NOT a change: it must revoke nothing and drop nothing.
+inline bool BleBondsInvalidated(bool EpochKnown, const char *Epoch, const char *Now)
+{
+    if (!BlePasskeyDigits(Now))
+        return true; // a value the store can never hold is never the stamp it holds
+    if (!EpochKnown)
+        return BlePasskeyEnabled(Now);
+    for (uint8_t i = 0; i < BLE_PASSKEY_LEN; i++)
+    {
+        if (Epoch[i] != Now[i])
+            return true;
+    }
+    return false;
+}
+
 // ===== How long a new link may stay unsecured =====
 //
 // The device drops a link that has not completed pairing by its deadline (AppBLETick in

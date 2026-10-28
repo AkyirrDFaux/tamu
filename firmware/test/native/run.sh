@@ -165,7 +165,7 @@ if ! printf '%s\n' "$radio_body" | grep -q 'AppBLEEnforceBondPolicy();'; then
     echo "FAIL $APPBLE_SRC: the radio start must apply a passkey change made while the radio was down"
     blessec_guard_fail=1
 fi
-enforce_body=$(sed -n '/^void AppBLEEnforceBondPolicy()/,/^}/p' "$APPBLE_SRC")
+enforce_body=$(sed -n '/^bool AppBLEEnforceBondPolicy()/,/^}/p' "$APPBLE_SRC")
 if ! printf '%s\n' "$enforce_body" | grep -q 'AppBLEForgetAllBonds();'; then
     echo "FAIL $APPBLE_SRC: AppBLEEnforceBondPolicy must forget the invalidated bonds"
     blessec_guard_fail=1
@@ -265,6 +265,60 @@ if ! printf '%s\n' "$forget_body" | grep -q 'Adv->isAdvertising()'; then
 fi
 [ $e65_guard_fail = 0 ] && echo "PASS: the bond forget clears the air first, then asks the tick to rebuild the advertisement"
 fail=$((fail + e65_guard_fail))
+echo
+
+# t_c1376256 (Issues.md E68), structural half. The revoke is only a revoke if three things hold, and
+# each of them failed once on the rig or in review:
+#   - a passkey write that does not CHANGE the code revokes nothing (the epoch comparison decides,
+#     not "was the write accepted"), and it must not drop a live session either: the old drop test
+#     was `Policy.Mitm`, which is true for a re-written passkey and disconnected a good session;
+#   - a real change drops whatever link is up, whichever direction the code moved - passkey ->
+#     `000000` left MITM off and kept the old peer's session over a bond the same apply deleted;
+#   - the epoch is never stamped from `onAuthenticationComplete`: a bond made under an old code
+#     still authenticates from its stored LTK, and stamping on that reconnect erased the mismatch
+#     the boot-time retry depends on (the rig observed exactly this, Issues.md E65).
+echo "### source guard: a passkey write revokes only a changed code, and drops its live link (E68)"
+e68_guard_fail=0
+apply_body=$(sed -n '/^void AppBLEApplySecurityPolicy()/,/^}/p' "$APPBLE_SRC")
+revoked_var=$(printf '%s\n' "$apply_body" | sed -n 's/.*bool \([A-Za-z_][A-Za-z0-9_]*\) = AppBLEEnforceBondPolicy();.*/\1/p' | head -1)
+if [ -z "$revoked_var" ]; then
+    echo "FAIL $APPBLE_SRC: the policy apply must take the revocation decision (a no-op write revokes nothing)"
+    e68_guard_fail=1
+fi
+# The drop is gated on that decision - never on the MITM bit of the policy just applied.
+if printf '%s\n' "$apply_body" | grep -q 'if (Policy.Mitm'; then
+    echo "FAIL $APPBLE_SRC: the session drop is gated on the new policy, not on the code having changed (E68)"
+    e68_guard_fail=1
+fi
+revoke_line=$(printf '%s\n' "$apply_body" | grep -n '= AppBLEEnforceBondPolicy();' | head -1 | cut -d: -f1)
+drop_line=$(printf '%s\n' "$apply_body" | grep -n 'BleServer->disconnect(BleConnHandle);' | head -1 | cut -d: -f1)
+if [ -z "$drop_line" ] || [ -z "$revoke_line" ] || [ "$drop_line" -le "$revoke_line" ]; then
+    echo "FAIL $APPBLE_SRC: a changed passkey must drop the live session after revoking its bonds (E68)"
+    e68_guard_fail=1
+elif ! printf '%s\n' "$apply_body" | sed -n "${revoke_line},${drop_line}p" | grep -q "if ($revoked_var &&"; then
+    echo "FAIL $APPBLE_SRC: the session drop must be gated on '$revoked_var' (the revocation decision)"
+    e68_guard_fail=1
+fi
+# The decision itself is host-tested (ble_settings_test.cpp); the device must ask it, not re-derive
+# it with a memcmp of its own.
+if ! printf '%s\n' "$enforce_body" | grep -q 'BleBondsInvalidated(BleBondEpochKnown'; then
+    echo "FAIL $APPBLE_SRC: AppBLEEnforceBondPolicy must decide with BleBondsInvalidated (host-tested)"
+    e68_guard_fail=1
+fi
+# A reconnect must never re-stamp the epoch.
+auth_body=$(sed -n '/void onAuthenticationComplete/,/^    }$/p' "$APPBLE_SRC")
+if printf '%s\n' "$auth_body" | grep -q 'AppBLEBondEpochStamp'; then
+    echo "FAIL $APPBLE_SRC: onAuthenticationComplete re-stamps the bond epoch - a reconnect with a stale bond would silence the retry (E68)"
+    e68_guard_fail=1
+fi
+# ... and the two places that may stamp are the empty store after a forget and the nothing-to-revoke
+# case in the enforce path.
+if [ "$(grep -c 'BleBondEpochSave(BleBondEpoch)' "$APPBLE_SRC")" != 2 ]; then
+    echo "FAIL $APPBLE_SRC: the bond epoch may only be written where the store is wholly under the current code (forget + enforce)"
+    e68_guard_fail=1
+fi
+[ $e68_guard_fail = 0 ] && echo "PASS: a changed passkey revokes the bonds and drops the link; a no-op write does neither; a reconnect never re-stamps"
+fail=$((fail + e68_guard_fail))
 echo
 
 # E64 ruling C (owner, 2026-10-28), with E66 (2026-10-28) on top: advertising is ONE condition - no

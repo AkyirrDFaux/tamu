@@ -390,12 +390,50 @@ static void TestSecureBudget()
     }
 }
 
+// --- which passkey write invalidates the stored bonds --------------------------
+//
+// The decision the device makes on every policy apply (AppBLEEnforceBondPolicy in AppBLE.h). It is
+// also the answer that drops a live session, so "a passkey change revokes the bonds" and "the link
+// they authenticated is gone" are one rule. The two failure modes this table pins are the ones the
+// rig found: a re-written passkey that revokes nothing is useless, and a passkey change to
+// `000000` that leaves the old peer's session alive is worse.
+static void TestBondRevocation()
+{
+    // A write of the SAME code is not a revocation: revoke nothing, drop nothing.
+    CHECK(!BleBondsInvalidated(true, "123456", "123456"));
+    CHECK(!BleBondsInvalidated(true, "000000", "000000"));
+
+    // Any real change is one, in EITHER direction - `000000` included, because the old code is
+    // gone and the peer that authenticated with it is a stranger now.
+    CHECK(BleBondsInvalidated(true, "000000", "123456")); // a passkey is set
+    CHECK(BleBondsInvalidated(true, "123456", "000000")); // the passkey is removed
+    CHECK(BleBondsInvalidated(true, "123456", "654321")); // rotated
+    CHECK(BleBondsInvalidated(true, "123456", "123457")); // one digit
+
+    // An unstamped store (a fresh partition, or a build that predates the stamp) holds Just Works
+    // bonds: adopting it under Just Works keeps them; a passkey revokes them once.
+    CHECK(!BleBondsInvalidated(false, "000000", "000000"));
+    CHECK(BleBondsInvalidated(false, "000000", "123456"));
+
+    // A current value the store could never hold never equals its stamp either (the epoch read
+    // from NVS is validated the same way, so a half-written blob cannot pass for a match).
+    CHECK(BleBondsInvalidated(true, "123456", "12345"));
+    CHECK(BleBondsInvalidated(true, "123456", "12a456"));
+
+    // The table is symmetric in the digits: same length, same text, whatever the surrounding
+    // buffer looks like (the comparison is bounded by BLE_PASSKEY_LEN).
+    char Epoch[16] = {'1', '2', '3', '4', '5', '6', 'x', 'x'};
+    char Now[16] = {'1', '2', '3', '4', '5', '6', 'y', 'y'};
+    CHECK(!BleBondsInvalidated(true, Epoch, Now));
+}
+
 int main()
 {
     TestPolicy();
     TestBlockTable();
     TestBondRefresh();
     TestSecureBudget();
+    TestBondRevocation();
 
     printf("ble_settings: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;

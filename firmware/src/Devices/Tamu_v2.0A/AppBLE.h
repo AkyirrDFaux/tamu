@@ -494,36 +494,49 @@ void AppBLEBondEpochStamp()
 // Called whenever the policy can have changed - AppBLEApplySecurityPolicy (a passkey written while
 // the radio is up) and AppBLERadioStart (one written while the radio was off, which is the same
 // boot). Forgets the bonds if they were made under a different code.
-void AppBLEEnforceBondPolicy()
+//
+// Returns the decision, not a status: true means the code in force is NOT the one the store was
+// built under, i.e. this call IS a credential change - the bonds (if any) were invalidated and any
+// live session was admitted under a code that no longer exists. False covers both "the text did not
+// change" (a re-written passkey revokes nothing) and "an unstamped Just Works store was adopted",
+// and neither may cost a live link. AppBLEApplySecurityPolicy drops the session on exactly this
+// answer, so the forget and the drop can never disagree.
+bool AppBLEEnforceBondPolicy()
 {
     // The bond store's API needs the host; before createServer() there is nothing to compare
     // against, and the radio start calls this again once the store exists.
     if (!BleServer)
-        return;
+        return false;
 
     if (!BleBondEpochKnown)
         BleBondEpochKnown = BleBondEpochLoad(BleBondEpoch);
 
     const char *Now = StaticVol.BleSet.Passkey;
-    const bool Unknown = !BleBondEpochKnown;
-    if (!Unknown && memcmp(BleBondEpoch, Now, BLE_PASSKEY_LEN) == 0)
-        return;
 
     // An unstamped store predates this rule, and the only build that could have written it had no
     // passkey at all - its bonds are Just Works bonds. Under a passkey they can never authenticate,
     // so they go; under Just Works they are exactly what the current policy asks for, so they are
     // kept and merely stamped (no re-pairing for every device that upgrades).
+    if (!BleBondsInvalidated(BleBondEpochKnown, BleBondEpoch, Now))
+    {
+        AppBLEBondEpochStamp(); // nothing to revoke: just record which code the store is under now
+        return false;
+    }
+
     const int Bonds = NimBLEDevice::getNumBonds();
-    const bool Invalidated = !Unknown || BlePasskeyEnabled(Now);
-    if (Bonds > 0 && Invalidated)
+    if (Bonds > 0)
     {
         // The phone that paired under the old code cannot produce an authenticated link, and its
         // stored key would keep it connecting - it has to pair again inside a window.
         DeviceLog("APPBLE", "passkey changed since the bonds were made: forgetting %d bond(s)", Bonds);
         AppBLEForgetAllBonds(); // re-stamps the epoch only if the store really came up empty
-        return;
+        return true;
     }
-    AppBLEBondEpochStamp(); // nothing to revoke: just record which code the store is under now
+
+    // An empty store is under whatever code is current: record it, or every radio start would
+    // compare against a stamp that is gone.
+    AppBLEBondEpochStamp();
+    return true;
 }
 
 // Applies a changed passkey policy to the radio. Effective for the next pairing; the ATT
@@ -540,18 +553,25 @@ void AppBLEApplySecurityPolicy()
     DeviceLog("APPBLE", "policy applied: mitm=%u iocap=%u passkey set=%u",
               Policy.Mitm, Policy.IoCap, Policy.Mitm);
 
-    // A Just Works session is unauthenticated by definition: once a passkey is set it no longer
-    // meets the policy, so it is dropped rather than kept on the strength of the old decision.
-    if (Policy.Mitm && BleSecured && BleConnHandle != 0xFFFF && BleServer)
+    // The bonds that were made under the previous code are worthless now - and would keep the
+    // phone connecting with a bond it can never authenticate. Done after the policy is in force,
+    // so the next connection inside a window pairs fresh and gets the prompt.
+    //
+    // The drop is decided by the SAME answer that decides the forget, and by nothing else:
+    //   - a write that does not change the code revokes nothing AND drops nothing. The old test
+    //     was "is MITM in force now", so re-writing the same passkey from the app disconnected a
+    //     live, correctly authenticated session for no reason - a no-op write must be a no-op.
+    //   - a real change drops whatever link is up, whichever way the code moved. A one-way MITM
+    //     test missed passkey -> `000000`: MITM is off afterwards, so the peer that authenticated
+    //     with the old code kept its session over a bond the same apply had just deleted. A link
+    //     is admitted under the code in force when it came up, so after a change it is a stranger
+    //     by definition - the phone has to pair again inside a window.
+    const bool Revoked = AppBLEEnforceBondPolicy();
+    if (Revoked && BleConnHandle != 0xFFFF && BleServer)
     {
-        DeviceLog("APPBLE", "dropping the Just Works session: a passkey is now set");
+        DeviceLog("APPBLE", "dropping the live session: the passkey it authenticated with is gone");
         BleServer->disconnect(BleConnHandle);
     }
-
-    // The links that were paired under the previous code are worthless now - and would keep the
-    // phone connecting with a bond it can never authenticate. Done after the policy is in force, so
-    // the next connection inside a window pairs fresh and gets the prompt.
-    AppBLEEnforceBondPolicy();
 }
 
 class BleServerCallbacks : public NimBLEServerCallbacks
@@ -752,9 +772,19 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         // getNumBonds() unchanged. Tell the block to re-read the entries rather than the size.
         AppBLEBondStoreChanged();
 
-        // The store is now under the code this bond was just made with. A reconnect only compares
-        // (AppBLEBondEpochStamp is idempotent), so the partition is not written per connection.
-        AppBLEBondEpochStamp();
+        // The bond epoch is deliberately NOT stamped here. This link is bonded, but not
+        // necessarily under the code in force: a bond made under an old passkey authenticates from
+        // its stored LTK (it was paired with a passkey, so the key is marked authenticated), which
+        // is exactly what the rig showed - the old bond kept full access after the passkey changed
+        // (Issues.md E65, and E68 for this line). Stamping on a reconnect rewrote the epoch of a
+        // store the revoke had failed to clear, so the next radio start found the two equal and
+        // never retried, and the rotated code left that bond in place for good.
+        //
+        // The epoch therefore only moves where the STORE is known to be wholly under the current
+        // code: an empty store (AppBLEForgetAllBonds) or one with nothing to revoke
+        // (AppBLEEnforceBondPolicy, which also runs after every policy apply). A pairing that adds
+        // a bond under an epoch that already matches changes nothing, so a reconnect now writes no
+        // NVS entry at all - which is what the old comment claimed.
     }
 
     // The code the user configured, for the DISPLAY_ONLY policy. NimBLE-cpp only asks here when
