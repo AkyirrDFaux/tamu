@@ -725,15 +725,74 @@ outside the window), 5 refused (unsecured), 6 refused (busy)`. (b)
 field and fails until it does.
 
 
-**E67 `DeviceLog` is suppressed whenever a host holds the USB port, so rig evidence has to come from
-the register read-out or the air.** `Core/Functions/AppInterface.h` sets `Connected =
-AppUSBActive() || AppBLEActive()` and `Devices/Tamu_v2.0A/Log.h` drops every message while it is
+**E67 `DeviceLog` is suppressed whenever a host holds the USB port, so rig evidence had to come from
+the register read-out or the air - the runtime log is now readable over the protocol.** The
+suppression is real and deliberate: `Core/Functions/AppInterface.h` sets `Connected =
+AppUSBActive() || AppBLEActive()` and `Devices/Tamu_v2.0A/Log.h` drops the console copy while it is
 true; `AppUSBActive()` is `usb_serial_jtag_is_connected()`, which on this board reads true within
 ~0.4 s of a reset whenever the USB cable is attached to a live host - not only while a process is
-actually speaking the protocol. A rig session therefore sees the boot banner and nothing after it,
-which is why E65/E66 had to be pinned by timing and by register block reads. If a future card needs
-runtime device logs, the sink has to change (a ring the register path can read, or logs behind an
-explicit block field) - a plain `idf.py monitor` cannot show them.
+actually speaking the protocol. A rig session therefore saw the boot banner and nothing after it,
+which is why E65/E66 had to be pinned by timing and by register block reads (and why a plain
+`idf.py monitor` can never show them).
+**Fixed (2026-10-28, card t_c4d240e5): the log got a second, readable sink instead of the check
+being weakened.** The console copy stays suppressed - the app owns that byte stream and a stray line
+would corrupt its frames - and every `DeviceLog` line now ALSO goes into a 4 KB ring of formatted
+text, which the Log Handler service streams out on demand:
+- `Core/Functions/LogText.h`: the ring (host-clean, caller-owned storage), one flat byte buffer of
+  `'[' uptime_ms ']' ' ' TAG ':' ' ' text '\n'` lines. A line longer than the whole ring is refused
+  rather than wrapped, and a read starts on a line boundary so a partial oldest line is never
+  presented as an event. The uptime stamp is what makes "this line was produced after that read"
+  provable rather than inferred.
+- `Devices/Tamu_v2.0A/Log.h`: the append is the FIRST thing `DeviceLog` does and is unconditional;
+  only the `ESP_LOGI` copy sits behind the connected check. (The order is the whole fix, so
+  `test/native/run.sh` guards it.)
+- `Core/Services/LogHandler.h`: CID 3 `GetTextLogs` (0x0203) streams the window as FRAG fragments,
+  oldest line first. Request: an optional uint32 byte count (0/absent = the whole ring); reply: raw
+  text bytes, `\n` per line. It is answered BEFORE the log database is touched, so a failed DB
+  allocation cannot also blind the text log.
+- The ring takes its storage at the top of `ApplicationTask` (`LogHandler.InitText()`), on the heap
+  like the app TX ring and the log database; if the allocation fails the ring stays empty and says
+  so through `ESP_LOGE` instead of silently eating lines.
+**The Log wire format is untouched:** `LogMessage`/`LogRecord` (96-bit Log Struct + device + count)
+are unchanged and no log record gained or lost a byte - the ring is a byte stream beside them, not a
+different record. It is also NOT a replacement for the app's decoded error list: that list stays the
+32-bit-code database read by `GetLogs`.
+**Cost, measured (2026-10-28, clean build of both envs):** core `Tamu_v2_0A` flash 684,946 ->
+686,362 B (+1,416 B, 24.9 % of the ota_0 region), static RAM 77,876 -> 77,892 B (+16 B, 23.8 %) and
+**4,096 B of heap** taken once at boot for the ring. DAS `DAS_v0_1` is **0 B**: same size lines
+(flash 13,440/14,336 = 93.8 %, RAM 2,048/2,048 = 100 %) and the image is 13,444 B before and after
+with exactly ONE differing byte (offset 0xEAA, the `addi` immediate of the version constant inside
+`RegisterService::SystemGetEth` - the iteration stamp, not code). The whole ring is behind
+`TYPE_CORE` and the DAS/Valu are `DEVICE_LOG_TEXTLESS`, where `DeviceLog` is a no-op macro.
+The DAS budget itself, measured from the linker rather than the tool's percentage: `.text` ends at
+0x3C50, `.init_array` (+4) and the `.data` initialiser image (+0x30) put the image end at **0x3C84**,
+i.e. **380 B of spare code space** below the 0x3E00 `.fixed_data` pin (the "148 B" figure in other
+cards predates the `t_1e134fcc` diet and the counter-only edge payload).
+**Verified without the device:** `firmware/test/native/log_text_test.cpp` (52 checks: line format,
+wrap, the line-boundary rule, the tail-byte-count request, the fragment-shaped reader, refusal of an
+oversized line, newline flattening, an unallocated ring, and the snapshot property that makes a
+second read show only the newer lines) plus the E67 source guard in `test/native/run.sh`. Both were
+shown RED first: the guard fails on HEAD's `Log.h` (no append at all, `.pio/probe/red_e67_guard.py`),
+and the ring test fails 3 checks against the naive line-boundary rule in
+`.pio/probe/red/Core/Functions/LogText.h` (`.pio/probe/red_logtext.py`), which streams `xxx\n[5] ...`
+- a partial line presented as one.
+**Rig half is UNVERIFIED: the device runs 2026.10.28 iteration 27** (read-only System field 0,
+`.pio/probe/dev_version.py`), the fix is iteration 39 in the tree, and firmware flashing was not
+authorised in this card. The negative control is real, though: `.pio/probe/log_ring.py` against that
+image reaches the device over USB and gets no reply at all
+(`no GetTextLogs reply (tag 0xF001): the running image has no CID 3`). Recipe once flashing is
+authorised - `esptool.py ... write_flash 0x70000 .pio/build/Tamu_v2_0A/firmware.bin` (or
+`./upload.sh`), a `read_flash`/`cmp` read-back, then with the cable left attached:
+`firmware/.pio/probe/venv/bin/python firmware/.pio/probe/log_ring.py --action window --wait-close 70`
+- the first read must return >= 20 runtime lines, the read after `Action = 0` must add
+`APPBLE: connectable window open ...`, and the read after the 60 s window must add
+`APPBLE: connectable window closed` with no host action in between.
+**Still to land outside `firmware/`:** `Docs/Services/Log Handler.md`'s command table has no row for
+CID 3. Proposed row, in that table's shape:
+`| GetTextLogs | 3 | Byte count to return from the newest end (uint32, optional; absent = the whole ring) | Fragmentation, stream of raw text bytes, oldest line first, one '\n' per line | Core only; the runtime text log of the device itself, readable while the app link is attached (each line is '[' uptime_ms ']' TAG ': ' text) |`
+and one clause under "Log Database (Core)": "A core also keeps its own free-text runtime log - the
+lines the device prints for diagnostics - in a fixed RAM ring that survives the app link being
+attached; it is a byte stream, not a log record, and does not affect the Log Struct."
 
 **E68 A changed passkey still revoked nothing after E65, and the code that was meant to revoke had
 two holes of its own.** Card t_c1376256, from the rig session in t_4fc81fc7 (build 26.10.28.27):

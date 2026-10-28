@@ -2,15 +2,35 @@
 
 #include "Core/Functions/Packet.h"
 #include "Core/Functions/Log.h"
+#include "Core/Functions/LogText.h"
+#ifdef TYPE_CORE
+// The runtime text ring is written from every task that logs and read by the app task, so its
+// appends are serialised with the RTOS primitive the ESP32 core build already links. LogText.h
+// itself stays free of RTOS types so the native tests can drive it.
+#include "freertos/FreeRTOS.h"
+#include "esp_log.h"
+#endif
 
 // Log Handler service (Docs/Services/Log Handler.md):
 //   CID 0: Error reporter (outbound on nodes, inbound DB input on the core).
 //   CID 1: GetLogs - stream of LogRecord entries (core only).
 //   CID 2: ClearReadLogs - clear N logs from the end, confirm (core only).
+//   CID 3: GetTextLogs - the runtime TEXT log ring, oldest line first (core only, Issues.md E67).
 class LogHandlerService
 {
 public:
     bool Handle(const PacketFrame &Frame); // CID dispatch; true if consumed
+
+#ifdef TYPE_CORE
+    // --- The readable runtime log (Issues.md E67) -------------------------------------------
+    // A RAM copy of the free-text lines `DeviceLog` emits. The console copy is dropped while an
+    // app holds the USB port; this one is not, and CID 3 streams it out over the protocol.
+    // Allocated once at boot on the heap (the same policy as the log database and the app TX
+    // ring), so the static RAM cost is the ring's bookkeeping only.
+    void InitText();
+    void TextLog(uint32_t UptimeMs, const char *Tag, const char *Text);
+    LogTextRing TextRing; // 0 B static: the bytes live in the heap block InitText() takes
+#endif
 
 private:
 #ifdef TYPE_CORE
@@ -26,11 +46,45 @@ private:
 
     uint32_t Clock = 0;               // monotonic sequence source for "oldest" tracking
     uint16_t Order[LOG_MAX_CAPACITY];
+    portMUX_TYPE TextMux = portMUX_INITIALIZER_UNLOCKED; // serialises the text ring's appends
 #endif
 };
 
 // One instance per binary, in Core/Services/.
 LogHandlerService LogHandler;
+
+#ifdef TYPE_CORE
+// Storage for the runtime text ring. 4 KB is a WINDOW, not a transcript: it holds at least 25
+// worst-case (160 B) lines and typically 50-80 real ones, which is the "last N lines" a rig
+// session reads back.
+#define LOG_TEXT_RING_BYTES 4096
+
+// Takes the ring's storage. Called once from the boot sequence, before anything logs, so the
+// allocation happens on one task and every later append (app task or a radio callback) has a
+// ring to write to.
+inline void LogHandlerService::InitText()
+{
+    if (TextRing.Buf)
+        return;
+    uint8_t *Storage = (uint8_t *)malloc(LOG_TEXT_RING_BYTES);
+    if (!Storage || !TextRing.Init(Storage, LOG_TEXT_RING_BYTES))
+    {
+        free(Storage);
+        TextRing.Init(nullptr, 0);
+        ESP_LOGE("LOGH", "text log ring allocation failed (%u B): runtime lines stay console-only",
+                 (unsigned)LOG_TEXT_RING_BYTES);
+    }
+}
+
+inline void LogHandlerService::TextLog(uint32_t UptimeMs, const char *Tag, const char *Text)
+{
+    // A short critical section: the line is at most LOG_TEXT_LINE_MAX bytes and this runs from
+    // the app task and the radio callbacks alike.
+    portENTER_CRITICAL(&TextMux);
+    TextRing.Append(UptimeMs, Tag, Text);
+    portEXIT_CRITICAL(&TextMux);
+}
+#endif
 
 #ifdef TYPE_CORE
 inline int LogHandlerService::LogSeqSlotCompare(const void *Left, const void *Right)
@@ -64,6 +118,36 @@ inline bool LogHandlerService::Handle(const PacketFrame &Frame)
     (void)Cid;
     return true;
 #else
+    // GetTextLogs (CID 3, Issues.md E67): the runtime TEXT log ring - the lines DeviceLog emits,
+    // readable while an app holds the USB port. It needs no log database, so it is answered
+    // before the DB allocation guard: a failed DB allocation must not also blind the text log.
+    // Request: an optional uint32 byte count (0/absent = everything the ring holds).
+    // Response: a FRAG stream of raw text bytes, oldest line first, each line '\n'-terminated.
+    // The Log wire format is untouched - this stream is not a Log Struct and no Log Struct
+    // changed; the ring is the readable copy, not a different log record.
+    if (Cid == 3)
+    {
+        uint32_t Max = 0;
+        if (PayloadBytes(Frame) >= 4)
+            memcpy(&Max, Frame.Payload, sizeof(Max));
+        uint32_t End = TextRing.End(); // snapshot: lines appended after this belong to the next read
+        uint32_t From = TextRing.Begin(End, Max);
+        if (From >= End)
+        {
+            SendResponse(Frame, nullptr, 0); // nothing logged yet (or the ring allocation failed)
+            return true;
+        }
+        uint16_t Frags = (uint16_t)((End - From + MAX_FRAG_CONTENT_SIZE - 1) / MAX_FRAG_CONTENT_SIZE);
+        uint32_t Pos = From;
+        for (uint16_t Frag = 0; Frag < Frags; Frag++)
+        {
+            uint32_t N = TextRing.Copy(Pos, End, TxFrame.Payload + 4, MAX_FRAG_CONTENT_SIZE);
+            Pos += N;
+            SendFragFragment(Frame, Frag, Frags, (uint16_t)N, PRIORITY_LOG);
+        }
+        return true;
+    }
+
     EnsureLogStorage();
     if (!LogBuffer || !LogUsed || !LogSeq)
     {
