@@ -496,6 +496,21 @@ t_a9cda0b9's example entry is `C4:7F:51:xx:xx:xx  Akyirr-phone`. `NimBLEDevice` 
 `getNumBonds()`, `getBondedAddress(i)` and `deleteAllBonds()`; no name is stored (NimBLE keeps
 none), so the field carries `AA:BB:CC:DD:EE:FF` and the app must not promise a name.
 
+**E64 A phone-only setup cannot open a pairing window, so a bonded device with the window closed
+is off the air until a USB host writes `Action = 0`.** Every write to the `BLE Settings` block is
+refused unless the frame arrived over USB (`Devices/Tamu_v2.0A/BleSettingsGlue.h`,
+`BleBlockWritable`), `Action = 0` included - an earlier comment on card t_1d304c9c said the open
+window would be accepted from any link, and the final firmware says otherwise. The device also
+never advertises outside a window and only opens one by itself while its bond store is empty
+(`AppBLETick`, `AppBLEAutoWindow`), and the core's button is deliberately not a trigger. So card
+t_1d304c9c's item 5 ("open the pairing window for a user not near the device's button") works only
+from the desktop app over USB; the Android panel explains the refusal and points at the USB link.
+The recoverable cases are unchanged: no bonds (a boot or `Action = 1` re-opens the five-minute
+window) and a phone whose bond is stale (forget it in the phone's settings). The unrecoverable one
+is a device that holds bonds, has a closed window and has no USB host available. An owner ruling
+is needed before the firmware relaxes it (the rule exists so a paired phone cannot re-open its own
+window).
+
 **E61 `BLE_GATT_CHR_F_NOTIFY_INDICATE_AUTHEN` cannot be carried by a NimBLE-cpp characteristic.**
 It is `0x10000` and `NimBLECharacteristic`'s `properties` argument is `uint16_t`, so the notify
 path cannot ask for authentication. `NOTIFY_INDICATE_ENC` is used instead: with a passkey set,

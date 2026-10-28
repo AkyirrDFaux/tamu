@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tamuapp/core/ble_security.dart';
 import 'package:tamuapp/core/block_registry.dart';
 import 'package:tamuapp/core/render_dict.dart';
 import 'package:tamuapp/core/script_errors.dart';
@@ -160,6 +161,72 @@ List<({int field, String type})>? _wifiSettingsEntries() {
         if (defines[m.group(1)!] != null)
           (field: defines[m.group(1)!]!, type: m.group(2)!),
     ];
+  }
+  return null;
+}
+
+/// The BLE Settings table's `(field, type, size)` triples, in table order.
+///
+/// [_firmwareBlockEntries] cannot read this table either: each entry spans two lines, names its
+/// field index with a macro (`BLE_SET_FIELD_PASSKEY`) and its size with another
+/// (`BLE_PASSKEY_LEN`) or a `sizeof(...)`. The size matters here because the app pads a text
+/// write to the device's declared width - a wrong number would write six bytes into a sixteen-byte
+/// name. Returns null when the firmware tree is not checked out next to the app, and an empty list
+/// when the file exists but the table could not be parsed.
+List<({int field, String type, int size})>? _bleSettingsEntries() {
+  for (final path in [
+    '../firmware/src/Blocks/BleSettings.h',
+    '../../firmware/src/Blocks/BleSettings.h',
+  ]) {
+    final file = File(path);
+    if (!file.existsSync()) continue;
+    final source = file.readAsStringSync();
+    // The widths the table names live beside it, in its own header and in the policy header it
+    // includes (BLE_PASSKEY_LEN).
+    final defines = <String, int>{};
+    final policy = File('${file.parent.path}/BleSecurityPolicy.h');
+    final sources = [
+      source,
+      if (policy.existsSync()) policy.readAsStringSync(),
+    ];
+    for (final text in sources) {
+      for (final m in RegExp(
+        r'^#define\s+(BLE_\w+)\s+(\d+)\s*$',
+        multiLine: true,
+      ).allMatches(text)) {
+        defines[m.group(1)!] = int.parse(m.group(2)!);
+      }
+    }
+    final start = source.indexOf('BleSettings_Entries[]');
+    if (start < 0) return const [];
+    final open = source.indexOf('{', start);
+    final close = source.indexOf('\n};', open);
+    if (open < 0 || close < 0) return const [];
+    final body = source.substring(open, close);
+    // `{ MakeFieldKey(FIELD, key), offset,` ... `{ (uint16_t)DataType::Type, size, flags } }`
+    final re = RegExp(
+      r'MakeFieldKey\((BLE_SET_FIELD_\w+),\s*\d+\),.*?'
+      r'\(uint16_t\)DataType::(\w+),\s*([^,]+),',
+      dotAll: true,
+    );
+    final out = <({int field, String type, int size})>[];
+    for (final m in re.allMatches(body)) {
+      final field = defines[m.group(1)!];
+      if (field == null) continue;
+      final type = m.group(2)!;
+      final sizeText = m.group(3)!.trim();
+      final width =
+          int.tryParse(sizeText) ??
+          defines[sizeText] ??
+          switch (sizeText) {
+            'sizeof(uint32_t)' => 4,
+            'sizeof(uint8_t)' => 1,
+            _ => null,
+          };
+      if (width == null) continue;
+      out.add((field: field, type: type, size: width));
+    }
+    return out;
   }
   return null;
 }
@@ -610,6 +677,64 @@ void main() {
       expect(entries[wifiFieldPassword].type, 'Text');
       expect(entries[wifiFieldIp].type, 'Undefined');
       expect(wifi.field(wifiFieldPassword)!.secret, isTrue);
+    });
+
+    // The BLE Settings block (type 0x0B, core only). The panel reads and writes the fields by
+    // number and pads text writes to the device's declared width, so both the order and the
+    // sizes are part of the contract.
+    test('the BLE Settings schema and the app registry name the same fields', () {
+      final entries = _bleSettingsEntries();
+      if (entries == null) {
+        return; // firmware source not available next to the app
+      }
+      expect(
+        entries,
+        isNotEmpty,
+        reason:
+            'the BleSettings_Entries table was not parsed - guard is broken',
+      );
+      final ble = blockInfoFor(BlockType.bleSettings)!;
+      // The table carries one row per key, and the Bond field is keyed three times: 9 fields,
+      // 11 rows. The app labels fields by number, so the DISTINCT fields must run 0..8 in order.
+      final fields = [for (final e in entries) e.field];
+      expect(
+        fields.toSet().toList()..sort(),
+        [for (var i = 0; i < bleFieldCount; i++) i],
+        reason: 'app field labels lag the firmware BleSettings table',
+      );
+      expect(
+        ble.fields.length,
+        bleFieldCount,
+        reason: 'the registry must name every field of the block',
+      );
+
+      ({int field, String type, int size}) at(int field) =>
+          entries.firstWhere((e) => e.field == field);
+
+      // The passkey: six ASCII digits, readable and writable, masked in the app.
+      expect(at(bleFieldPasskey).type, 'Text');
+      expect(at(bleFieldPasskey).size, blePasskeyLength);
+      expect(ble.field(bleFieldPasskey)!.secret, isTrue);
+      expect(ble.field(bleFieldPasskey)!.maxChars, blePasskeyLength);
+      // The bond entries are addresses, not names (Issues.md E60), and the app must read as many
+      // keys as the store holds.
+      expect(at(bleFieldBond).type, 'Text');
+      expect(ble.field(bleFieldBond)!.name, 'Bond address');
+      expect(
+        entries.where((e) => e.field == bleFieldBond).length,
+        bleBondSlots,
+      );
+      // The window is a 32-bit millisecond count: five minutes does not fit a 16-bit field.
+      expect(at(bleFieldWindow).type, 'Uint32');
+      expect(at(bleFieldWindow).size, 4);
+      expect(at(bleFieldEnabled).type, 'Bool');
+      // Both enums carry the block's own numbering, which the panel writes back verbatim.
+      expect(at(bleFieldMode).type, 'Enum');
+      expect(at(bleFieldAction).type, 'Enum');
+      expect(at(bleFieldAction).size, 1);
+      expect(ble.field(bleFieldMode)!.enumValues, bleModeLabels);
+      expect(ble.field(bleFieldAction)!.enumValues, bleActionLabels);
+      expect(ble.field(bleFieldDisplayName)!.maxChars, bleDisplayNameWidth);
     });
   }, skip: skipReason);
 

@@ -44,6 +44,40 @@ class DiscoveredLink {
   });
 }
 
+/// A link that ended without the user asking, recorded so the UI can explain it.
+///
+/// A Bluetooth link that comes up and dies within seconds is the shape of a pairing the device
+/// refused (it drops a link that never became secure), which is why [lastedMs] is part of the
+/// record: the connection page uses it to tell "could not pair" from "the device went away".
+class LinkTrouble {
+  const LinkTrouble({
+    required this.linkName,
+    required this.isBle,
+    required this.lastedMs,
+    this.errorText,
+  });
+
+  final String linkName;
+  final bool isBle;
+
+  /// How long the session lived before it ended.
+  final int lastedMs;
+
+  /// The platform's own words, when it gave any.
+  final String? errorText;
+
+  /// The firmware allows a link five seconds to become secure before dropping it, so anything
+  /// under this is "it never got as far as a session".
+  static const int secureDeadlineMs = 5000;
+
+  bool get droppedDuringSecuring => isBle && lastedMs < secureDeadlineMs;
+
+  @override
+  String toString() =>
+      'LinkTrouble($linkName, ${isBle ? 'BLE' : 'USB'}, ${lastedMs}ms'
+      '${errorText == null ? '' : ', "$errorText"'})';
+}
+
 class ConnectionManager extends ChangeNotifier implements RequestChannel {
   ConnectionManager._() {
     // The service clients send through the installed channel (`request_channel.dart`), and the
@@ -67,6 +101,20 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
   String? connectedId;
   Duration autoInterval = const Duration(seconds: 1); // docs default
   bool refreshError = false;
+
+  /// The last link loss this session saw that the user did not ask for, or null. The connection
+  /// page reads it once to explain a failed Bluetooth attempt and clears it.
+  LinkTrouble? lastLinkTrouble;
+
+  /// When the current session started, for [LinkTrouble.lastedMs].
+  DateTime? _sessionStartedAt;
+
+  /// Drops [lastLinkTrouble] once the UI has shown it.
+  void clearLinkTrouble() {
+    if (lastLinkTrouble == null) return;
+    lastLinkTrouble = null;
+    notifyListeners();
+  }
 
   final List<BleScanEntry> _bleEntries = [];
   List<UsbPortEntry> _usbEntries = [];
@@ -481,18 +529,38 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
     await _detach();
     _transport = transport;
     connectedId = transport.id;
+    _sessionStartedAt = DateTime.now();
     _streamSub = transport.packetStream.listen(
       _onStreamBytes,
       onError: (Object error) {
         AppDiagnostics.log('link', 'packet stream error: $error -> disconnect');
+        _noteLinkLoss('$error');
         unawaited(disconnect());
       },
       onDone: () {
         AppDiagnostics.log('link', 'packet stream done -> disconnect');
+        _noteLinkLoss(null);
         unawaited(disconnect());
       },
     );
     notifyListeners();
+  }
+
+  /// Records a link that ended by itself, so the connection page can explain it rather than
+  /// leaving the user with a session that silently vanished.
+  void _noteLinkLoss(String? errorText) {
+    final transport = _transport;
+    final started = _sessionStartedAt;
+    _sessionStartedAt = null;
+    if (transport == null) return;
+    lastLinkTrouble = LinkTrouble(
+      linkName: transport.displayName,
+      isBle: transport is BleTransport,
+      lastedMs: started == null
+          ? 0
+          : DateTime.now().difference(started).inMilliseconds,
+      errorText: errorText,
+    );
   }
 
   Future<void> disconnect({bool manual = false}) async {
@@ -517,6 +585,7 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
     }
     await _streamSub?.cancel();
     _streamSub = null;
+    _sessionStartedAt = null;
     _activeLink = null; // re-list the device once the session ends
     _invalidateLinks();
     connectedId = null;

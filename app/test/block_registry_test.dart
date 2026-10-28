@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tamuapp/core/ble_security.dart';
 import 'package:tamuapp/core/block_registry.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/core/wifi_settings.dart';
@@ -103,6 +104,34 @@ void main() {
     // State carries the block's own enum labels, so the register row prints "Connected" and
     // not "Enum 2".
     expect(wifi.field(wifiFieldState)!.enumValues, wifiStateLabels);
+  });
+
+  // The BLE Settings block (firmware BlockType 0x0B, core/ble_security.dart). The panel reads the
+  // fields by number and the register page names them from here, so both the order and the two
+  // enum label sets matter.
+  test('the BLE Settings block names its nine fields in table order', () {
+    final ble = blockInfoFor(BlockType.bleSettings)!;
+    expect(ble.typeName, 'BLE Settings');
+    expect(ble.fields.map((f) => f.name), [
+      'Passkey',
+      'Mode',
+      'Bond count',
+      'Bond address',
+      'Window',
+      'Action',
+      'Enabled',
+      'Display name',
+      'Advertised name',
+    ]);
+    // The passkey is a secret in the app's sense: masked on every read-out, never pre-filled.
+    expect(ble.field(bleFieldPasskey)!.secret, isTrue);
+    expect(ble.field(bleFieldPasskey)!.maxChars, blePasskeyLength);
+    // The two enums print the block's own words, and the window carries its unit.
+    expect(ble.field(bleFieldMode)!.enumValues, bleModeLabels);
+    expect(ble.field(bleFieldAction)!.enumValues, bleActionLabels);
+    expect(ble.field(bleFieldWindow)!.unit, 'ms');
+    // Address only: the device's bond store keeps no peer name (Issues.md E60).
+    expect(ble.field(bleFieldBond)!.name, 'Bond address');
   });
 
   // Every call site bounds-checks before naming a field (register_page_tiles.dart,

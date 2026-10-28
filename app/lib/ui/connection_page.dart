@@ -2,10 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/ble_security.dart'
+    show BleLinkSymptom, bleLinkGuidance, classifyBleLinkFailure;
 import '../core/connection.dart';
 import '../core/device_db.dart';
 import '../core/platform_caps.dart';
 import '../core/settings.dart';
+import 'ble_security_page.dart' show showBleLinkGuidance;
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -32,11 +35,15 @@ class _ConnectionPageState extends State<ConnectionPage>
   /// make the StreamBuilder resubscribe on every rebuild.
   late final Stream<String?> _bluetoothWarning = _manager.bluetoothWarning;
 
+  /// The link loss this page has already explained, so one drop is not explained twice.
+  LinkTrouble? _explainedTrouble;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     ShellTabs.instance.addListener(_onTabChanged);
+    _manager.addListener(_onManagerEvent);
     _refreshOnce();
     // Autorefresh is "automatically on" (docs, 1 s period): start the periodic
     // timer now, not only on the first tab switch.
@@ -47,9 +54,44 @@ class _ConnectionPageState extends State<ConnectionPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     ShellTabs.instance.removeListener(_onTabChanged);
+    _manager.removeListener(_onManagerEvent);
     // Leaving the page (app exit) always stops autorefresh.
     if (ShellTabs.instance.index == 0) _manager.setAutoRefresh(false);
     super.dispose();
+  }
+
+  /// A link that ended by itself is explained once: a Bluetooth session that came up and died is
+  /// almost always the device refusing a pairing, which the user fixes on the phone (see
+  /// `bleLinkGuidance`). A link that merely went away gets the plain notice instead.
+  void _onManagerEvent() {
+    final trouble = _manager.lastLinkTrouble;
+    if (trouble == null || identical(trouble, _explainedTrouble)) return;
+    _explainedTrouble = trouble;
+    _manager.clearLinkTrouble();
+    if (!mounted || !trouble.isBle) return;
+    final symptom = classifyBleLinkFailure(
+      errorText: trouble.errorText,
+      droppedSoonAfterConnect: trouble.droppedDuringSecuring,
+    );
+    if (symptom == BleLinkSymptom.unknown && !trouble.droppedDuringSecuring) {
+      showSnack(context, 'Bluetooth link lost');
+      return;
+    }
+    unawaited(
+      _explainBleFailure(trouble.errorText, trouble.droppedDuringSecuring),
+    );
+  }
+
+  Future<void> _explainBleFailure(String? errorText, bool droppedSoon) async {
+    if (!mounted) return;
+    await showBleLinkGuidance(
+      context,
+      bleLinkGuidance(
+        errorText: errorText,
+        droppedSoonAfterConnect: droppedSoon,
+      ),
+      linkError: errorText,
+    );
   }
 
   /// Coming back from the system settings page (permission fix-up) re-checks.
@@ -346,7 +388,13 @@ class _ConnectionPageState extends State<ConnectionPage>
         final error = await _manager.connectTo(link);
         if (!context.mounted) return;
         if (error != null) {
-          showSnack(context, 'Connect failed: $error');
+          // A Bluetooth failure gets the guidance (the stale-bond case must not read as a broken
+          // device); a USB failure is the cable and keeps the plain message.
+          if (link.type == LinkType.ble) {
+            unawaited(_explainBleFailure(error, false));
+          } else {
+            showSnack(context, 'Connect failed: $error');
+          }
           return;
         }
         // Populate the Devices page as soon as a session is up.

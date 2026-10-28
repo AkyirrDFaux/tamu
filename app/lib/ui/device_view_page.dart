@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../core/ble_security.dart' show hasBleSettingsBlock;
 import '../core/device_db.dart';
 import '../core/register_client.dart';
 import '../core/types.dart';
 import '../core/wifi_settings.dart' show hasWifiSettingsBlock;
+import 'ble_security_page.dart';
 import 'formatters.dart';
 import 'log_page.dart';
 import 'register_page.dart';
@@ -37,13 +39,14 @@ class _DeviceViewPageState extends State<DeviceViewPage>
   bool _renaming = false;
   bool _refreshing = false;
 
-  /// The device's own block list, asked once per page: only the WiFi tile is gated on it (the
-  /// block is a compile-in firmware option, so most devices do not carry it). The client caches
-  /// the enumeration, so an autorefresh does not re-ask.
+  /// The device's own block list, asked once per page: only the Bluetooth and WiFi tiles are
+  /// gated on it (WiFi's block is a compile-in option, and a non-core device carries neither).
+  /// The client caches the enumeration, so an autorefresh does not re-ask.
   late final RegisterClient _register = RegisterClient(
     deviceId: widget.deviceId,
   );
   bool _hasWifiBlock = false;
+  bool _hasBleBlock = false;
 
   @override
   void initState() {
@@ -68,7 +71,10 @@ class _DeviceViewPageState extends State<DeviceViewPage>
       final types = await _register.enumerateBlockTypes();
       // A null answer means the device did not say: keep what was known instead of dropping the
       // tile off a page that is merely mid-reconnect.
-      if (types != null) _hasWifiBlock = hasWifiSettingsBlock(types);
+      if (types != null) {
+        _hasWifiBlock = hasWifiSettingsBlock(types);
+        _hasBleBlock = hasBleSettingsBlock(types);
+      }
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
@@ -226,6 +232,16 @@ class _DeviceViewPageState extends State<DeviceViewPage>
                             deviceId: widget.deviceId,
                             deviceName: entry.displayName,
                           ),
+                        ),
+                      // The Bluetooth panel: the BLE Settings block (0x0B). Like WiFi it is
+                      // gated on the device's own enumeration - a non-core device carries no
+                      // such block, and a tile for one would open an empty page.
+                      if (_hasBleBlock)
+                        _serviceTile(
+                          context,
+                          Icons.bluetooth,
+                          'Bluetooth',
+                          () => BleSecurityPage(deviceId: widget.deviceId),
                         ),
                       // WiFi Settings is a compile-in firmware option, off by default: the
                       // tile exists only for a device that actually enumerates the block, so a
