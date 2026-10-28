@@ -112,6 +112,10 @@ echo "### native register-read tests (a row with no bytes is unreadable, not a t
 build_run "registerread" "register_read_test.cpp"
 echo
 
+echo "### native BLE Settings tests (Just Works vs passkey policy, and the block table's offsets)"
+build_run "blesettings" "ble_settings_test.cpp"
+echo
+
 # t_e57a9667, structural half: RegisterGetByBlockInfo and the script read instruction both pull the
 # packet/register/device layer, so the host cannot link them. The facts the three cases depend on
 # are asserted on the source instead:

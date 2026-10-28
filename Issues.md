@@ -466,3 +466,34 @@ are hardware-only.
   been run, so neither the 9 MHz conversion accuracy nor the unchanged fan PWM has been observed on
   the rig - that needs a real divider on a measuring node, and the fan PWM compared against the
   pre-fix build.
+
+## BLE Settings block (2026-10-28)
+
+**E58 The `BLE Settings` block type is not in the docs' block table.** `Docs/Services/Register.md`
+lists "Static block types | ..." and leaves the per-type list to the module documents; no document
+numbers type `0x0B` or describes the `BLE Settings` fields. The block was specified by the owner as
+a card (t_a9cda0b9) and implemented from that table, with field numbers fixed in
+`firmware/src/Blocks/BleSettings.h` (0 Passkey, 1 Mode, 2 Bond count, 3 Bond keyed, 4 Window,
+5 Action, 6 Enabled, 7 Display name). Proposed doc change (parent only): a `BLE Settings` section
+in the block tables with those fields and type `0x0B`, and `0x0B` added to the block-type list.
+Not a code defect - the app's registry entry (t_1d304c9c) needs the same numbers.
+
+**E59 `NimBLEDevice::setScanFilterMode()` does not restrict who may connect.** Card t_367f86d0
+named it as the connect filter to apply while the pairing window is closed. In esp-nimble-cpp 2.5.0
+it sets the *scan duplicate cache* filter type (`NimBLEDevice::setScanFilterMode` -> `m_scanFilterMode`,
+`NimBLEDevice::init` rejects a call after init) and has nothing to do with connection admission. The
+connect filter is `NimBLEAdvertising::setScanFilter(scanWhitelistOnly, connectWhitelistOnly)`, which
+`AppBLE.h` now applies (whitelist-only while the window is closed, both false while it is open); the
+stronger measure is that the device does not advertise at all outside a window. No doc impact.
+
+**E60 The NimBLE bond store keeps no peer name, so a Bond entry is an address only.** Card
+t_a9cda0b9's example entry is `C4:7F:51:xx:xx:xx  Akyirr-phone`. `NimBLEDevice` exposes
+`getNumBonds()`, `getBondedAddress(i)` and `deleteAllBonds()`; no name is stored (NimBLE keeps
+none), so the field carries `AA:BB:CC:DD:EE:FF` and the app must not promise a name.
+
+**E61 `BLE_GATT_CHR_F_NOTIFY_INDICATE_AUTHEN` cannot be carried by a NimBLE-cpp characteristic.**
+It is `0x10000` and `NimBLECharacteristic`'s `properties` argument is `uint16_t`, so the notify
+path cannot ask for authentication. `NOTIFY_INDICATE_ENC` is used instead: with a passkey set,
+MITM pairing makes encryption and authentication the same event, and `AppBLE.h`'s connect gate
+re-checks `isAuthenticated()` on every link, so an unauthenticated peer cannot reach the notify
+path either way.

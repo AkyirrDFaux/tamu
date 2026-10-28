@@ -29,32 +29,39 @@ inline bool RegisterService::StaticSaveAll() {
 inline bool RegisterService::StaticRecallAll() {
     uint8_t Buf[sizeof(StaticPer)];
     uint16_t Cnt = ReadBackupFile(StaticValuesName(), Buf, sizeof(Buf));
-    if (Cnt < sizeof(StaticPer)) {
+    if (Cnt == 0) {
         // Absent is not the same as unreadable. A short read of a PRESENT .SV is a failed read, and
         // answering it by writing would replace the saved settings with the compiled-in defaults -
         // so only a genuinely absent file is created here. The stored space is left untouched.
-        if (Storage.FileExists(StaticValuesName()) != 0xFFFFFFFF) {
-            DeviceLog("STORAGE", "static recall: .SV unreadable, left as it is");
-            return false; // present but unreadable: the caller must not report Success
+        if (Storage.FileExists(StaticValuesName()) == 0xFFFFFFFF) {
+            // No mirror at all: keep the compiled-in defaults, but persist them now so the
+            // mirror exists with the right size for the app's read-modify-write partial saves (a
+            // direct write to an absent `.SV` cannot succeed).
+            return StaticSaveAll();
         }
-        // No mirror at all: keep the compiled-in defaults, but persist them now so the
-        // mirror exists with the right size for the app's read-modify-write partial saves (a
-        // direct write to an absent `.SV` cannot succeed).
-        return StaticSaveAll();
+        DeviceLog("STORAGE", "static recall: .SV unreadable, left as it is");
+        return false; // present but unreadable: the caller must not report Success
     }
+
+    // A SHORTER mirror is the space of an OLDER build: the static persistent space grows whenever
+    // a block is added (the BLE Settings tail is the newest). Those bytes are a valid prefix, so
+    // they are loaded as one and the growth keeps its compiled-in default - refusing the whole
+    // file would revert the saved Name and net-ID to the defaults instead.
+    const uint16_t Load = (Cnt < sizeof(StaticPer)) ? Cnt : (uint16_t)sizeof(StaticPer);
 
     // Defensive: a present-but-erased mirror (0xFF) is not a valid saved space. The filesystem
     // erases a file's blocks when it is created, so a valid `.SV` is never all 0xFF; this only
     // guards a torn write. The System Name is the validity anchor (always NUL-padded text since B10),
     // so a 0xFF byte there means the mirror was never validly written - re-persist the live
     // values rather than clobbering the defaults and the Name with erased bytes.
-    for (uint16_t i = 0; i < SYSTEM_NAME_LEN && i < Cnt; i++) {
+    for (uint16_t i = 0; i < SYSTEM_NAME_LEN && i < Load; i++) {
         if (Buf[i] == 0xFF) {
             return StaticSaveAll();
         }
     }
 
-    memcpy(&StaticPer, Buf, sizeof(StaticPer));
+    memcpy(&StaticPer, Buf, Load); // only the bytes the mirror holds; the growth keeps its default
+
 #ifdef TYPE_CORE
     DeviceStatus.NetId = StaticPer.System.NetId;
 #endif

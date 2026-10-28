@@ -55,6 +55,7 @@ const SerialNumber &GetSerialNumber()
 #include "Blocks/Button.h"
 #include "Blocks/PWM.h"
 #include "Blocks/AccGyr.h"
+#include "Blocks/BleSettings.h"
 #include "Blocks/Vysi1Display.h"
 
 // The static memory: two flat spaces (Docs/Services/Register.md "System + Static memory
@@ -66,12 +67,14 @@ struct StaticPersistent {
     PWMPersistent Fan[2];         // BlockType 4
     AccGyrPersistent Accgyr;      // BlockType 5
     Vysi1Persistent Display[2];   // BlockType 6
+    BleSettingsPersistent BleSet; // BlockType 0x0B: BLE passkey/enable/name (tail - see RegisterPersist.h)
 };
 struct StaticVolatile {
     LEDButtonVolatile LedButton;  // BlockType 3
     PWMVolatile Fan[2];           // BlockType 4
     AccGyrVolatile Accgyr;        // BlockType 5
     Vysi1Volatile Display[2];     // BlockType 6
+    BleSettingsVolatile BleSet;   // BlockType 0x0B: the radio's security state, read-only
 };
 StaticPersistent StaticPer = {
     // Name is a fixed 16-char null-padded field.
@@ -79,6 +82,7 @@ StaticPersistent StaticPer = {
     .Fan = {},
     .Accgyr = {},
     .Display = {},
+    .BleSet = {},
 };
 StaticVolatile StaticVol;
 
@@ -94,7 +98,8 @@ const StaticBlockDescriptor StaticBlockRegistry[] = {
     {&StaticVol.Fan[1], &StaticPer.Fan[1], &PWMSchema, "Fan2"},
     {&StaticVol.Accgyr, &StaticPer.Accgyr, &AccGyrSchema, "AccGyr"},
     {&StaticVol.Display[0], &StaticPer.Display[0], &Vysi1Schema, "LEDDisplay"},
-    {&StaticVol.Display[1], &StaticPer.Display[1], &Vysi1Schema, "LEDDisplay2"}};
+    {&StaticVol.Display[1], &StaticPer.Display[1], &Vysi1Schema, "LEDDisplay2"},
+    {&StaticVol.BleSet, &StaticPer.BleSet, &BleSettingsSchema, "BLE Settings"}};
 const size_t StaticBlockNum = sizeof(StaticBlockRegistry) / sizeof(StaticBlockDescriptor);
 
 // The Subscriptions instance the main loop calls. Pulled here (not at the top) because
@@ -110,6 +115,7 @@ LEDDriver LED(3, 0); // both LED strips: pins 3 (Display1) and 0 (Display2), sen
 
 #include "AppUSB.h"
 #include "AppBLE.h"
+#include "BleSettingsGlue.h" // the BLE Settings block's write triggers and read-only refresh
 #include "RSBus.h"
 
 #ifdef TYPE_CORE
@@ -256,6 +262,7 @@ LED.Setup();
         DeviceSvc.PollBootloaderPassthrough();    // settles a bootloader passthrough (CIDs 0x20-0x22)
 #endif
         AppInterface.Pump();
+        BleSettingsSync(); // the BLE Settings block's read-only fields follow the radio
         ButtonUpdate();
 
         // Sample the IMU at its configured output data rate instead of every loop

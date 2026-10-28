@@ -73,7 +73,8 @@ enum class BlockType : uint16_t {
     Deleted        = 0x07,
     ResistiveMeasure = 0x08,
     Button         = 0x09,
-    LED            = 0x0A
+    LED            = 0x0A,
+    BleSettings    = 0x0B  // BLE link settings + state (Blocks/BleSettings.h)
     // The banked Dynamic (0x3F0-0x3F3) and Scripts (0x3F4-0x3F7) ranges are not enum members:
     // they are addressed by BlockTypeRange (Core/Services/RegisterDefs.h).
 };

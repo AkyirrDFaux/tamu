@@ -8,6 +8,7 @@
 // Requires AppUSB.h to be included first (shares WireStreamParser).
 
 #include "NimBLEDevice.h"
+#include "Blocks/BleSecurityPolicy.h"
 
 #define BLE_SERVICE_UUID "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define BLE_RX_CHAR_UUID "6E400002-B5A3-F393-E0A9-E50E24DCCA9E" // app writes here
@@ -32,6 +33,60 @@ static volatile bool BleConnected = false;
 static bool BleOldConnected = false;   // for deferred advertising restart
 static bool BleAdvRestart = false;     // advertising must be restarted
 static volatile uint16_t BleMtu = 23;  // negotiated ATT MTU (ATT default)
+
+// ===== Link security =====
+//
+// Security is enforced at the Bluetooth level only: the characteristics' flags demand an
+// encrypted (and, with a passkey, authenticated) link, so the ATT server refuses an unsecured
+// peer before any application code runs, and the app session below is not established until the
+// link reports encrypted+bonded. There is no application-layer authentication on top.
+//
+// The policy itself is NOT stored here: it is derived from the `BLE Settings` block's Passkey
+// field on every use (BlePolicyNow), so the register field is the single source of truth. The
+// same block owns the radio's enable state and the advertised name (AppBLESettingsApply).
+#define BLE_WINDOW_MS 60000           // connectable window opened by a button press / the block
+#define BLE_SECURE_DEADLINE_MS 5000   // a link that has not become secure by then is dropped
+
+static volatile bool BleSecured = false;      // current link encrypted, bonded (and authenticated)
+static uint32_t BleWindowEndMs = 0;           // 0 = the connectable window is closed
+static uint32_t BleSecureDeadlineMs = 0;      // 0 = no unsecured link pending
+static uint16_t BleConnHandle = 0xFFFF;
+static bool BleWindowApplied = false;         // advertising/filter state matches the window
+
+// Radio state, straight from the block's Enabled/Display name fields. `BleRadioUp` means the
+// NimBLE host and the GATT table exist; `BleEnabled` means the block wants the radio usable. A
+// device booted with Enabled = false never initialises NimBLE at all - no radio, no host task.
+static bool BleRadioUp = false;
+static volatile bool BleEnabled = false;
+static char BleFallbackName[SYSTEM_NAME_LEN + 1] = {0}; // System.Name, used when Display name is empty
+static char BleAppliedName[SYSTEM_NAME_LEN + 1] = {0};  // the name the advertisement carries now
+
+// The passkey text -> the whole radio+attribute policy. Cheap (6 bytes), so it is re-derived
+// instead of cached: a written passkey is then in force immediately, with no stale copy around.
+static BleSecurityPolicy BlePolicyNow()
+{
+    return BleSecurityPolicyFrom(StaticPer.BleSet.Passkey);
+}
+
+// The advertised/device name: the block's Display name when it has one, else System.Name. The
+// Display name field is a fixed-size character field (null-padded), so trailing NULs and spaces
+// are trimmed; a field of nothing but padding means "not set".
+static void BleEffectiveName(char *Out)
+{
+    const char *Display = StaticPer.BleSet.DisplayName;
+    uint8_t Len = BLE_DISPLAY_NAME_LEN;
+    while (Len > 0 && (Display[Len - 1] == '\0' || Display[Len - 1] == ' '))
+        Len--;
+    if (Len > 0 && Display[0] != '\0')
+    {
+        memcpy(Out, Display, Len);
+        Out[Len] = '\0';
+        return;
+    }
+    memcpy(Out, BleFallbackName, SYSTEM_NAME_LEN + 1);
+}
+
+
 
 // Fed and reset only from the NimBLE host task (BleTxCallbacks::onWrite and the
 // connect/disconnect callbacks), never from AppBLETick - see the framer race note there.
@@ -85,33 +140,230 @@ struct BleRxAssembler
     }
 } StaticBleRxAssembler;
 
+// ===== Connectable window =====
+//
+// The device is discoverable and connectable only while a window is open: it advertises nothing
+// at all outside one, so a scan finds no Tamu and even a bonded phone cannot start a connection.
+// A window is opened by the frame's button (AppBLETick) or by the `BLE Settings` block's Action
+// field, and closes on its own after BLE_WINDOW_MS. A radio that the block has disabled has no
+// window at all.
+
+bool AppBLEWindowOpen()
+{
+    return BleRadioUp && BleEnabled && BleWindowEndMs != 0;
+}
+
+// Milliseconds left in the window, 0 when it is closed (the block's Window field).
+uint32_t AppBLEWindowLeftMs()
+{
+    if (!AppBLEWindowOpen())
+        return 0;
+    const uint32_t Now = TimeFromBoot();
+    const int32_t Left = (int32_t)(BleWindowEndMs - Now);
+    return Left > 0 ? (uint32_t)Left : 0;
+}
+
+// Opens (or extends) the connectable window. Called from the button and from the block's
+// Action field, both in the app task. Returns false when the radio cannot be discovered at all.
+bool AppBLEOpenWindow()
+{
+    if (!BleRadioUp || !BleEnabled)
+    {
+        DeviceLog("APPBLE", "window refused: the radio is disabled");
+        return false;
+    }
+    BleWindowEndMs = TimeFromBoot() + BLE_WINDOW_MS;
+    DeviceLog("APPBLE", "connectable window open for %u ms", (unsigned)BLE_WINDOW_MS);
+    return true;
+}
+
+// ===== Bond store read-out / erasure (the block's Bond fields and Action=1) =====
+
+int AppBLEBondCount()
+{
+    return BleRadioUp ? NimBLEDevice::getNumBonds() : 0;
+}
+
+// Writes bond `Index`'s identity address ("AA:BB:CC:DD:EE:FF") NUL-terminated into `Out`.
+// The NimBLE bond store keeps no peer name, so the address is the whole entry.
+bool AppBLEBondText(int Index, char *Out, size_t Len)
+{
+    if (!Out || Len == 0)
+        return false;
+    Out[0] = '\0';
+    if (!BleRadioUp || Index < 0 || Index >= NimBLEDevice::getNumBonds())
+        return false;
+    const std::string Text = NimBLEDevice::getBondedAddress(Index).toString();
+    snprintf(Out, Len, "%s", Text.c_str());
+    return true;
+}
+
+// Drops every bond and the whitelist that mirrors it: a phone that was bonded is a stranger
+// afterwards and has to pair again inside a window.
+bool AppBLEForgetAllBonds()
+{
+    if (!BleRadioUp)
+        return false;
+    const int Before = NimBLEDevice::getNumBonds();
+    const bool Ok = NimBLEDevice::deleteAllBonds();
+
+    // The whitelist is our own list, not the bond store's: remove what we added (through the
+    // API, so the local mirror and the controller stay in step).
+    while (NimBLEDevice::getWhiteListCount() > 0)
+    {
+        const NimBLEAddress Addr = NimBLEDevice::getWhiteListAddress(0);
+        if (!NimBLEDevice::whiteListRemove(Addr))
+            break;
+    }
+
+    DeviceLog("APPBLE", "bonds forgotten: %d -> %d (ok=%d)", Before, NimBLEDevice::getNumBonds(), Ok);
+    return Ok;
+}
+
+// Applies a changed passkey policy to the radio. Effective for the next pairing; the ATT
+// permissions baked into the GATT table at init are not rebuilt (that needs a reboot), which is
+// why the connect gate re-checks the policy on every link instead of trusting the table alone.
+void AppBLEApplySecurityPolicy()
+{
+    if (!BleRadioUp)
+        return;
+    const BleSecurityPolicy Policy = BlePolicyNow();
+    NimBLEDevice::setSecurityAuth(true, Policy.Mitm, true);
+    NimBLEDevice::setSecurityIOCap(Policy.IoCap);
+    NimBLEDevice::setSecurityPasskey(Policy.Passkey);
+    DeviceLog("APPBLE", "policy applied: mitm=%u iocap=%u passkey set=%u",
+              Policy.Mitm, Policy.IoCap, Policy.Mitm);
+
+    // A Just Works session is unauthenticated by definition: once a passkey is set it no longer
+    // meets the policy, so it is dropped rather than kept on the strength of the old decision.
+    if (Policy.Mitm && BleSecured && BleConnHandle != 0xFFFF && BleServer)
+    {
+        DeviceLog("APPBLE", "dropping the Just Works session: a passkey is now set");
+        BleServer->disconnect(BleConnHandle);
+    }
+}
+
 class BleServerCallbacks : public NimBLEServerCallbacks
 {
+    // A connection is NOT an app session. It becomes one only when the link is encrypted,
+    // bonded - and, with a passkey set, authenticated - which is what onAuthenticationComplete
+    // reports. Until then BleConnected stays false: no notification is sent and the GATT flags
+    // refuse every read and write at the ATT layer.
     void onConnect(NimBLEServer *PServer, NimBLEConnInfo &ConnInfo) override
     {
-        BleMtu = ConnInfo.getMTU();
-        BleConnected = true;
+        BleConnHandle = ConnInfo.getConnHandle();
+        BleMtu = 23;
+        BleSecured = false;
+        BleConnected = false;
         StaticBleRxAssembler.Reset();
         BleParser.Reset();
-        // Prefer 2M PHY when the central supports it: halves air time per packet
-        // (helps multi-notification transfers); stays at 1M otherwise.
-        PServer->updatePhy(ConnInfo.getConnHandle(),
-                           BLE_GAP_LE_PHY_2M_MASK, BLE_GAP_LE_PHY_2M_MASK, 0);
-        // BlueZ defaults to a long connection interval (~30-60 ms); request a
-        // fast one so transactions do not wait multiple connection events.
-        // Units: interval 1.25 ms (6..12 -> 7.5..15 ms), timeout 10 ms (400 -> 4 s).
-        PServer->updateConnParams(ConnInfo.getConnHandle(), 6, 12, 0, 400);
+        AppInterface.TxFlushAll();
+
+        // The block can switch the radio off at any moment; a connection that raced the switch is
+        // dropped rather than served.
+        if (!BleEnabled)
+        {
+            DeviceLog("APPBLE", "refused: the radio is disabled");
+            PServer->disconnect(ConnInfo.getConnHandle());
+            return;
+        }
+
+        // A peer the bond store does not know can only be here to pair, and pairing is allowed
+        // only inside the connectable window. One we do know is kept: it encrypts with the key
+        // it stored right after connecting.
+        if (!ConnInfo.isBonded() && !AppBLEWindowOpen())
+        {
+            DeviceLog("APPBLE", "refused an unpaired peer: the pairing window is closed");
+            PServer->disconnect(ConnInfo.getConnHandle());
+            return;
+        }
+
+        // Ask for security now instead of waiting for the first refused attribute access, so the
+        // phone shows its pair dialog (and, with a passkey set, asks for the code) immediately.
+        const int Rc = ble_gap_security_initiate(ConnInfo.getConnHandle());
+        if (Rc != 0)
+            DeviceLog("APPBLE", "security initiate failed: rc=%d", Rc);
+        BleSecureDeadlineMs = TimeFromBoot() + BLE_SECURE_DEADLINE_MS;
     }
 
     void onDisconnect(NimBLEServer *PServer, NimBLEConnInfo &ConnInfo, int Reason) override
     {
         BleConnected = false;
+        BleSecured = false;
+        BleConnHandle = 0xFFFF;
+        BleSecureDeadlineMs = 0;
         // Drop any half-received chunk with the session (see BleRxAssembler::reset).
         StaticBleRxAssembler.Reset();
         BleParser.Reset();
         BleMtu = 23;
         AppInterface.TxFlushAll(); // pending responses belong to the dead session
         AppbleResetSessionBreadcrumbs();
+    }
+
+    // Encryption change / pairing completed. This is where a link is judged: the app session is
+    // established only for a link that meets the whole policy, and anything else is dropped.
+    void onAuthenticationComplete(NimBLEConnInfo &ConnInfo) override
+    {
+        const BleSecurityPolicy Policy = BlePolicyNow();
+
+        if (!ConnInfo.isEncrypted() || !ConnInfo.isBonded())
+        {
+            DeviceLog("APPBLE", "pairing failed (enc=%u bonded=%u): dropping the link",
+                      ConnInfo.isEncrypted(), ConnInfo.isBonded());
+            BleSecured = false;
+            BleConnected = false;
+            if (BleServer)
+                BleServer->disconnect(ConnInfo.getConnHandle());
+            return;
+        }
+
+        // With a passkey set, encryption without authentication means the pairing skipped the
+        // code, so the link is refused even though encryption succeeded.
+        if (Policy.Mitm && !ConnInfo.isAuthenticated())
+        {
+            DeviceLog("APPBLE", "unauthenticated link refused: a passkey is set");
+            BleSecured = false;
+            BleConnected = false;
+            if (BleServer)
+                BleServer->disconnect(ConnInfo.getConnHandle());
+            return;
+        }
+
+        // A completed bond: remember the IDENTITY address. The phone connects from a rotating
+        // private address, while the identity address is what the bond store keeps, so a
+        // whitelist entry on the identity address survives the rotation. whiteListAdd() returns
+        // true when the address is already there, false only when the controller refused it.
+        if (!NimBLEDevice::whiteListAdd(ConnInfo.getIdAddress()))
+            DeviceLog("APPBLE", "whitelist add failed for %s",
+                      ConnInfo.getIdAddress().toString().c_str());
+
+        BleSecured = true;
+        BleConnected = true;
+        BleMtu = ConnInfo.getMTU();
+        BleSecureDeadlineMs = 0;
+        // Prefer 2M PHY when the central supports it: halves air time per packet
+        // (helps multi-notification transfers); stays at 1M otherwise.
+        if (BleServer)
+        {
+            BleServer->updatePhy(ConnInfo.getConnHandle(),
+                                 BLE_GAP_LE_PHY_2M_MASK, BLE_GAP_LE_PHY_2M_MASK, 0);
+            // BlueZ defaults to a long connection interval (~30-60 ms); request a
+            // fast one so transactions do not wait multiple connection events.
+            // Units: interval 1.25 ms (6..12 -> 7.5..15 ms), timeout 10 ms (400 -> 4 s).
+            BleServer->updateConnParams(ConnInfo.getConnHandle(), 6, 12, 0, 400);
+        }
+
+        DeviceLog("APPBLE", "link secured: enc=%u bonded=%u auth=%u bonds=%d bits=%u",
+                  ConnInfo.isEncrypted(), ConnInfo.isBonded(), ConnInfo.isAuthenticated(),
+                  NimBLEDevice::getNumBonds(), ConnInfo.getSecKeySize());
+    }
+
+    // The code the user configured, for the DISPLAY_ONLY policy. NimBLE-cpp only asks here when
+    // the static passkey is left at its 123456 default, so returning the configured value keeps
+    // a passkey of exactly 123456 working.
+    uint32_t onPassKeyDisplay() override
+    {
+        return BlePolicyNow().Passkey;
     }
 
     void onMTUChange(uint16_t MTU, NimBLEConnInfo &ConnInfo) override
@@ -200,37 +452,176 @@ static void StartAppAdvertising()
     bool UuidOk = Adv->addServiceUUID(BLE_SERVICE_UUID);
     Adv->enableScanResponse(true); // must precede setName (see ordering note)
     char AdvName[SYSTEM_NAME_LEN + 1];
-    SystemNameCString(AdvName);
+    BleEffectiveName(AdvName); // the block's Display name, or System.Name
     bool NameOk = Adv->setName(AdvName);
+    // While the window is open any peer may connect - that is what the window is for. The
+    // whitelist-only filter is the state applied when it is closed (ApplyConnectFilter).
+    Adv->setScanFilter(false, false);
     bool Started = Adv->start();
     DeviceLog("APPBLE", "adv restart: uuid=%d name=%d started=%d",
               UuidOk, NameOk, Started);
 }
 
-void AppBLEInit(const char *DeviceName)
+// Connect filter for the advertising instance: whitelist-only connect requests while the window
+// is closed, any peer while it is open.
+//
+// Note on the card's `setScanFilterMode`: in esp-nimble-cpp 2.5.0 that call (NimBLEDevice's) is
+// the *scan duplicate cache* filter type and must be made before init - it does not restrict who
+// may connect. The controller-side connect filter is the advertising filter policy below.
+static void ApplyConnectFilter(bool WindowOpen)
 {
-    NimBLEDevice::init(DeviceName);
+    NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
+    if (!Adv)
+        return;
+    Adv->setScanFilter(!WindowOpen, !WindowOpen);
+    DeviceLog("APPBLE", "connect filter: whitelist-only=%d", !WindowOpen);
+}
+
+// Starts the radio: the NimBLE host, the pairing policy, the GATT table (built from that policy)
+// and the whitelist taken from the bond store. Called at boot when the block's Enabled is true,
+// and later if it is switched on. Idempotent per boot: BleRadioUp guards it.
+static bool AppBLERadioStart()
+{
+    // The pairing policy is read from the `BLE Settings` block BEFORE the server exists, so the
+    // characteristics are built with the permissions that policy implies.
+    const BleSecurityPolicy Policy = BlePolicyNow();
+    char Name[SYSTEM_NAME_LEN + 1];
+    BleEffectiveName(Name);
+
+    if (!NimBLEDevice::init(Name))
+    {
+        DeviceLog("APPBLE", "radio start failed");
+        return false;
+    }
     NimBLEDevice::setMTU(512);
 
+    // A: passkey "000000" -> Just Works: bonding on, MITM off, LE Secure Connections on, and the
+    // device offers neither input nor output. B: a passkey is set -> MITM required and the
+    // device only displays the code, which the phone asks the user for. The code is never typed
+    // on the device (it has no display) - it arrives over USB in the block's Passkey field.
+    NimBLEDevice::setSecurityAuth(true, Policy.Mitm, true);
+    NimBLEDevice::setSecurityIOCap(Policy.IoCap);
+    NimBLEDevice::setSecurityPasskey(Policy.Passkey);
+    // Keep the encryption and identity keys on both sides: the identity key (IRK) is what lets a
+    // phone's rotating private address resolve back to the bonded identity, and the bond is
+    // useless for a reconnect without the LTK.
+    NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
+    NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
+
     BleServer = NimBLEDevice::createServer();
+    if (!BleServer)
+    {
+        DeviceLog("APPBLE", "createServer failed");
+        return false;
+    }
     BleServer->setCallbacks(&StaticBleServerCallbacks);
 
     NimBLEService *Svc = BleServer->createService(BLE_SERVICE_UUID);
 
-    NimBLECharacteristic *Rx = Svc->createCharacteristic(
-        BLE_RX_CHAR_UUID,
-        NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+    // Every characteristic permission requires encryption (the flags below carry the *_ENC bits),
+    // plus *_AUTHEN when a passkey is set: the ATT server refuses an unencrypted or
+    // unauthenticated peer at the attribute, not in application code.
+    NimBLECharacteristic *Rx = Svc->createCharacteristic(BLE_RX_CHAR_UUID, Policy.RxFlags);
     Rx->setCallbacks(&StaticBleTxCallbacks);
 
-    BleTx = Svc->createCharacteristic(BLE_TX_CHAR_UUID, NIMBLE_PROPERTY::NOTIFY);
+    BleTx = Svc->createCharacteristic(BLE_TX_CHAR_UUID, Policy.TxFlags);
 
     // (NimBLEService::start() is a no-op / deprecated: services start with the server.)
 
-    // Do NOT start advertising here: the controller may not have synced with
-    // the radio yet, and start() then succeeds while nothing reaches the air.
-    // Defer to AppBLETick (runs once the host is fully up).
-    BleAdvRestart = true;
+    // The bonds already in the store are the whitelist: a bonded phone's identity address has to
+    // be there from boot, or a reconnect after a reboot would find an empty filter. NimBLE does
+    // not restore the list itself - the bond store does, not the controller's whitelist.
+    const int Bonds = NimBLEDevice::getNumBonds();
+    for (int i = 0; i < Bonds; i++)
+        NimBLEDevice::whiteListAdd(NimBLEDevice::getBondedAddress(i));
+
+    memcpy(BleAppliedName, Name, SYSTEM_NAME_LEN + 1);
+    BleRadioUp = true;
+    BleEnabled = true;
+    // Do NOT start advertising here, and do not start it at boot at all: the device is only
+    // discoverable while a connectable window is open (the button or the block's Action field).
+    // AppBLETick owns that transition.
+    BleAdvRestart = false;
+    BleWindowEndMs = 0;
+    ApplyConnectFilter(false);
+    BleWindowApplied = false;
+
+    DeviceLog("APPBLE", "radio up: name='%s' mode=%s bonds=%d whitelist=%u",
+              BleAppliedName, Policy.Mitm ? "passkey" : "just works", Bonds,
+              (unsigned)NimBLEDevice::getWhiteListCount());
+    return true;
 }
+
+// Brings the radio level with the block's Enabled and Display name fields. Called from the main
+// loop (BleSettingsSync) so a write takes effect within one iteration; the pairing policy needs
+// no call here - BlePolicyNow() reads the block at every use, and a written passkey applies
+// through its trigger.
+void AppBLESettingsApply()
+{
+    const bool WantEnabled = StaticPer.BleSet.Enabled != 0;
+    char Name[SYSTEM_NAME_LEN + 1];
+    BleEffectiveName(Name);
+
+    if (WantEnabled && !BleRadioUp)
+    {
+        AppBLERadioStart(); // first enable, or the boot of a device that had it on
+        return;
+    }
+
+    if (!WantEnabled && BleRadioUp)
+    {
+        // Off means off: no advertisement, no window, no session. The controller stays
+        // initialised - tearing NimBLE down after the GATT table is registered is not a safe
+        // runtime operation - but it transmits nothing until the block enables it again, and a
+        // device that boots with Enabled = false never initialises the radio at all.
+        if (BleEnabled)
+        {
+            BleEnabled = false;
+            BleWindowEndMs = 0;
+            BleSecureDeadlineMs = 0;
+            BleAdvRestart = false;
+            if (BleServer && BleConnHandle != 0xFFFF)
+                BleServer->disconnect(BleConnHandle);
+            NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
+            if (Adv)
+                Adv->stop();
+            DeviceLog("APPBLE", "radio disabled by the BLE Settings block");
+        }
+        return;
+    }
+
+    if (!BleRadioUp)
+        return;
+
+    BleEnabled = WantEnabled;
+
+    // The advertised (and device) name follows the block.
+    if (strcmp(Name, BleAppliedName) != 0)
+    {
+        NimBLEDevice::setDeviceName(Name);
+        memcpy(BleAppliedName, Name, SYSTEM_NAME_LEN + 1);
+        DeviceLog("APPBLE", "advertised name -> '%s'", BleAppliedName);
+        // Rebuild rather than mutate in place: the same reason as StartAppAdvertising's note.
+        if (AppBLEWindowOpen())
+        {
+            NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
+            if (Adv)
+                Adv->stop();
+            BleAdvRestart = true;
+        }
+    }
+}
+
+void AppBLEInit(const char *DeviceName)
+{
+    // The fallback advertised name: the persisted System Name, used while the block's Display
+    // name field is empty. From here on the block decides the rest.
+    strncpy(BleFallbackName, DeviceName, SYSTEM_NAME_LEN);
+    BleFallbackName[SYSTEM_NAME_LEN] = '\0';
+    AppBLESettingsApply();
+}
+
+
 
 bool AppBLEActive()
 {
@@ -245,6 +636,60 @@ void AppBLETick()
     // Comm LED is a per-burst pulse: RX/TX below turn it on, and this tick turns
     // it back off at the start so an idle session does not leave it lit.
 
+    // A device whose block has the radio disabled has no NimBLE host at all (Enabled was false
+    // at boot) - nothing to advertise, nothing to time out.
+    if (!BleRadioUp)
+        return;
+
+    // ---- connectable window ----
+    // It closes by itself; everything about discoverability hangs off it.
+    if (BleWindowEndMs != 0 && (int32_t)(TimeFromBoot() - BleWindowEndMs) >= 0)
+    {
+        BleWindowEndMs = 0;
+        DeviceLog("APPBLE", "connectable window closed");
+    }
+
+    // The frame's button opens it. A press, not a level: the state is sampled once per loop by
+    // ButtonUpdate, and holding the button open must not keep extending the window.
+    static bool ButtonPrev = false;
+    const bool ButtonNow = StaticVol.LedButton.ButtonState;
+    if (ButtonNow && !ButtonPrev && BleEnabled)
+        AppBLEOpenWindow();
+    ButtonPrev = ButtonNow;
+
+    const bool WindowOpen = AppBLEWindowOpen();
+    if (WindowOpen != BleWindowApplied)
+    {
+        BleWindowApplied = WindowOpen;
+        ApplyConnectFilter(WindowOpen);
+        if (WindowOpen)
+        {
+            BleAdvRestart = true;
+        }
+        else
+        {
+            // Outside the window the device advertises nothing at all: no scan result, and no
+            // connection request from even a bonded phone (it cannot address an advert that is
+            // not on the air).
+            NimBLEAdvertising *ClosedAdv = NimBLEDevice::getAdvertising();
+            if (ClosedAdv)
+                ClosedAdv->stop();
+            BleAdvRestart = false;
+        }
+    }
+
+    // A connection that has not become encrypted+bonded by its deadline belongs to a peer that
+    // never started - or never completed - pairing. Drop it; a session is only ever established
+    // by onAuthenticationComplete.
+    if (!BleSecured && BleSecureDeadlineMs != 0 &&
+        (int32_t)(TimeFromBoot() - BleSecureDeadlineMs) >= 0)
+    {
+        BleSecureDeadlineMs = 0;
+        DeviceLog("APPBLE", "dropping a link that did not become secure");
+        if (BleServer && BleConnHandle != 0xFFFF)
+            BleServer->disconnect(BleConnHandle);
+    }
+
     // Deferred advertising restart.
     if (!BleConnected && BleOldConnected)
         BleAdvRestart = true; // s_ble_parser was already reset by onDisconnect (host task)
@@ -257,8 +702,9 @@ void AppBLETick()
 
     NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
 
-    // Deferred restart after a clean disconnect.
-    if (BleAdvRestart && !BleConnected)
+    // Deferred restart after a clean disconnect - only while the window is still open, so a
+    // session that ends after it closed leaves nothing on the air.
+    if (BleAdvRestart && !BleConnected && WindowOpen)
     {
         BleAdvRestart = false;
         StartAppAdvertising();
@@ -270,8 +716,9 @@ void AppBLETick()
     //  - stack admits the outage (isAdvertising()==false): rebuild promptly;
     //  - stale advertising instance claiming to run with no session ever
     //    arriving: one conservative rebuild as a last resort (long interval).
+    // Both only apply inside an open window: outside one there is deliberately nothing to heal.
     static uint32_t IdleSince = 0;
-    if (!BleConnected && !BleOldConnected)
+    if (WindowOpen && !BleConnected && !BleOldConnected)
     {
         const bool AdvUp = Adv && Adv->isAdvertising();
         if (IdleSince == 0) IdleSince = TimeFromBoot();
