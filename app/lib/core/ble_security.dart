@@ -228,7 +228,8 @@ enum BleSecurityCondition {
   /// A window is open now, so the device is discoverable.
   windowOpen,
 
-  /// The window is closed and the device holds bonds: nobody can connect until one is opened.
+  /// The window is closed and the device holds bonds: its bonded phones still connect at any
+  /// time, and only a new pairing needs a window (which only USB can open).
   closedBonded,
 
   /// The window is closed and the store is empty: the device is reachable only when it opens a
