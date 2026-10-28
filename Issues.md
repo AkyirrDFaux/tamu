@@ -743,7 +743,10 @@ type-carrying read-out below was then built and flashed once (iteration 43, `cmp
   `Bond[0] = 4C:23:38:74:E6:F6`, `Window 0`. Three reconnects (`ble_lastlink.py --connect 3`):
   each `Last peer=4C:23:38:74:E6:F6/0 Last air=4C:23:38:74:E6:F6/0 LastLink=2 (ADMITTED)`, bond count
   still 1 afterwards. On the pre-fix image the same peer timed out twice in exactly that state.
-- **The device's own log names the identity** (E67 ring, read within a second of the link):
+- **The device's own log names the identity** (E67 ring, read within a second of the link; the image is
+  iteration 43 / `3288ba4` - the one recorded at the head of this section, 687,296 B, sha256
+  `985fe306…`, the build that still carried the ring. `b01e635` withdrew it, so this witness cannot be
+  re-taken on today's image; the register read-out is what replaces it):
   `[27621] APPBLE: link up: peer=4C:23:38:74:E6:F6 t=0 air=4C:23:38:74:E6:F6 t=0`,
   `[27678] APPBLE: link secured: enc=1 bonded=1 auth=0 bonds=1 bits=16 peer=… t=0 air=… t=0`, then
   `adv restart: uuid=1 name=1 started=1 filter=none` - the accept list is gone from the advertisement.
@@ -881,9 +884,18 @@ block):
   site): no wire change and it reaches CID 1, but the free-form values (addresses, ms, percentages) are
   lost, repeats fold into `Count`, each code needs an app-side table row (app lane), and it is a change
   per call site rather than one in `DeviceLog`;
-- a second console, `CONFIG_ESP_CONSOLE_SECONDARY_UART0`: text keeps flowing on the UART pins while the
-  app owns USB - no protocol change and no app change - but the rig needs a USB-UART adapter on the
-  header;
+- **UART0 as the console**, on the UART pins instead of USB. `CONFIG_ESP_CONSOLE_SECONDARY_UART0` is not a
+  real option: the pinned ESP-IDF 6.0.1 (`components/esp_stdio/Kconfig:35-55`) offers only
+  `CONFIG_ESP_CONSOLE_SECONDARY_NONE` and `..._SECONDARY_USB_SERIAL_JTAG` in that choice, and the
+  secondary runs the other direction - USB-Serial-JTAG output while UART0 is PRIMARY. What delivers this
+  route is the primary choice: `CONFIG_ESP_CONSOLE_UART_DEFAULT` with the secondary left `NONE`. Its
+  pins, though, are U0TXD GPIO21 / U0RXD GPIO20 (`soc/esp32c3/include/soc/uart_pins.h`), and on this
+  board those two pads ARE the RS-485 transceiver (`Devices/Tamu_v2.0A/RSBus.h:6-7`, UART1 at 460800
+  Bd), so it needs `CONFIG_ESP_CONSOLE_UART_CUSTOM` with UART0 on two spare pins - plus a USB-UART
+  adapter on them for the rig. Still no protocol change and no app change, and it still prints nothing
+  on its own: `Devices/Tamu_v2.0A/Log.h` returns before the `ESP_LOGI` whenever
+  `AppInterface.Connected` is true, so the same change has to narrow that guard to "the USB console is
+  the console" (only meaningful while `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`);
 - keep the console copy while the USB link is idle (`AppUsbSilent()`: ~500 ms without an app frame)
   instead of suppressing it on cable presence: cheap, and it makes a raw capture work while nothing
   speaks the protocol, but it still shows nothing while an app is talking.
