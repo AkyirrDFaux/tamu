@@ -336,13 +336,18 @@ class _BleSecurityPageState extends State<BleSecurityPage>
     final ok = await confirmDialog(
       context,
       title: 'Forget all bonds?',
-      body: count == 0
-          ? 'The device holds no bonds, so there is nothing to forget. The command still '
-                'resets its store.'
-          : 'Every phone paired with this device ($count today) must pair again: each one has '
-                'to be forgotten in that phone\'s Bluetooth settings before it can connect. '
-                'The device opens a five-minute pairing window by itself afterwards, so it stays '
-                'reachable.',
+      body:
+          (count == 0
+              ? 'The device holds no bonds, so there is nothing to forget. The command still '
+                    'resets its store.'
+              : 'Every phone paired with this device ($count today) must pair again: each one has '
+                    'to be forgotten in that phone\'s Bluetooth settings before it can connect. '
+                    'The device opens a five-minute pairing window by itself afterwards, so it '
+                    'stays reachable.') +
+          (_overUsb
+              ? ''
+              : '\n\nThis app is connected over Bluetooth, so the device will refuse the write. '
+                    'Connect over USB to wipe the bonds.'),
       confirmLabel: 'Forget bonds',
     );
     if (!ok || !mounted) return;
@@ -361,7 +366,8 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   Future<void> _askPasskey({required bool currentSet}) async {
     final digits = await showDialog<String>(
       context: context,
-      builder: (context) => _PasskeyDialog(currentSet: currentSet),
+      builder: (context) =>
+          _PasskeyDialog(currentSet: currentSet, overUsb: _overUsb),
     );
     if (digits == null || !mounted) return;
     await _setPasskey(digits);
@@ -764,10 +770,14 @@ class _BleGuidanceBody extends StatelessWidget {
 /// The dialog IS the confirmation - it says what the phone will ask, what `000000` means, and
 /// that a forgotten code can only be replaced over USB.
 class _PasskeyDialog extends StatefulWidget {
-  const _PasskeyDialog({required this.currentSet});
+  const _PasskeyDialog({required this.currentSet, required this.overUsb});
 
   /// Whether a code is set now, so the copy can say the old one stops working.
   final bool currentSet;
+
+  /// Whether this app's link to the device is USB. The device refuses the write from any other
+  /// link, so the dialog says so before the code is typed instead of after a refusal.
+  final bool overUsb;
 
   @override
   State<_PasskeyDialog> createState() => _PasskeyDialogState();
@@ -813,6 +823,23 @@ class _PasskeyDialogState extends State<_PasskeyDialog> {
               'cannot change it.',
               style: theme.textTheme.bodySmall,
             ),
+            if (!widget.overUsb) ...[
+              const SizedBox(height: Spacing.md),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.usb, size: IconSize.sm, color: kWarning),
+                  const SizedBox(width: Spacing.sm),
+                  Expanded(
+                    child: Text(
+                      'This app is connected over Bluetooth: the device will refuse the write. '
+                      'Connect over USB to set the code.',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: Spacing.lg),
             TextField(
               controller: _controller,

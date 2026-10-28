@@ -437,6 +437,11 @@ void main() {
 
       await tester.tap(find.byTooltip('Set the passkey'));
       await tester.pumpAndSettle();
+      // The dialog says it before the code is typed, not only after the refusal.
+      expect(
+        find.textContaining('the device will refuse the write'),
+        findsOneWidget,
+      );
       await tester.enterText(find.byType(TextField), '123456');
       await tester.pump();
       await tester.tap(find.widgetWithText(FilledButton, 'Set passkey'));
