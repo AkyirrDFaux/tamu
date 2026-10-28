@@ -528,10 +528,13 @@ privacy, which is what lets a whitelist match survive RPA rotation. `AppBLETick`
 whitelist from the store whenever `BleBondGeneration` moves, so a bond the store evicted on overflow
 does not stay admitted.
 Revocation on a passkey change, the policy-shaped pairing deadline, `Action = 1` clearing the bonds
-and the USB-only write rule are untouched. Consequences for the app (card t_1d304c9c, item 5): its
-"the window opens only over USB" statement stays true and stops mattering for a bonded device; what
-remains unrecoverable is a phone whose bond is stale (forget it in the phone's settings) and a
-device with no bond and no USB host (its recovery window is the only way in).
+and the USB-only write rule are untouched. The block's `Window` field keeps its meaning - milliseconds
+left in the PAIRING window, 0 when closed - so a client must no longer read 0 as "the device is off
+the air": it now means "no new phone may pair, a bonded one may connect". Consequences for the app
+(card t_1d304c9c, item 5): its "the window opens only over USB" statement stays true and stops
+mattering for a bonded device; what remains unrecoverable is a phone whose bond is stale (forget it
+in the phone's settings) and a device with no bond and no USB host (its recovery window is the only
+way in).
 **No rig evidence yet:** the build has not been flashed, so the air checks in the card (bonded peer
 reconnects with the window closed, a stranger's connect ignored, a window still pairs, and the same
 two states after it closes) are unverified on hardware.
