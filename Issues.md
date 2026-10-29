@@ -512,9 +512,9 @@ answers exactly `00 01 02 03 04 05` - fields 6..12 get no reply at all.
 keeps the `Static block types | ...` placeholder, so the block-type list numbers neither `0x0B` nor
 `0x0C`. `03a585b` has since added a `BLE Settings` section of type `0x0B`
 (`Docs/Services/App Interface.md:29`, table at `:31-40`), but its rows carried only key `0` (Bond
-`0..N`) and no field index, and the twelve-field table it described had an `Advertised name` row the
-firmware had to match, so the numbers a client was to address the block with were only the firmware's
-- and in a different order from the section's rows. The
+`0..N`) and no field index, and the twelve-field block the firmware shipped carried an `Advertised
+name` field at index 8 for which the doc had no row at all, so the numbers a client was to address the
+block with were only the firmware's - and in a different order from the section's rows. The
 block was specified by the owner as a card (t_a9cda0b9) and implemented from that table, with field
 numbers fixed in `firmware/src/Blocks/BleSettings.h`.
 *(2026-10-29, card `t_41038b88`: the numbering this entry used to quote - `0 Passkey … 8 Advertised
@@ -889,7 +889,7 @@ against the device read-back in the note at the head of this section:
 | `Window` (`Uint32`, RO) | `Window`, index 5, `Uint32`, 4 B, **`Trigger`** - reads ms left, a write sets the deadline (0 closes) |
 | `Action` (`Enum`, W, "0 opens the pairing window, 1 forgets every bond") | **remove the row.** A window is opened by writing `Window`; forgetting is zeroing `Bonds` |
 | `Display name` - "Applies from the next advertising start" | "**Is** the advertised name; a write re-advertises at once. Empty means the System `Name`" |
-| (no field indexes; `Bond count` listed before `Display name`) | index every row `0..5` the way the System block table states its numbers: 0 Enabled, 1 Passkey, 2 Mode, 3 Display name, 4 Bonds, 5 Window |
+| (no row carries a field index - the `Key` column reads `0` everywhere except `Bond`'s `0..N`; the doc's rows run Enabled, Passkey, Mode, **Display name**, then `Bond count`, `Bond`, `Window`, `Action`) | index every row `0..5` the way the System block table states its numbers: 0 Enabled, 1 Passkey, 2 Mode, 3 Display name, 4 Bonds, 5 Window |
 | `:44` "`Action = 1` clears them, and so does changing the passkey" | "zeroing the `Bonds` array clears them, and so does changing the passkey" |
 
 No `Advertised name`, `Last peer`, `Last air` or `Last link` row belongs in that table - the first is
@@ -900,8 +900,13 @@ the `Docs/Services/Register.md:24` block-type list.
 The app side is **card `t_c432c8ac`**, not a partial edit here: `app/lib/core/ble_security.dart` no
 longer matches the block (field constants, the `bleAction*` constants, keyed `Bond` texts), and
 `app/test/firmware_contract_test.dart:200` parses `BleSettings_Entries` out of the header, which now
-holds six rows - 74 references across seven files need the new shape (field/type/size list and the
-`Bonds` write semantics are in the card's comment thread).
+holds six rows - the removed identifiers occur **151 times over 141 lines** in seven files and need the
+new shape (field/type/size list and the `Bonds` write semantics are in the card's comment thread).
+Recount:
+
+    git grep -o -E 'bleFieldBondCount|bleFieldBond|bleFieldAction|bleFieldAdvertisedName|bleFieldLast(Air|Link|Peer)|bleAction[A-Za-z]*|bleVerdict[A-Za-z]*|bleBondSlots' -- app/ | wc -l
+
+-> `151`; the same `git grep` without `-o` counts the 141 lines, with `-l` the seven files.
 
 
 **E67 `DeviceLog` is suppressed while a host holds the USB port, and its lines cannot reach the log
