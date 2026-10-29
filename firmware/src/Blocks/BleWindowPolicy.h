@@ -17,7 +17,7 @@
 // There are exactly two of those:
 //   - the radio came up with no bond stored (headless first use, including a device that boots with
 //     an empty store): without this nobody could ever make the first bond;
-//   - an explicit forget emptied the store - `Action = 1`, a passkey change that invalidates the
+//   - an explicit forget emptied the store - zeroing the `Bonds` array, a passkey change that invalidates the
 //     stored bonds, or the epoch revoke at radio start (all three run through
 //     AppBLEForgetAllBonds, AppBLE.h), because every phone that was paired has to pair again.
 //
@@ -25,8 +25,8 @@
 // host-clean, so test/native/ble_window_test.cpp drives the table and the radio code only supplies
 // the two inputs.
 //
-// Nothing here is about the MANUAL window (`Action = 0`, BLE_WINDOW_MS): that one is opened by the
-// owner's command and does not consult this header.
+// Nothing here is about the MANUAL window (a write to the block's `Window` field): that one is opened
+// by the owner's command and does not consult this header.
 
 #include <cstdint>
 

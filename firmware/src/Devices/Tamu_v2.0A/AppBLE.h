@@ -47,7 +47,7 @@ static volatile uint16_t BleMtu = 23;  // negotiated ATT MTU (ATT default)
 // The policy itself is NOT stored here: it is derived from the `BLE Settings` block's Passkey
 // field on every use (BlePolicyNow), so the register field is the single source of truth. The
 // same block owns the radio's enable state and the advertised name (AppBLESettingsApply).
-#define BLE_WINDOW_MS 60000           // connectable window opened by the block's Action field
+#define BLE_WINDOW_MS 60000           // the pairing window a host usually asks for (a write sets its own)
 #define BLE_AUTO_WINDOW_MS 300000     // ... and opened by itself for 5 min while no bond is stored
 // A link that has not completed pairing by its deadline is dropped (AppBLETick). The budget itself
 // is policy-shaped and lives with the policy (Blocks/BleSecurityPolicy.h, BleSecureBudgetMs): Just
@@ -76,7 +76,7 @@ static bool BleLinkBondingClosed = false;
 // Never "the bond store reads empty" - a deletion a LINK drove (repeat pairing, E69) empties the
 // store too, and that must not make a locked device offer itself. Blocks/BleWindowPolicy.h has the
 // rule, and the only two events are the radio starting with no bond (headless first use) and an
-// explicit forget emptying the store (`Action = 1`, a passkey change, the epoch revoke - all three
+// explicit forget emptying the store (zeroed `Bonds`, a passkey change, the epoch revoke - all three
 // run through AppBLEForgetAllBonds). App task only: written by the register/USB path and by the
 // radio start, read by the tick in the same task.
 static BleWindowCause BleAutoWindowCause = BleWindowCauseNone;
@@ -173,15 +173,15 @@ struct BleRxAssembler
 // ===== Connectable window =====
 //
 // A window is the PAIRING state. While one is open any phone may connect and pair (up to the three
-// bonds the store holds). Two things open one:
-//   - the `BLE Settings` block's Action field (USB, `Action = 0`) for BLE_WINDOW_MS;
-//   - the device itself, unattended, for BLE_AUTO_WINDOW_MS - but only after an EVENT the owner
-//     caused: the radio coming up with no bond stored (headless first use), or an explicit forget
-//     emptying the store (`Action = 1`, a passkey change, the epoch revoke). It is deliberately NOT
-//     "the bond store reads empty" any more (Issues.md E69): the vendored stack deletes a bond when
-//     a peer that it already has a bond for asks to pair again, before any application callback
-//     runs, so a link could empty the store and make this device offer itself to the room for five
-//     minutes. Blocks/BleWindowPolicy.h holds that rule; AppBLETick consumes the event.
+// bonds the store holds). It is opened by a WRITE to the `BLE Settings` block's Window field (USB
+// only, write the milliseconds you want; 0 closes it) and by the device itself, unattended, for
+// BLE_AUTO_WINDOW_MS - but only after an EVENT the owner caused: the radio coming up with no bond
+// stored (headless first use), or an explicit forget emptying the store (zeroing the `Bonds` array,
+// a passkey change, the epoch revoke). It is deliberately NOT "the bond store reads empty" any more
+// (Issues.md E69): the vendored stack deletes a bond when a peer that it already has a bond for asks
+// to pair again, before any application callback runs, so a link could empty the store and make this
+// device offer itself to the room for five minutes. Blocks/BleWindowPolicy.h holds that rule;
+// AppBLETick consumes the event.
 // The core's button is not a trigger: Button.h shares LED_NOTIFICATION_PIN with the notification LED
 // and forces the button state false while the LED is driven, so a press is invisible exactly when it
 // blinks.
@@ -219,17 +219,34 @@ uint32_t AppBLEWindowLeftMs()
     return Left > 0 ? (uint32_t)Left : 0;
 }
 
-// Opens (or extends) the connectable window for the manual period. Called from the block's
-// Action field, in the app task. Returns false when the radio cannot be discovered at all.
-bool AppBLEOpenWindow()
+// Opens (or extends) the connectable window for `Ms`, or closes it when `Ms` is 0. Called from a
+// write to the block's Window field, in the app task, so the deadline is a command and the read-back
+// is the countdown (AppBLEWindowLeftMs). Returns false when the radio cannot offer itself at all -
+// a radio the block has switched off has nothing to advertise; closing is always accepted.
+bool AppBLESetWindow(uint32_t Ms)
 {
+    if (Ms == 0)
+    {
+        if (BleWindowEndMs != 0)
+            DeviceLog("APPBLE", "connectable window closed by the block");
+        BleWindowEndMs = 0;
+        return true;
+    }
     if (!BleRadioUp || !BleEnabled)
     {
         DeviceLog("APPBLE", "window refused: the radio is disabled");
         return false;
     }
-    BleWindowEndMs = TimeFromBoot() + BLE_WINDOW_MS;
-    DeviceLog("APPBLE", "connectable window open for %u ms", (unsigned)BLE_WINDOW_MS);
+    // The countdown compares signed (AppBLEWindowLeftMs), so a deadline further away than INT32_MAX
+    // ms would read as already past. Refused rather than clamped: a write that asked for ~25 days of
+    // pairing window is a mistake, not a request to be rounded.
+    if (Ms > (uint32_t)INT32_MAX)
+    {
+        DeviceLog("APPBLE", "window refused: %u ms is longer than the countdown can hold", (unsigned)Ms);
+        return false;
+    }
+    BleWindowEndMs = TimeFromBoot() + Ms;
+    DeviceLog("APPBLE", "connectable window open for %u ms", (unsigned)Ms);
     return true;
 }
 
@@ -249,28 +266,29 @@ bool AppBLEAutoWindow()
     return true;
 }
 
-// ===== Bond store read-out / erasure (the block's Bond fields and Action=1) =====
+// ===== Bond store read-out / erasure (the block's Bonds array) =====
 //
-// Order and eviction (the card's rules, settled against this build's NimBLE):
+// Order and eviction (settled against this build's NimBLE):
 //   - The store keeps entries in the order they were added (ble_store_config_peer_secs is an
-//     append array, re-sorted by bond_count at boot), so key 0 is the OLDEST bond and
-//     getBondedAddress(i) walks oldest first - what the block's Bond fields promise.
-//   - Capacity is CONFIG_BT_NIMBLE_MAX_BONDS = 3 (static_assert'd against the field's key count).
+//     append array, re-sorted by bond_count at boot), so entry 0 is the OLDEST bond and
+//     getBondedAddress(i) walks oldest first - the order the block's Bonds array publishes.
+//   - Capacity is CONFIG_BT_NIMBLE_MAX_BONDS = 3 (static_assert'd against the array's entry count).
 //     When a fourth phone pairs, the config store answers BLE_HS_ESTORE_CAP, and the default
 //     store-status handler that esp-nimble-cpp installs (ble_store_util_status_rr via
 //     NimBLEDeviceCallbacks) calls ble_gap_unpair_oldest_peer() and retries: the OLDEST bond is
 //     evicted, so the phone that paired first is the one that has to pair again. Nothing is
 //     silently dropped - the store is full, one entry goes.
 //   - Because that eviction and the new bond land inside ONE store-status callback, the size of
-//     the store reads 3 before and 3 after while its content changed entirely. The block's Bond
-//     fields therefore cannot be refreshed on the count alone (they used to be, and kept listing
-//     the evicted phone): every completed bond and every forget bumps BleBondGeneration, and
-//     BleSettingsSync re-formats on a change of it. The count and a slow content check in the
-//     glue are the safety net for a store that changes without either event.
+//     the store reads 3 before and 3 after while its content changed entirely. The block's array
+//     therefore cannot be refreshed on the count alone (it used to be, and kept listing the evicted
+//     phone): every completed bond and every forget bumps BleBondGeneration, and BleSettingsSync
+//     re-formats on a change of it. The count and a slow content check in the glue are the safety
+//     net for a store that changes without either event.
 
 // "The bond store's content may differ from what the block last formatted". Bumped from the
-// NimBLE host task (onAuthenticationComplete) and the app task (AppBLEForgetAllBonds); read by the
-// main loop, so volatile - a 32-bit aligned word, which the C3 updates atomically.
+// NimBLE host task (onAuthenticationComplete) and the app task (AppBLEForgetAllBonds,
+// AppBLEForgetBond); read by the main loop, so volatile - a 32-bit aligned word, which the C3
+// updates atomically.
 static volatile uint32_t BleBondGeneration;
 
 void AppBLEBondStoreChanged()
@@ -288,17 +306,17 @@ int AppBLEBondCount()
     return BleRadioUp ? NimBLEDevice::getNumBonds() : 0;
 }
 
-// Writes bond `Index`'s identity address ("AA:BB:CC:DD:EE:FF") NUL-terminated into `Out`.
-// The NimBLE bond store keeps no peer name, so the address is the whole entry.
-bool AppBLEBondText(int Index, char *Out, size_t Len)
+// Writes bond `Index`'s identity address into `Out` in the order the block publishes it
+// (AA:BB:CC:DD:EE:FF -> Out[0..5]). NimBLE keeps the six bytes least-significant first, which is
+// the reverse of that, so the copy is what makes the block's entry readable as an address.
+// False when the store holds no such entry.
+bool AppBLEBondAddress(int Index, uint8_t *Out)
 {
-    if (!Out || Len == 0)
+    if (!Out || !BleRadioUp || Index < 0 || Index >= NimBLEDevice::getNumBonds())
         return false;
-    Out[0] = '\0';
-    if (!BleRadioUp || Index < 0 || Index >= NimBLEDevice::getNumBonds())
-        return false;
-    const std::string Text = NimBLEDevice::getBondedAddress(Index).toString();
-    snprintf(Out, Len, "%s", Text.c_str());
+    const uint8_t *Val = NimBLEDevice::getBondedAddress(Index).getVal();
+    for (uint8_t i = 0; i < BLE_BOND_ADDR_LEN; i++)
+        Out[i] = Val[BLE_BOND_ADDR_LEN - 1 - i];
     return true;
 }
 
@@ -340,74 +358,6 @@ static bool BlePeerWasBonded(const NimBLEAddress &Addr)
     return false;
 }
 
-// ===== The last link, as something a rig can read (Issues.md E66) =====
-//
-// E66's second half is evidence, and the device log cannot supply it: DeviceLog is dropped whenever a
-// host holds the link (E67), which is exactly when a connect happens, so "the bonded peer came back
-// from a rotating private address and the controller resolved it" left no trace anywhere a host can
-// see. The last judged link is therefore kept in RAM - both addresses and the verdict - and the
-// `BLE Settings` block publishes it (fields 9..11, BleSettingsSync reads it through AppBLELastLink).
-//
-// The card's question - "did the controller resolve this peer's rotating private address?" - is
-// answered by the PAIR of addresses, not by an address type. For a peer the controller resolved,
-// `ble_hs_conn_addrs()` leaves the identity on `peer_id_addr` and sets `peer_ota_addr` to the RPA the
-// peer used on the air, so `getIdAddress()` and `getAddress()` differ exactly when a resolution
-// happened (BleCameInResolved in Blocks/BleAdmissionPolicy.h). The `/N` type suffix that the block
-// prints on both is information only: the same function rewrites the event's 2/3 to 0/1 on
-// `peer_id_addr`, so the type the host is handed can never read 2/3 and proves nothing either way.
-// A peer that connects from its own address (public, or a static random one) reads the SAME address
-// twice - the normal case on a rig whose host cannot enable privacy, not a broken read-out.
-//
-// Written from the NimBLE host task (the callbacks) and read from the app task, so it is published
-// through a sequence counter: an odd value means a write is in flight and the reader retries rather
-// than serving half an address.
-struct BleLastLinkRecord
-{
-    uint8_t Air[6];     // the address the peer connected from (peer_ota_addr: the RPA when resolved)
-    uint8_t AirType;    // ... and its type. NimBLE normalises 2/3 to 0/1, so this is 0/1 in practice
-    uint8_t Id[6];      // the identity the admission decision used (peer_id_addr)
-    uint8_t IdType;
-    uint8_t Verdict;    // BleLinkVerdict
-    bool Valid;         // false until a link has been judged: a zeroed record is NOT a link
-};
-static BleLastLinkRecord BleLastLink;
-static volatile uint32_t BleLastLinkSeq; // even = a stable record, odd = being written
-
-static void BleLastLinkSet(const NimBLEAddress &Air, const NimBLEAddress &Id, uint8_t Verdict)
-{
-    BleLastLinkSeq = BleLastLinkSeq + 1;
-    memcpy(BleLastLink.Air, Air.getVal(), 6);
-    BleLastLink.AirType = Air.getType();
-    memcpy(BleLastLink.Id, Id.getVal(), 6);
-    BleLastLink.IdType = Id.getType();
-    BleLastLink.Verdict = Verdict;
-    BleLastLink.Valid = true;
-    BleLastLinkSeq = BleLastLinkSeq + 1;
-}
-
-// Copies the last link record. False when no link has been judged since boot (so the block's fields
-// stay empty instead of reading as the all-zero address), or when a write kept winning (never seen -
-// the writer's critical section is a handful of stores, so three attempts always succeed).
-bool AppBLELastLink(BleLastLinkRecord *Out)
-{
-    if (!Out)
-        return false;
-    for (uint8_t Attempt = 0; Attempt < 3; Attempt++)
-    {
-        const uint32_t Before = BleLastLinkSeq;
-        if (Before & 1u)
-            continue;
-        BleLastLinkRecord Copy;
-        memcpy(&Copy, (const void *)&BleLastLink, sizeof(Copy));
-        if (BleLastLinkSeq == Before)
-        {
-            *Out = Copy;
-            return Copy.Valid;
-        }
-    }
-    return false;
-}
-
 // ===== Bonds vs the passkey they were made under =====
 //
 // A bond is only worth anything under the passkey that created it: the phone comes back encrypted
@@ -431,7 +381,7 @@ static bool BleBondEpochKnown = false;     // false = no stamp (fresh partition,
 // with `BLE_HS_EBUSY` while advertising or discovery is active (ble_gap.c: "We cannot delete entry
 // from resolving list if there is ongoing discovery or advertising in progress"), and since E64
 // this device advertises whenever no session is up - which is the state a USB command arrives in.
-// Without this, an idle device could not forget at all: `Action = 1` answered FLAG_FAIL and kept
+// Without this, an idle device could not forget at all: the forget command answered FLAG_FAIL and kept
 // the store, and the passkey-change revoke (AppBLEEnforceBondPolicy) revoked nothing. The delete
 // runs on the GAP procedure on purpose - `ble_store_util_delete_peer` would sidestep the air, but
 // it also skips the controller resolving-list removal that makes a forgotten peer unlinkable
@@ -471,7 +421,7 @@ bool AppBLEForgetAllBonds()
         BleBondEpochKnown = true;
         BleBondEpochSave(BleBondEpoch);
 
-        // This IS the explicit event the automatic window is owed to (`Action = 1`, a passkey change,
+        // This IS the explicit event the automatic window is owed to (zeroing `Bonds`, a passkey change,
         // the epoch revoke - every one of them comes through here): every phone that was paired has
         // to pair again, so the device offers itself for BLE_AUTO_WINDOW_MS without being asked.
         // Gated on the store really coming up empty, like the stamp above: a delete that left an
@@ -503,6 +453,65 @@ bool AppBLEForgetAllBonds()
     // reply cannot disagree with the read-out. `Ok` stays in the log for the case where one unpair
     // reported an error over an entry the store had already lost.
     return After == 0;
+}
+
+// Forgets ONE bond: the peer at `Addr` (the published six bytes - the identity address the block's
+// `Bonds` entry carries). Called from a `Bonds` write whose entry's address was zeroed.
+//
+// It is the same air dance as AppBLEForgetAllBonds and for the same reason (E65: `ble_gap_unpair()`
+// refuses with BLE_HS_EBUSY while advertising, and this device advertises whenever no session is
+// up - the state a USB command arrives in), and the rebuild is again requested, not started, so
+// there is one start site (the tick).
+//
+// The epoch stamp and the automatic window are NOT touched here: emptying the store is
+// AppBLEForgetAllBonds' job (the block calls it when every entry of the written array is zero), so
+// the "an explicit forget emptied the store" event still has exactly one grant site.
+bool AppBLEForgetBond(const uint8_t Addr[BLE_BOND_ADDR_LEN])
+{
+    if (!BleServer)
+        return false;
+
+    // The store is the truth about what exists; the entry being written only says what the host
+    // wants. A bond the store does not hold is already gone, which is the state the write asked for.
+    int Found = -1;
+    uint8_t Have[BLE_BOND_ADDR_LEN];
+    for (int i = 0; i < NimBLEDevice::getNumBonds(); i++)
+        if (AppBLEBondAddress(i, Have) && memcmp(Have, Addr, BLE_BOND_ADDR_LEN) == 0)
+        {
+            Found = i;
+            break;
+        }
+    if (Found < 0)
+        return true;
+
+    const NimBLEAddress Target = NimBLEDevice::getBondedAddress(Found);
+
+    NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
+    const bool AdvWasUp = Adv != nullptr && Adv->isAdvertising();
+    bool AdvStopped = !AdvWasUp;
+    if (AdvWasUp)
+    {
+        Adv->stop(); // a synchronous HCI command: the controller is idle once it returns
+        AdvStopped = !Adv->isAdvertising();
+        if (!AdvStopped)
+            DeviceLog("APPBLE", "advertising would not stop: the bond delete will be refused (E65)");
+    }
+
+    const int Before = NimBLEDevice::getNumBonds();
+    const bool Ok = NimBLEDevice::deleteBond(Target);
+    const int After = NimBLEDevice::getNumBonds();
+    DeviceLog("APPBLE", "bond forgotten: %d -> %d (ok=%d)", Before, After, Ok);
+    AppBLEBondStoreChanged();
+
+    if (AdvWasUp && AdvStopped)
+    {
+        BleAdvStateApplied = false;
+        DeviceLog("APPBLE", "advertisement returns: the bond delete is done (E65)");
+    }
+
+    // The caller is told the store's STATE, like the forget-all path: the block reads the array back
+    // from the store, so a reply that disagreed with it would be the only place the truth differed.
+    return After < Before;
 }
 
 // Records the policy the store is under. Cheap and idempotent: only a genuine change reaches NVS,
@@ -620,7 +629,6 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         {
             DeviceLog("APPBLE", "refused a second peer: a link is already live (handle %u)",
                       (unsigned)BleConnHandle);
-            BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkRefusedBusy);
             PServer->disconnect(ConnInfo.getConnHandle());
             return;
         }
@@ -641,7 +649,6 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         if (!BleEnabled)
         {
             DeviceLog("APPBLE", "refused: the radio is disabled");
-            BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkRefusedBusy);
             PServer->disconnect(ConnInfo.getConnHandle());
             return;
         }
@@ -659,18 +666,13 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         {
             DeviceLog("APPBLE", "refused a stranger at %s: the pairing window is closed",
                       ConnInfo.getIdAddress().toString().c_str());
-            BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkRefusedNotBonded);
             PServer->disconnect(ConnInfo.getConnHandle());
             return;
         }
 
-        // From here the link is judged, not yet admitted: the security procedure decides. The record
-        // says so, because a link that never completes it (the deadline in AppBLETick) is neither an
-        // admission nor one of the refusals below.
-        // `Last air` and `Last peer` differ exactly when the controller resolved a rotating private
-        // address for this link (see the comment on BleLastLinkRecord); the `/N` type suffix on both
-        // is information only, because NimBLE normalises the resolved types 2/3 to 0/1.
-        BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkPending);
+        // From here the link is judged, not yet admitted: the security procedure decides, and a link
+        // that never completes it (the deadline in AppBLETick) is neither an admission nor one of
+        // the refusals above.
         DeviceLog("APPBLE", "link up: peer=%s t=%u air=%s t=%u%s",
                   ConnInfo.getIdAddress().toString().c_str(),
                   (unsigned)ConnInfo.getIdAddress().getType(),
@@ -733,7 +735,6 @@ class BleServerCallbacks : public NimBLEServerCallbacks
             DeviceLog("APPBLE", "link refused (enc=%u bonded=%u%s): dropping",
                       ConnInfo.isEncrypted(), ConnInfo.isBonded(),
                       BleLinkBondingClosed ? ", no pairing window" : "");
-            BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkRefusedUnsecured);
             BleSecured = false;
             BleConnected = false;
             if (BleServer)
@@ -746,7 +747,6 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         if (Policy.Mitm && !ConnInfo.isAuthenticated())
         {
             DeviceLog("APPBLE", "unauthenticated link refused: a passkey is set");
-            BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkRefusedUnsecured);
             BleSecured = false;
             BleConnected = false;
             if (BleServer)
@@ -764,7 +764,6 @@ class BleServerCallbacks : public NimBLEServerCallbacks
                                BlePeerWasBonded(ConnInfo.getIdAddress())))
         {
             DeviceLog("APPBLE", "refused a link that paired outside the pairing window: forgetting its bond");
-            BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkRefusedOutsideWindow);
             if (!NimBLEDevice::deleteBond(ConnInfo.getIdAddress()))
                 DeviceLog("APPBLE", "could not forget the bond of %s: it still admits this peer",
                           ConnInfo.getIdAddress().toString().c_str());
@@ -778,7 +777,6 @@ class BleServerCallbacks : public NimBLEServerCallbacks
 
         BleSecured = true;
         BleConnected = true;
-        BleLastLinkSet(ConnInfo.getAddress(), ConnInfo.getIdAddress(), BleLinkAdmitted);
         BleMtu = ConnInfo.getMTU();
         BleSecureDeadlineMs = 0;
         // Prefer 2M PHY when the central supports it: halves air time per packet
@@ -1082,14 +1080,18 @@ void AppBLESettingsApply()
         NimBLEDevice::setDeviceName(Name);
         memcpy(BleAppliedName, Name, SYSTEM_NAME_LEN + 1);
         DeviceLog("APPBLE", "advertised name -> '%s'", BleAppliedName);
-        // Rebuild rather than mutate in place: the same reason as StartAppAdvertising's note.
-        // A bonded device carries the new name on the air outside a window too, so this follows
-        // the advertising rule, not the window.
-        if (BleAdvWanted())
+        // Re-advertise NOW, in this same pass: the field and the air are the same thing, and on a
+        // device that advertises whenever it is idle, "at the next advertising start" can mean
+        // never. A live session cannot advertise at all - the tick's deferred restart carries the
+        // new name onto the air the moment the link drops.
+        if (BleAdvWanted() && !BleConnected)
         {
-            NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
-            if (Adv)
-                Adv->stop();
+            StartAppAdvertising(); // rebuild, never mutate in place (see its own note)
+            BleAdvStateApplied = true;
+            BleAdvRestart = false;
+        }
+        else
+        {
             BleAdvRestart = true;
         }
     }

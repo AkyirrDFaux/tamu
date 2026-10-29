@@ -8,7 +8,7 @@
 //
 // The rule the window now follows is an EVENT, not a reading:
 //   - the radio came up with an empty store (headless first use) -> window;
-//   - an explicit forget emptied the store (`Action = 1`, a passkey change, the epoch revoke)
+//   - an explicit forget emptied the store (zeroing `Bonds`, a passkey change, the epoch revoke)
 //     -> window, because every paired phone has to pair again;
 //   - no event, whatever the store reads -> nothing. That is the E69 case: a link-driven deletion
 //     leaves the store empty and must still open no window.

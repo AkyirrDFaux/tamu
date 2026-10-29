@@ -495,6 +495,11 @@ while a window is open or the store is empty (see E64 for the advertising rule i
 t_a9cda0b9's example entry is `C4:7F:51:xx:xx:xx  Akyirr-phone`. `NimBLEDevice` exposes
 `getNumBonds()`, `getBondedAddress(i)` and `deleteAllBonds()`; no name is stored (NimBLE keeps
 none), so the field carries `AA:BB:CC:DD:EE:FF` and the app must not promise a name.
+*(2026-10-29, the six-field block: the entry is still `address + name`, but the NAME half is now ours
+and writable - `Devices/Tamu_v2.0A/BleBondLabelStore.h` keeps a label per identity address in NVS
+(`ble`/`bondnames`), keyed by the address so eviction or a delete cannot hand a label to another
+phone, and pruned to the bonds that exist. A second phone has no name until the host writes one, and
+an empty name is the honest reading of "never labelled".)*
 
 **E64 A phone-only setup cannot open a pairing window, so a bonded device had to be reachable
 without one (owner ruling C, 2026-10-28).** Every write to the `BLE Settings` block is refused
@@ -1136,8 +1141,10 @@ it: the next boot after such a write prints `I (342) BLESEC: passkey source: non
 (`BlePasskeyStore.h:98-101`).
 
 **E72 `Action = 0`/`Action = 1` looked refused on the `BLE Settings` block - the probe was sending
-the ASCII character `'0'`/`'1'` (0x30/0x31), not the number.** *(Resolved 2026-10-29: probe defect,
-fixed in `firmware/.pio/probe/bleset_probe.py`; kept as the measured record of a trap that produced a
+the ASCII character `'0'`/`'1'` (0x30/0x31), not the number.** *(Resolved 2026-10-29: probe defect;
+the whole `Action` field has since been removed - the block's six fields open the pairing window with
+a write to `Window` and forget everything by zeroing `Bonds`, so this entry is history only. Card
+t_41038b88.)* *(Kept as the measured record of a trap that produced a
 false alarm about a recovery lever.)* Found on the rig 2026-10-29 during card `t_c0266baf`, corrected
 the same day after review; **not a firmware defect and no `firmware/src` file was touched.** `Action` is
 an `Enum(1)` trigger: `OnBleActionWrite` matches the *byte*, so its `default:`

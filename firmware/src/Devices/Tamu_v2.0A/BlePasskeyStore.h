@@ -118,7 +118,7 @@ static bool BlePasskeyStoreSave(const char *Text)
 // its stored LTK comes up encrypted and bonded but NOT authenticated, so after a passkey change the
 // connect gate refuses it - forever, because a phone does not re-pair on its own while it believes
 // it is bonded (nimble's repeat-pairing path ignores the request until the application deletes the
-// bond) and the only other way out is the USB-only Action=1. The same hole is a security one: a
+// bond) and the only other way out is the USB-only forget-all (zeroing the block's Bond list). The same hole is a security one: a
 // bond made under the OLD code would survive a rotation, so rotating the code would revoke nothing.
 //
 // So the passkey the store was built under is remembered next to it, and any change forgets the

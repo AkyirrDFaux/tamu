@@ -38,11 +38,13 @@ static int checks = 0, failures = 0;
 // the radio. Defining them here lets the table be driven and records that a write reached the
 // trigger instead of the generic copy.
 static int PasskeyTriggerCalls = 0;
-static int ActionTriggerCalls = 0;
 static int EnabledTriggerCalls = 0;
 static int DisplayNameTriggerCalls = 0;
+static int BondsTriggerCalls = 0;
+static int WindowTriggerCalls = 0;
 static char PasskeyTriggerText[BLE_PASSKEY_LEN + 1] = {0};
-static uint8_t ActionTriggerValue = 0xFF;
+static uint8_t BondsTriggerValue[BLE_BOND_ARRAY_LEN] = {0};
+static uint32_t WindowTriggerValue = 0xFFFFFFFFu;
 
 bool OnBlePasskeyWrite(const StaticBlockDescriptor &, uint16_t, const void *Data, uint16_t Length)
 {
@@ -65,12 +67,24 @@ bool OnBleDisplayNameWrite(const StaticBlockDescriptor &Block, uint16_t, const v
     return true;
 }
 
-bool OnBleActionWrite(const StaticBlockDescriptor &, uint16_t, const void *Data, uint16_t Length)
+// The Bonds write is a whole-array value the glue checks against the bond store; here the stub only
+// records the bytes it was handed, so the table can be checked for routing and size.
+bool OnBleBondsWrite(const StaticBlockDescriptor &, uint16_t, const void *Data, uint16_t Length)
 {
-    ActionTriggerCalls++;
-    if (Length != 1)
+    BondsTriggerCalls++;
+    if (Length != BLE_BOND_ARRAY_LEN)
         return false;
-    ActionTriggerValue = *(const uint8_t *)Data;
+    memcpy(BondsTriggerValue, Data, BLE_BOND_ARRAY_LEN);
+    return true;
+}
+
+// The Window write is a Uint32 command (set the deadline, 0 closes).
+bool OnBleWindowWrite(const StaticBlockDescriptor &, uint16_t, const void *Data, uint16_t Length)
+{
+    WindowTriggerCalls++;
+    if (Length != sizeof(uint32_t))
+        return false;
+    memcpy(&WindowTriggerValue, Data, sizeof(WindowTriggerValue));
     return true;
 }
 
@@ -163,10 +177,23 @@ static void TestBlockTable()
     BleSettingsVolatile Vol;
     StaticBlockDescriptor Blk = {&Vol, &Per, &BleSettingsSchema, "BLE Settings", nullptr};
 
+    // --- six fields, numbered 0..5, and nothing else ---
+    CHECK(BleSettingsSchema.EntryCount == 6);
+    CHECK(BleSettingsSchema.TriggerCount == 5); // every settable field but Mode
+    CHECK(Blk.Get(6, 0).Data == nullptr);       // the retired Action / Advertised name / Last* slots
+    CHECK(Blk.Get(11, 0).Data == nullptr);
+
     // --- the fields resolve to the struct members the offsets claim ---
+    FieldResult R = Blk.Get(BLE_SET_FIELD_ENABLED, 0);
+    CHECK(R.Data == &Per.Enabled);
+    CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Bool);
+    CHECK(R.Descriptor.Size == 1);
+    CHECK(ValueIsPersistent(R.Descriptor));
+    CHECK(!ValueIsReadOnly(R.Descriptor));
+
     // The passkey is readable and writable, but NOT persistent: it lives in NVS, so the register
     // file (.SV) never carries the secret. Its wire copy is the volatile field.
-    FieldResult R = Blk.Get(BLE_SET_FIELD_PASSKEY, 0);
+    R = Blk.Get(BLE_SET_FIELD_PASSKEY, 0);
     CHECK(R.Data == &Vol.Passkey);
     CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Text);
     CHECK(R.Descriptor.Size == BLE_PASSKEY_LEN);
@@ -175,79 +202,49 @@ static void TestBlockTable()
 
     R = Blk.Get(BLE_SET_FIELD_MODE, 0);
     CHECK(R.Data == &Vol.Mode);
-    CHECK(ValueIsReadOnly(R.Descriptor));
-
-    R = Blk.Get(BLE_SET_FIELD_BONDCOUNT, 0);
-    CHECK(R.Data == &Vol.BondCount);
-    CHECK(R.Descriptor.Size == 1);
-
-    // The Bond field is keyed: each key is its own buffer, not three names for one.
-    for (uint8_t k = 0; k < BLE_SETTINGS_BOND_SLOTS; k++)
-    {
-        R = Blk.Get(BLE_SET_FIELD_BOND, k);
-        CHECK(R.Data == &Vol.Bond[k][0]);
-        CHECK(R.Descriptor.Size == BLE_BOND_TEXT_LEN);
-        CHECK(ValueIsReadOnly(R.Descriptor));
-    }
-    CHECK(Blk.Get(BLE_SET_FIELD_BOND, BLE_SETTINGS_BOND_SLOTS).Data == nullptr); // no hidden slot
-
-    R = Blk.Get(BLE_SET_FIELD_WINDOW, 0);
-    CHECK(R.Data == &Vol.WindowMs);
-    CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Uint32);
-    CHECK(R.Descriptor.Size == sizeof(uint32_t));
-
-    R = Blk.Get(BLE_SET_FIELD_ACTION, 0);
-    CHECK(R.Data == &Vol.Action);
     CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Enum);
-    CHECK(!ValueIsReadOnly(R.Descriptor)); // a write is the command
-
-    R = Blk.Get(BLE_SET_FIELD_ENABLED, 0);
-    CHECK(R.Data == &Per.Enabled);
-    CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Bool);
     CHECK(R.Descriptor.Size == 1);
-    CHECK(ValueIsPersistent(R.Descriptor));
+    CHECK(ValueIsReadOnly(R.Descriptor));
 
     R = Blk.Get(BLE_SET_FIELD_DISPLAYNAME, 0);
     CHECK(R.Data == &Per.DisplayName);
     CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Text);
     CHECK(R.Descriptor.Size == BLE_DISPLAY_NAME_LEN);
     CHECK(ValueIsPersistent(R.Descriptor));
+    CHECK(!ValueIsReadOnly(R.Descriptor));
 
-    // The resolved advertised name is a read-out of the rule "empty Display name = System.Name".
-    R = Blk.Get(BLE_SET_FIELD_ADVERTISED, 0);
-    CHECK(R.Data == &Vol.AdvertisedName);
-    CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Text);
-    CHECK(R.Descriptor.Size == BLE_DISPLAY_NAME_LEN);
-    CHECK(ValueIsReadOnly(R.Descriptor));
-
-    // The E66 read-out: the identity the admission used, the address the peer came from, and the
-    // verdict. All three are read-only and in the volatile space (nothing of a link is persisted),
-    // and the two addresses are the same width as a Bond text so a rig can read them all the same way.
-    R = Blk.Get(BLE_SET_FIELD_LASTPEER, 0);
-    CHECK(R.Data == &Vol.LastPeer);
-    CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Text);
-    CHECK(R.Descriptor.Size == BLE_BOND_TEXT_LEN);
-    CHECK(ValueIsReadOnly(R.Descriptor));
+    // The bond list: ONE Undefined value (a raw byte block - the app decodes it), writable, and its
+    // declared size is what fixes the entry count.
+    R = Blk.Get(BLE_SET_FIELD_BONDS, 0);
+    CHECK(R.Data == &Vol.Bonds);
+    CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Undefined);
+    CHECK(R.Descriptor.Size == BLE_BOND_ARRAY_LEN);
+    CHECK(!ValueIsReadOnly(R.Descriptor));
     CHECK(!ValueIsPersistent(R.Descriptor));
 
-    R = Blk.Get(BLE_SET_FIELD_LASTAIR, 0);
-    CHECK(R.Data == &Vol.LastAir);
-    CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Text);
-    CHECK(R.Descriptor.Size == BLE_BOND_TEXT_LEN);
-    CHECK(ValueIsReadOnly(R.Descriptor));
-    CHECK(!ValueIsPersistent(R.Descriptor));
+    // The entry geometry the size is built from: 6-byte address + 16-byte name, three slots.
+    CHECK(BLE_BOND_ENTRY_LEN == 22);
+    CHECK(BLE_SETTINGS_BOND_SLOTS == 3);
+    CHECK(BLE_BOND_ARRAY_LEN == BLE_SETTINGS_BOND_SLOTS * BLE_BOND_ENTRY_LEN);
+    CHECK(sizeof(Vol.Bonds) == BLE_BOND_ARRAY_LEN);
+    // ... and an entry is address-then-name at the stride the field promises.
+    CHECK((void *)(Vol.Bonds + 1 * BLE_BOND_ENTRY_LEN) == (void *)(&Vol.Bonds[BLE_BOND_ENTRY_LEN]));
+    CHECK(BLE_BOND_NAME_LEN == BLE_DISPLAY_NAME_LEN);
 
-    R = Blk.Get(BLE_SET_FIELD_LASTLINK, 0);
-    CHECK(R.Data == &Vol.LastLink);
-    CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Enum);
-    CHECK(R.Descriptor.Size == 1);
-    CHECK(ValueIsReadOnly(R.Descriptor));
+    // Window: a Uint32 that now carries a command as well as the countdown.
+    R = Blk.Get(BLE_SET_FIELD_WINDOW, 0);
+    CHECK(R.Data == &Vol.WindowMs);
+    CHECK(ValueInfoType(R.Descriptor) == (uint16_t)DataType::Uint32);
+    CHECK(R.Descriptor.Size == sizeof(uint32_t));
+    CHECK(!ValueIsReadOnly(R.Descriptor));
 
-    // A fresh device has judged no link: both addresses read empty and the verdict says so, so a
-    // rig cannot mistake "nothing connected yet" for "connected and refused".
-    CHECK(Vol.LastPeer[0] == '\0');
-    CHECK(Vol.LastAir[0] == '\0');
-    CHECK(Vol.LastLink == BleLinkNone);
+    // --- the empty/invalid address rule the array is read with ---
+    const uint8_t Empty[BLE_BOND_ADDR_LEN] = {0, 0, 0, 0, 0, 0};
+    const uint8_t Peer[BLE_BOND_ADDR_LEN] = {0x4C, 0x23, 0x38, 0x74, 0xE6, 0xF6};
+    CHECK(BleBondAddrEmpty(Empty));
+    CHECK(!BleBondAddrEmpty(Peer));
+    const uint8_t NearlyEmpty[BLE_BOND_ADDR_LEN] = {0, 0, 0, 0, 0, 1};
+    CHECK(!BleBondAddrEmpty(NearlyEmpty)); // one non-zero byte is an address, not an empty slot
 
     // --- the defaults a device with a zero .SV tail gets ---
     CHECK(Per.Enabled == 1);                        // radio on out of the box
@@ -256,16 +253,13 @@ static void TestBlockTable()
     CHECK(Per.DisplayName[0] == '\0');              // empty = use System.Name
     CHECK(Vol.Mode == BLE_SET_MODE_JUST_WORKS);
     CHECK(Vol.WindowMs == 0);                       // closed
+    for (uint8_t i = 0; i < BLE_BOND_ARRAY_LEN; i++)
+        CHECK(Vol.Bonds[i] == 0);                   // no bond: every slot reads as the empty address
 
     // --- Read Only is refused, not silently ignored ---
     uint8_t One = 1;
     ValueInfo BoolDesc = {(uint16_t)DataType::Bool, 1, 0};
     CHECK(!Blk.Set(BLE_SET_FIELD_MODE, 0, &One, 1, BoolDesc));
-    ValueInfo U32Desc = {(uint16_t)DataType::Uint32, 4, 0};
-    uint32_t Zero = 0;
-    CHECK(!Blk.Set(BLE_SET_FIELD_WINDOW, 0, &Zero, 4, U32Desc));
-    ValueInfo TextDesc = {(uint16_t)DataType::Text, BLE_BOND_TEXT_LEN, 0};
-    CHECK(!Blk.Set(BLE_SET_FIELD_BOND, 0, "X", 1, TextDesc));
 
     // --- the settable fields ---
     // Display name reaches its trigger (the whole block is USB-only, so a plain copy path would
@@ -296,31 +290,42 @@ static void TestBlockTable()
     CHECK(PasskeyTriggerCalls == 2);
     CHECK(strlen(PasskeyTriggerText) == 2);
 
-    // --- the action write reaches its trigger with the command byte ---
-    // The command field is an Enum of one byte: a Bool-typed write is refused by the type check
-    // above the trigger, which is why the app writes it as an Enum.
-    ValueInfo EnumDesc = {(uint16_t)DataType::Enum, 1, 0};
-    uint8_t Open = BLE_SET_ACTION_OPEN_WINDOW;
-    CHECK(!Blk.Set(BLE_SET_FIELD_ACTION, 0, &Open, 1, BoolDesc)); // wrong type: never reaches the trigger
-    CHECK(ActionTriggerCalls == 0);
-    CHECK(Blk.Set(BLE_SET_FIELD_ACTION, 0, &Open, 1, EnumDesc));
-    CHECK(ActionTriggerCalls == 1);
-    CHECK(ActionTriggerValue == BLE_SET_ACTION_OPEN_WINDOW);
-    uint8_t Forget = BLE_SET_ACTION_FORGET_BONDS;
-    CHECK(Blk.Set(BLE_SET_FIELD_ACTION, 0, &Forget, 1, EnumDesc));
-    CHECK(ActionTriggerValue == BLE_SET_ACTION_FORGET_BONDS);
+    // --- the Bonds write reaches its trigger as the whole array ---
+    uint8_t Array[BLE_BOND_ARRAY_LEN] = {0};
+    memcpy(Array, Peer, BLE_BOND_ADDR_LEN);          // entry 0's address
+    memcpy(Array + BLE_BOND_ADDR_LEN, "Tamu rig", 8); // ... and its name
+    ValueInfo BondDesc = {(uint16_t)DataType::Undefined, BLE_BOND_ARRAY_LEN, 0};
+    // A Text-typed write is refused above the trigger: the field is one raw block.
+    ValueInfo WrongType = {(uint16_t)DataType::Text, BLE_BOND_ARRAY_LEN, 0};
+    CHECK(!Blk.Set(BLE_SET_FIELD_BONDS, 0, Array, BLE_BOND_ARRAY_LEN, WrongType));
+    CHECK(BondsTriggerCalls == 0);
+    // A value shorter than the declared size is refused too - the dispatcher caps Length to the
+    // descriptor, and Set() refuses a non-Text field whose length is not its declared size.
+    CHECK(!Blk.Set(BLE_SET_FIELD_BONDS, 0, Array, BLE_BOND_ADDR_LEN, BondDesc));
+    CHECK(BondsTriggerCalls == 0);
+    CHECK(Blk.Set(BLE_SET_FIELD_BONDS, 0, Array, BLE_BOND_ARRAY_LEN, BondDesc));
+    CHECK(BondsTriggerCalls == 1);
+    CHECK(memcmp(BondsTriggerValue, Peer, BLE_BOND_ADDR_LEN) == 0);
+    CHECK(memcmp(BondsTriggerValue + BLE_BOND_ADDR_LEN, "Tamu rig", 8) == 0);
+    CHECK(memcmp(Vol.Bonds, Array, BLE_BOND_ARRAY_LEN) != 0); // the trigger applies it, not Set()
 
-    // A multi-byte value on the command field is refused by the type/size check before the
-    // trigger: the command is one byte.
-    uint16_t Wide = 0x0100;
-    ValueInfo WideDesc = {(uint16_t)DataType::Enum, 2, 0};
-    CHECK(!Blk.Set(BLE_SET_FIELD_ACTION, 0, &Wide, 2, WideDesc));
-    CHECK(ActionTriggerCalls == 2);
+    // --- the Window write reaches its trigger as a Uint32 ---
+    ValueInfo U32Desc = {(uint16_t)DataType::Uint32, sizeof(uint32_t), 0};
+    uint32_t Ms = 45000;
+    CHECK(!Blk.Set(BLE_SET_FIELD_WINDOW, 0, &Ms, 1, U32Desc)); // short value: never reaches the trigger
+    CHECK(WindowTriggerCalls == 0);
+    CHECK(Blk.Set(BLE_SET_FIELD_WINDOW, 0, &Ms, sizeof(Ms), U32Desc));
+    CHECK(WindowTriggerCalls == 1);
+    CHECK(WindowTriggerValue == Ms);
+    Ms = 0; // 0 closes it - the same field, the same trigger
+    CHECK(Blk.Set(BLE_SET_FIELD_WINDOW, 0, &Ms, sizeof(Ms), U32Desc));
+    CHECK(WindowTriggerCalls == 2);
+    CHECK(WindowTriggerValue == 0);
 }
 
-// --- the Bond read-out's refresh decision -------------------------------------
+// --- the bond array's refresh decision ----------------------------------------
 //
-// The block's Bond texts are a cache of the NimBLE bond store. Refreshing it on the store's SIZE
+// The block's Bonds array is a cache of the NimBLE bond store. Refreshing it on the store's SIZE
 // was wrong: a fourth phone makes the stack evict the oldest bond and add the new one inside a
 // single store callback, so getNumBonds() reads 3 before and 3 after. This drives the predicate the
 // glue actually uses, so that case is the first thing checked.

@@ -153,30 +153,8 @@ static void TestCameInResolved()
     CHECK(BleCameInResolved(Phone, Random, Phone, Public));
 }
 
-// The verdict numbers are wire values: the "Last link" field is read by a rig (and by the app), so a
-// reorder would silently mean something else. Pinned here, where changing one is visible.
-static void TestVerdictNumbers()
-{
-    CHECK(BleLinkNone == 0);
-    CHECK(BleLinkPending == 1);
-    CHECK(BleLinkAdmitted == 2);
-    CHECK(BleLinkRefusedNotBonded == 3);
-    CHECK(BleLinkRefusedOutsideWindow == 4);
-    CHECK(BleLinkRefusedUnsecured == 5);
-    CHECK(BleLinkRefusedBusy == 6);
-    // Every "refused" value is distinct from every other and from the two non-verdicts, so a read-out
-    // can never be ambiguous about what happened.
-    const uint8_t Refusals[] = {BleLinkRefusedNotBonded, BleLinkRefusedOutsideWindow,
-                                BleLinkRefusedUnsecured, BleLinkRefusedBusy};
-    for (size_t i = 0; i < sizeof(Refusals); i++)
-    {
-        CHECK(Refusals[i] != BleLinkNone);
-        CHECK(Refusals[i] != BleLinkPending);
-        CHECK(Refusals[i] != BleLinkAdmitted);
-        for (size_t j = i + 1; j < sizeof(Refusals); j++)
-            CHECK(Refusals[i] != Refusals[j]);
-    }
-}
+// The verdict numbers are gone with the "Last link" field (the block carries six fields now, none of
+// them a link record). What stays pinned is the two decisions the radio still asks this header for.
 
 // The controller's own witness of a resolution: types 2/3 are IDENTITY addresses, which is exactly
 // what it reports when it resolved a peer's RPA; 0/1 is the address as it came off the air
@@ -188,7 +166,6 @@ int main()
 {
     TestSameIdentity();
     TestCameInResolved();
-    TestVerdictNumbers();
     TestBondingAllowed();
     TestSessionAllowed();
     TestStrangerCannotBeAdmittedWhereBondingIsClosed();

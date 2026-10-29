@@ -12,7 +12,7 @@
 #   ble_store_util_delete_peer + RETRY, before any application callback), so a LINK could empty the
 #   store and make a locked device hand out a 5-minute window in which any peer that pairs is
 #   admitted. The window is now owed to two owner events only - the radio coming up with an empty
-#   store (headless first use) and an explicit forget that emptied the store (Action = 1, a passkey
+#   store (headless first use) and an explicit forget that emptied the store (zeroing `Bonds`, a passkey
 #   change, the epoch revoke, all through AppBLEForgetAllBonds) - and the tick consumes the event
 #   exactly once, so nothing can open a window "because the store reads empty".
 #
