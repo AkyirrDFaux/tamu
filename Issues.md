@@ -1154,8 +1154,14 @@ Action = byte 0x01  raw=01   -> flags=0x0E echo=0005c0020c00010001
 control Enabled = b'\x01'      -> flags=0x0E echo=0006c0020400010001
 ```
 So on `iteration 49` (flag-off image, one process, `/dev/ttyACM0`) **both actions are accepted**:
-`0x0E` for `Action = 0` (pairing window opens - `Window` went `0` -> `296098`) and `0x0E` for
-`Action = 1` (the E65 forget path runs; `Bond count` stayed `0`, the store was already empty). The
+`0x0E` for `Action = 0` (the pairing window opens for `BLE_WINDOW_MS` = 60 s -
+`AppBLE.h:50`, set by `AppBLEOpenWindow()`, `AppBLE.h:231` - `Window` went `0` -> `59957`, re-measured
+`0` -> `59498`) and `0x0E` for `Action = 1` (the E65 forget path runs; `Bond count` stayed `0`, the
+store was already empty, and the emptied store opens the *automatic* window for `BLE_AUTO_WINDOW_MS` =
+300 s - `AppBLE.h:51`, reached through `AppBLEAutoWindow` / `BleAutoWindowCauseForgotten`,
+`AppBLE.h:479` - `Window` then reads ~`299508`, re-measured `0` -> `299482`; the same 300 s window is
+what the device opens on any boot with no bond stored, logging `APPBLE: no bonds stored: window open
+for 300000 ms`). The
 `default:` branch's refusal is evidence about the byte that arrived and nothing else - the earlier entry
 that read it as "the recovery lever is unavailable, the device is reachable by the bonded peer only" was
 wrong, and the repeat-pairing delete of E69 was only reached because of this false alarm.
