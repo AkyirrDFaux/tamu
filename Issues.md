@@ -1134,3 +1134,37 @@ NVS (`BlePasskeyStore.h`) and survived the same reset (`BLESEC: passkey source: 
 it: the next boot after such a write prints `I (342) BLESEC: passkey source: none (just works)`
 (`.pio/probe/boot_displayname_empty.log:141`), matching `BlePasskeyStoreSave`'s `nvs_erase_key`
 (`BlePasskeyStore.h:98-101`).
+
+**E72 `Action = 0` and `Action = 1` on the `BLE Settings` block are refused on `iteration 49`, while
+every other trigger on the same block is accepted.** Found on the rig 2026-10-29 during card
+`t_c0266baf` (not part of it, not fixed there: nothing under `firmware/src` was touched). The block's
+only command surface answers `FLAG_FAIL` (`flags=0x4E`, empty payload) for both actions, so the
+documented ways to open a pairing window and to forget the bonds are unavailable - and with a bond
+stored and no window open, the device is reachable by that peer only. Reproduce in one session, same
+port, same block:
+```
+$ firmware/.pio/probe/venv/bin/python firmware/.pio/probe/bleset_probe.py write 5 0
+write field 5 (Action) = b'0': REFUSED [flags=0x4E echo=]        Window stays 0
+$ ... bleset_probe.py write 5 1
+write field 5 (Action) = b'1': REFUSED [flags=0x4E echo=]        Bond count stays 1
+$ ... bleset_probe.py write 6 1                                  (control: same block, same session)
+write field 6 (Enabled) = b'\x01': OK [flags=0x0E echo=0006c0020400010001]
+```
+Measured on the flag-off image and on a temporary `-D USE_WIFI_SETTINGS` build of the same commit, with
+one bond stored and with an empty store, and after a fresh boot whose own log line reads
+`APPBLE: radio up: name='Akyirr' mode=just works bonds=1`. Ruled out by those runs: the USB-only write
+rule (`Enabled`/`Display name`/`Passkey` writes from the same process are accepted, so
+`AppFrameCameOverUsb()` is true for the frame that carries the `Action` write), the request shape
+(`e65_forget_check.py` sends the identical `write_field(1, 0x0B, 0, 5, 0, 0x0C, bytes([1]))` and
+recorded `flags=0x0E` when E65 was accepted), and the bond store's contents (both an empty and a
+one-bond store refuse). That leaves the trigger body: `OnBleActionWrite` reaches
+`AppBLEOpenWindow()` (`!BleRadioUp || !BleEnabled` is the only refusal there, yet the radio is on the
+air and answering over USB) or `AppBLEForgetAllBonds()` (`After == 0` is its success condition).
+`git diff b6694d5..HEAD -- firmware/src/Devices/Tamu_v2.0A/AppBLE.h` shows no change to
+`AppBLEOpenWindow`, `BleWindowEndMs`, `BleEnabled` or `BleRadioUp`, so the E65-proven image and this one
+differ elsewhere; the cause is not identified. What a rig can do meanwhile: a peer that presents the
+bonded identity and asks to pair again makes the vendored stack delete that bond before the app sees
+the request (E69), so re-pairing from the host without a key empties the store (measured: `Bond count`
+1 -> 0) and the E64 rule then refuses the new bond - the one recovery path observed, and how
+`t_c0266baf` undid the bond its step 7 needed. Consequence for any client: do not plan on
+`Action = 0`/`Action = 1` as a recovery lever until this is fixed and re-measured.
