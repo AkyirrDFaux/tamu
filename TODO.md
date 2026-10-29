@@ -598,7 +598,8 @@ Open:
   1<<9` (`Node = 1<<8`).
 - **Scripts**: `SCR_XXX` (4096 file ids) but only 64 loaded slots (6-bit); the caller picks the
   slot. Boot-load prefers the identity slot.
-- **BLE advertising** uses the persisted System Name.
+- **BLE advertising** uses the `BLE Settings` `Display name`; empty means the persisted System
+  `Name`, and a write re-advertises in the same pass (the field and the air cannot disagree).
 - **Bootloader**: raw frame `0xCA | control(5 pad, 1 even parity, 2 cmd) | offset u32 LE |
   [32 B payload] | 0xBC`; parity is even over the command + offset + payload; cmds `01` write /
   `10` read-request / `11` read-response. The core's Device `0020/0021` passthrough relays the raw

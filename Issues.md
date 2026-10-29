@@ -466,22 +466,68 @@ are hardware-only.
 
 ## BLE Settings block (2026-10-28)
 
+**2026-10-29, owner ruling "simplify the BLE block" - the block is SIX fields, and this note is the
+authority for their numbers.** Card `t_41038b88`, image `26.10.29.3`, read back over USB on the rig
+(`firmware/.pio/probe/bleset6.py`): block `BLE Settings`, type `0x0B`, `fields=6`, `EnumerateFields`
+answers exactly `00 01 02 03 04 05` - fields 6..12 get no reply at all.
+
+| Field | Index | Type | Declared size | Flags |
+| --- | --- | --- | --- | --- |
+| Enabled | 0 | `Bool` | 1 | Persistent, Trigger |
+| Passkey | 1 | `Text` | 6 | Trigger |
+| Mode | 2 | `Enum` | 1 | RO |
+| Display name | 3 | `Text` | 16 | Persistent, Trigger |
+| Bonds | 4 | `Undefined` | 66 | Trigger |
+| Window | 5 | `Uint32` | 4 | Trigger |
+
+- **`Bonds` is one value, not a table.** `BLE_SETTINGS_BOND_SLOTS` = 3 entries of
+  `BLE_BOND_ENTRY_LEN` = 22 B (6-byte identity address + 16-byte peer name), so the declared size is
+  `BLE_BOND_ARRAY_LEN` = 66 (`static_assert`ed against slots × entry in
+  `firmware/src/Blocks/BleSettings.h`). The address is in the order it is printed
+  (`AA:BB:CC:DD:EE:FF` = bytes 0..5), an **all-zero address is an empty slot**, and the name is
+  16 bytes NUL-padded with no terminator guaranteed. The 16-byte name width is the device's name
+  width, shared with `Display name`.
+- **What a write can and cannot do:** an entry's name is writable; zeroing an address deletes that
+  bond (the peer must pair again inside a window); a non-zero address the store does not hold in
+  that slot is **refused as a whole write** - `FLAG_FAIL` with an empty payload, nothing applied,
+  names included - because the keys (LTK/IRK) live in NVS and never in the register file, so a
+  fabricated entry could never authenticate. A `Bonds` write shorter than 66 B never reaches the
+  trigger: a non-Text field must match its declared size (`Core/Functions/MemoryTypes.h:210`). A
+  read pads the value to 4 bytes, so 66 arrives as 68 - use `ValueInfo.Size`.
+- **`Display name` IS the advertised name, live**, not "at the next advertising start": a write
+  rebuilds and restarts the advertisement in the same loop pass, so the air and the field cannot
+  disagree; an empty value means the System `Name`. Measured on the air with a timestamped scan
+  (first advertisement after the write carried the new name, uptime continuous, no reboot).
+  `Advertised name`, `Action` and `Last peer` / `Last air` / `Last link` no longer exist.
+- **`Window` is a read-out and a command**: it reads the milliseconds left in the connectable
+  window and a write sets the deadline (write the ms you want, 0 closes). Forgetting every bond is
+  zeroing the `Bonds` array. Every write to the block, `Window` included, is still refused unless
+  the frame arrived over USB (`BleBlockWritable`).
+- **Every entry below that measures a build older than `26.10.29.3`** (E58–E66, E68–E71) quotes the
+  twelve-field block's field numbers, `Bond count`, keyed `Bond` texts, `Action` and the `Last *`
+  read-outs. That is the record of how the block got here - history, not the current block. Where an
+  entry's field numbers still matter (E58), the correction is in place.
+
 **E58 The `BLE Settings` block's field numbers are not in the docs.** `Docs/Services/Register.md:24`
 keeps the `Static block types | ...` placeholder, so the block-type list numbers neither `0x0B` nor
 `0x0C`. `03a585b` has since added a `BLE Settings` section of type `0x0B`
-(`Docs/Services/App Interface.md:29`, table at `:31-40`), but its rows carry only key `0` (Bond
-`0..N`) and no field index, and there is no `Advertised name` row, so the numbers a client addresses
-the block with are still only the firmware's - and in a different order from the section's rows. The
+(`Docs/Services/App Interface.md:29`, table at `:31-40`), but its rows carried only key `0` (Bond
+`0..N`) and no field index, and the twelve-field table it described had an `Advertised name` row the
+firmware had to match, so the numbers a client was to address the block with were only the firmware's
+- and in a different order from the section's rows. The
 block was specified by the owner as a card (t_a9cda0b9) and implemented from that table, with field
-numbers fixed in `firmware/src/Blocks/BleSettings.h` (0 Passkey Text(6), readable+writable,
-NVS-backed and NOT persistent; 1 Mode Enum RO; 2 Bond count Index RO; 3 Bond Text RO keyed 0..2;
-4 Window Uint32 RO; 5 Action Enum write; 6 Enabled Bool Persistent; 7 Display name Text(16)
-Persistent; 8 Advertised name Text(16) RO). Every write to the block is refused unless the frame
-arrived over USB.
+numbers fixed in `firmware/src/Blocks/BleSettings.h`.
+*(2026-10-29, card `t_41038b88`: the numbering this entry used to quote - `0 Passkey … 8 Advertised
+name`, then `5 Action`, `6 Enabled`, `7 Display name` - is the twelve-field block and is history. The
+six fields a client addresses today, and the only numbers that matter, are the table in the note at
+the head of this section: **0 Enabled, 1 Passkey, 2 Mode, 3 Display name, 4 Bonds, 5 Window**, with no
+`Advertised name` row to add because `Display name` is the advertised name. The doc change still owed
+is spelled out under "Doc change owed" below.)*
+Every write to the block is refused unless the frame arrived over USB.
 Proposed doc change (parent only): the field indexes on that section's rows (stated the way the
-System block table states its field numbers), the missing `Advertised name` field, and both static
-types added to the block-type list. Not a code defect - the app's registry entry (t_1d304c9c) needs
-the same numbers.
+System block table states its field numbers) - see "Doc change owed" below - and both static types
+added to the block-type list. Not a code defect - the app's registry entry reads the same numbers
+from the header (card `t_c432c8ac`).
 
 **E59 `NimBLEDevice::setScanFilterMode()` does not restrict who may connect.** Card t_367f86d0
 named it as the connect filter to apply while the pairing window is closed. In esp-nimble-cpp 2.5.0
@@ -825,24 +871,37 @@ the post-link USB read, once finding the device reset).
   `b01e635` withdrew the CID 3 text ring (E67), and `DeviceLog` is dropped while USB is attached, so
   `e66_log_after_connect.py` now fails with `no GetTextLogs reply (tag 0xF001)`. The APPBLE lines
   (`link up: peer=… air=… (resolved: …)`) do carry the pair for a console that can be read; the
-  register read-out (fields 9-11) is the evidence on this rig. The card's "log showing the resolved
+  register read-out (fields 9-11 of the then twelve-field block; removed 2026-10-29, so the air and
+  the `Display name` field are the read-out today) is the evidence on this rig. The card's "log showing the resolved
   identity" is therefore satisfied by the READ-OUT, and the resolution half itself stays UNPROVEN
   here (type 0 on every link; privacy and static-addr both refused, one controller).
 
-**Still to land outside `firmware/`.** (a) `Docs/Services/App Interface.md`'s BLE Settings table has
-no rows for fields 9-11; proposed rows - `Last peer | 0 | Text | RO | the identity the last admission
-decision used, "AA:BB:CC:DD:EE:FF/N"; empty before the first link. N is the address type NimBLE handed
-the host and is INFORMATION ONLY (NimBLE normalises the controller's resolved types 2/3 to 0/1, so it
-reads 0 or 1)`; `Last air | 0 | Text | RO | the address the peer connected from, as "AA:BB:CC:DD:EE:FF/N";
-its six-byte address differs from Last peer's exactly when the controller resolved the peer's rotating
-private address - then Last air is the RPA and Last peer the identity. Equal to Last peer for a peer
-that connects from its own public/static address (the normal reading when the host has no LE privacy)` ;
-`Last link | 0 | Enum | RO | 0 none, 1 pending, 2 admitted, 3 refused (not a bond), 4 refused (paired
-outside the window), 5 refused (unsecured), 6 refused (busy)`.
-(b) `app/lib/core/ble_security.dart` still describes field 10 as "an RPA when resolved" and
-`lastAddressResolved` compares the WHOLE text, including the `/N` suffix; it should compare the address
-part (strip at `/`) so the type can never fabricate a difference. `bleFieldCount = 12` and the labels
-are already correct, so the contract test passes either way.
+**Doc change owed (2026-10-29, card `t_41038b88`) - `Docs/Services/App Interface.md` still specifies
+the twelve-field block.** This replaces the two items that stood here (which asked for `Last peer` /
+`Last air` / `Last link` doc rows - fields that no longer exist, and would have sent the docs lane to
+add three phantom rows - and a partial `app/lib/core/ble_security.dart` fix). `Docs/` is the parent's
+to edit, with Akyirr's approval; nothing below is applied. Measured divergence, `App Interface.md:31-40`
+against the device read-back in the note at the head of this section:
+
+| Doc row today | Owed |
+| --- | --- |
+| `Bond count` (`Index`, RO) + `Bond` (`Text`, RO, keyed `0..N`) | **one `Bonds` field, index 4, `Undefined`, 66 B, `Trigger`**: 3 fixed-size entries of 22 B = 6-byte identity address (printed order) + 16-byte NUL-padded peer name; an all-zero address is an empty slot |
+| `Window` (`Uint32`, RO) | `Window`, index 5, `Uint32`, 4 B, **`Trigger`** - reads ms left, a write sets the deadline (0 closes) |
+| `Action` (`Enum`, W, "0 opens the pairing window, 1 forgets every bond") | **remove the row.** A window is opened by writing `Window`; forgetting is zeroing `Bonds` |
+| `Display name` - "Applies from the next advertising start" | "**Is** the advertised name; a write re-advertises at once. Empty means the System `Name`" |
+| (no field indexes; `Bond count` listed before `Display name`) | index every row `0..5` the way the System block table states its numbers: 0 Enabled, 1 Passkey, 2 Mode, 3 Display name, 4 Bonds, 5 Window |
+| `:44` "`Action = 1` clears them, and so does changing the passkey" | "zeroing the `Bonds` array clears them, and so does changing the passkey" |
+
+No `Advertised name`, `Last peer`, `Last air` or `Last link` row belongs in that table - the first is
+the `Display name` field itself and the other three were removed on 2026-10-29. Still owed from the
+original entry: the field indexes on the System/BLE tables and both static types (`0x0B`, `0x0C`) in
+the `Docs/Services/Register.md:24` block-type list.
+
+The app side is **card `t_c432c8ac`**, not a partial edit here: `app/lib/core/ble_security.dart` no
+longer matches the block (field constants, the `bleAction*` constants, keyed `Bond` texts), and
+`app/test/firmware_contract_test.dart:200` parses `BleSettings_Entries` out of the header, which now
+holds six rows - 74 references across seven files need the new shape (field/type/size list and the
+`Bonds` write semantics are in the card's comment thread).
 
 
 **E67 `DeviceLog` is suppressed while a host holds the USB port, and its lines cannot reach the log
@@ -1109,9 +1168,11 @@ Measured 2026-10-28/29, card `t_cb221e2e`, build `26.10.28 iteration 49`. Contro
 (`bash firmware/.pio/probe/e71_displayname_revert.sh`, log `.pio/probe/e71_displayname_revert.log`,
 **15/15 assertions, 0 failures**):
 - write `Display name = "Tamu Desk"`, **no** save: the block reads the write back immediately
-  (`KV 7 0 Tamu Desk`, `KV 8 0 Tamu Desk`) - then one reset and the boot log says
+  (`KV 7 0 Tamu Desk`, `KV 8 0 Tamu Desk` - fields 7 and 8 of the twelve-field block; `Display name`
+  is field 3 today) - then one reset and the boot log says
   `I (442) APPBLE: radio up: name='Akyirr' mode=just works bonds=0`, the block reads `Display name`
-  empty and `Advertised name = Akyirr`, and the air carries `Akyirr` at rssi -38
+  empty and `Advertised name = Akyirr` (the block's field 8 then; that read-out is gone - the air
+  reading that follows is what proves it now), and the air carries `Akyirr` at rssi -38
   (`.pio/probe/boot_displayname_unsaved.log`; the string `Tamu Desk` appears nowhere in that capture).
 - the **same** write plus Save All, the **same** reset: `I (442) APPBLE: radio up: name='Tamu Desk'
   mode=just works bonds=0`, the block reads `Tamu Desk`, the air carries `Tamu Desk` at rssi -38
