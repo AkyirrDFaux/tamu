@@ -19,7 +19,11 @@ const double _signalIconSize = 18;
 
 /// Connection page (Docs/App/Connection.md).
 class ConnectionPage extends StatefulWidget {
-  const ConnectionPage({super.key});
+  const ConnectionPage({super.key, this.manager});
+
+  /// The connection to drive. Defaults to the app's [ConnectionManager.instance]; a test passes
+  /// its own so the pending path can be exercised against a fake transport.
+  final ConnectionManager? manager;
 
   @override
   State<ConnectionPage> createState() => _ConnectionPageState();
@@ -27,7 +31,8 @@ class ConnectionPage extends StatefulWidget {
 
 class _ConnectionPageState extends State<ConnectionPage>
     with WidgetsBindingObserver {
-  final _manager = ConnectionManager.instance;
+  late final ConnectionManager _manager =
+      widget.manager ?? ConnectionManager.instance;
   bool _refreshing = false;
   Duration? _autoInterval = const Duration(seconds: 1); // docs default: on
 
@@ -37,6 +42,10 @@ class _ConnectionPageState extends State<ConnectionPage>
 
   /// The link loss this page has already explained, so one drop is not explained twice.
   LinkTrouble? _explainedTrouble;
+
+  /// The attempt outcome this page has already shown, so one failure is not shown twice (the
+  /// manager keeps the notice for whoever asks, this page asks once).
+  ConnectNotice? _shownNotice;
 
   @override
   void initState() {
@@ -63,7 +72,23 @@ class _ConnectionPageState extends State<ConnectionPage>
   /// A link that ended by itself is explained once: a Bluetooth session that came up and died is
   /// almost always the device refusing a pairing, which the user fixes on the phone (see
   /// `bleLinkGuidance`). A link that merely went away gets the plain notice instead.
+  ///
+  /// A pending attempt that ended without a session is explained from the manager's one
+  /// [ConnectNotice], so Cancel, the timeout and a refusal all leave the panel the same way.
   void _onManagerEvent() {
+    _showConnectNotice();
+    _explainLinkTrouble();
+  }
+
+  void _showConnectNotice() {
+    final notice = _manager.lastConnectNotice;
+    if (notice == null || identical(notice, _shownNotice)) return;
+    _shownNotice = notice;
+    if (!mounted) return;
+    showSnack(context, notice.message);
+  }
+
+  void _explainLinkTrouble() {
     final trouble = _manager.lastLinkTrouble;
     if (trouble == null || identical(trouble, _explainedTrouble)) return;
     _explainedTrouble = trouble;
@@ -293,12 +318,14 @@ class _ConnectionPageState extends State<ConnectionPage>
                   title: Text(
                     'Connecting to ${_manager.connectingTarget ?? ''}',
                   ),
-                  subtitle: const Text('Establishing session...'),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.close),
-                    tooltip: 'Cancel',
-                    onPressed: () =>
-                        unawaited(_manager.disconnect(manual: true)),
+                  subtitle: const Text('Establishing session'),
+                  // The pending state's explicit way out: it abandons the attempt (see
+                  // ConnectionManager.cancelConnect), and the same row is what the 10 s
+                  // timeout takes away when nobody answers.
+                  trailing: TextButton.icon(
+                    onPressed: () => unawaited(_manager.cancelConnect()),
+                    icon: const Icon(Icons.close, size: 18),
+                    label: const Text('Cancel'),
                   ),
                 ),
               if (_manager.isConnected)
@@ -394,18 +421,17 @@ class _ConnectionPageState extends State<ConnectionPage>
         }
         final error = await _manager.connectTo(link);
         if (!context.mounted) return;
-        if (error != null) {
-          // A Bluetooth failure gets the guidance (the stale-bond case must not read as a broken
-          // device); a USB failure is the cable and keeps the plain message.
-          if (link.type == LinkType.ble) {
-            unawaited(_explainBleFailure(error, false));
-          } else {
-            showSnack(context, 'Connect failed: $error');
-          }
+        // How the attempt ended - cancelled, timed out, refused - is the manager's
+        // ConnectNotice, shown once by _showConnectNotice. Only a refusal that never became an
+        // attempt (already connected/connecting, USB on a phone) has no notice to show.
+        if (error != null && _manager.lastConnectNotice == null) {
+          showSnack(context, error);
           return;
         }
-        // Populate the Devices page as soon as a session is up.
-        unawaited(DeviceDatabase.instance.refreshNetwork());
+        if (error == null) {
+          // Populate the Devices page as soon as a session is up.
+          unawaited(DeviceDatabase.instance.refreshNetwork());
+        }
       },
     );
   }

@@ -66,6 +66,11 @@ abstract class Transport {
   /// BLE: MAC address).
   String get id;
 
+  /// Brings the link up and leaves the packet stream flowing. Throws
+  /// [TransportException] when it cannot - including when the attempt was abandoned by a
+  /// [close] while it was still running, which is how a cancelled connect stops dead.
+  Future<void> connect();
+
   /// Raw link bytes (USB frames / BLE notifications before de-framing is done
   /// internally by the implementation).
   Stream<Uint8List> get linkBytes;
@@ -110,6 +115,10 @@ class UsbTransport implements Transport {
   final _streamController = StreamController<Uint8List>.broadcast();
   final UsbFrameParser _parser = UsbFrameParser();
 
+  /// True once [close] ran: an attempt still in flight must abandon instead of publishing a link
+  /// nobody is waiting for any more.
+  bool _closed = false;
+
   UsbTransport(this.portName);
 
   @override
@@ -124,7 +133,9 @@ class UsbTransport implements Transport {
   @override
   Stream<Uint8List> get packetStream => _streamController.stream;
 
+  @override
   Future<void> connect() async {
+    _closed = false;
     final port = SerialPort(portName);
     if (!port.openReadWrite()) {
       final error = SerialPort.lastError;
@@ -176,6 +187,15 @@ class UsbTransport implements Transport {
       port.dispose();
       throw TransportException('Cannot configure $portName: $configError');
     }
+    // A close that arrived while the port was being configured abandons the attempt: the handle
+    // it opened must not outlive the transport.
+    if (_closed) {
+      try {
+        port.close();
+      } catch (_) {}
+      port.dispose();
+      throw TransportException('$portName was closed while connecting');
+    }
     _port = port;
     final reader = SerialPortReader(port);
     _reader = reader;
@@ -223,6 +243,7 @@ class UsbTransport implements Transport {
 
   @override
   Future<void> close() async {
+    _closed = true;
     await _sub?.cancel();
     _reader?.close();
     _port?.close();
@@ -299,13 +320,19 @@ class BleTransport implements Transport {
   Stream<Uint8List> get packetStream => _packetStream;
 
   /// Connects, discovers the App service and subscribes to notifications.
+  @override
   Future<void> connect() async {
+    // A transport closed while the attempt was running must not revive: it is how Cancel stops
+    // the retries rather than letting them reconnect behind the panel's back.
+    _ensureOpen();
     // BLE connections can fail transiently (ATT error 0x0e) when the device is
     // mid-advertising-restart right after a disconnect; retry a couple of times.
     Object? lastError;
     for (var attempt = 0; attempt < 3; attempt++) {
+      _ensureOpen();
       if (attempt > 0) {
         await Future<void>.delayed(Duration(milliseconds: 600 * attempt));
+        _ensureOpen();
       }
       try {
         await _connectOnce();
@@ -320,9 +347,15 @@ class BleTransport implements Transport {
     throw TransportException('BLE connect failed: $lastError');
   }
 
+  void _ensureOpen() {
+    if (_closed) throw const TransportException('BLE connect abandoned');
+  }
+
   Future<void> _connectOnce() async {
     await UniversalBle.connect(deviceId);
+    _ensureOpen();
     final services = await UniversalBle.discoverServices(deviceId);
+    _ensureOpen();
     BleCharacteristic? notifyChar;
     for (final service in services) {
       // Platform-reported UUID casing varies; compare normalized.

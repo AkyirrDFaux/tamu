@@ -30,6 +30,105 @@ enum DeviceSort { signal, alphabetical }
 
 enum LinkType { ble, usb }
 
+/// How long one connect attempt may run before the app gives up on its own.
+///
+/// Long enough for a Bluetooth connect, service discovery and MTU negotiation, short enough that
+/// a device that is off or out of range cannot hold the panel hostage: after this the attempt is
+/// abandoned and the panel is idle again with a plain line instead of a spinner that never ends.
+const Duration connectAttemptTimeout = Duration(seconds: 10);
+
+/// What the panel says when an attempt ended without the device answering (the timeout).
+const String connectNoAnswerMessage = 'No answer from the device';
+
+/// What it says when the user abandoned the attempt: the panel's own action, not a failure.
+const String connectCancelledMessage = 'Connection cancelled';
+
+/// What it says when the device answered by turning this phone away.
+///
+/// The device answers every connect request - advertising does not depend on the window or on the
+/// bond store - and disconnects an unbonded peer immediately when no pairing window is open
+/// (`BleServerCallbacks::onConnect` in `Devices/Tamu_v2.0A/AppBLE.h`), so that refusal reaches the
+/// phone as a fast failure rather than a hang. Saying "no answer" would send the user looking for
+/// a device that is standing right there.
+const String connectPairingWindowMessage =
+    'The device only accepts paired phones (open a pairing window from USB)';
+
+/// How a connect attempt ended when it produced no session.
+enum ConnectEnd {
+  /// The user pressed Cancel: the attempt was abandoned, not merely hidden.
+  cancelled,
+
+  /// The app waited [connectAttemptTimeout] and the device never answered.
+  noAnswer,
+
+  /// The device answered and refused this phone (see [connectPairingWindowMessage]).
+  refused,
+
+  /// A failure the app cannot place: an unopenable port, a platform error.
+  failed,
+}
+
+/// The line the panel shows after an attempt that produced no session.
+///
+/// It exists so the pending state has ONE way out, whichever way it ended: cancel, timeout and a
+/// refusal all leave the same field behind, and the panel reads it instead of each caller having
+/// to word the failure itself.
+class ConnectNotice {
+  const ConnectNotice({
+    required this.end,
+    required this.message,
+    this.detail,
+    this.isBle = false,
+  });
+
+  final ConnectEnd end;
+
+  /// The plain line for the user.
+  final String message;
+
+  /// The platform's own words, kept for the Log page rather than shown.
+  final String? detail;
+
+  /// Whether the attempt went over Bluetooth (the refusal classification is BLE-shaped).
+  final bool isBle;
+
+  @override
+  String toString() =>
+      'ConnectNotice(${end.name}, "$message"'
+      '${detail == null ? '' : ', detail: "$detail"'})';
+}
+
+/// Places an attempt that ended without a session, from what the app can see.
+///
+/// Only called for an attempt that failed on its own: an attempt the app had to abandon is a
+/// timeout (it reached [connectAttemptTimeout]) and never gets here. A Bluetooth attempt that
+/// fails before that deadline therefore has an answer behind it - the device or the platform said
+/// something - which is the refusal the copy names, unless the platform's words say nothing
+/// answered at all (`not found`, a timeout of its own), in which case the timeout copy is right.
+/// A USB attempt keeps its platform message: a port that will not open is the cable, not the
+/// device's pairing policy.
+ConnectNotice classifyConnectFailure({
+  required DiscoveredLink link,
+  required String errorText,
+}) {
+  if (link.type == LinkType.ble) {
+    final noAnswer =
+        !bleErrorLooksLikeSecurity(errorText) &&
+        bleErrorLooksUnreachable(errorText);
+    return ConnectNotice(
+      end: noAnswer ? ConnectEnd.noAnswer : ConnectEnd.refused,
+      message: noAnswer ? connectNoAnswerMessage : connectPairingWindowMessage,
+      detail: errorText,
+      isBle: true,
+    );
+  }
+  return ConnectNotice(
+    end: ConnectEnd.failed,
+    message: 'Connect failed: $errorText',
+    detail: errorText,
+  );
+}
+
 /// One row of the connection list.
 class DiscoveredLink {
   final String id;
@@ -85,16 +184,33 @@ class LinkTrouble {
 }
 
 class ConnectionManager extends ChangeNotifier implements RequestChannel {
-  ConnectionManager._() {
+  ConnectionManager._({bool installChannel = true}) {
     // The service clients send through the installed channel (`request_channel.dart`), and the
     // app's channel is this connection. Installing it here arms the clients for anything that
     // reaches the app's connection - the coupling they had when they called
     // `ConnectionManager.instance` directly. A tool installs its own channel instead and never
     // touches this class.
-    installRequestChannel(this);
+    if (installChannel) installRequestChannel(this);
   }
 
   static final ConnectionManager instance = ConnectionManager._();
+
+  /// A manager that is not the app's singleton, for tests that drive the pending path against a
+  /// fake transport. It does not install itself as the app's request channel.
+  @visibleForTesting
+  ConnectionManager.forTest() : this._(installChannel: false);
+
+  /// Builds the transport for one attempt. Tests replace it with a fake so the pending path
+  /// (cancel, timeout) can be exercised without a radio or a serial port.
+  @visibleForTesting
+  Transport Function(DiscoveredLink link) transportFactory = _defaultTransport;
+
+  static Transport _defaultTransport(DiscoveredLink link) =>
+      link.type == LinkType.ble ? BleTransport(link.id) : UsbTransport(link.id);
+
+  /// How long one attempt may run before the app abandons it. A test shortens it.
+  @visibleForTesting
+  Duration connectTimeout = connectAttemptTimeout;
 
   // --- Scan state -----------------------------------------------------------
   // Android is BLE-only, so the source menu must not offer USB there.
@@ -215,7 +331,8 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
   // --- Connection state -----------------------------------------------------
   Transport? _transport;
   DiscoveredLink? _activeLink;
-  bool _connecting = false;
+  _ConnectAttempt? _attempt;
+  bool _disposed = false;
 
   String? get connectedName => _transport?.displayName;
   @override
@@ -224,9 +341,15 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
 
   /// True while a connect attempt is in flight (BLE connect + service discovery
   /// + MTU negotiation takes several seconds - the UI must show progress).
-  bool get isConnecting => _connecting;
-  String? _connectingTarget;
-  String? get connectingTarget => _connectingTarget;
+  bool get isConnecting => _attempt != null;
+  String? get connectingTarget => _attempt?.link.name;
+
+  /// How the last attempt that produced no session ended, or null when there is nothing to say.
+  ///
+  /// One field rather than a message per caller: the panel reads it, so a cancel, a timeout and a
+  /// refusal all leave the pending state the same way - idle, with one plain line - no matter
+  /// which code path (a tap or autoconnect) started the attempt.
+  ConnectNotice? lastConnectNotice;
 
   final PacketStreamParser _parser = PacketStreamParser();
   StreamSubscription<Uint8List>? _streamSub;
@@ -255,7 +378,7 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
     // so enumeration is paused until disconnect. Also pause while a connect is
     // still being established (_transport is only set after BLE connect +
     // service discovery + MTU, which can take seconds).
-    if (_transport != null || _connecting) return;
+    if (_transport != null || isConnecting) return;
     // NOTE: BLE entries are MERGED, not cleared, on every refresh: the BlueZ
     // backend only emits a device when its RSSI property CHANGES, so a
     // stationary close-range device stays silent in later scans and clearing
@@ -492,43 +615,116 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
   // Connecting / disconnecting
   // ===========================================================================
 
-  /// Returns null on success or an error message.
+  /// Returns null on success or the line the panel shows when the attempt produced no session.
+  ///
+  /// The attempt is abandonable: it ends by itself on success, by the device refusing it, by
+  /// [connectTimeout] running out, or by [cancelConnect]. Whichever way it ends, the panel is left
+  /// with no attempt in flight and (unless a session came up) one [ConnectNotice] saying why.
   Future<String?> connectTo(DiscoveredLink link) async {
-    if (_connecting) return 'Already connecting';
+    // Whatever the last attempt said is old news once a new one is asked for; clearing it here
+    // also keeps a precondition refusal below from inheriting it.
+    lastConnectNotice = null;
+    if (_attempt != null) return 'Already connecting';
     if (_transport != null) return 'Already connected - disconnect first';
+    // Android is BLE-only (Docs/App/General info.md).
+    if (link.type == LinkType.usb && !supportsUsb) {
+      return 'USB is not supported on this platform';
+    }
 
-    _connecting = true;
-    _connectingTarget = link.name;
+    final attempt = _ConnectAttempt(link);
+    _attempt = attempt;
     notifyListeners();
+
+    ConnectNotice? notice;
     try {
-      final Transport transport;
-      switch (link.type) {
-        case LinkType.ble:
-          final ble = BleTransport(link.id);
-          await ble.connect();
-          transport = ble;
-        case LinkType.usb:
-          // Android is BLE-only (Docs/App/General info.md).
-          if (!supportsUsb) return 'USB is not supported on this platform';
-          final usb = UsbTransport(link.id);
-          await usb.connect();
-          transport = usb;
-      }
+      final transport = transportFactory(link);
+      attempt.transport = transport;
+      attempt.deadline = Timer(connectTimeout, () {
+        // Nothing answered within the deadline: abandon the wait AND drop the platform's work,
+        // so the panel cannot be left waiting on a connect nobody is listening to any more.
+        _abandonAttempt(attempt, timedOut: true);
+      });
+      await Future.any<void>([
+        transport.connect(),
+        attempt.abandoned.then<void>((_) => throw const _ConnectAbandoned()),
+      ]);
+      // A connect that finished after the attempt was abandoned must not become a session: the
+      // user (or the deadline) already gave up on it.
+      if (attempt.isAbandoned) throw const _ConnectAbandoned();
       await _attach(transport);
+      // Cancel can land while the attach runs (a few awaits); a session nobody waited for must
+      // not stay up behind an idle panel.
+      if (attempt.isAbandoned) {
+        await _detach();
+        throw const _ConnectAbandoned();
+      }
       _activeLink = link;
       _invalidateLinks();
       // Pull the live network (core + SNDB devices) now that the link is up,
       // so the UI shows real data immediately after an autoconnect.
       unawaited(DeviceDatabase.instance.refreshNetwork());
       AppDiagnostics.log('link', 'connected: ${transport.displayName}');
-      return null;
+    } on _ConnectAbandoned {
+      await attempt.closeTransport();
+      notice = attempt.timedOut
+          ? const ConnectNotice(
+              end: ConnectEnd.noAnswer,
+              message: connectNoAnswerMessage,
+            )
+          : const ConnectNotice(
+              end: ConnectEnd.cancelled,
+              message: connectCancelledMessage,
+            );
     } catch (error) {
+      await attempt.closeTransport();
       AppDiagnostics.log('link', 'connect failed: $error');
-      return error.toString();
+      notice = classifyConnectFailure(link: link, errorText: error.toString());
     } finally {
-      _connecting = false;
-      notifyListeners();
+      attempt.deadline?.cancel();
+      if (identical(_attempt, attempt)) _attempt = null;
+      if (notice != null) {
+        lastConnectNotice = notice;
+        final suffix = notice.message.isEmpty ? '' : ' (${notice.message})';
+        AppDiagnostics.log(
+          'link',
+          'connect ${notice.end.name}: ${link.name}$suffix',
+        );
+      }
+      // An attempt's own teardown can outlive the manager (the app closing mid-connect), and a
+      // change notification after dispose is an error.
+      if (!_disposed) notifyListeners();
     }
+    return notice?.message;
+  }
+
+  /// Abandons the attempt in flight: the panel's way out of a connect that hangs.
+  ///
+  /// This is not "hide the spinner": the transport is closed (which disconnects the peer a
+  /// Bluetooth connect is still negotiating with, and releases a serial port), scanning stops,
+  /// and autoconnect is held off briefly so the abandoned attempt is not restarted on the next
+  /// refresh. Returns false when nothing was pending.
+  Future<bool> cancelConnect() async {
+    final attempt = _attempt;
+    if (attempt == null) return false;
+    AppDiagnostics.log(
+      'link',
+      'connect cancelled by the user: ${attempt.link.name}',
+    );
+    _autoConnectSuppressedUntil = DateTime.now().add(
+      const Duration(seconds: 30),
+    );
+    _abandonAttempt(attempt, timedOut: false);
+    await stopScan();
+    return true;
+  }
+
+  /// Tells the attempt to stop waiting and drops the work behind it. Idempotent: cancel, the
+  /// deadline and a late platform answer can all reach the same attempt.
+  void _abandonAttempt(_ConnectAttempt attempt, {required bool timedOut}) {
+    if (attempt.isAbandoned) return;
+    attempt.abandon(timedOut: timedOut);
+    attempt.deadline?.cancel();
+    unawaited(attempt.closeTransport());
   }
 
   Future<void> _attach(Transport transport) async {
@@ -764,9 +960,64 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
 
   @override
   void dispose() {
+    _disposed = true;
     _autoTimer?.cancel();
+    final attempt = _attempt;
+    if (attempt != null) _abandonAttempt(attempt, timedOut: false);
     stopScan();
     _detach();
     super.dispose();
   }
+}
+
+/// One connect attempt, and what it takes to abandon it.
+///
+/// It exists because a connect is a long platform wait with no handle on it: the attempt owns the
+/// transport (so the link can be closed from outside the waiting code), a deadline, and a future
+/// that completes when anyone gives up on it. [ConnectionManager.connectTo] races the platform's
+/// connect against [abandoned], which is what makes Cancel and the timeout real rather than a
+/// hidden spinner.
+class _ConnectAttempt {
+  _ConnectAttempt(this.link);
+
+  final DiscoveredLink link;
+
+  /// The transport this attempt is building; set before the platform call starts.
+  Transport? transport;
+
+  /// The attempt's own timeout, cancelled however the attempt ends.
+  Timer? deadline;
+
+  /// True when the attempt ended on its deadline rather than on the user's Cancel.
+  bool timedOut = false;
+
+  final _abandoned = Completer<void>();
+  bool _transportClosed = false;
+
+  Future<void> get abandoned => _abandoned.future;
+  bool get isAbandoned => _abandoned.isCompleted;
+
+  void abandon({required bool timedOut}) {
+    if (isAbandoned) return;
+    this.timedOut = timedOut;
+    _abandoned.complete();
+  }
+
+  /// Drops the transport, which is what stops the platform's work: closing a Bluetooth transport
+  /// disconnects the peer it may still be connecting to, and closing a serial transport releases
+  /// the port. Safe to call from the abandon path and the failing path alike.
+  Future<void> closeTransport() async {
+    if (_transportClosed) return;
+    _transportClosed = true;
+    final t = transport;
+    if (t == null) return;
+    try {
+      await t.close();
+    } catch (_) {}
+  }
+}
+
+/// Control flow marker for "this attempt was given up on", never a message.
+class _ConnectAbandoned implements Exception {
+  const _ConnectAbandoned();
 }

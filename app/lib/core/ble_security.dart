@@ -643,6 +643,24 @@ const List<String> _unreachableTokens = [
   'refused',
 ];
 
+/// Whether the platform's error text is the pairing or the encryption failing.
+///
+/// The two halves are exposed because a connect attempt has to place a failure the app never
+/// watched die: [classifyConnectFailure] in `connection.dart` reads these to tell "the device
+/// answered and refused the phone" from "nothing answered at all".
+bool bleErrorLooksLikeSecurity(String? errorText) {
+  final text = (errorText ?? '').toLowerCase();
+  return text.isNotEmpty &&
+      _securityFailureTokens.any((token) => text.contains(token));
+}
+
+/// Whether the platform's error text is "nothing answered" rather than "the answer was refused".
+bool bleErrorLooksUnreachable(String? errorText) {
+  final text = (errorText ?? '').toLowerCase();
+  return text.isNotEmpty &&
+      _unreachableTokens.any((token) => text.contains(token));
+}
+
 /// Classifies one failed BLE attempt.
 ///
 /// The app cannot read the block after a failure (there is no link), and there is no per-link
@@ -739,9 +757,7 @@ BleLinkSymptom _classifyBleFailure({
   String? errorText,
   required bool droppedWhileSecuring,
 }) {
-  final text = (errorText ?? '').toLowerCase();
-  if (text.isNotEmpty &&
-      _securityFailureTokens.any((token) => text.contains(token))) {
+  if (bleErrorLooksLikeSecurity(errorText)) {
     return BleLinkSymptom.securityRefused;
   }
   if (droppedWhileSecuring) {
@@ -749,9 +765,6 @@ BleLinkSymptom _classifyBleFailure({
     // secure-link deadline, not of a device out of reach.
     return BleLinkSymptom.droppedDuringSecuring;
   }
-  if (text.isNotEmpty &&
-      _unreachableTokens.any((token) => text.contains(token))) {
-    return BleLinkSymptom.unreachable;
-  }
+  if (bleErrorLooksUnreachable(errorText)) return BleLinkSymptom.unreachable;
   return BleLinkSymptom.unknown;
 }
