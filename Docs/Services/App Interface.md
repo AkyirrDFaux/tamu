@@ -33,15 +33,13 @@ Block type `0x0B`, core only: the link's configuration and state. **Every write 
 | Enabled | 0 | `Bool` | P, W | false = the radio is off: no advertising, no connections |
 | Passkey | 0 | `Text` (6 digits) | W | read and write; `000000` disables it and pairing falls back to Just Works. Stored in NVS outside the register file; USB only |
 | Mode | 0 | `Enum` | RO | Just Works or Passkey, derived from the passkey so the two cannot disagree |
-| Display name | 0 | `Text` | P, W | the name advertised over BLE; empty means the System `Name`. Applies from the next advertising start |
-| Bond count | 0 | `Index` | RO | entries in the bond store |
-| Bond | 0..N | `Text` | RO | address and name of a bonded peer, oldest first |
-| Window | 0 | `Uint32` | RO | milliseconds left in the connectable window, 0 when closed |
-| Action | 0 | `Enum` | W | 0 opens the pairing window, 1 forgets every bond. USB only |
+| Display name | 0 | `Text` (16) | P, W | the name advertised over BLE; a write re-advertises at once; empty means the System `Name` |
+| Bonds | 0 | `Undefined` (3 × 22 B) | TR, W | the bond store as three 22-byte entries (6-byte address + 16-byte name), oldest first; an all-zero address is empty. Zeroing an address forgets that bond and a name may be edited; a non-zero address in an empty slot is refused — pairing remains the only way to add a peer. USB only |
+| Window | 0 | `Uint32` | TR, W | milliseconds left in the connectable window; a write opens it for that many ms, 0 closes it. USB only |
 
 - It advertises whenever no device is connected over BLE; connecting is limited to bonded peers, and a new device can pair only while a window is open (or while no bond is stored).
 - Characteristics require an encrypted link; with a passkey set they also require an authenticated (MITM-protected) one.
-- Bonds and the passkey live in NVS, not in the register file: they survive a firmware reflash; `Action = 1` clears them, and so does changing the passkey.
+- Bonds and the passkey live in NVS, not in the register file: they survive a firmware reflash; zeroing a `Bonds` entry forgets that peer, and so does changing the passkey.
 - The store holds `CONFIG_BT_NIMBLE_MAX_BONDS` bonds (three today) and the device accepts one live connection at a time.
 ### WiFi Settings
 Block type `0x0C`, core only, **compiled in only when the WiFi option is enabled** — it is absent from a stock device, and absent means the device has no WiFi. The radio itself is not implemented yet.
