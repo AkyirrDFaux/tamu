@@ -83,7 +83,8 @@ struct StaticVolatile {
     PWMVolatile Fan[2];           // BlockType 4
     AccGyrVolatile Accgyr;        // BlockType 5
     Vysi1Volatile Display[2];     // BlockType 6
-    BleSettingsVolatile BleSet;   // BlockType 0x0B: the passkey text and the radio's state, read-only
+    // BlockType 0x0B: the passkey text, the mode, the bond list and the window countdown.
+    BleSettingsVolatile BleSet;
 #ifdef USE_WIFI_SETTINGS
     WifiSettingsVolatile WifiSet; // BlockType 0x0C: State/IP (read-only) + the always-empty password
 #endif
