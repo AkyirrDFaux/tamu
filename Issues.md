@@ -1099,19 +1099,38 @@ loop log the state once, >=500 ms later. Not implemented - route (d) is the owne
 2026-10-28 and this is its measured blind spot.
 
 **E71 A write to a `Persistent` static field lives in RAM until the app saves: a reset drops it.**
-Measured 2026-10-28, card `t_cb221e2e`, build `26.10.28 iteration 49`. `Display name = "Tamu Desk"`
-read back from the block immediately after the write (field 7 and the resolved `Advertised name`), then
-one reset: the boot log says `APPBLE: radio up: name='Akyirr' mode=just works bonds=0` and the block
-reads `Display name` empty and `Advertised name = Akyirr`. The same for `Enabled`: written `false`,
-read back `false`, reset -> reads `true` and the radio starts (`radio up` + `adv restart ... started=1`).
+Measured 2026-10-28/29, card `t_cb221e2e`, build `26.10.28 iteration 49`. Controlled pair for
+`Display name`, one reset each, the **only** difference between the two runs being the save
+(`bash firmware/.pio/probe/e71_displayname_revert.sh`, log `.pio/probe/e71_displayname_revert.log`,
+**15/15 assertions, 0 failures**):
+- write `Display name = "Tamu Desk"`, **no** save: the block reads the write back immediately
+  (`KV 7 0 Tamu Desk`, `KV 8 0 Tamu Desk`) - then one reset and the boot log says
+  `I (442) APPBLE: radio up: name='Akyirr' mode=just works bonds=0`, the block reads `Display name`
+  empty and `Advertised name = Akyirr`, and the air carries `Akyirr` at rssi -38
+  (`.pio/probe/boot_displayname_unsaved.log`; the string `Tamu Desk` appears nowhere in that capture).
+- the **same** write plus Save All, the **same** reset: `I (442) APPBLE: radio up: name='Tamu Desk'
+  mode=just works bonds=0`, the block reads `Tamu Desk`, the air carries `Tamu Desk` at rssi -38
+  (`.pio/probe/boot_displayname_saved_recheck.log`).
+Same shape for `Enabled`, measured in the same round: written `false` with **no** save -> the next boot
+prints `I (442) APPBLE: radio up: name='Akyirr' ...` and the radio starts
+(`.pio/probe/cap_boot_enabled_off.log:150`); written `false` **plus** Save All -> that boot contains no
+`APPBLE:` line at all and the device stays off the air
+(`.pio/probe/cap_boot_enabled_off_saved.log`, `grep -c 'APPBLE:'` = 0).
 This is by design, not a defect: `Docs/Services/Register.md:56` - "The device can only overwrite or load
 the whole file; targeted saves and recalls are handled by the app" - and `.SV` is written only by
-`RegisterService::StaticSaveAll()` (`Core/Services/RegisterPersist.h:20`, CID 4 Save All), which a field
-write never reaches; the `Persistent` flag on a static field names the memory space, not an
+`RegisterService::StaticSaveAll()` (`Core/Services/RegisterPersist.h:20`), which a field
+write never reaches: over the register service that is **Save All = CID 5**
+(`Docs/Services/Register.md:64-65`, `Core/Services/RegisterDefs.h:35`), while **CID 4 is Recall All**,
+which loads `.SV` **over** the RAM copy - a client that sends 4 instead of 5 discards the change it just
+wrote. The `Persistent` flag on a static field names the memory space, not an
 auto-save-on-write.
 Two consequences worth having written down: (1) a mistaken `Enabled = false` is undone by one USB
 write (measured, `Enabled` false -> true, uptime monotonic, no reboot) **and** by a plain reset, so the
 device is never USB-rescue-only; (2) a client that changes `Enabled` or `Display name` must follow with
 Save All or the change is gone at the next reset - the app's settings page is the place that decides it
 (card `t_1d304c9c`'s territory, not the firmware's). The passkey is unaffected either way: it lives in
-NVS (`BlePasskeyStore.h`) and survived the same reset (`BLESEC: passkey source: nvs (set)`).
+NVS (`BlePasskeyStore.h`) and survived the same reset (`BLESEC: passkey source: nvs (set)`). Writing
+`000000` erases that entry rather than merely relaxing the policy, and the read-back alone cannot show
+it: the next boot after such a write prints `I (342) BLESEC: passkey source: none (just works)`
+(`.pio/probe/boot_displayname_empty.log:141`), matching `BlePasskeyStoreSave`'s `nvs_erase_key`
+(`BlePasskeyStore.h:98-101`).
