@@ -3,79 +3,83 @@
 /// as every other block instead of a side-channel command set.
 ///
 /// The block's table order is fixed here because the panel, the block registry and the firmware
-/// contract test all address the fields (and the Bond keys) by number:
+/// contract test all address the fields by number:
 ///
-///   0 Passkey          Text(6), write (Trigger)  6 ASCII digits, "000000" = Just Works
-///   1 Mode             Enum, read-only           0 Just Works, 1 Passkey, derived from the passkey
-///   2 Bond count       Index, read-only          entries in the device's bond store
-///   3 Bond[0..2]       Text(20), read-only       "AA:BB:CC:DD:EE:FF", OLDEST FIRST, address only
-///   4 Window           Uint32, read-only         ms left in the connectable window, 0 = closed
-///   5 Action           Enum, write (Trigger)     0 open the pairing window, 1 forget all bonds
-///   6 Enabled          Bool, persistent+write    false = the radio is not used at all
-///   7 Display name     Text(16), persistent+write advertised name, empty = the System `Name`
-///   8 Advertised name  Text(16), read-only       the name actually on the air
-///   9 Last peer        Text(20), read-only       identity the last admission used (E66), "AA:BB:CC:DD:EE:FF/N"
-///  10 Last air         Text(20), read-only       address the same link came in on, "AA:BB:CC:DD:EE:FF/N"
-///  11 Last link        Enum, read-only           how the last judged link ended ([bleVerdictLabels])
+///   0 Enabled          Bool, persistent+write       false = the radio is not used at all
+///   1 Passkey          Text(6), write (Trigger)     6 ASCII digits, "000000" = Just Works
+///   2 Mode             Enum, read-only              0 Just Works, 1 Passkey, derived from the passkey
+///   3 Display name     Text(16), persistent+write   the advertised name, empty = the System `Name`
+///   4 Bonds            Undefined(66), write         three `address(6) + name(16)` entries
+///   5 Window           Uint32, write (Trigger)      ms left in the connectable window, 0 = closed
 ///
-/// Fields 9 and 10 are read as a PAIR, and the pair is the witness: they differ when the controller
-/// resolved a rotating private address to the identity in `Last peer`, which is the reading E66
-/// exists for ([BleSecuritySnapshot.lastAddressResolved]). **Equal addresses are the correct
-/// reading** for a peer that connects from its own public or static address — this rig's host does
-/// exactly that — and are never a sign that the read-out failed. The `/N` suffix is information
-/// only (NimBLE normalises the controller's resolved types 2 and 3 to 0 and 1, so it never reads 2
-/// or 3), and it is never part of the comparison.
+/// The block is SIX fields and nothing else (owner ruling 2026-10-29): `Action`, `Bond count`, the
+/// keyed `Bond 0..2` rows and the `Last peer`/`Last air`/`Last link` read-out are gone. What they
+/// used to say lives in the `Bonds` array (which slots hold a bond, and each peer's label) and in
+/// the `Window` field, which is now a command as well as a read-out.
 ///
-/// Two properties shape everything the panel does, and both come from the firmware
+/// Three properties shape everything the panel does, and all come from the firmware
 /// (`Devices/Tamu_v2.0A/BleSettingsGlue.h`, `Devices/Tamu_v2.0A/AppBLE.h`):
 ///
 ///  - **Every write to this block is refused unless the frame arrived over USB.** A phone that
-///    could rotate the key, wipe the bonds, rename the device or switch its radio off would defeat
+///    could rotate the key, delete the bonds, rename the device or switch its radio off would defeat
 ///    the passkey it is protecting. So over a BLE link the panel is a read-out plus an explanation
 ///    of why the controls cannot work — and a refused write is a normal `FLAG_FAIL` reply, which
 ///    the app surfaces as a sentence rather than leaving a control that silently does nothing.
-///  - **Advertising has one condition: the radio is up and enabled and no session is up** (E64
-///    ruling C, `BleAdvWanted()`). It never depends on the bond store or on a window, so the
-///    block's `Window` of 0 means "no pairing window", not "nothing on the air". What the window
-///    and the store do decide is **who may connect**: a bonded phone always, and any other phone
-///    while a window is open or while the store is still empty - an empty store is exactly how the
-///    first bond gets made. The gate is the device's own session check, never the controller's
-///    accept list (E66: nothing sets an advertising filter policy and the bond store is not
-///    mirrored into the controller's white list, because that list is matched against an address a
-///    privacy-enabled phone never connects from). So a stranger's CONNECT_REQ is answered and the
-///    link is refused when it cannot prove a bond - from that phone, a failed pairing rather than
-///    a silent absence. An empty store has nothing to protect and admits anyone; it also opens its
-///    own five-minute window once per boot and again after `Action = 1`. Only USB can open a window
-///    (`Action = 0`). Neither shape of "it does not connect" is a broken device
-///    ([bleLinkGuidance]).
+///  - **`Window` reads the milliseconds LEFT and a write sets the deadline** (0 closes it). The old
+///    `Action` enum carried the same command; it is gone, so opening a window is one field write.
+///  - **`Display name` IS the advertised name.** A write re-advertises in the same loop pass, so
+///    there is no "next advertising start" — that could mean never on a device that advertises
+///    whenever it is idle, which is why the field and the air cannot disagree any more.
+///
+/// Advertising has one condition: the radio is up and enabled and no session is up (E64 ruling C,
+/// `BleAdvWanted()`). It never depends on the bond store or on a window, so the block's `Window` of
+/// 0 means "no pairing window", not "nothing on the air". What the window and the store do decide
+/// is **who may connect**: a bonded phone always, and any other phone while a window is open or
+/// while the store is still empty - an empty store is exactly how the first bond gets made. The gate
+/// is the device's own session check, never the controller's accept list (E66: nothing sets an
+/// advertising filter policy and the bond store is not mirrored into the controller's white list,
+/// because that list is matched against an address a privacy-enabled phone never connects from). So
+/// a stranger's CONNECT_REQ is answered and the link is refused when it cannot prove a bond - from
+/// that phone, a failed pairing rather than a silent absence. An empty store has nothing to protect
+/// and admits anyone; it also opens its own five-minute window once per boot, and again after an
+/// explicit forget emptied it. Neither shape of "it does not connect" is a broken device
+/// ([bleLinkGuidance]).
 library;
 
 import 'types.dart';
 
 /// Field numbers of the `BLE Settings` block, in table order (firmware `Blocks/BleSettings.h`,
-/// `BLE_SET_FIELD_*`).
-const int bleFieldPasskey = 0;
-const int bleFieldMode = 1;
-const int bleFieldBondCount = 2;
-const int bleFieldBond = 3;
-const int bleFieldWindow = 4;
-const int bleFieldAction = 5;
-const int bleFieldEnabled = 6;
-const int bleFieldDisplayName = 7;
-const int bleFieldAdvertisedName = 8;
-const int bleFieldLastPeer = 9;
-const int bleFieldLastAir = 10;
-const int bleFieldLastLink = 11;
+/// `BLE_SET_FIELD_*`) — six fields, nothing else.
+const int bleFieldEnabled = 0;
+const int bleFieldPasskey = 1;
+const int bleFieldMode = 2;
+const int bleFieldDisplayName = 3;
+const int bleFieldBonds = 4;
+const int bleFieldWindow = 5;
 
-/// How many fields the block carries (0..11).
-const int bleFieldCount = 12;
+/// How many fields the block carries (0..5).
+const int bleFieldCount = 6;
 
 /// The block type the firmware assigns to `BLE Settings` (`BlockType::BleSettings`).
 const int bleSettingsBlockTypeValue = 0x0B;
 
 /// Bond slots the block exposes — one per `CONFIG_BT_NIMBLE_MAX_BONDS` (three today). The
-/// firmware static-asserts the two numbers together.
+/// firmware static-asserts the two numbers together, and the `Bonds` value's declared size is
+/// [bleBondsLength], which is exactly `slots × entry`.
 const int bleBondSlots = 3;
+
+/// One entry of the `Bonds` array: the peer's identity address (six bytes, **printed order**) and
+/// its label (sixteen bytes, NUL-padded). `BLE_BOND_ADDR_LEN` / `BLE_BOND_NAME_LEN` in the header.
+const int bleBondAddressLength = 6;
+const int bleBondNameLength = 16;
+
+/// `address + name` — `BLE_BOND_ENTRY_LEN`.
+const int bleBondEntryLength = bleBondAddressLength + bleBondNameLength;
+
+/// The `Bonds` value's declared size: three entries, `BLE_BOND_ARRAY_LEN`. The device requires the
+/// whole array in one write (the register path demands a non-Text field's declared size), so this
+/// is also the length of every write the panel sends.
+const int bleBondsLength = bleBondSlots * bleBondEntryLength;
 
 /// The passkey's width: six ASCII digits, exactly (the device refuses any other length).
 const int blePasskeyLength = 6;
@@ -98,79 +102,171 @@ const Map<int, String> bleModeLabels = {
 /// The label for a `Mode` value, `Mode N` for one this build does not know.
 String bleModeLabel(int mode) => bleModeLabels[mode] ?? 'Mode $mode';
 
-/// `Action` values: what a write to field 5 asks the device to do.
-const int bleActionOpenWindow = 0;
-const int bleActionForgetBonds = 1;
+/// The longest window a write may ask for. The device's countdown compares signed, so a deadline
+/// further away than `INT32_MAX` ms would read as already past; `AppBLESetWindow` refuses such a
+/// write instead of clamping it.
+const int bleWindowMaximumMs = 0x7FFFFFFF;
 
-const Map<int, String> bleActionLabels = {
-  bleActionOpenWindow: 'Open pairing window',
-  bleActionForgetBonds: 'Forget all bonds',
-};
-
-/// `Last link` values: the verdict of the last judged link, exactly as the firmware numbers
-/// `BleLinkVerdict` (`firmware/src/Blocks/BleAdmissionPolicy.h`). E66 added the field because the
-/// log cannot answer the question it settles: while a host holds the link the device's log is
-/// dropped (Issues.md E67), and a connect happens exactly then.
+/// Why [ms] cannot be written to `Window`, or null when it can.
 ///
-/// The distinction that matters is between a stranger being refused and a bonded peer whose
-/// address was not recognised — two links that look identical from the phone.
-const int bleVerdictNone = 0;
-const int bleVerdictPending = 1;
-const int bleVerdictAdmitted = 2;
-const int bleVerdictRefusedNotBonded = 3;
-const int bleVerdictRefusedOutsideWindow = 4;
-const int bleVerdictRefusedUnsecured = 5;
-const int bleVerdictRefusedBusy = 6;
+/// `0` always closes (the device accepts it with the radio down), a non-zero value needs the radio
+/// switched on, and nothing above [bleWindowMaximumMs] is accepted. The dialog checks this before
+/// sending so a refusal is not the first the user hears of it.
+String? bleWindowProblem(int ms, {required bool enabled}) {
+  if (ms < 0) return 'a window length cannot be negative';
+  if (ms > bleWindowMaximumMs) {
+    return 'the window must be at most ${bleWindowMaximumMs ~/ 1000} seconds';
+  }
+  if (ms > 0 && !enabled) {
+    return 'the radio is switched off, so no window can open';
+  }
+  return null;
+}
 
-const Map<int, String> bleVerdictLabels = {
-  bleVerdictNone: 'No link judged',
-  bleVerdictPending: 'Not judged yet',
-  bleVerdictAdmitted: 'Admitted',
-  bleVerdictRefusedNotBonded: 'Refused: not bonded',
-  bleVerdictRefusedOutsideWindow: 'Refused: not in a window',
-  bleVerdictRefusedUnsecured: 'Refused: not secured',
-  bleVerdictRefusedBusy: 'Refused: radio busy',
-};
+/// One slot of the `Bonds` array: a peer's identity address and the label kept beside it.
+///
+/// The device publishes the address in the order it is printed (`AA:BB:CC:DD:EE:FF`), not in
+/// NimBLE's least-significant-first storage order — the firmware reverses it for us
+/// (`Blocks/BleSettings.h`, "The Bonds array"). An ALL-ZERO address is the device's own empty-slot
+/// marker; a real identity address is never all zero.
+class BleBond {
+  const BleBond({required this.address, this.name = ''});
 
-/// The label for a `Last link` value, `Verdict N` for one this build does not know.
-String bleVerdictLabel(int verdict) =>
-    bleVerdictLabels[verdict] ?? 'Verdict $verdict';
+  /// The six address bytes, in printed order.
+  final List<int> address;
 
-/// What a `Last link` verdict means, in one sentence. The two refusals are spelled out because
-/// telling them apart is the whole reason E66 added the field: a stranger refused at connect and a
-/// bonded phone whose address the device did not recognise look identical from the phone.
-String bleVerdictDetail(int verdict) => switch (verdict) {
-  bleVerdictNone => 'No connect has been judged since the device booted.',
-  bleVerdictPending =>
-    'A link came up and the device has not finished judging it yet.',
-  bleVerdictAdmitted => 'A bonded phone connected and the session was secured.',
-  bleVerdictRefusedNotBonded =>
-    'The identity is not in the bond store and no pairing window was open: this was a '
-        "stranger's connect request.",
-  bleVerdictRefusedOutsideWindow =>
-    'The phone paired on a link that may not make a bond, so that bond was forgotten.',
-  bleVerdictRefusedUnsecured =>
-    'The link failed the security policy: no bond, or a passkey that was not used.',
-  bleVerdictRefusedBusy =>
-    'A session was already live, or the block had the radio switched off.',
-  _ => 'The device reported a verdict this build does not know.',
-};
+  /// The label stored beside the address (`BleBondLabelStore.h`). The NimBLE store keeps no peer
+  /// name (Issues.md E60), so this is the app's own label — and it is what a rename writes.
+  final String name;
+
+  /// True for an all-zero address: no bond in this slot.
+  bool get isEmpty => address.every((byte) => byte == 0);
+
+  /// The address as `AA:BB:CC:DD:EE:FF`, or an empty string for an empty slot.
+  String get addressText => isEmpty ? '' : address.map(_bleHexByte).join(':');
+
+  /// True when [address] is this entry's address, byte for byte.
+  bool holds(List<int> other) =>
+      address.length == other.length &&
+      [
+        for (var i = 0; i < address.length; i++) address[i] == other[i],
+      ].every((same) => same);
+
+  @override
+  String toString() => 'BleBond(${isEmpty ? '<empty>' : addressText}, "$name")';
+}
+
+String _bleHexByte(int byte) =>
+    (byte & 0xFF).toRadixString(16).padLeft(2, '0').toUpperCase();
+
+/// Three empty slots — the reading of a `Bonds` field that answered with zeros, and the default of
+/// a snapshot whose device did not answer it at all.
+const BleBond bleEmptyBond = BleBond(address: [0, 0, 0, 0, 0, 0]);
+const List<BleBond> bleEmptyBonds = [bleEmptyBond, bleEmptyBond, bleEmptyBond];
+
+/// Decodes the `Bonds` value into its [bleBondSlots] slots, empties included.
+///
+/// The value is `ValueInfo.Size` bytes ([bleBondsLength] = 66); a read pads its reply to a
+/// four-byte boundary, so the bytes handed back can be 68 long and only the first 66 are entries.
+/// A slot past the end of a short value reads as empty, so a truncated reply cannot shift an
+/// address into a name.
+List<BleBond> decodeBleBonds(List<int> value) {
+  List<int> slice(int start, int length) => [
+    for (var i = 0; i < length; i++)
+      start + i < value.length ? value[start + i] & 0xFF : 0,
+  ];
+  return [
+    for (var slot = 0; slot < bleBondSlots; slot++)
+      BleBond(
+        address: slice(slot * bleBondEntryLength, bleBondAddressLength),
+        name: decodePaddedString(
+          slice(
+            slot * bleBondEntryLength + bleBondAddressLength,
+            bleBondNameLength,
+          ),
+        ),
+      ),
+  ];
+}
+
+/// The wire value for [bonds]: always [bleBondsLength] bytes, unknown slots padded with zeros.
+///
+/// The device requires exactly the declared size for this field, so a write built here is always
+/// the whole array — one write describes every slot, and the reply describes all of them.
+List<int> encodeBleBonds(List<BleBond> bonds) {
+  final out = List<int>.filled(bleBondsLength, 0);
+  for (var slot = 0; slot < bleBondSlots && slot < bonds.length; slot++) {
+    final base = slot * bleBondEntryLength;
+    final bond = bonds[slot];
+    for (var i = 0; i < bleBondAddressLength && i < bond.address.length; i++) {
+      out[base + i] = bond.address[i] & 0xFF;
+    }
+    final name = bond.name.codeUnits;
+    for (var i = 0; i < bleBondNameLength && i < name.length; i++) {
+      out[base + bleBondAddressLength + i] = name[i] & 0xFF;
+    }
+  }
+  return out;
+}
+
+/// The array to send when [slot]'s label is renamed: every other entry untouched.
+List<int> bleBondsRenamed(List<BleBond> bonds, int slot, String name) =>
+    encodeBleBonds([
+      for (var i = 0; i < bonds.length; i++)
+        i == slot ? BleBond(address: bonds[i].address, name: name) : bonds[i],
+    ]);
+
+/// The array to send when [slot]'s address is cleared, which deletes that bond: the address is
+/// zeroed and the label goes with it. Every other entry is untouched, so a device that holds more
+/// than one bond keeps the rest.
+///
+/// Zeroing the last bond empties the store, and the firmware answers that with the one
+/// implementation of "every bond is gone" (`AppBLEForgetAllBonds`): the store is wiped and the
+/// automatic five-minute pairing window is owed.
+List<int> bleBondsCleared(List<BleBond> bonds, int slot) => encodeBleBonds([
+  for (var i = 0; i < bonds.length; i++) i == slot ? bleEmptyBond : bonds[i],
+]);
+
+/// What is stated about a peer that was never paired, wherever the panel has to explain the
+/// missing slot: the array is a VIEW of the bond store, so a peer appears in it by pairing and by
+/// nothing else.
+const String bleBondCannotAdd =
+    'A peer cannot be added by hand: a bond is created by pairing, never by writing this list.';
+
+/// Why the device refused a `Bonds` write, in one sentence.
+///
+/// The device decides the WHOLE frame before applying any of it: a non-zero address that is not
+/// the one its store holds in that slot refuses the write outright, and nothing is applied - names
+/// included. A bond cannot be created by a register write at all (the LTK/IRK live in the bond
+/// store, never in the register file), so an entry the panel invented is a statement about
+/// pairing rather than a failure to retry. The other shape of a refusal is a list the device has
+/// moved on from: entries are matched slot by slot, so a bond that was evicted (or added) since
+/// the panel read the array makes the write stale rather than wrong.
+String bleBondsRefusal({
+  required bool overUsb,
+  required List<int> sent,
+  required List<BleBond> held,
+}) {
+  if (!overUsb) return bleWriteRefusal(overUsb: false);
+  final sentBonds = decodeBleBonds(sent);
+  final invented = [
+    for (var slot = 0; slot < sentBonds.length && slot < held.length; slot++)
+      if (!sentBonds[slot].isEmpty &&
+          !held[slot].holds(sentBonds[slot].address))
+        sentBonds[slot].addressText,
+  ];
+  if (invented.isNotEmpty) {
+    return '$bleBondCannotAdd Pair the phone from its Bluetooth settings while a pairing window '
+        'is open, and it appears here.';
+  }
+  return 'The device refused the change: its bond list is not the one this panel read. Read it '
+      'again and retry.';
+}
 
 /// Whether the device's block enumeration carries the BLE Settings block. It is compiled into the
 /// core only, so a node's absence of it is the normal case rather than an error.
 bool hasBleSettingsBlock(Iterable<({int type, int maxInstance})> types) =>
     types.any((t) => t.type == bleSettingsBlockTypeValue);
-
-/// The address part of a `Last peer` / `Last air` reading: the `AA:BB:CC:DD:EE:FF` before the
-/// `/N` address type, or the whole text when the device sent no suffix.
-///
-/// The type is **information only** — NimBLE normalises the controller's resolved types 2/3 to
-/// 0/1 — so two readings of the same address must compare equal however their types differ. This
-/// is the one place that split happens for the app.
-String bleAddressPart(String text) {
-  final slash = text.indexOf('/');
-  return slash < 0 ? text : text.substring(0, slash);
-}
 
 /// One field read as the device answered it, or null when it did not answer.
 typedef BleFieldRead = ({ValueInfo meta, List<int> value})?;
@@ -184,52 +280,34 @@ class BleSecuritySnapshot {
   const BleSecuritySnapshot({
     this.passkey = blePasskeyNone,
     this.mode = bleModeJustWorks,
-    this.bondCount = 0,
-    this.bonds = const <String>[],
+    this.bonds = bleEmptyBonds,
     this.windowMs = 0,
     this.enabled = false,
     this.displayName = '',
-    this.advertisedName = '',
-    this.lastPeer = '',
-    this.lastAir = '',
-    this.lastLink = bleVerdictNone,
     this.answered = const <int>{},
   });
 
-  /// Builds the snapshot from the field reads: [fields] keyed by field number (key 0), and
-  /// [bonds] keyed by the Bond field's key (0..2).
+  /// Builds the snapshot from the field reads, keyed by field number (every field has key 0 — the
+  /// keyed `Bond` rows are gone, the array carries all three slots).
   ///
   /// A field the device did not answer keeps its empty default here (an unanswered passkey stays
   /// `''`, not `000000`) and is NOT recorded in [answered]. The defaults alone cannot be told
   /// apart from a device really reporting "no passkey, closed, off", so the panel asks
   /// [answeredField] before printing a field and shows `-` for one it never heard about.
-  factory BleSecuritySnapshot.fromReads(
-    Map<int, BleFieldRead> fields, {
-    Map<int, BleFieldRead> bonds = const <int, BleFieldRead>{},
-  }) {
+  factory BleSecuritySnapshot.fromReads(Map<int, BleFieldRead> fields) {
     List<int> bytesOf(int field) => fields[field]?.value ?? const <int>[];
-    final count = bytesOf(bleFieldBondCount);
     final window = bytesOf(bleFieldWindow);
     return BleSecuritySnapshot(
       passkey: decodePaddedString(bytesOf(bleFieldPasskey)),
       mode: bytesOf(bleFieldMode).isEmpty
           ? bleModeJustWorks
           : bytesOf(bleFieldMode)[0],
-      bondCount: count.isEmpty ? 0 : count[0],
-      bonds: [
-        for (var key = 0; key < bleBondSlots; key++)
-          if (decodePaddedString(bonds[key]?.value ?? const <int>[]).isNotEmpty)
-            decodePaddedString(bonds[key]!.value),
-      ],
+      bonds: fields[bleFieldBonds] == null
+          ? bleEmptyBonds
+          : decodeBleBonds(bytesOf(bleFieldBonds)),
       windowMs: window.length >= 4 ? uint32FromBytes(window) : 0,
       enabled: bytesOf(bleFieldEnabled).any((b) => b != 0),
       displayName: decodePaddedString(bytesOf(bleFieldDisplayName)),
-      advertisedName: decodePaddedString(bytesOf(bleFieldAdvertisedName)),
-      lastPeer: decodePaddedString(bytesOf(bleFieldLastPeer)),
-      lastAir: decodePaddedString(bytesOf(bleFieldLastAir)),
-      lastLink: bytesOf(bleFieldLastLink).isEmpty
-          ? bleVerdictNone
-          : bytesOf(bleFieldLastLink)[0],
       answered: {
         for (final entry in fields.entries)
           if (entry.value != null) entry.key,
@@ -244,12 +322,10 @@ class BleSecuritySnapshot {
   /// The device's effective policy (`Mode`), derived from the passkey on the device.
   final int mode;
 
-  /// Entries in the device's bond store.
-  final int bondCount;
-
-  /// The bonded identities the block exposes, oldest first. Addresses only: the NimBLE store
-  /// keeps no peer name (Issues.md E60), so the app must never promise one.
-  final List<String> bonds;
+  /// The `Bonds` array, one entry per slot and in the device's own order (the bond store's, oldest
+  /// first). Empty slots are kept: the panel draws a row for each, which is how "there is room for
+  /// another phone, and it gets there by pairing" can be said at all.
+  final List<BleBond> bonds;
 
   /// Milliseconds left in the connectable window; 0 means closed.
   final int windowMs;
@@ -257,25 +333,9 @@ class BleSecuritySnapshot {
   /// Whether the block wants the radio used at all.
   final bool enabled;
 
-  /// The name the user set for the advertisement; empty means the System `Name` is used.
+  /// The name the user set for the advertisement; empty means the System `Name` is used. This IS
+  /// the advertised name (the block has no second read-out): a write re-advertises at once.
   final String displayName;
-
-  /// The resolved name actually on the air (set by the device, not computed here).
-  final String advertisedName;
-
-  /// The identity the last admission decision used (`Last peer`), or empty while no link has been
-  /// judged since boot. An address only, `AA:BB:CC:DD:EE:FF/N`: the block carries no peer name.
-  final String lastPeer;
-
-  /// The address the last judged peer connected from (`Last air`), `AA:BB:CC:DD:EE:FF/N`, or empty
-  /// while no link has been judged since boot. It differs from [lastPeer] exactly when the
-  /// controller resolved a rotating private address to the identity the gate compared with the bond
-  /// store — the read-out E66 exists for ([lastAddressResolved]). Equal addresses are the expected
-  /// reading for a peer that connects from its own public or static address, not a failed read.
-  final String lastAir;
-
-  /// How the last judged link ended, as one of the `bleVerdict*` values.
-  final int lastLink;
 
   /// The field numbers the device actually answered in this reading, from
   /// [BleSecuritySnapshot.fromReads]. Empty for a snapshot that was stated rather than read (a
@@ -293,7 +353,7 @@ class BleSecuritySnapshot {
       answered.isNotEmpty &&
       !(answered.contains(bleFieldEnabled) &&
           answered.contains(bleFieldWindow) &&
-          answered.contains(bleFieldBondCount));
+          answered.contains(bleFieldBonds));
 
   /// True when a passkey protects pairing (the device's own `Mode` says so).
   bool get passkeySet => mode == bleModePasskey;
@@ -301,19 +361,12 @@ class BleSecuritySnapshot {
   /// True while the device is discoverable and connectable.
   bool get windowOpen => windowMs > 0;
 
-  /// True when the last judged link came from a different address than the identity the device
-  /// judged: the controller resolved a rotating private address to the bonded identity.
-  ///
-  /// "Resolved" means exactly this: [lastPeer] carries the peer's identity and [lastAir] a
-  /// DIFFERENT address on the air, for the same link. Only the address parts are compared
-  /// ([bleAddressPart]) — the `/N` type suffix is information NimBLE normalises, so it can never
-  /// fabricate a difference. Equal addresses mean the peer connected from its own public or static
-  /// address, which is the normal reading (this rig's host) and not a failed read-out. Both
-  /// addresses must have been read, so an unanswered field is never read as "resolved".
-  bool get lastAddressResolved =>
-      lastPeer.isNotEmpty &&
-      lastAir.isNotEmpty &&
-      bleAddressPart(lastPeer) != bleAddressPart(lastAir);
+  /// How many slots hold a bond. The array is the count now — there is no separate `Bond count`
+  /// field, and an all-zero address is the device's own empty-slot marker.
+  int get bondCount => bonds.where((bond) => !bond.isEmpty).length;
+
+  /// How many slots are free.
+  int get emptyBondSlots => bonds.where((bond) => bond.isEmpty).length;
 
   /// True when the radio is on but nothing else is known: no passkey, no bonds, no window and no
   /// name. That is a block a build reports without driving a radio, and the panel says so instead
@@ -323,8 +376,7 @@ class BleSecuritySnapshot {
       !passkeySet &&
       bondCount == 0 &&
       !windowOpen &&
-      displayName.isEmpty &&
-      advertisedName.isEmpty;
+      displayName.isEmpty;
 
   /// The state the panel reports for this reading.
   BleSecurityCondition get condition => bleSecurityCondition(this);
@@ -333,7 +385,7 @@ class BleSecuritySnapshot {
   String toString() =>
       'BleSecuritySnapshot(mode: ${bleModeLabel(mode)}, bonds: $bondCount, '
       'window: ${bleWindowText(windowMs)}, enabled: $enabled, '
-      'advertised: "$advertisedName")';
+      'displayName: "$displayName")';
 }
 
 /// What the panel says about a reading.
@@ -433,28 +485,24 @@ String bleWindowCountdown(int ms) {
 String bleWindowText(int ms) =>
     ms <= 0 ? 'closed' : '${bleWindowCountdown(ms)} left';
 
-/// The line under the last-link read-out: what the three E66 fields add up to, or null when the
-/// device did not answer enough of them for the app to say anything (the panel then prints `-`
-/// and makes no claim).
-String? bleLastLinkDetail(BleSecuritySnapshot snapshot) {
-  if (!snapshot.answeredField(bleFieldLastPeer) ||
-      !snapshot.answeredField(bleFieldLastAir) ||
-      !snapshot.answeredField(bleFieldLastLink)) {
-    return null;
+/// The line under the bond list: what the array means as a whole, or null when the device did not
+/// answer it (the panel then prints `-` and makes no claim about what is stored).
+///
+/// The distinction that matters is between "no bond" and "not read": an empty store is a device
+/// that admits any phone, which is the state a first pairing is made in, never a silent device.
+String? bleBondsDetail(BleSecuritySnapshot snapshot) {
+  if (!snapshot.answeredField(bleFieldBonds)) return null;
+  final bonds = snapshot.bondCount;
+  if (bonds == 0) {
+    return 'No phone is paired. Any phone may pair, and it appears here once it has: '
+        '$bleBondCannotAdd';
   }
-  if (snapshot.lastPeer.isEmpty || snapshot.lastAir.isEmpty) {
-    return snapshot.lastPeer.isEmpty && snapshot.lastAir.isEmpty
-        ? 'No connect has been judged since the device booted: a power cycle clears these '
-              'fields.'
-        : null;
-  }
-  if (snapshot.lastAddressResolved) {
-    return 'The two addresses differ: the phone connects from a private address the controller '
-        'rotates, and the device judged it as the identity above. That is a bonded phone '
-        'working normally.';
-  }
-  return 'The phone connected from the address the device knows it by: no address resolution '
-      'was needed.';
+  final free = snapshot.emptyBondSlots;
+  return free == 0
+      ? '$bonds phones are paired and the list is full. Pairing another one replaces the oldest: '
+            'the bond store holds ${snapshot.bonds.length} at a time.'
+      : '$bonds of ${snapshot.bonds.length} slots hold a bond. A new phone pairs into a free one '
+            'while a pairing window is open - $bleBondCannotAdd';
 }
 
 /// True when [text] is exactly six ASCII digits — the only shape the device accepts for the
@@ -516,11 +564,11 @@ enum BleLinkSymptom {
   droppedDuringSecuring,
 
   /// The device never answered: it is off, out of range, or its radio is switched off. A phone
-  /// the device holds no bond for is not silent in the same way — since E66 the device answers its
-  /// connect request and refuses the link once it cannot prove a bond, so the refusal normally
-  /// reaches the phone as a failed pairing ([securityRefused]). Some stacks report a
-  /// refuse-then-drop as a bare timeout anyway, which is what the device's USB panel settles
-  /// (`Last link`, [bleVerdictDetail]).
+  /// the device holds no bond for is not silent in the same way — the device answers its connect
+  /// request and refuses the link once it cannot prove a bond, so the refusal normally reaches the
+  /// phone as a failed pairing ([securityRefused]). Some stacks report a refuse-then-drop as a
+  /// bare timeout anyway; the device's own `Bonds` list (read over USB) says whether it holds a
+  /// bond for that phone at all.
   unreachable,
 
   /// Anything else. The panel then lists both causes instead of guessing between them.
@@ -618,7 +666,8 @@ BleLinkGuidance bleLinkGuidance({
         headline: 'This phone is no longer paired with the device',
         detail:
             'The device no longer holds a bond for this phone, so it refuses the link. That is '
-            'the normal result of a firmware update, of "Forget all bonds", or of changing the '
+            'the normal result of a firmware update, of deleting the bond in the device\'s own bond '
+            'list, or of changing the '
             'passkey - the device is working, it just has to pair with this phone again.',
         steps: [
           "Open your phone's Bluetooth settings and find this device in the paired list.",

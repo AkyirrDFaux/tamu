@@ -897,16 +897,20 @@ the `Display name` field itself and the other three were removed on 2026-10-29. 
 original entry: the field indexes on the System/BLE tables and both static types (`0x0B`, `0x0C`) in
 the `Docs/Services/Register.md:24` block-type list.
 
-The app side is **card `t_c432c8ac`**, not a partial edit here: `app/lib/core/ble_security.dart` no
-longer matches the block (field constants, the `bleAction*` constants, keyed `Bond` texts), and
-`app/test/firmware_contract_test.dart:200` parses `BleSettings_Entries` out of the header, which now
-holds six rows - the removed identifiers occur **151 times over 141 lines** in seven files and need the
-new shape (field/type/size list and the `Bonds` write semantics are in the card's comment thread).
-Recount:
+**The app side landed (2026-10-29, same card).** `app/lib/core/ble_security.dart` now carries the six
+field constants (`0` Enabled .. `5` Window), the `Bonds` codec (`decodeBleBonds` / `encodeBleBonds`:
+6-byte printed-order address + 16-byte NUL-padded name per 22-byte entry, three slots, all-zero
+address = empty), and the refusal split the device's whole-frame reply needs (`bleBondsRefusal`: a
+fabricated address reads "a bond is created by pairing", a list the device has moved on from asks for
+a re-read). `Window` is written as `Uint32` ms (0 closes) with the device's own limits checked before
+the write (`bleWindowProblem`: `INT32_MAX`, and a switched-off radio for a non-zero value). The panel
+draws one row per slot (rename = name write, delete = zeroed address), and `Display name` reads as
+live. The retired identifiers are gone from `app/` - recount:
 
-    git grep -o -E 'bleFieldBondCount|bleFieldBond|bleFieldAction|bleFieldAdvertisedName|bleFieldLast(Air|Link|Peer)|bleAction[A-Za-z]*|bleVerdict[A-Za-z]*|bleBondSlots' -- app/ | wc -l
+    git grep -o -E 'bleFieldBond\b|bleFieldBondCount|bleFieldAction|bleFieldAdvertisedName|bleFieldLast(Air|Link|Peer)|bleAction[A-Za-z]*|bleVerdict[A-Za-z]*' -- app/ | wc -l
 
--> `151`; the same `git grep` without `-o` counts the 141 lines, with `-l` the seven files.
+-> `0` (it was 151 occurrences over 141 lines in seven files). What still describes the twelve-field
+block is `Docs/Services/App Interface.md`, in the table above - that is the parent's edit.
 
 
 **E67 `DeviceLog` is suppressed while a host holds the USB port, and its lines cannot reach the log
@@ -1077,7 +1081,10 @@ code (it must be refused) plus one with the new code inside a window (it must su
 says "`Action = 1` clears them, and so does changing the passkey" (docs commit `e6162da`, reviewed on
 `t_944a5f2d`), and the closing paragraph of the panel in `app/lib/ui/ble_security_page.dart:704` now
 says the bonds are "cleared by \"Forget all bonds\" or by changing the passkey" (`7064526`, reviewed
-on `t_dd5f927c`). Neither text disagrees with the device any more.
+on `t_dd5f927c`). Neither text disagrees with the device any more. *(Updated 2026-10-29, six-field
+redesign: "Forget all bonds" no longer exists, so the panel's line now reads "cleared by deleting an
+entry or by changing the passkey" - same meaning, the device's zero-the-address delete. The doc line
+is still owed in the "Doc change owed" table of the BLE Settings section above; card `t_c432c8ac`.)*
 
 **E69 A peer that presents a bonded identity and asks to pair deletes that bond, and the then-empty
 store hands out a 5-minute pairing window.** Measured on the rig 2026-10-28 during items 3 and 5 of

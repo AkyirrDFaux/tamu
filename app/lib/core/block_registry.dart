@@ -6,8 +6,7 @@
 /// what the firmware code defines for each block type.
 library;
 
-import 'ble_security.dart'
-    show bleActionLabels, bleModeLabels, bleVerdictLabels;
+import 'ble_security.dart' show bleModeLabels;
 import 'types.dart';
 import 'wifi_settings.dart' show wifiStateLabels;
 
@@ -183,31 +182,28 @@ const _wifiSettingsFields = [
   FieldInfo('IP address'),
 ];
 
-// BLE Settings (firmware BlockType 0x0B, core/wifi_settings.dart's counterpart
-// `core/ble_security.dart`): the radio's settings, the pairing policy and the bond store as
-// register fields. The labels are indexed by field number, so the order below is the firmware
-// table order (Blocks/BleSettings.h) and `firmware_contract_test.dart` pins it.
+// BLE Settings (firmware BlockType 0x0B, `core/ble_security.dart`): the radio's settings, the
+// pairing policy and the bond list as register fields. The labels are indexed by field number, so
+// the order below is the firmware table order (Blocks/BleSettings.h) and
+// `firmware_contract_test.dart` pins it.
+//
+// Six fields, and nothing else: `Action`, `Bond count`, the keyed `Bond 0..2` rows and the
+// `Last peer`/`Last air`/`Last link` read-out were retired with the six-field redesign
+// (2026-10-29). The bond list is ONE `Undefined` value (66 bytes) the panel decodes, and `Window`
+// is a command as well as a read-out.
 //
 // Passkey is a secret in the app's sense - masked on the register row, and an editor never
 // pre-fills it - but it READS BACK on purpose: it is the user's own code, and the panel reveals
 // it on request. `000000` is the "no passkey" value, so the panel prints Just Works rather than
-// the six zeros. Bond is an address only: the NimBLE store keeps no peer name (Issues.md E60).
+// the six zeros. `Bonds` is a packed array, not a text field: the register row shows it as bytes,
+// and the Bluetooth panel is where it is decoded into addresses and names.
 const _bleSettingsFields = [
+  FieldInfo('Enabled'),
   FieldInfo('Passkey', maxChars: 6, secret: true),
   FieldInfo('Mode', enumValues: bleModeLabels),
-  FieldInfo('Bond count'),
-  FieldInfo('Bond address', maxChars: 20),
-  FieldInfo('Window', unit: 'ms'),
-  FieldInfo('Action', enumValues: bleActionLabels),
-  FieldInfo('Enabled'),
   FieldInfo('Display name', maxChars: 16),
-  FieldInfo('Advertised name', maxChars: 16),
-  // The E66 read-out of the last judged link (fields 9-11). Both addresses are the block's own
-  // 20-byte texts; `Last link` is the verdict, and its labels are the firmware's `BleLinkVerdict`
-  // vocabulary (`core/ble_security.dart` `bleVerdictLabels`), which the panel spells out.
-  FieldInfo('Last peer', maxChars: 20),
-  FieldInfo('Last air', maxChars: 20),
-  FieldInfo('Last link', enumValues: bleVerdictLabels),
+  FieldInfo('Bonds'),
+  FieldInfo('Window', unit: 'ms'),
 ];
 
 const Map<BlockType, BlockInfo> _blockRegistry = {

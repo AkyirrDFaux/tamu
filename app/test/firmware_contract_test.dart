@@ -231,6 +231,32 @@ List<({int field, String type, int size})>? _bleSettingsEntries() {
   return null;
 }
 
+/// The `Bonds` array's own numbers (`BLE_SETTINGS_BOND_SLOTS`, `BLE_BOND_*`) from the block header,
+/// keyed by their firmware names.
+///
+/// The app's decoder restates them ([bleBondSlots], [bleBondEntryLength], [bleBondsLength]), so a
+/// change to either side has to be a deliberate edit rather than a silently mis-read array: an
+/// entry one byte wider would read a name's first byte as the next address. Returns null when the
+/// firmware tree is not checked out next to the app.
+Map<String, int>? _bleBondLayout() {
+  for (final path in [
+    '../firmware/src/Blocks/BleSettings.h',
+    '../../firmware/src/Blocks/BleSettings.h',
+  ]) {
+    final file = File(path);
+    if (!file.existsSync()) continue;
+    final source = file.readAsStringSync();
+    return {
+      for (final m in RegExp(
+        r'^#define\s+(BLE_SETTINGS_BOND_SLOTS|BLE_BOND_\w+)\s+(\d+)\s*$',
+        multiLine: true,
+      ).allMatches(source))
+        m.group(1)!: int.parse(m.group(2)!),
+    };
+  }
+  return null;
+}
+
 /// The BLE securing budgets the firmware states (`constexpr uint32_t BleSecureBudget*Ms = N;` in
 /// `src/Blocks/BleSecurityPolicy.h`), keyed by name.
 ///
@@ -705,8 +731,9 @@ void main() {
     });
 
     // The BLE Settings block (type 0x0B, core only). The panel reads and writes the fields by
-    // number and pads text writes to the device's declared width, so both the order and the
-    // sizes are part of the contract.
+    // number, pads text writes to the device's declared width and decodes the Bonds array from its
+    // declared size, so the order, the sizes and the array's entry layout are all part of the
+    // contract.
     test('the BLE Settings schema and the app registry name the same fields', () {
       final entries = _bleSettingsEntries();
       if (entries == null) {
@@ -719,11 +746,10 @@ void main() {
             'the BleSettings_Entries table was not parsed - guard is broken',
       );
       final ble = blockInfoFor(BlockType.bleSettings)!;
-      // The table carries one row per key, and the Bond field is keyed three times: 12 fields,
-      // 14 rows. The app labels fields by number, so the DISTINCT fields must run 0..11 in order.
-      final fields = [for (final e in entries) e.field];
+      // Six rows, one per field, no keyed rows at all: the bond list is ONE Undefined value.
+      expect(entries, hasLength(bleFieldCount));
       expect(
-        fields.toSet().toList()..sort(),
+        [for (final e in entries) e.field],
         [for (var i = 0; i < bleFieldCount; i++) i],
         reason: 'app field labels lag the firmware BleSettings table',
       );
@@ -736,52 +762,51 @@ void main() {
       ({int field, String type, int size}) at(int field) =>
           entries.firstWhere((e) => e.field == field);
 
+      // Enabled is field 0 now (it was 6 in the twelve-field block).
+      expect(at(bleFieldEnabled).type, 'Bool');
+      expect(at(bleFieldEnabled).size, 1);
       // The passkey: six ASCII digits, readable and writable, masked in the app.
       expect(at(bleFieldPasskey).type, 'Text');
       expect(at(bleFieldPasskey).size, blePasskeyLength);
       expect(ble.field(bleFieldPasskey)!.secret, isTrue);
       expect(ble.field(bleFieldPasskey)!.maxChars, blePasskeyLength);
-      // The bond entries are addresses, not names (Issues.md E60), and the app must read as many
-      // keys as the store holds.
-      expect(at(bleFieldBond).type, 'Text');
-      expect(ble.field(bleFieldBond)!.name, 'Bond address');
-      expect(
-        entries.where((e) => e.field == bleFieldBond).length,
-        bleBondSlots,
-      );
+      // Mode is the derived policy, read-only.
+      expect(at(bleFieldMode).type, 'Enum');
+      expect(at(bleFieldMode).size, 1);
+      expect(ble.field(bleFieldMode)!.enumValues, bleModeLabels);
+      expect(at(bleFieldDisplayName).type, 'Text');
+      expect(at(bleFieldDisplayName).size, bleDisplayNameWidth);
+      expect(ble.field(bleFieldDisplayName)!.maxChars, bleDisplayNameWidth);
+      // The bond list: one `Undefined` value whose declared size is exactly the three entries the
+      // app decodes. A wrong size would either hide a bond or read a name as an address.
+      expect(at(bleFieldBonds).type, 'Undefined');
+      expect(at(bleFieldBonds).size, bleBondsLength);
+      expect(bleBondsLength, bleBondSlots * bleBondEntryLength);
+      expect(bleBondEntryLength, bleBondAddressLength + bleBondNameLength);
       // The window is a 32-bit millisecond count: five minutes does not fit a 16-bit field.
       expect(at(bleFieldWindow).type, 'Uint32');
       expect(at(bleFieldWindow).size, 4);
-      expect(at(bleFieldEnabled).type, 'Bool');
-      // Both enums carry the block's own numbering, which the panel writes back verbatim.
-      expect(at(bleFieldMode).type, 'Enum');
-      expect(at(bleFieldAction).type, 'Enum');
-      expect(at(bleFieldAction).size, 1);
-      expect(ble.field(bleFieldMode)!.enumValues, bleModeLabels);
-      expect(ble.field(bleFieldAction)!.enumValues, bleActionLabels);
-      expect(ble.field(bleFieldDisplayName)!.maxChars, bleDisplayNameWidth);
-      // The E66 read-out (fields 9-11): two addresses at the bond text's width, and the verdict.
-      // The app labels that Enum with its own vocabulary, so a re-numbered `BleLinkVerdict` would
-      // name the wrong outcome; the values are pinned to the firmware enum here.
-      expect(at(bleFieldLastPeer).type, 'Text');
-      expect(at(bleFieldLastPeer).size, 20);
-      expect(at(bleFieldLastAir).type, 'Text');
-      expect(at(bleFieldLastAir).size, 20);
-      expect(ble.field(bleFieldLastPeer)!.maxChars, 20);
-      expect(at(bleFieldLastLink).type, 'Enum');
-      expect(at(bleFieldLastLink).size, 1);
-      final verdicts = _firmwareEnum(
-        'src/Blocks/BleAdmissionPolicy.h',
-        'BleLinkVerdict',
-      );
-      if (verdicts.isNotEmpty) {
-        expect(
-          bleVerdictLabels.keys.toList()..sort(),
-          verdicts.values.toList()..sort(),
-          reason: 'the app labels a BleLinkVerdict value it must not guess at',
-        );
-        expect(ble.field(bleFieldLastLink)!.enumValues, bleVerdictLabels);
+      // The retired fields answer nothing, so the app must not address them.
+      expect(entries.any((e) => e.field >= bleFieldCount), isFalse);
+    });
+
+    // The Bonds array's parts, read from the header's own `#define`s: the app hard-codes the same
+    // numbers (they are the decoder) and a change on either side must be a deliberate edit.
+    test('the Bonds entry layout matches BleSettings.h', () {
+      final layout = _bleBondLayout();
+      if (layout == null) {
+        return; // firmware source not available next to the app
       }
+      expect(
+        layout,
+        isNotEmpty,
+        reason: 'the BLE_BOND_* defines were not parsed',
+      );
+      expect(layout['BLE_SETTINGS_BOND_SLOTS'], bleBondSlots);
+      expect(layout['BLE_BOND_ADDR_LEN'], bleBondAddressLength);
+      expect(layout['BLE_BOND_NAME_LEN'], bleBondNameLength);
+      expect(layout['BLE_BOND_ENTRY_LEN'], bleBondEntryLength);
+      expect(layout['BLE_BOND_ARRAY_LEN'], bleBondsLength);
     });
 
     // The securing budgets the app's failure classifier restates. The card's stale-bond guidance

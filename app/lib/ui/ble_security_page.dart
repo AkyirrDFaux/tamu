@@ -13,25 +13,33 @@ import 'theme.dart';
 import 'widgets.dart';
 
 /// The Bluetooth panel: the `BLE Settings` block (BlockType `0x0B`) read and written through the
-/// register path — the pairing mode, the bonded phones, the connectable window, the passkey, the
-/// radio's enable state and the advertised name, with nothing invented
-/// (`core/ble_security.dart` holds the field map, the state rules and the failure guidance).
+/// register path — the radio's enable state, the passkey and the mode it implies, the advertised
+/// name, the bond list and the pairing window, with nothing invented
+/// (`core/ble_security.dart` holds the field map, the state rules, the bonds codec and the failure
+/// guidance).
 ///
-/// Two firmware rules shape the page:
+/// The block is SIX fields: `Enabled`, `Passkey`, `Mode`, `Display name`, `Bonds`, `Window`. The
+/// panel draws them as three cards — the pairing settings, the bond list, the radio — because that
+/// is how a user thinks about them; the fields themselves are shown in that order.
+///
+/// Three firmware rules shape the page:
 ///
 ///  - **Every write to this block is refused unless the frame arrived over USB.** Over a BLE link
 ///    the panel is therefore a read-out: the notice above the card says so up front, and a write
 ///    the device refuses comes back as a sentence naming the reason rather than a no-op.
-///  - **Advertising is on whenever the radio is up and enabled and no session is up** (E64 ruling
-///    C); the bond store and the pairing window decide which links become a session instead (E66:
-///    the connect is answered and a link that cannot prove a bond is refused). A bonded phone
-///    reconnects on its own, with no USB host and no window; any phone may pair while a window
-///    is open or while the store is still empty; only USB can open a window. The panel shows the
-///    countdown, the bond list and the state as one story so "it will not connect" has a visible
-///    cause.
+///  - **The bond list is a VIEW of the bond store.** Its rows are decoded from one `Undefined`
+///    array (three entries of `address(6) + name(16)`), so an entry can be renamed or deleted —
+///    but a peer appears in it by PAIRING, and a non-zero address the device does not hold is
+///    refused as a whole frame. The panel says that in the empty rows instead of offering an
+///    "add" control the device would reject.
+///  - **`Window` is a command and a read-out.** A write opens the window for that many
+///    milliseconds and 0 closes it; the row shows the countdown the device reports. Only USB can
+///    write it, which is the same rule as the rest of the block.
 ///
-/// The block is compiled into the core only, so like the WiFi panel this page is reached only for
-/// a device whose own block enumeration carries it, and it renders nothing when it does not.
+/// Advertising is on whenever the radio is up and enabled and no session is up (E64 ruling C);
+/// the bond store and the pairing window decide which links become a session instead. The block is
+/// compiled into the core only, so like the WiFi panel this page is reached only for a device whose
+/// own block enumeration carries it, and it renders nothing when it does not.
 class BleSecurityPage extends StatefulWidget {
   final int deviceId;
 
@@ -70,10 +78,6 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   /// The raw field reads behind [_snapshot]: the write path takes a field's declared type and
   /// width from here instead of guessing them.
   Map<int, BleFieldRead> _reads = const {};
-
-  /// The Bond field's keyed reads (0..[bleBondSlots]-1), kept beside [_reads] because the field is
-  /// read per key rather than per field number.
-  Map<int, BleFieldRead> _bondReads = const {};
 
   /// False when the device's enumeration does not carry the block: the page then draws nothing.
   bool _present = true;
@@ -148,31 +152,18 @@ class _BleSecurityPageState extends State<BleSecurityPage>
           0,
         );
       }
-      // The Bond field is keyed: one address per slot, oldest first.
-      final bonds = <int, BleFieldRead>{};
-      for (var key = 0; key < bleBondSlots; key++) {
-        bonds[key] = await _client.readBlockField(
-          bleSettingsBlockTypeValue,
-          0,
-          bleFieldBond,
-          key,
-        );
-      }
       if (!mounted) return;
       final answered = reads.values.any((r) => r != null);
       setState(() {
         _refreshing = false;
         _present = true;
         _reads = reads;
-        _bondReads = bonds;
         // Present but silent is a failure worth showing: the device claims a block it will not
         // let anyone read, which is not the same thing as not having one.
         _error = answered
             ? null
             : 'The Bluetooth block is present but did not answer a read';
-        _snapshot = answered
-            ? BleSecuritySnapshot.fromReads(reads, bonds: bonds)
-            : null;
+        _snapshot = answered ? BleSecuritySnapshot.fromReads(reads) : null;
       });
       _syncWindowTimer();
     } finally {
@@ -212,7 +203,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
     if (read == null) return; // a lost answer is not a closed window
     setState(() {
       _reads = {..._reads, bleFieldWindow: read};
-      _snapshot = BleSecuritySnapshot.fromReads(_reads, bonds: _bondReads);
+      _snapshot = BleSecuritySnapshot.fromReads(_reads);
     });
     if ((_snapshot?.windowMs ?? 0) <= 0) {
       _windowTimer?.cancel();
@@ -237,8 +228,8 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   /// reply (`null` from the client), so it is surfaced — never silently dropped.
   ///
   /// [persist] saves the persistent space afterwards: `Enabled` and `Display name` are mirrored
-  /// into the device's `.SV` by a Save All, while the passkey (NVS) and the two commands are
-  /// applied by their triggers and need no save.
+  /// into the device's `.SV` by a Save All, while the passkey (NVS) and the `Window`/`Bonds`
+  /// triggers are applied by the device itself and need no save.
   Future<void> _writeField(
     int field, {
     required int type,
@@ -306,12 +297,12 @@ class _BleSecurityPageState extends State<BleSecurityPage>
       persist: true,
       done: name.isEmpty
           ? 'Display name cleared - the device advertises its own name'
-          : 'Display name set',
+          : 'Display name set - the device advertises it now',
       valueHint: 'a display name is exactly $width characters',
     );
   }
 
-  /// Writes the passkey (field 0). The device accepts exactly six ASCII digits and refuses the
+  /// Writes the passkey (field 1). The device accepts exactly six ASCII digits and refuses the
   /// write otherwise, so the shape is checked here first and the refusal still has a sentence.
   Future<void> _setPasskey(String digits) => _writeField(
     bleFieldPasskey,
@@ -323,44 +314,115 @@ class _BleSecurityPageState extends State<BleSecurityPage>
     valueHint: 'the passkey must be exactly $blePasskeyLength digits',
   );
 
-  /// `Action = 0`: opens (or extends) the connectable window. Accepted over USB only, like every
-  /// write to this block.
-  Future<void> _openWindow() => _writeField(
-    bleFieldAction,
-    type: _writeType(bleFieldAction, DataType.enum_.value),
-    bytes: const [bleActionOpenWindow],
-    done: 'Pairing window open',
-    valueHint: 'the device could not open a window',
+  /// Writes `Window` (field 5): the milliseconds to open for, 0 to close. The device reads the
+  /// field back as the time left, so the row shows the countdown the device reports rather than
+  /// one the app counts.
+  Future<void> _setWindow(int ms) => _writeField(
+    bleFieldWindow,
+    type: _writeType(bleFieldWindow, DataType.uint32.value),
+    bytes: uint32ToBytes(ms).toList(),
+    done: ms <= 0
+        ? 'Pairing window closed'
+        : 'Pairing window open for ${bleWindowCountdown(ms)}',
+    valueHint: bleWindowProblem(ms, enabled: _snapshot?.enabled ?? false),
   );
 
-  /// `Action = 1`: forgets every bond. Destructive, so the consequence is stated before the tap.
-  Future<void> _forgetBonds() async {
+  /// The window editor: a length in milliseconds, with the device's own limits stated and the
+  /// 0-closes rule spelled out. The dialog refuses what the device would refuse, so a refusal is
+  /// not the first the user hears of it.
+  Future<void> _askWindow(int currentMs) async {
+    final ms = await showDialog<int>(
+      context: context,
+      builder: (context) => _WindowDialog(
+        currentMs: currentMs,
+        enabled: _snapshot?.enabled ?? true,
+        overUsb: _overUsb,
+      ),
+    );
+    if (ms == null || !mounted) return;
+    await _setWindow(ms);
+  }
+
+  /// Writes the whole `Bonds` array (field 4). The device requires the field's declared size for a
+  /// non-Text value, so [bytes] is always [bleBondsLength] long — one write describes every slot.
+  ///
+  /// A refusal is decided by the device for the WHOLE frame and applies nothing (names included),
+  /// so the sentence is built from what was sent against what the panel last read
+  /// ([bleBondsRefusal]): a fabricated address is "a bond is made by pairing", while a list the
+  /// device has moved on from asks for a re-read.
+  Future<void> _writeBonds(
+    List<int> bytes, {
+    required List<BleBond> held,
+    required String done,
+  }) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final reply = await _client.writeBlockField(
+      bleSettingsBlockTypeValue,
+      0,
+      bleFieldBonds,
+      0,
+      ValueInfo(
+        type: _writeType(bleFieldBonds, DataType.undefined.value),
+        size: bytes.length,
+        flags: _writeFlags(bleFieldBonds),
+      ),
+      bytes,
+    );
+    if (!mounted) return;
+    setState(() => _busy = false);
+    _snack(
+      reply != null
+          ? done
+          : bleBondsRefusal(overUsb: _overUsb, sent: bytes, held: held),
+    );
+    await _refresh();
+  }
+
+  /// Renames one entry's label. The array is written back whole with every other slot as it was
+  /// read, because the device matches the frame slot by slot: an entry it does not recognise
+  /// refuses the entire write.
+  Future<void> _renameBond(int slot, String name) async {
     final snapshot = _snapshot;
-    final count = snapshot?.bondCount ?? 0;
+    if (snapshot == null) return;
+    await _writeBonds(
+      bleBondsRenamed(snapshot.bonds, slot, name),
+      held: snapshot.bonds,
+      done: name.isEmpty
+          ? 'Label cleared'
+          : 'Label set to "$name" for ${snapshot.bonds[slot].addressText}',
+    );
+  }
+
+  /// Clearing an entry's address deletes that bond — the only deletion the device offers, because
+  /// the array is a view of the bond store. The consequence is stated before the tap: that phone
+  /// has to pair again, and emptying the store makes the device open its automatic five-minute
+  /// window.
+  Future<void> _clearBond(BleBond bond) async {
+    final snapshot = _snapshot;
+    if (snapshot == null || bond.isEmpty) return;
+    final slot = snapshot.bonds.indexOf(bond);
+    final last = snapshot.bondCount == 1;
+    final label = bond.name.isEmpty ? '' : ' (${bond.name})';
     final ok = await confirmDialog(
       context,
-      title: 'Forget all bonds?',
+      title: 'Delete this bond?',
       body:
-          (count == 0
-              ? 'The device holds no bonds, so there is nothing to forget. The command still '
-                    'resets its store.'
-              : 'Every phone paired with this device ($count today) must pair again: each one has '
-                    'to be forgotten in that phone\'s Bluetooth settings before it can pair '
-                    'again. With the store empty the device opens a five-minute pairing window '
-                    'by itself afterwards, so the next pairing can go through.') +
-          (_overUsb
-              ? ''
-              : '\n\nThis app is connected over Bluetooth, so the device will refuse the write. '
-                    'Connect over USB to wipe the bonds.'),
-      confirmLabel: 'Forget bonds',
+          'The device forgets ${bond.addressText}$label: that phone has to be forgotten in its '
+          'own Bluetooth settings, and then pair again - which needs a pairing window.'
+          '${last ? '\n\nThis is the last bond, so the store is emptied, and the device opens a '
+                    'five-minute pairing window by itself afterwards.' : ''}'
+          '${_overUsb ? '' : '\n\nThis app is connected over Bluetooth, so the device will refuse '
+                    'the write. Connect over USB to delete a bond.'}',
+      confirmLabel: 'Delete bond',
     );
-    if (!ok || !mounted) return;
-    await _writeField(
-      bleFieldAction,
-      type: _writeType(bleFieldAction, DataType.enum_.value),
-      bytes: const [bleActionForgetBonds],
-      done: 'Bonds forgotten - every phone must pair again',
-      valueHint: 'the device could not clear its bond store',
+    if (!ok || !mounted || slot < 0) return;
+    await _writeBonds(
+      bleBondsCleared(snapshot.bonds, slot),
+      held: snapshot.bonds,
+      done: last
+          ? 'Bond deleted - the store is empty, so the device opens a five-minute pairing window'
+          : 'Bond deleted - that phone has to pair again',
     );
   }
 
@@ -419,15 +481,15 @@ class _BleSecurityPageState extends State<BleSecurityPage>
         : '${bleModeLabel(snapshot.mode)} - no code required';
   }
 
-  /// One of the two E66 addresses: the device's own text, `no link judged yet` when it answered
-  /// with an empty field, and `-` when it did not answer at all.
-  String _lastAddressText(
-    BleSecuritySnapshot snapshot,
-    int field,
-    String address,
-  ) {
-    if (!snapshot.answeredField(field)) return '-';
-    return address.isEmpty ? 'no link judged yet' : address;
+  /// The label editor for one bond: sixteen characters, with what a label is (and is not) stated
+  /// above the field.
+  Future<void> _askBondName(int slot, String current) async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => _BondNameDialog(current: current),
+    );
+    if (name == null || !mounted || name == current) return;
+    await _renameBond(slot, name);
   }
 
   @override
@@ -467,6 +529,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
       );
     }
 
+    final bondsAnswered = snapshot.answeredField(bleFieldBonds);
     return TamuPage(
       title: 'Bluetooth',
       actions: actions,
@@ -521,37 +584,34 @@ class _BleSecurityPageState extends State<BleSecurityPage>
                   ],
                 ),
               ),
-              InfoRow(
-                'Pairing window',
-                snapshot.answeredField(bleFieldWindow)
-                    ? bleWindowText(snapshot.windowMs)
-                    : '-',
-                labelWidth: 120,
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  Spacing.xl,
-                  Spacing.sm,
-                  Spacing.xl,
-                  Spacing.sm,
+              // `Window` is a command and a read-out at once: the row shows the countdown the
+              // device reports, and the editor writes it (0 closes).
+              ListTile(
+                dense: true,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: Spacing.xl,
                 ),
-                child: Wrap(
-                  spacing: Spacing.md,
-                  runSpacing: Spacing.sm,
+                title: const Text('Pairing window'),
+                subtitle: Text(_windowSubtitle(snapshot)),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    OutlinedButton.icon(
-                      onPressed: _busy ? null : _openWindow,
-                      icon: const Icon(Icons.wifi_tethering, size: IconSize.sm),
-                      label: const Text('Open pairing window'),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: _busy ? null : _forgetBonds,
-                      icon: const Icon(
-                        Icons.link_off,
-                        size: IconSize.sm,
-                        color: kError,
+                    if (snapshot.answeredField(bleFieldWindow) &&
+                        snapshot.windowOpen)
+                      IconButton(
+                        tooltip: 'Close the pairing window',
+                        icon: const Icon(
+                          Icons.wifi_tethering_off,
+                          size: IconSize.sm,
+                        ),
+                        onPressed: _busy ? null : () => _setWindow(0),
                       ),
-                      label: const Text('Forget all bonds'),
+                    IconButton(
+                      tooltip: 'Set the pairing window',
+                      icon: const Icon(Icons.timer_outlined, size: IconSize.sm),
+                      onPressed: _busy
+                          ? null
+                          : () => _askWindow(snapshot.windowMs),
                     ),
                   ],
                 ),
@@ -559,39 +619,36 @@ class _BleSecurityPageState extends State<BleSecurityPage>
             ],
           ),
           const SizedBox(height: Spacing.lg),
+          // The bond list: one row per slot of the `Bonds` array. A row's label can be changed and
+          // its address cleared (which deletes the bond); a peer is only ever ADDED by pairing,
+          // which is what an empty slot says.
           InfoCard(
-            title: 'Bonded devices',
+            title: 'Bonds',
             children: [
-              InfoRow(
-                'Bond count',
-                snapshot.answeredField(bleFieldBondCount)
-                    ? '${snapshot.bondCount}'
-                    : '-',
-                labelWidth: 120,
-              ),
-              if (snapshot.bonds.isEmpty)
+              if (!bondsAnswered)
+                InfoRow('Bond list', '-', labelWidth: 120)
+              else
+                for (var slot = 0; slot < snapshot.bonds.length; slot++)
+                  _BondRow(
+                    bond: snapshot.bonds[slot],
+                    busy: _busy,
+                    onRename: () =>
+                        _askBondName(slot, snapshot.bonds[slot].name),
+                    onDelete: () => _clearBond(snapshot.bonds[slot]),
+                  ),
+              if (bleBondsDetail(snapshot) != null)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
                     Spacing.xl,
-                    Spacing.xs,
+                    Spacing.sm,
                     Spacing.xl,
                     Spacing.md,
                   ),
                   child: Text(
-                    !snapshot.answeredField(bleFieldBondCount)
-                        ? 'The device did not answer the bond count.'
-                        : snapshot.bondCount == 0
-                        ? 'No phone is paired with this device.'
-                        : 'The device reports ${snapshot.bondCount} bonds but did not read '
-                              'their addresses back.',
+                    bleBondsDetail(snapshot)!,
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
-                )
-              else
-                for (final address in snapshot.bonds)
-                  // Address only: the device's bond store keeps no peer name (Issues.md E60),
-                  // so a name here would be invented.
-                  InfoRow('Paired phone', address, labelWidth: 120),
+                ),
             ],
           ),
           const SizedBox(height: Spacing.lg),
@@ -614,6 +671,9 @@ class _BleSecurityPageState extends State<BleSecurityPage>
                 value: snapshot.enabled,
                 onChanged: _busy ? null : _setEnabled,
               ),
+              // Display name IS the advertised name: there is no second read-out any more, and a
+              // write re-advertises in the same loop pass, so the row says "now" and not "at the
+              // next advertising start".
               ListTile(
                 dense: true,
                 contentPadding: const EdgeInsets.symmetric(
@@ -624,8 +684,8 @@ class _BleSecurityPageState extends State<BleSecurityPage>
                   !snapshot.answeredField(bleFieldDisplayName)
                       ? '-'
                       : snapshot.displayName.isEmpty
-                      ? 'not set - the device uses its own name'
-                      : snapshot.displayName,
+                      ? 'not set - the device advertises its own name'
+                      : '${snapshot.displayName} - on the air now',
                 ),
                 trailing: IconButton(
                   tooltip: 'Set the display name',
@@ -635,73 +695,14 @@ class _BleSecurityPageState extends State<BleSecurityPage>
                       : () => _askDisplayName(snapshot.displayName),
                 ),
               ),
-              InfoRow(
-                'Advertising as',
-                snapshot.advertisedName.isEmpty ? '-' : snapshot.advertisedName,
-                labelWidth: 120,
-              ),
-            ],
-          ),
-          const SizedBox(height: Spacing.lg),
-          // The E66 read-out: which link the device judged last and how it ended. The phone could
-          // not tell a refused stranger from a bonded peer whose address it did not recognise,
-          // and the device's log is dropped while a host holds the link, so this card is the only
-          // place that answer survives a connect.
-          InfoCard(
-            title: 'Last judged link',
-            children: [
-              InfoRow(
-                'Verdict',
-                snapshot.answeredField(bleFieldLastLink)
-                    ? bleVerdictLabel(snapshot.lastLink)
-                    : '-',
-                labelWidth: 120,
-              ),
-              if (snapshot.answeredField(bleFieldLastLink))
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    Spacing.xl,
-                    Spacing.xs,
-                    Spacing.xl,
-                    Spacing.sm,
-                  ),
-                  child: Text(
-                    bleVerdictDetail(snapshot.lastLink),
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              InfoRow(
-                'Identity judged',
-                _lastAddressText(snapshot, bleFieldLastPeer, snapshot.lastPeer),
-                labelWidth: 120,
-              ),
-              InfoRow(
-                'Connected from',
-                _lastAddressText(snapshot, bleFieldLastAir, snapshot.lastAir),
-                labelWidth: 120,
-              ),
-              if (bleLastLinkDetail(snapshot) != null)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    Spacing.xl,
-                    Spacing.xs,
-                    Spacing.xl,
-                    Spacing.md,
-                  ),
-                  child: Text(
-                    bleLastLinkDetail(snapshot)!,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
             ],
           ),
           const SizedBox(height: Spacing.lg),
           Text(
-            'Everything above is the block\'s own: the mode, the bond list, the window, the '
-            'advertised name and the last judged link are computed and reported by the device. '
-            'The passkey is stored on '
-            'the device itself and survives a firmware update; the bonds do too, so they are '
-            'cleared by "Forget all bonds" or by changing the passkey.',
+            'Everything above is the block\'s own: the mode, the bond list, the window and the '
+            'name are computed and reported by the device. The passkey is stored on the device '
+            'itself and survives a firmware update; the bonds are kept in its bond store, so they '
+            'are cleared by deleting an entry or by changing the passkey.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: Spacing.md),
@@ -712,12 +713,23 @@ class _BleSecurityPageState extends State<BleSecurityPage>
             'If this phone stops connecting: the device may no longer hold a bond for it, and a '
             'device that holds bonds ignores phones it has no bond for. Forget the device in '
             "your phone's Bluetooth settings, then pair again from a pairing window - open one "
-            'below over USB while the device still holds bonds.',
+            'here over USB.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
       ),
     );
+  }
+
+  /// The window row's line: the countdown the device reports, plus what the state means. A window
+  /// is the PAIRING state, so a closed one is never "off the air" - a bonded phone connects
+  /// regardless.
+  String _windowSubtitle(BleSecuritySnapshot snapshot) {
+    if (!snapshot.answeredField(bleFieldWindow)) return '-';
+    if (snapshot.windowOpen) {
+      return '${bleWindowText(snapshot.windowMs)} - any phone may pair until it closes';
+    }
+    return 'closed - no new pairing until a window is open. A bonded phone connects anyway.';
   }
 
   /// The up-front statement that the whole block is read-only over this link, so the user is not
@@ -855,6 +867,263 @@ class _BleGuidanceBody extends StatelessWidget {
           Text('The link said:', style: theme.textTheme.bodySmall),
           Text(linkError!, style: theme.textTheme.bodySmall),
         ],
+      ],
+    );
+  }
+}
+
+/// One slot of the bond list: the peer's address, the label kept beside it, and the two edits the
+/// device accepts — rename, and clear the address (which deletes the bond).
+///
+/// An empty slot is drawn too, and it says how a peer gets there: by pairing. That is the whole
+/// reason the panel has no "add bond" control — the array is a view of the bond store, and the
+/// device refuses a frame that names an address it does not hold.
+class _BondRow extends StatelessWidget {
+  const _BondRow({
+    required this.bond,
+    required this.busy,
+    required this.onRename,
+    required this.onDelete,
+  });
+
+  final BleBond bond;
+  final bool busy;
+  final VoidCallback onRename;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (bond.isEmpty) {
+      return ListTile(
+        dense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: Spacing.xl),
+        leading: const Icon(Icons.bluetooth_outlined, size: IconSize.sm),
+        title: const Text('Empty slot'),
+        subtitle: Text(
+          'A phone appears here once it has paired.',
+          style: theme.textTheme.bodySmall,
+        ),
+      );
+    }
+    return ListTile(
+      dense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: Spacing.xl),
+      title: Text(bond.addressText),
+      subtitle: Text(
+        bond.name.isEmpty ? 'no label' : bond.name,
+        style: theme.textTheme.bodySmall,
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'Rename this bond',
+            icon: const Icon(Icons.label_outline, size: IconSize.sm),
+            onPressed: busy ? null : onRename,
+          ),
+          IconButton(
+            tooltip: 'Delete this bond',
+            icon: const Icon(Icons.link_off, size: IconSize.sm, color: kError),
+            onPressed: busy ? null : onDelete,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The pairing-window editor: a length in milliseconds, with the device's own rule stated — a
+/// write OPENS the window for that long and 0 closes it. The device refuses a non-zero value while
+/// its radio is off and anything above `INT32_MAX` ms, so both are checked here before the write.
+class _WindowDialog extends StatefulWidget {
+  const _WindowDialog({
+    required this.currentMs,
+    required this.enabled,
+    required this.overUsb,
+  });
+
+  /// The countdown the device reported when the dialog opened, offered as the starting value.
+  final int currentMs;
+
+  /// Whether the radio is on: a non-zero window cannot open with it off.
+  final bool enabled;
+
+  /// Whether this app's link is USB. A write is refused on any other link, so the dialog says so
+  /// before a length is typed.
+  final bool overUsb;
+
+  @override
+  State<_WindowDialog> createState() => _WindowDialogState();
+}
+
+class _WindowDialogState extends State<_WindowDialog> {
+  late final _controller = TextEditingController(
+    text: widget.currentMs > 0 ? '${widget.currentMs}' : '',
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  int? get _ms => int.tryParse(_controller.text.trim());
+
+  void _preset(int ms) => setState(() => _controller.text = '$ms');
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final ms = _ms;
+    final problem = ms == null
+        ? 'enter the length in milliseconds (0 closes the window)'
+        : bleWindowProblem(ms, enabled: widget.enabled);
+    return AlertDialog(
+      title: const Text('Pairing window'),
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'While a window is open any phone may pair with the device. A bonded phone '
+              'connects at any time, window or not.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: Spacing.sm),
+            Text(
+              'The write opens the window for the number of milliseconds you enter; 0 closes it '
+              'now.',
+              style: theme.textTheme.bodySmall,
+            ),
+            if (!widget.overUsb) ...[
+              const SizedBox(height: Spacing.md),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.usb, size: IconSize.sm, color: kWarning),
+                  const SizedBox(width: Spacing.sm),
+                  Expanded(
+                    child: Text(
+                      'This app is connected over Bluetooth: the device will refuse the write. '
+                      'Connect over USB to open a window.',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: Spacing.lg),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Milliseconds',
+                suffixText: 'ms',
+              ),
+            ),
+            const SizedBox(height: Spacing.sm),
+            Wrap(
+              spacing: Spacing.sm,
+              children: [
+                ActionChip(
+                  label: const Text('30 s'),
+                  onPressed: () => _preset(30000),
+                ),
+                ActionChip(
+                  label: const Text('1 min'),
+                  onPressed: () => _preset(60000),
+                ),
+                ActionChip(
+                  label: const Text('5 min'),
+                  onPressed: () => _preset(300000),
+                ),
+              ],
+            ),
+            if (problem != null) ...[
+              const SizedBox(height: Spacing.sm),
+              Text(
+                problem,
+                style: theme.textTheme.bodySmall?.copyWith(color: kWarning),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: problem == null && ms != null
+              ? () => Navigator.pop(context, ms)
+              : null,
+          child: const Text('Set window'),
+        ),
+      ],
+    );
+  }
+}
+
+/// The label editor for one bond. The label is the app's own — the NimBLE bond store keeps no peer
+/// name (`BleBondLabelStore.h`) — so the copy says what it is for rather than implying the phone
+/// reports it.
+class _BondNameDialog extends StatefulWidget {
+  const _BondNameDialog({required this.current});
+
+  final String current;
+
+  @override
+  State<_BondNameDialog> createState() => _BondNameDialogState();
+}
+
+class _BondNameDialogState extends State<_BondNameDialog> {
+  late final _controller = TextEditingController(text: widget.current);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Bond label'),
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'A name for this phone, kept on the device beside its address so two bonded phones '
+              'can be told apart. The phone never sends one. Leave it empty to remove the label.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: Spacing.lg),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              maxLength: bleBondNameLength,
+              decoration: const InputDecoration(hintText: 'Phone name'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _controller.text.trim()),
+          child: const Text('Set label'),
+        ),
       ],
     );
   }
