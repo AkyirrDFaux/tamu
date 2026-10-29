@@ -61,6 +61,11 @@ void main() {
         ConnectEnd.cancelled,
         reason: 'the panel is left idle with one plain line',
       );
+      expect(
+        manager.autoConnectHeldOffUntil,
+        isNotNull,
+        reason: 'the refresh timer must not restart what the user just abandoned',
+      );
 
       // The platform may still finish its connect afterwards; the abandoned attempt must not
       // progress into a session when it does.
@@ -96,6 +101,20 @@ void main() {
         transport.closeCount,
         1,
         reason: 'the timeout drops the pending connect too',
+      );
+    });
+
+    test('the timeout holds autoconnect off, the same as Cancel', () async {
+      final manager = ConnectionManager.forTest()
+        ..connectTimeout = const Duration(milliseconds: 20);
+      manager.transportFactory = (_) => _FakeTransport();
+
+      expect(await manager.connectTo(bleLink), connectNoAnswerMessage);
+      expect(
+        manager.autoConnectHeldOffUntil,
+        isNotNull,
+        reason: 'otherwise the 1 s refresh restarts the attempt the deadline just ended, '
+            'so a device that is off is retried and re-reported forever',
       );
     });
 
@@ -223,6 +242,137 @@ void main() {
       expect(row, findsNothing);
       expect(find.text(connectNoAnswerMessage), findsOneWidget);
       expect(transport.closeCount, 1);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('a second cancel leaves a line of its own', (tester) async {
+      final manager = ConnectionManager.forTest();
+      final transport = _FakeTransport();
+      manager.transportFactory = (_) => transport;
+      tester.view.physicalSize = const Size(900, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildTheme(),
+          home: ConnectionPage(manager: manager),
+        ),
+      );
+      await tester.pump();
+
+      // First attempt, cancelled by hand.
+      unawaited(manager.connectTo(bleLink));
+      await tester.pump();
+      await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(connectCancelledMessage), findsOneWidget);
+
+      // That line has had its time on screen.
+      tester
+          .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
+          .removeCurrentSnackBar();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text(connectCancelledMessage), findsNothing);
+
+      // The next attempt says the same thing, and must still be able to say it: the cancel
+      // notice is a `const` expression, so Dart hands the page the very same object twice.
+      unawaited(manager.connectTo(bleLink));
+      await tester.pump();
+      expect(find.widgetWithText(TextButton, 'Cancel'), findsOneWidget);
+      await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text(connectCancelledMessage), findsOneWidget);
+      expect(
+        transport.closeCount,
+        2,
+        reason: 'each cancel drops the link it was waiting on',
+      );
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('a second timeout leaves a line of its own', (tester) async {
+      final manager = ConnectionManager.forTest()
+        ..connectTimeout = const Duration(milliseconds: 50);
+      final transport = _FakeTransport();
+      manager.transportFactory = (_) => transport;
+      tester.view.physicalSize = const Size(900, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildTheme(),
+          home: ConnectionPage(manager: manager),
+        ),
+      );
+      await tester.pump();
+
+      unawaited(manager.connectTo(bleLink));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(connectNoAnswerMessage), findsOneWidget);
+
+      tester
+          .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
+          .removeCurrentSnackBar();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text(connectNoAnswerMessage), findsNothing);
+
+      // Same shape, second time: the timeout notice is `const` as well.
+      unawaited(manager.connectTo(bleLink));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text(connectNoAnswerMessage), findsOneWidget);
+      expect(transport.closeCount, 2);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('a failed Bluetooth connect reaches the stale-bond guidance', (
+      tester,
+    ) async {
+      // The shape the firmware's refusal takes on a phone that still holds a bond the device
+      // dropped: the platform's own words say the pairing/encryption failed.
+      final manager = ConnectionManager.forTest()..seedLinkForTest(bleLink);
+      manager.transportFactory = (_) => _FakeTransport(
+        failure: 'GATT_INSUFFICIENT_AUTHENTICATION (status 5)',
+      );
+      tester.view.physicalSize = const Size(900, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildTheme(),
+          home: ConnectionPage(manager: manager),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('Tamu core'));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // The fast read is the one line...
+      expect(find.text(connectPairingWindowMessage), findsOneWidget);
+      // ...and the guidance behind it is the copy that names the phone-side fix, which the
+      // one-liner does not carry: a phone that still holds the old bond must forget it, or
+      // opening a pairing window alone does not get it back in.
+      expect(
+        find.text('This phone is no longer paired with the device'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Bluetooth settings'), findsWidgets);
 
       await tester.pumpWidget(const SizedBox());
     });

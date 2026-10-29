@@ -53,6 +53,13 @@ const String connectCancelledMessage = 'Connection cancelled';
 const String connectPairingWindowMessage =
     'The device only accepts paired phones (open a pairing window from USB)';
 
+/// How long autoconnect stays quiet after an attempt was abandoned.
+///
+/// A manual disconnect holds autoconnect off for this long (Docs/App/Settings.md: the user stays
+/// disconnected), and so does an abandoned attempt: without it the 1 s refresh restarts a connect
+/// nobody is waiting for - a device that is off would be re-attempted, and re-reported, forever.
+const Duration abandonedConnectQuietFor = Duration(seconds: 30);
+
 /// How a connect attempt ended when it produced no session.
 enum ConnectEnd {
   /// The user pressed Cancel: the attempt was abandoned, not merely hidden.
@@ -244,6 +251,17 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
   Timer? _autoTimer;
   Timer? _autoConnectRetry;
   DateTime? _autoConnectSuppressedUntil;
+
+  /// Until when autoconnect is held off, or null when it is free to run.
+  ///
+  /// Written by a manual disconnect and by an abandoned attempt (Cancel or the deadline), so that
+  /// neither is undone by the refresh timer; null once the window has passed.
+  DateTime? get autoConnectHeldOffUntil {
+    final until = _autoConnectSuppressedUntil;
+    if (until == null || !DateTime.now().isBefore(until)) return null;
+    return until;
+  }
+
   bool _bleScanActive = false;
 
   /// BLE scan entries older than this are pruned: the scan backend only reports a
@@ -316,6 +334,9 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
         );
       }
     }
+    for (final l in _seededLinks) {
+      addIfActive(l);
+    }
     switch (sort) {
       case DeviceSort.signal:
         links.sort((a, b) => (b.rssi ?? -999).compareTo(a.rssi ?? -999));
@@ -333,6 +354,18 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
   DiscoveredLink? _activeLink;
   _ConnectAttempt? _attempt;
   bool _disposed = false;
+
+  /// Links a test planted, listed as if a scan had seen them.
+  final List<DiscoveredLink> _seededLinks = [];
+
+  /// Plants a link the panel lists like a scanned one, so a test can tap a real device row and
+  /// drive the real connect path without a radio.
+  @visibleForTesting
+  void seedLinkForTest(DiscoveredLink link) {
+    _seededLinks.add(link);
+    _invalidateLinks();
+    notifyListeners();
+  }
 
   String? get connectedName => _transport?.displayName;
   @override
@@ -411,10 +444,10 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
       _autoConnectRetry = null;
       return;
     }
-    // After a manual disconnect, leave the device alone for a while; resume
-    // autoconnect once the window expires.
-    final suppressed = _autoConnectSuppressedUntil;
-    if (suppressed != null && DateTime.now().isBefore(suppressed)) {
+    // After a manual disconnect, or an attempt that was abandoned, leave the device alone for a
+    // while; resume autoconnect once the window expires.
+    final suppressed = autoConnectHeldOffUntil;
+    if (suppressed != null) {
       final remaining = suppressed.difference(DateTime.now());
       _autoConnectRetry?.cancel();
       _autoConnectRetry = Timer(remaining, () {
@@ -642,7 +675,7 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
       attempt.deadline = Timer(connectTimeout, () {
         // Nothing answered within the deadline: abandon the wait AND drop the platform's work,
         // so the panel cannot be left waiting on a connect nobody is listening to any more.
-        _abandonAttempt(attempt, timedOut: true);
+        unawaited(_abandonAttempt(attempt, timedOut: true));
       });
       await Future.any<void>([
         transport.connect(),
@@ -710,21 +743,26 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
       'link',
       'connect cancelled by the user: ${attempt.link.name}',
     );
-    _autoConnectSuppressedUntil = DateTime.now().add(
-      const Duration(seconds: 30),
-    );
-    _abandonAttempt(attempt, timedOut: false);
-    await stopScan();
+    await _abandonAttempt(attempt, timedOut: false);
     return true;
   }
 
   /// Tells the attempt to stop waiting and drops the work behind it. Idempotent: cancel, the
   /// deadline and a late platform answer can all reach the same attempt.
-  void _abandonAttempt(_ConnectAttempt attempt, {required bool timedOut}) {
+  ///
+  /// Both exits tear down the same way, the deadline included. A timeout that only stopped the
+  /// wait would leave the refresh timer free to restart the attempt a second later, so a device
+  /// that is off would be retried - and reported - forever behind a panel that never settles.
+  Future<void> _abandonAttempt(
+    _ConnectAttempt attempt, {
+    required bool timedOut,
+  }) async {
     if (attempt.isAbandoned) return;
     attempt.abandon(timedOut: timedOut);
     attempt.deadline?.cancel();
+    _autoConnectSuppressedUntil = DateTime.now().add(abandonedConnectQuietFor);
     unawaited(attempt.closeTransport());
+    await stopScan();
   }
 
   Future<void> _attach(Transport transport) async {
@@ -771,7 +809,7 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
     // the user stays disconnected (Docs/App/Settings.md).
     if (manual) {
       _autoConnectSuppressedUntil = DateTime.now().add(
-        const Duration(seconds: 30),
+        abandonedConnectQuietFor,
       );
     }
     await _detach();

@@ -43,8 +43,8 @@ class _ConnectionPageState extends State<ConnectionPage>
   /// The link loss this page has already explained, so one drop is not explained twice.
   LinkTrouble? _explainedTrouble;
 
-  /// The attempt outcome this page has already shown, so one failure is not shown twice (the
-  /// manager keeps the notice for whoever asks, this page asks once).
+  /// The attempt outcome this page has already shown, so one attempt's line is not repeated by
+  /// the manager's later notifications (it keeps the notice until the next attempt starts).
   ConnectNotice? _shownNotice;
 
   @override
@@ -82,7 +82,15 @@ class _ConnectionPageState extends State<ConnectionPage>
 
   void _showConnectNotice() {
     final notice = _manager.lastConnectNotice;
-    if (notice == null || identical(notice, _shownNotice)) return;
+    if (notice == null) {
+      // A new attempt clears the manager's notice, and this page forgets what it showed so the
+      // new attempt's line is its own. Without this reset, identity alone would swallow a repeat:
+      // the cancel and timeout notices are `const` expressions and Dart canonicalises those, so
+      // two cancels in a row hand the page the very same object (and the second line never shows).
+      _shownNotice = null;
+      return;
+    }
+    if (identical(notice, _shownNotice)) return;
     _shownNotice = notice;
     if (!mounted) return;
     showSnack(context, notice.message);
@@ -422,10 +430,22 @@ class _ConnectionPageState extends State<ConnectionPage>
         final error = await _manager.connectTo(link);
         if (!context.mounted) return;
         // How the attempt ended - cancelled, timed out, refused - is the manager's
-        // ConnectNotice, shown once by _showConnectNotice. Only a refusal that never became an
-        // attempt (already connected/connecting, USB on a phone) has no notice to show.
-        if (error != null && _manager.lastConnectNotice == null) {
-          showSnack(context, error);
+        // ConnectNotice, shown once by _showConnectNotice.
+        final notice = _manager.lastConnectNotice;
+        if (notice == null) {
+          // Only a refusal that never became an attempt (already connected/connecting, USB on a
+          // phone) has no notice behind it; the returned line is all there is to show.
+          if (error != null) showSnack(context, error);
+          return;
+        }
+        // A Bluetooth attempt that failed on its own was answered - by the device turning this
+        // phone away, or by a platform error the app cannot place - and that is the stale-bond
+        // case `bleLinkGuidance` exists for. The one-line notice above is the fast read; the
+        // guidance is the fix, because it is the copy that names the phone-side "Forget this
+        // device" step, without which a phone holding a bond the device dropped stays refused.
+        // Cancel and the deadline have no platform detail, so they open nothing.
+        if (notice.isBle && notice.detail != null) {
+          unawaited(_explainBleFailure(notice.detail, false));
           return;
         }
         if (error == null) {
