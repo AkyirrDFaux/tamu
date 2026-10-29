@@ -925,21 +925,40 @@ instead of an expression inside a header the host cannot link:
   predicate asked with all three inputs, the guard before `vsnprintf`/`ESP_LOGI`, still exactly one
   sink). RED on HEAD's headers - six FAIL lines, the first naming the presence gate - and GREEN after.
 - Cost, clean builds of both envs: core flash 685,482 -> 685,630 B (+148 B), static RAM unchanged at
-  77,876 B, version 26.10.28.46 -> .48. DAS **0 B**: identical size lines (flash 13,440/14,336 = 93.8 %,
-  RAM 2,048/2,048 = 100.0 %) and, with the version iteration pinned to the control's `.20`, a
-  byte-identical image (`cmp` silent, sha256 `fa139a11...`); with the real stamp (`.21`, minted because
-  the new header sits under `src/Core`) exactly one byte differs, the version immediate at 0xEAA.
+  77,876 B, version 26.10.28.46 -> **.49** (`version.json` and the build log agree; an earlier version of
+  this entry said `.48`, which is not the stamped image). DAS **0 B**: identical size lines (flash
+  13,440/14,336 = 93.8 %, RAM 2,048/2,048 = 100.0 %) and, with the version iteration pinned to the
+  control's `.20`, a byte-identical image (`cmp` silent, sha256 `fa139a11...`); with the real stamp
+  (`.21`, minted because the new header sits under `src/Core`) exactly one byte differs, the version
+  immediate at 0xEAA.
 - **The rig half is NOT measured: the device runs 2026.10.28 iteration 46** (read-only System field 0;
-  the fix is .48) and this card carried no authorisation to flash. What could be measured read-only, on
-  the pre-fix image, with the core up 27 min (System field 3 = 1,647,235 ms, so nothing reset it): the
+  the fix is **.49**) and this card carried no authorisation to flash. What could be measured read-only,
+  on the pre-fix image, with the core up 27 min (System field 3 = 1,647,235 ms, so nothing reset it): the
   port opened and held for 30 s with the cable attached ->
   `seconds: 30.1  bytes: 0  lines: 0` (`.pio/probe/console_e67.py`, which does NOT touch the modem
   lines - `logcat.py` sets DTR/RTS and reboots the core). Recipe once authorised: write
   `.pio/build/Tamu_v2_0A/firmware.bin` at 0x70000 with a `read_flash`/`cmp` read-back, then
-  `firmware/.pio/probe/console_e67.py --seconds 130 --out ...` with the app/host connected but idle and
-  one protocol read (`dev_version.py`) inside the capture; the acceptance is >= 20 runtime lines with
-  `[ms]` uptime stamps including one emitted after the read started. Length matters: the cheapest
-  guaranteed lines are the BLE tick's, and the idle rebuild one is at ~120 s.
+  `firmware/.pio/probe/console_e67.py --seconds N --out ...` with the host holding the port and sending
+  no app frames.
+- **How many lines a capture can hold, and why this entry's first recipe could not reach its own bar
+  (corrected 2026-10-28).** The tree has 136 `DeviceLog()` call sites under `src/`, and at rest only one
+  PAIR is timer-driven: `AppBLE.h:1234` (`no BLE session for 120 s, forcing adv rebuild`) plus the
+  `adv restart: ...` line `StartAppAdvertising()` emits behind it at `:950` (the 3 s `advertising down
+  %u ms, rebuilding` loop at `:1228` only runs while the advertising is already down). Everything else
+  waits for an event. So with a host holding the port, sending nothing, and no BLE session either, the
+  rate is **2 lines per 120 s**: ">= 20 runtime lines" needs **~20 minutes** of that state, and the
+  130 s capture the first recipe proposed yields ~2. The rig card (t_0f5c04b6) now states the length
+  instead of the old 130 s.
+- **That floor is what SILENCE yields, not what the console can carry** - measured on the same image,
+  E70: a 10 s capture taken while a probe wrote one field, `.pio/probe/cap_enabled_off.log`, recorded
+  **76 lines**, every one `DISP` (`local interest IdTgt=39937 IdSrc=39938/39939 ...`, ~7.6 per second -
+  frames carrying OTHER device ids, so not the probe's own writes), and not one `BLESEC`/`APPBLE` line,
+  because those were triggered by a write and the write is the frame that silences them. Anything that
+  happens while the USB link is quiet comes through, including traffic over the air or on the RS-485
+  bus. A short capture therefore honestly shows: no boot banner in it (nothing resets the core), plus
+  whatever the last <= 500 ms of silence carried - for a rig session **>= 1 `[ms]`-stamped runtime line
+  emitted after the read started**, and 20 of them are free if the capture spans a reset (boot lines)
+  or BLE/bus traffic. Fudging the count is not an option: the rig card blocks with the figure it saw.
 
 **Verified:** both envs build (`pio run -e Tamu_v2_0A -e DAS_v0_1`, size lines above) and the native
 suite (`firmware/test/native/run.sh`) is green with the ring test gone; `log_store.py` is the probe behind
