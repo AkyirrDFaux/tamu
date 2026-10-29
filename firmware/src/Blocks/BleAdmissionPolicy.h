@@ -23,6 +23,10 @@
 // bonding switch is ever lost (a stack change, a stale store, a peer that pairs before the flag is
 // set) the session gate still refuses the link instead of admitting a stranger.
 //
+// E73 added the other half of the same decision: the question is asked at CONNECT as well, so a
+// peer that could never be admitted is refused before its security procedure starts
+// (`BleConnectRefused` at the bottom of this header).
+//
 // Host-clean on purpose (no NimBLE, no ESP-IDF): test/native/ble_admission_test.cpp drives the
 // same decisions the radio code makes.
 
@@ -92,4 +96,31 @@ inline bool BleSessionAllowed(bool WindowOpen, int BondsBefore, bool PeerWasBond
     if (BondsBefore == 0)
         return true;
     return PeerWasBonded;
+}
+
+// The same question, asked where the link is ESTABLISHED rather than where it is admitted
+// (Issues.md E73). WHERE it is asked decides what the peer sees, not only whether it gets in:
+//
+//  - asked only in `onAuthenticationComplete`, a phone that can never be admitted is still walked
+//    through a pairing - the stack sends a Security Request at connect, the OS raises its pairing
+//    dialog, the pairing completes without a bond (bonding is closed outside a window) and the link
+//    is then dropped. The outcome is right and the presentation is wrong: the user is taught that
+//    this device pairs, spends a pairing attempt, and sees a failure at the end of a dialog that
+//    should never have opened.
+//  - asked at CONNECT, the link is terminated in the connection-complete callback, before
+//    `ble_gap_security_initiate()` and before any SMP exchange. The central's pairing UI has
+//    nothing to react to, so the OS reports a connection failure rather than a pairing failure.
+//
+// Nothing is lost by refusing early, because the answer cannot be a false "no": a session needs the
+// peer to encrypt with a stored LTK, `ble_sm_retrieve_ltk` looks that LTK up by the peer's IDENTITY
+// address, so a link whose identity is not in the store has nothing to authenticate with - the
+// security procedure could only have failed or produced a bond this policy refuses to keep.
+//
+// The same function, deliberately: the connect-time refusal and the session gate cannot disagree,
+// and a peer that passes the first can never be refused by the second for a reason the first could
+// have seen. What differs is only WHEN it is asked - a window that opens while a refused link is
+// still tearing down does not retroactively admit it; the next connect is judged again.
+inline bool BleConnectRefused(bool WindowOpen, int BondsBefore, bool PeerWasBonded)
+{
+    return !BleSessionAllowed(WindowOpen, BondsBefore, PeerWasBonded);
 }

@@ -63,6 +63,10 @@ static uint32_t BleSecureDeadlineMs = 0;      // 0 = no unsecured link pending
 static uint32_t BleSecureBudgetUsedMs = 0;    // the budget the pending link was granted (for the log)
 static bool BleSecureLinkMitm = false;        // ... and whether it was granted the passkey budget
 static uint16_t BleConnHandle = 0xFFFF;
+// When the current link came up (uptime ms, taken in onConnect). The connect-time refusal is only
+// "immediate" if it can be measured, so onDisconnect logs the link's whole lifetime: a refused link
+// reads a few milliseconds, a session reads as long as the app was connected (Issues.md E73).
+static uint32_t BleLinkUpMs = 0;
 static bool BleAdvStateApplied = false;       // the advertisement matches BleAdvWanted()
 // The bond store as it was when the current link came up, and whether the peer that finished the
 // security procedure is one of those bonds. The session gate asks the second question (E66;
@@ -197,9 +201,9 @@ struct BleRxAssembler
 // list is matched against the address the peer uses on the air, and a phone under LE privacy
 // connects from a rotating private address (RPA) that this controller resolves for the connection
 // but not for the filter - so the filter dropped the peer it existed to admit. The cost of dropping
-// it is that a stranger's CONNECT_REQ is answered before the link is refused at the security
-// procedure instead of being ignored by the controller. See the advertising rule below and
-// Issues.md E66.
+// it is that a stranger's CONNECT_REQ is answered before the link is torn down; since E73 the
+// teardown happens in onConnect, before any security procedure, so the stranger's OS never gets as
+// far as a pairing prompt. See the advertising rule below, Issues.md E66 and E73.
 // A radio that the block has disabled advertises nothing at all.
 
 int AppBLEBondCount(); // defined with the bond read-out below
@@ -618,6 +622,10 @@ class BleServerCallbacks : public NimBLEServerCallbacks
     // refuse every read and write at the ATT layer.
     void onConnect(NimBLEServer *PServer, NimBLEConnInfo &ConnInfo) override
     {
+        // Every link's lifetime is measured from here (onDisconnect logs the delta): a refusal that
+        // lands in this callback has to read as milliseconds, and a session reads as its duration.
+        BleLinkUpMs = TimeFromBoot();
+
         // One live connection at a time. The Tamu protocol has a single receive stream and one
         // session state, so a second peer would interleave with the first app's traffic rather
         // than get its own session. The controller allows three connections
@@ -654,17 +662,31 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         }
 
         // Who may HOLD a link is decided by a bond the peer can prove, not by the address it
-        // arrives on: with a bond stored and no window open, only a peer that already had a key can
-        // come up encrypted AND bonded (E66, Blocks/BleAdmissionPolicy.h). A peer that arrives from
-        // a PUBLIC address has no private address in the way, so the store can be asked here and a
-        // stranger is refused now rather than after a pairing attempt. A private one may be the
-        // owner behind an address this device cannot resolve for the filter (E66), so that case is
-        // left to the security procedure and judged in onAuthenticationComplete.
-        if (!AppBLEWindowOpen() && AppBLEBondCount() > 0 &&
-            !BlePeerWasBonded(ConnInfo.getIdAddress()) &&
-            (ConnInfo.getIdAddress().getType() & 0x01) == 0)
+        // arrives on (E66, Blocks/BleAdmissionPolicy.h) - and that question is answered HERE, at the
+        // link, before the security procedure (Issues.md E73). With a bond stored and no window, a
+        // peer whose identity is not one of those bonds can never become a session: the session gate
+        // in onAuthenticationComplete would ask the same question and say no, and the security
+        // procedure could only have failed, because the LTK lookup goes by identity address
+        // (`ble_sm_retrieve_ltk`). Asking it now means the peer's security procedure never starts, so
+        // its OS has no pairing dialog to raise: it reports a connection failure instead of a
+        // pairing that appears to work and then fails.
+        //
+        // The address TYPE is deliberately not consulted. An earlier shape refused only peers on a
+        // PUBLIC identity and let a private one through to the pairing exchange (E66's caution about
+        // the controller's filter) - which is exactly the case a phone under LE privacy arrives in,
+        // and where the pairing dialog the owner saw came from. The host does not need to resolve
+        // anything here: when the controller resolves the peer's RPA, the connection-complete event
+        // carries the IDENTITY address (types 2/3, normalised to 0/1 by `ble_hs_conn_addrs`) and
+        // `BlePeerWasBonded` matches it against the store; when it does not resolve, the link is a
+        // stranger's by definition and could not have authenticated anyway.
+        if (BleConnectRefused(AppBLEWindowOpen(), BleLinkBondCount,
+                              BlePeerWasBonded(ConnInfo.getIdAddress())))
         {
-            DeviceLog("APPBLE", "refused a stranger at %s: the pairing window is closed",
+            // The line names the peer both ways (the identity the gate compared, the address it
+            // came in on) and the reason, because "not bonded" and "window closed" are the two
+            // inputs a rig session cannot read back anywhere else (the block has no link record).
+            DeviceLog("APPBLE", "refused %s (identity %s): not bonded, window closed - no pairing started",
+                      ConnInfo.getAddress().toString().c_str(),
                       ConnInfo.getIdAddress().toString().c_str());
             PServer->disconnect(ConnInfo.getConnHandle());
             return;
@@ -710,6 +732,11 @@ class BleServerCallbacks : public NimBLEServerCallbacks
 
     void onDisconnect(NimBLEServer *PServer, NimBLEConnInfo &ConnInfo, int Reason) override
     {
+        // How long the link lived, from the connection-complete event to here. This is the timing
+        // the connect-time refusal (Issues.md E73) is judged by: a refused link is a few
+        // milliseconds old, a session as long as the app held it.
+        DeviceLog("APPBLE", "link down after %u ms (secured=%u reason=0x%02x)",
+                  (unsigned)(TimeFromBoot() - BleLinkUpMs), (unsigned)BleSecured, (unsigned)Reason);
         BleConnected = false;
         BleSecured = false;
         BleConnHandle = 0xFFFF;
@@ -920,12 +947,14 @@ static bool BleAdvWanted()
 // admit (`adv_filter_policy=2` with `entry-0={addr_type=0 addr=4c:23:38:74:e6:f6}` on the air,
 // Issues.md E66). Nothing sets an advertising filter policy any more, and the bond store is no
 // longer mirrored into the controller's white list: the admission question is answered by the
-// session gate instead (BleSessionAllowed in onAuthenticationComplete).
+// connect gate (BleConnectRefused in onConnect) with the session gate behind it (BleSessionAllowed
+// in onAuthenticationComplete).
 //
-// The trade-off, stated rather than hidden: a stranger's CONNECT_REQ is now answered, and the link
-// is refused a moment later when it cannot prove a bond. The advertisement and its scan response
-// were already unfiltered, so nothing new is visible; what is lost is that the controller no longer
-// drops the request in the link layer.
+// The trade-off, stated rather than hidden: a stranger's CONNECT_REQ is answered, and the link is
+// torn down in onConnect within a few milliseconds - before its security procedure, so no pairing
+// dialog is raised (E73; the refused link's own lifetime is logged by onDisconnect). The
+// advertisement and its scan response were already unfiltered, so nothing new is visible; what is
+// lost is that the controller no longer drops the request in the link layer.
 
 // Rebuilds and starts the advertisement from scratch. Used for the initial
 // start AND every post-session restart: restarting the previous instance can

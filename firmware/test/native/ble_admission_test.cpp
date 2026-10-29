@@ -19,6 +19,10 @@
 //     table below is the whole rule, including the property that makes it safe: wherever a new
 //     bond cannot be made, a peer that was not bonded before cannot be admitted.
 //
+//  4. The same rule is asked at CONNECT (E73, `BleConnectRefused`), so a peer that could never be
+//     admitted is refused before its security procedure starts and its OS never raises a pairing
+//     dialog it cannot complete. The pairing is never even attempted.
+//
 // No device dependency: built like align/stride (see run.sh).
 
 #include <cstdio>
@@ -133,6 +137,47 @@ static void TestStrangerCannotBeAdmittedWhereBondingIsClosed()
     }
 }
 
+// The connect-time half of the same decision (E73). Where the rule is asked decides what the peer
+// sees: asking it only after the security procedure lets a phone raise its pairing dialog and then
+// fail, which teaches the user the wrong thing. The rows below are the owner's three cases, and the
+// last block pins that the two askers cannot disagree - the connect gate IS the session gate.
+static void TestConnectRefused()
+{
+    // (a) no window, the store holds a bond, the peer is not one of them: refused at the link, so
+    // no security procedure starts and the OS has no pairing prompt to show.
+    CHECK(BleConnectRefused(false, 1, false));
+    CHECK(BleConnectRefused(false, 2, false));
+    CHECK(BleConnectRefused(false, 3, false));
+
+    // (c) bonded, no window: admitted, connects with no prompt.
+    CHECK(!BleConnectRefused(false, 1, true));
+    CHECK(!BleConnectRefused(false, 3, true));
+
+    // (b) a window is open: a new phone pairs normally, bonded or not.
+    CHECK(!BleConnectRefused(true, 0, false));
+    CHECK(!BleConnectRefused(true, 1, false));
+    CHECK(!BleConnectRefused(true, 3, true));
+
+    // An empty store is the first-bond path and is never refused, window or not (E64).
+    CHECK(!BleConnectRefused(false, 0, false));
+
+    // The two askers are one rule: over the whole table, a link refused at connect is exactly a link
+    // the session gate would refuse. If these ever diverge, a peer can be walked through a pairing
+    // for an answer the device already had.
+    for (int WindowOpen = 0; WindowOpen <= 1; WindowOpen++)
+    {
+        for (int Bonds = 0; Bonds <= 3; Bonds++)
+        {
+            for (int Bonded = 0; Bonded <= 1; Bonded++)
+            {
+                CHECK(BleConnectRefused(WindowOpen, Bonds, Bonded != 0) ==
+                      !BleSessionAllowed(WindowOpen, Bonds, Bonded != 0));
+            }
+        }
+    }
+}
+
+
 // The controller's vocabulary: types 2/3 are IDENTITY addresses, which is what the
 // connection-complete event carries when the controller resolved a peer's RPA; 0/1 is the address as
 // it came off the air (public / random, an unresolved RPA included). This test pins the ADDRESS-PAIR
@@ -168,6 +213,7 @@ int main()
     TestCameInResolved();
     TestBondingAllowed();
     TestSessionAllowed();
+    TestConnectRefused();
     TestStrangerCannotBeAdmittedWhereBondingIsClosed();
 
     printf("ble admission: %d checks passed", checks - failures);

@@ -343,6 +343,8 @@ echo
 #     stranger cannot pair outside a window and come back bonded;
 #   - the session gate refuses a link that is encrypted and bonded but is NOT one of the bonds from
 #     before the link (BleSessionAllowed), and forgets the bond such a link made;
+#   - the SAME question is asked at the link, before the security procedure (BleConnectRefused, E73),
+#     so a peer that could never be admitted never starts a pairing - no OS dialog, no wasted attempt;
 #   - the advertisement is rebuilt when it has to start and only dropped when the radio is off.
 echo "### source guard: advertising runs whenever no device is connected - window, bonds or none (E64 C/E66)"
 adv_guard_fail=0
@@ -381,6 +383,27 @@ init_line=$(printf '%s\n' "$connect_body" | grep -n 'ble_gap_security_initiate' 
 if [ -z "$snapshot_line" ] || [ -z "$bonding_line" ] || [ -z "$init_line" ] ||
    [ "$snapshot_line" -ge "$bonding_line" ] || [ "$bonding_line" -ge "$init_line" ]; then
     echo "FAIL $APPBLE_SRC: the snapshot must be taken first, then the bonding rule, then security"
+    adv_guard_fail=1
+fi
+
+# E73: the same rule is asked at the LINK, before the security procedure. Asking it only in
+# onAuthenticationComplete lets a phone that can never be admitted be walked through a pairing - the
+# stack sends a Security Request, the OS raises its pairing dialog, the pairing completes without a
+# bond and the link is dropped at the end, which is what the owner saw from his phone. The gate is
+# BleConnectRefused (host-tested above) and it must come BEFORE ble_gap_security_initiate.
+refuse_line=$(printf '%s\n' "$connect_body" | grep -n 'if (BleConnectRefused(' | head -1 | cut -d: -f1)
+if [ -z "$refuse_line" ]; then
+    echo "FAIL $APPBLE_SRC: onConnect must refuse an inadmissible peer at the link (BleConnectRefused, E73)"
+    adv_guard_fail=1
+elif [ -z "$init_line" ] || [ "$refuse_line" -ge "$init_line" ]; then
+    echo "FAIL $APPBLE_SRC: the connect-time refusal must come BEFORE ble_gap_security_initiate - otherwise the peer is shown a pairing prompt it cannot complete (E73)"
+    adv_guard_fail=1
+fi
+# ... and it must not be narrowed by address type again: a phone under LE privacy connects from a
+# private address, which is exactly the case the owner saw the pairing dialog in. The identity the
+# controller resolved is what the store is asked about (BlePeerWasBonded).
+if printf '%s\n' "$connect_body" | grep -q 'getType() & 0x01'; then
+    echo "FAIL $APPBLE_SRC: the connect-time refusal is narrowed by address type again - an LE-privacy peer then reaches the pairing exchange (E73)"
     adv_guard_fail=1
 fi
 

@@ -1252,3 +1252,120 @@ non-number at all; Text fields (`Passkey`, `Display name`) still carry the liter
 against the device after the change: `write 5 0`, `write 5 1` and the `write 6 1` control all print
 `OK [flags=0x0E ...]` with the echoes above. Lesson for any future probe: a trigger field's argument is
 its wire encoding, and `b'\x01'` (1 byte) is not `b'1'` (ASCII 0x31).
+
+**E73 An unbonded peer was walked through a pairing before being refused - the outcome was right and
+the presentation was wrong (owner, 2026-10-29).** From the owner's phone: *"The blocking works - you
+can't connect when the window is closed or you aren't paired, but it seemingly let me pair even when
+the pairing window wasn't open (it didn't actually pair, but it looked like it through the OS)."* So
+the device refused the session and the phone still raised its pairing dialog, spent an attempt and
+then reported a failure.
+**His own words pin the state:** "it didn't actually pair" means the device refused at
+`onAuthenticationComplete` (`enc=1 bonded=0`, bonding closed), and bonding is closed only when the
+store holds a bond AND no window is open (`BleBondingAllowed`) - so the store was non-empty and the
+peer was not one of its bonds. That is exactly the case this entry fixes; the empty-store/first-bond
+path (E64) is a different state and still pairs, deliberately.
+**Cause: the connect-time refusal was narrowed to one address type.** `onConnect` had:
+```c
+if (!AppBLEWindowOpen() && AppBLEBondCount() > 0 &&
+    !BlePeerWasBonded(ConnInfo.getIdAddress()) &&
+    (ConnInfo.getIdAddress().getType() & 0x01) == 0)   // public identity only
+```
+The type test came from E66's caution that the *controller's filter* cannot resolve an RPA - but it
+was applied to the *host's* bond-store lookup, where it is not needed: when the controller resolves a
+peer's RPA the connection-complete event carries the IDENTITY address (types 2/3, normalised to 0/1 by
+`ble_hs_conn_addrs`, ble_hs_conn.c:522-566) and `BlePeerWasBonded` matches it against the store. An
+unresolved private address is a stranger by definition. A phone under LE privacy therefore skipped
+the gate, reached `ble_gap_security_initiate()` in the same callback, and the pairing it could never
+finish was attempted first.
+**Why refusing early cannot lock out a phone that works today:** a session needs the peer to encrypt
+with a stored LTK, and `ble_sm_ltk_req_rx` -> `ble_sm_retrieve_ltk` looks that LTK up by (type,
+IDENTITY address) against `our_sec`. A link whose identity is not in the store has nothing to
+authenticate with, so the security procedure could only have failed. The gate asks the store the very
+question the LTK lookup asks - if a bonded phone reconnects with no window today (it does, the owner
+confirms it), its identity is what the store is matched against today, and the gate admits it.
+**Fix (firmware).** `Blocks/BleAdmissionPolicy.h` gained `BleConnectRefused(WindowOpen, BondsBefore,
+PeerWasBonded)`, defined as `!BleSessionAllowed(...)` on purpose: the connect-time refusal and the
+session gate are one rule, so they cannot disagree; only the MOMENT differs. `onConnect` asks it right
+after the bond snapshot and before `NimBLEDevice::setSecurityAuth` / `ble_gap_security_initiate()`, and
+terminates the link there:
+```
+APPBLE: refused <air> (identity <id>): not bonded, window closed - no pairing started
+```
+The address TYPE is no longer consulted anywhere in the gate. The session gate in
+`onAuthenticationComplete` stays as the backstop (a peer whose identity was in the store but whose
+pairing yields no bond - a stale bond on the phone's side - is still refused there; the device cannot
+know that peer is unbonded, and that case necessarily still attempts security).
+**The mirror case is the same refusal, not a second path.** The terminate is issued inside the
+connection-complete callback, before the peer's first ATT or SMP PDU can be processed, so a peer that
+would initiate security itself never gets the chance: there is no pairing to refuse because none
+starts. A second in-callback refusal (the second-peer and radio-disabled branches) was already shaped
+this way, which is why the fix is a gate and not a new mechanism.
+**Controller-side rejection was preferred and is not available** - restated from E66 rather than
+re-tested: the accept list is matched against the on-air address and `lld_wl_rpa_res` is referenced
+only from `hci_le_rmv_dev_from_wlst_cmd_handler`, never from the connect-request path, so a
+whitelist-only advertisement drops the bonded phone it exists to admit. What is lost by the host-side
+gate is that the controller answers the CONNECT_REQ; what is gained is that the link dies before any
+security procedure, which is the whole point of this entry.
+**Timing is now measured, not asserted.** `onConnect` stamps `BleLinkUpMs` and `onDisconnect` logs
+`APPBLE: link down after <N> ms (secured=<0|1> reason=0x..)`, so the refused path's lifetime is a
+number in the device log rather than an adjective.
+**Native + source guard.** `test/native/ble_admission_test.cpp` gained `TestConnectRefused()`: the
+owner's three cases as rows, the empty-store row, and an exhaustive 2x4x2 sweep asserting
+`BleConnectRefused(..) == !BleSessionAllowed(..)`, so the two askers cannot drift apart. The
+admission source guard in `test/native/run.sh` asserts on `AppBLE.h` that `onConnect` calls
+`BleConnectRefused(` BEFORE `ble_gap_security_initiate` and that the `getType() & 0x01` narrowing is
+gone. **The two new checks are RED on the pre-fix header** (`git show HEAD:` of `AppBLE.h` put in
+place, guard re-run):
+```
+FAIL src/Devices/Tamu_v2.0A/AppBLE.h: onConnect must refuse an inadmissible peer at the link (BleConnectRefused, E73)
+FAIL src/Devices/Tamu_v2.0A/AppBLE.h: the connect-time refusal is narrowed by address type again - an LE-privacy peer then reaches the pairing exchange (E73)
+```
+and GREEN on the fix. Whole suite: `bash test/native/run.sh` exit 0, `ble admission: 65 checks passed`.
+**Build + image.** Clean builds of both envs (`pio run -e <env> -t fullclean` first): core
+`RAM: 23.8% (used 77876 bytes from 327680 bytes)`, `Flash: 24.9% (used 686726 bytes from 2752512
+bytes)`, version `26.10.29` iteration 6; DAS `RAM: 100.0% (used 2048 bytes from 2048 bytes)`,
+`Flash: 93.8% (used 13440 bytes from 14336 bytes)`, image 13,444 B - the DAS compiles nothing of this
+change (`AppBLE.h` is core-only) and its size lines are identical to the previous build.
+**On the device (owner-authorised flashing, 2026-10-29 15:11 and 15:2x).** Two rounds, because a
+comment-only tidy after the first one re-stamped the source hash: iteration 5 was flashed and read
+back first, then the tidied tree minted iteration 6 and was flashed and read back the same way, so the
+image on the device IS the current tree's bytes. Round 2, which is what is running:
+`write_flash 0x70000` -> `Hash of data verified.`; `read_flash 0x70000 687408` -> `Read 687408
+bytes`, `cmp` silent, sha256
+`f055e7e4fbdc28f108866c09a0fa67e549c859b4d1689ab52cade55b587a9f23` on both sides; the running image
+reads back as `2026.10.29 iteration 6` (`Version=0x355D0006`), and a re-run of `pio run -e Tamu_v2_0A`
+right after compiles nothing (`grep -c Compiling` = 0), which is the proof the flashed bytes are the
+tree's. (`HEAD` moved under this card - the app's `217a27e` landed mid-run - and it changes no
+firmware input, which the zero-compile re-run shows.)
+**Case (c) measured on the rig - bonded peer, `Window 0`, connects with no prompt.** Block before the
+connect (after the flash and its reset, so the bond survived the image change):
+`Bonds` = `4C:23:38:74:E6:F6` (one entry), `Window 0`. Console capture with the connect driven from
+the same process (`.pio/probe/e73_connect_capture.py`: read-only on the tty, bleak over D-Bus, so
+there is still one reader on the port):
+```
+I (22121) APPBLE: link up: peer=4C:23:38:74:E6:F6 t=0 air=4C:23:38:74:E6:F6 t=0
+I (22191) APPBLE: link secured: enc=1 bonded=1 auth=0 bonds=1 bits=16 peer=4C:23:38:74:E6:F6 t=0 air=4C:23:38:74:E6:F6 t=0
+I (22191) APPBLE: BLE session started
+I (27571) APPBLE: link down after 5448 ms (secured=1 reason=0x213)
+```
+No `refused` line and no pairing: 70 ms from link up to secured (22121 -> 22191), the session held
+until the central disconnected (`0x213` = remote user terminated, `5,448 ms`). The same shape was
+measured on iteration 5 (160 ms up to secured, `link down after 6345 ms`). The gate does not fire on
+the bonded peer, which is the regression this fix could have caused.
+**Case (a) could not be staged on this rig, and the reason is structural.** The device log for a
+refused link needs a peer whose identity is not in the store while the store holds one: this host is
+the only controller (`bluetoothctl list` = one, `0489:e0cd`), it connects from its public address
+(`4C:23:38:74:E6:F6`, the very identity in the store), and a second or private identity is not
+available - `btmgmt privacy on` / `static-addr` answer `status 0x14` without CAP_NET_ADMIN (E66
+record), `btvirt` and the vhci node do not exist here, and the register path refuses a fabricated bond
+address by design. So the refused path's `link down after N ms` number is the owner's phone to
+produce; the device-side logic is pinned by the native table, the source guard and the (c) run above.
+**What the owner should do (phone, ~2 minutes).** Confirm `Bonds` holds a phone (the Bluetooth panel
+lists it; `bleset6.py bonds` over USB) and `Window = 0`. From a phone that is NOT in that list:
+(a) connect from the OS Bluetooth settings -> expect a failure with NO pairing dialog (Android: a
+failed connect; iOS: "Connection Unsuccessful"); the device log shows
+`refused <air> (identity <id>): not bonded, window closed - no pairing started` and
+`link down after <small N> ms`. (b) Open the window (app Bluetooth panel, or write `Window 60000` over
+USB), connect the same phone -> normal pairing dialog, `link up` then `link secured: enc=1 bonded=1`,
+and the phone appears in `Bonds`. (c) Close the window (`Window 0`), reconnect the phone that IS in
+`Bonds` -> connects with no prompt, `link secured`, no `refused` line.

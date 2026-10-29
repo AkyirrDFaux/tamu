@@ -555,6 +555,12 @@ Open:
       **Deferred to the display/rig batch.**
 - [ ] **Rig looks.** `Polygon`/`Star` after the `atan2` fix; a rounded `Square`/`Rectangle`
       (eye-only; the evaluation scene sets no `Rounding`). Needs the display rig.
+- [ ] **E73 phone acceptance is outstanding (owner).** The device refuses an unbonded peer at the
+      link now (firmware in the tree, image `26.10.29` iteration 6 flashed and verified), and case (c)
+      - bonded phone, `Window 0`, no prompt - is measured on the rig. What has not been seen from a
+      PHONE is (a) an unbonded peer outside a window getting a failure with no pairing dialog, and (b)
+      the same peer pairing normally inside a window. Recipe and expected lines are in `Issues.md`
+      E73. Case (a) is not stageable on the rig: one controller, a public address, no CAP_NET_ADMIN.
 - **BLE large-reply drain (B11, fixed 2026-10-15).** `AppInterfaceService::TxFlush` now pumps the
       BLE tick mid-stream (`TxPeek`/`TxCommit` in `AppBLETick`) when BLE is the active link, so a
       reply larger than the TX ring can complete instead of losing its tail fragments. Builds +
@@ -598,6 +604,13 @@ Open:
   1<<9` (`Node = 1<<8`).
 - **Scripts**: `SCR_XXX` (4096 file ids) but only 64 loaded slots (6-bit); the caller picks the
   slot. Boot-load prefers the identity slot.
+- **BLE admission is decided at the LINK, and the link gate IS the session gate** (`E73`,
+  2026-10-29). `BleConnectRefused` in `onConnect` is `!BleSessionAllowed`, asked before the security
+  procedure, so a peer that could never be admitted never raises a pairing dialog; the
+  `onAuthenticationComplete` gate stays as the backstop. The address TYPE is not part of the rule -
+  the peer's IDENTITY address is what the bond store (and the LTK lookup) are matched against, so a
+  phone under LE privacy is judged the same way as a peer on a public address. Exception, unchanged
+  (`E64`): an EMPTY store may still pair without a window - that is the first bond.
 - **BLE advertising** uses the `BLE Settings` `Display name`; empty means the persisted System
   `Name`, and a write re-advertises in the same pass (the field and the air cannot disagree).
 - **Bootloader**: raw frame `0xCA | control(5 pad, 1 even parity, 2 cmd) | offset u32 LE |
