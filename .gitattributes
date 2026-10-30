@@ -11,8 +11,13 @@
 *.cpp    linguist-language=C++
 *.cc     linguist-language=C++
 *.c      linguist-language=C++
-*.S      linguist-language=Assembly
-*.s      linguist-language=Assembly
+*.S      linguist-detectable=false
+*.s      linguist-detectable=false
+
+# --- Tooling is not what this repository is -----------------------------
+# Build/flash helper scripts: real, but too small to describe the project.
+*.sh     linguist-detectable=false
+*.py     linguist-detectable=false
 
 # --- Generated code is not hand-written source --------------------------
 *.g.dart                                  linguist-generated=true
