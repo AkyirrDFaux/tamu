@@ -17,6 +17,9 @@
 #   register_read_test.cpp  a row with no bytes is unreadable - a read of it fails the access
 #                     (REGISTER), it is not an empty value whose type then complains (the read-side
 #                     ValueReadable, Core/Functions/MemoryTypes.h)
+#   vysi_render_kind_test.cpp  the real Vysi1Render.h: a render part is classified by its field's
+#                     key-0 dictionary marker (kind 1 geometry / 2 texture), so a field whose marker
+#                     was created by an empty host write applies and one without a marker does not
 #   lease_test.cpp    the requester row's lifetime and install/keepalive cadence (Core/Services/
 #                     SubscriptionsLease.h): rows are never dropped on time, an unanswered install
 #                     retries at SUB_RETRY_MS, capped at 5, then the keepalive, and an answer
@@ -212,6 +215,22 @@ echo
 
 echo "### native register-read tests (a row with no bytes is unreadable, not a type mismatch)"
 build_run "registerread" "register_read_test.cpp"
+echo
+
+# t_2da784f0, renderer half: the REAL Blocks/Vysi1Render.h is compiled here (unmodified) over a real
+# DynamicBlockDescriptor, with the four device-layer symbols its headers reference but the render path
+# never calls (DeviceStatus/TxFrame/DispatchPacket/DeviceLog) stubbed. It pins the two facts the card
+# needs measured rather than read:
+#   - a field whose key-0 row was created by an EMPTY host write (a Geometry/Texture ValueInfo with
+#     Size 0, no value bytes) is classified kind 1 / kind 2 and its geometry/texture APPLY;
+#   - with those key-0 rows gone - the measured rig symptom - the fields are still listed and
+#     classified 0, the overlay is never applied and the picture shows through.
+# A block whose key-0 rows already exist must read the same in both passes (fields 0/1 keep their
+# kind), and re-sending an existing marker must change nothing (a restore is idempotent).
+# -Wno-unused-function: MemoryDynamic.h's file helpers are static and unused in a TU that only
+# drives the block model - they warn under -Werror without being reachable here.
+echo "### native Vysi render-kind tests (a created key-0 marker is classified, a missing one is not)"
+build_run "vysirender" "vysi_render_kind_test.cpp" -DUSE_DYNAMIC_BLOCKS -Wno-unused-function
 echo
 
 echo "### native BLE Settings tests (Just Works vs passkey policy, and the block table's offsets)"
