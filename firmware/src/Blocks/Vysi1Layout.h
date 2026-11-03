@@ -8,13 +8,16 @@
 #include "Blocks/Vysi1Gamma.h"
 #include "Blocks/GeometryMath.h" // GeometryParams/PrepareGeometry/ShapeAlpha
 #include "Blocks/Render.h"
+#include "Blocks/Vysi1LayoutFile.h" // layout-file decode (shared with the host tests)
 #include "Core/Functions/Memory.h"
 #include "Core/Types/Matrix.h"
 #include "Core/Types/Vector.h"
 
 #include <cstddef> // offsetof
 
-const uint8_t LayoutVysiv1_0[10 * 11]{
+// The compiled-in layout: 11x10 cells, 1-based LED indexes (0 = a cell with no LED). constexpr so
+// the capacity check below can read it at compile time.
+constexpr uint8_t LayoutVysiv1_0[10 * 11]{
     0, 0, 0, 28, 29, 48, 49, 68, 0, 0, 0,
     0, 0, 11, 27, 30, 47, 50, 67, 69, 0, 0,
     0, 10, 12, 26, 31, 46, 51, 66, 70, 82, 0,
@@ -108,7 +111,11 @@ class Vysi1Display
 {
 public:
     static const uint32_t MaxLayoutEntries = 256;
-    static const uint32_t LedNum = 86;
+    // Chain capacity: the most LEDs this board can drive, i.e. the buffers below hold indices
+    // 0…86. It is NOT "the panel's LED count" - that comes from the layout file (LedCount), so a
+    // file addressing 86 LEDs and one addressing 87 load on the same image. This constant only
+    // bounds the buffers and the loader's index check.
+    static const uint32_t LedNum = 87;
     // Maximum render "parts" (geometry/texture fields) cached per block; 12 leaves headroom
     // for richer scenes.
     static const uint32_t MaxCachedFields = 12;
@@ -131,6 +138,10 @@ public:
     // the built-in default carries the same value as the preloaded LAY_1.
     uint8_t BrightnessLimit = 178;
     ColourClass Buffer[LedNum];
+    // How many of those pixels this panel's layout actually uses: the highest LED index the loaded
+    // layout carries, + 1. The per-panel send walks `LedCount` pixels, so the count follows the
+    // layout file rather than a firmware figure (Vysi1LayoutFile::Count).
+    uint16_t LedCount = 0;
 
     // LED-centric screen coordinates (rebuilt when a layout loads). Screen y = 0 at
     // the bottom; the layout array is row-first with its first row on top.
@@ -144,7 +155,8 @@ public:
     uint8_t Mask[LedNum];
 
     // Cached per-field geometry alpha (0..255), invalidated on block/offset/layout change.
-    // ~1 KB per display (12 fields x 86 LEDs); two displays cost 2 KB of static RAM.
+    // MaxCachedFields x LedNum bytes per display (~1 KB at the 87-LED capacity); two displays cost
+    // 2 KB of static RAM.
     uint8_t GeoMask[MaxCachedFields][LedNum];
     DynamicBlockDescriptor *CacheBlockPtr = nullptr;
     uint32_t CacheBlockGen = 0xFFFFFFFF;
@@ -186,8 +198,8 @@ public:
     ColourClass LerpColour(const ColourClass &C1, const ColourClass &C2, Number Factor);
     void ShiftHue(ColourClass &Colour, Number HueDeg);
 
-    // Rebuilds the per-LED screen-coordinate table from the current layout and bumps
-    // LayoutGen (invalidates the geometry cache).
+    // Rebuilds the per-LED screen-coordinate table from the current layout, recomputes the panel's
+    // LED count and bumps LayoutGen (invalidates the geometry cache).
     void RebuildLedTable()
     {
         for (uint32_t i = 0; i < LedNum; i++)
@@ -196,15 +208,22 @@ public:
             LedX[i] = 0;
             LedY[i] = 0;
         }
-        for (uint32_t Index = 0; Index < (uint32_t)Lw * Lh && Index < MaxLayoutEntries; Index++)
+        uint32_t Used = (uint32_t)Lw * Lh;
+        if (Used > MaxLayoutEntries)
+            Used = MaxLayoutEntries;
+        for (uint32_t Index = 0; Index < Used; Index++)
         {
             uint16_t Idx = Layout[Index];
+            // The loader rejects an index beyond the chain before committing, so this guard only
+            // covers the compiled-in table and any future writer of Layout[].
             if (Idx == 0xFFFF || Idx >= LedNum)
                 continue;
             LedX[Idx] = (uint8_t)(Index % Lw);
             LedY[Idx] = (uint8_t)(Lh - 1 - (Index / Lw)); // screen y, 0 at bottom
             LedPresent[Idx] = true;
         }
+        // The panel's LED count is whatever the cells in use address: highest index + 1.
+        LedCount = Vysi1LayoutFile::Count(Layout, Used);
         LayoutGen++;
     }
 
@@ -221,9 +240,10 @@ public:
         RebuildLedTable();
     }
 
-    // Loads the layout file named by Per.LayoutFile (8-char storage name form).
-    // Rejects files that are malformed or whose LED indexes exceed this display.
-    bool LoadLayoutFromStorage()
+    // Loads the layout file named by Per.LayoutFile (8-char storage name form). The file's cells
+    // decide how many LEDs the panel has (LedCount); the only limit the firmware adds is the chain
+    // capacity, and a cell beyond it rejects the whole file instead of blanking that pixel.
+    Vysi1LayoutFile::Result LoadLayoutFromStorage()
     {
         // Blank name (all spaces or NULs; character fields are NUL-padded since B10) ->
         // built-in default layout.
@@ -233,44 +253,70 @@ public:
         if (Empty)
         {
             LoadDefaultLayout();
-            return true;
+            return Vysi1LayoutFile::Result::Ok;
         }
 
         uint32_t Off, Size;
         if (!Storage.GetFileInfo(Per.LayoutFile, &Off, &Size))
-            return false;
-        if (Size < 3)
-            return false;
+            return Vysi1LayoutFile::Result::Missing;
 
         // Docs/Modules and blocks/LED display.md: u8 brightness limit, u8 width, u8 height,
         // then the index table. Only this format is accepted - a file written to the older
         // 2-byte header fails here and the caller falls back to the built-in default.
+        uint32_t Entries = 0;
         uint8_t Hdr[3];
-        if (StorageFlash.Read(Off, Hdr, 3) != 3)
-            return false;
-        uint32_t Entries = (uint32_t)Hdr[1] * Hdr[2];
-        if (Hdr[1] == 0 || Hdr[2] == 0 || Entries > MaxLayoutEntries ||
-            Size < 3 + Entries * 2)
-            return false;
+        Vysi1LayoutFile::Result Res;
+        if (Size < 3)
+            Res = Vysi1LayoutFile::Result::TooSmall;
+        else if (StorageFlash.Read(Off, Hdr, 3) != 3)
+            Res = Vysi1LayoutFile::Result::ReadFailed;
+        else
+            Res = Vysi1LayoutFile::ParseHeader(Hdr, Size, MaxLayoutEntries, Entries);
+        if (Res != Vysi1LayoutFile::Result::Ok)
+            return Res;
 
         // Read into a scratch buffer and only commit to the display once the whole read
         // succeeded, so a failed read leaves the previous layout/state untouched.
         uint16_t Pending[MaxLayoutEntries];
         if (StorageFlash.Read(Off + 3, (void *)Pending, Entries * 2) != Entries * 2)
-            return false;
+            return Vysi1LayoutFile::Result::ReadFailed;
+        Res = Vysi1LayoutFile::ParseTable(Pending, Entries, (uint16_t)LedNum);
+        if (Res != Vysi1LayoutFile::Result::Ok)
+            return Res;
+
         for (uint32_t i = 0; i < Entries; i++)
-        {
             Layout[i] = Pending[i];
-            if (Layout[i] != 0xFFFF && Layout[i] >= LedNum)
-                Layout[i] = 0xFFFF; // index beyond this display's chain
-        }
         BrightnessLimit = Hdr[0];
         Lw = Hdr[1];
         Lh = Hdr[2];
-        RebuildLedTable();
-        return true;
+        RebuildLedTable(); // recomputes LedCount from the committed cells
+        return Vysi1LayoutFile::Result::Ok;
     }
 };
+
+// The LED count is the layout file's, so these guard the two things a file cannot move: the
+// per-LED buffers are capacity-sized from LedNum (one number in one place), and the compiled-in
+// layout table must fit that capacity. Both fail the build rather than the panel.
+static_assert(sizeof(Vysi1Display::Buffer) == Vysi1Display::LedNum * sizeof(ColourClass),
+              "Buffer must hold one ColourClass per LED of the chain capacity");
+static_assert(sizeof(Vysi1Display::Mask) == Vysi1Display::LedNum, "Mask must be one byte per LED");
+static_assert(sizeof(Vysi1Display::LedX) == Vysi1Display::LedNum, "LedX must be one byte per LED");
+static_assert(sizeof(Vysi1Display::LedY) == Vysi1Display::LedNum, "LedY must be one byte per LED");
+static_assert(sizeof(Vysi1Display::LedPresent) == Vysi1Display::LedNum, "LedPresent must be one flag per LED");
+static_assert(sizeof(Vysi1Display::GeoMask) == Vysi1Display::MaxCachedFields * Vysi1Display::LedNum,
+              "GeoMask must be one byte per LED per cached field");
+
+// Highest 1-based index the compiled-in table uses (0 = a cell with no LED).
+constexpr uint16_t MaxBuiltinLayoutIndex()
+{
+    uint16_t Max = 0;
+    for (uint32_t i = 0; i < sizeof(LayoutVysiv1_0); i++)
+        if (LayoutVysiv1_0[i] > Max)
+            Max = LayoutVysiv1_0[i];
+    return Max;
+}
+static_assert(MaxBuiltinLayoutIndex() >= 1 && MaxBuiltinLayoutIndex() <= Vysi1Display::LedNum,
+              "the compiled-in layout must address LEDs that fit the chain capacity");
 
 inline Vysi1Display *Vysi1Display::Instances[Vysi1Display::MaxInstances] = {};
 inline uint32_t Vysi1Display::InstanceCount = 0;
@@ -280,10 +326,11 @@ inline uint32_t Vysi1Display::InstanceCount = 0;
 // layout must be re-applied explicitly.
 inline void Vysi1BootLayout(Vysi1Display &Disp)
 {
-    // A file that cannot be loaded (missing, truncated, or an older 2-byte-header format)
-    // must not leave the display on its zero-initialised Layout[] - every cell there maps to
-    // LED 0 - so fall back to the built-in default.
-    if (!Disp.LoadLayoutFromStorage())
+    // A file that cannot be loaded (missing, truncated, over-capacity, or an older 2-byte-header
+    // format) must not leave the display on its zero-initialised Layout[] - every cell there maps
+    // to LED 0 - so fall back to the built-in default. The refusal itself is named
+    // (Vysi1LayoutFile::ResultName) for whoever logs it.
+    if (Disp.LoadLayoutFromStorage() != Vysi1LayoutFile::Result::Ok)
         Disp.LoadDefaultLayout();
 }
 
@@ -306,7 +353,7 @@ inline bool OnVysi1FieldWrite(const StaticBlockDescriptor& Block, uint16_t Index
     char Saved[8];
     memcpy(Saved, Disp->Per.LayoutFile, 8);
     memcpy(Disp->Per.LayoutFile, Pending, 8);
-    bool Ok = Disp->LoadLayoutFromStorage();
+    bool Ok = Disp->LoadLayoutFromStorage() == Vysi1LayoutFile::Result::Ok;
     if (!Ok)
         memcpy(Disp->Per.LayoutFile, Saved, 8); // revert the RAM field
     return Ok;

@@ -88,6 +88,19 @@ echo "### native alignment tests (PacketFrame alignment + unaligned buffer acces
 build_run "align" "align_test.cpp"
 echo
 
+# The panel's LED count is the layout file's: 86-index and 87-index layouts must load on the SAME
+# binary (the count is the highest index + 1, and the per-panel send follows it), while a cell one
+# past the chain capacity is a named refusal instead of a silent 0xFFFF.
+echo "### native Vysi layout-file tests (86- and 87-LED layouts in one binary; over-capacity is named)"
+build_run "vysilayout" "vysi1_layout_test.cpp"
+# The test models the board's chain capacity as its own constant because Vysi1Layout.h pulls the
+# register bus and cannot be linked on the host. Keep the modelled figure equal to the header's.
+if ! grep -q 'static const uint32_t LedNum = 87;' src/Blocks/Vysi1Layout.h; then
+    echo "FAIL src/Blocks/Vysi1Layout.h: LedNum is no longer 87 - update Capacity in test/native/vysi1_layout_test.cpp"
+    fail=$((fail + 1))
+fi
+echo
+
 echo "### native stride-offset tests (script VM symbol resolution)"
 build_run "stride" "stride_test.cpp"
 echo

@@ -324,7 +324,13 @@ LED.Setup();
         // period (loop start to loop start), i.e. the display's real update rate.
         Display1.Render();
         Display2.Render();
-        LED.SendParallel(Display1.Buffer, Display2.Buffer, Vysi1Display::LedNum);
+        // The pixel count comes from each panel's own layout file (highest LED index it carries,
+        // + 1), not from a firmware constant: a panel whose layout addresses LED 86 sends 87
+        // pixels on the same image as one that addresses 86. Both strips share one bit timeline,
+        // so the longer count is sent - a shorter chain passes the extra pixels out of its last
+        // LED (a WS2812 latches the first N values it sees) and stays dark past its end.
+        const uint16_t SendLen = Display1.LedCount > Display2.LedCount ? Display1.LedCount : Display2.LedCount;
+        LED.SendParallel(Display1.Buffer, Display2.Buffer, SendLen);
         {
             // FPS EMA weights (alpha = 0.1) in 16.16 fixed point; the pair sums to exactly
             // 1.0 so the average does not drift.
