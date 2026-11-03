@@ -22,6 +22,7 @@ namespace Vysi1LayoutFile
     enum class Result : uint8_t
     {
         Ok,
+        NoName,              // the Layout File Name register is blank: the panel has no layout
         Missing,             // the storage file could not be found
         TooSmall,            // shorter than the 3-byte header
         BadHeader,           // zero width or height, or more cells than the layout can hold
@@ -36,6 +37,7 @@ namespace Vysi1LayoutFile
         switch (Value)
         {
         case Result::Ok: return "ok";
+        case Result::NoName: return "no layout file name";
         case Result::Missing: return "layout file not found";
         case Result::TooSmall: return "file shorter than the 3-byte header";
         case Result::BadHeader: return "bad header (zero width/height, or more cells than the layout holds)";
@@ -44,6 +46,17 @@ namespace Vysi1LayoutFile
         case Result::IndexBeyondCapacity: return "a cell addresses an LED beyond this panel's chain";
         }
         return "unknown";
+    }
+
+    // True when a Layout File Name field names no file: all spaces or NULs (character fields are
+    // NUL-padded since B10). A blank name is "no layout", NOT a request for a built-in default -
+    // the firmware has none (owner rule: no layout is pre-loaded in the firmware).
+    inline bool IsBlankName(const char Name[8])
+    {
+        for (uint32_t i = 0; i < 8; i++)
+            if (Name[i] != ' ' && Name[i] != '\0')
+                return false;
+        return true;
     }
 
     // Validates the 3-byte header against the file's size and the layout's entry capacity, and

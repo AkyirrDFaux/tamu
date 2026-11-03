@@ -135,6 +135,58 @@ int main()
     CHECK(LoadImage(File, Size, Count) == Vysi1LayoutFile::Result::Ok);
     CHECK_EQ(Count, 87);
 
+    // ---- the layouts the akyirr_v2 setup actually ships, through the same decode ----
+    // Byte-for-byte cell tables from akyirr_setup's `layouts` (semantic form: null -> Unused).
+    // LAY_1 is the original 86-LED map; LAY_2 moves every picture cell by one and adds LED 0, so the
+    // left panel sends 87 pixels from the same binary.
+    {
+        const uint16_t Unused = Vysi1LayoutFile::Unused;
+        const uint16_t LAY_1[] = {
+            Unused, Unused, Unused, 27, 28, 47, 48, 67, Unused, Unused, Unused,
+            Unused, Unused, 10, 26, 29, 46, 49, 66, 68, Unused, Unused,
+            Unused, 9, 11, 25, 30, 45, 50, 65, 69, 81, Unused,
+            0, 8, 12, 24, 31, 44, 51, 64, 70, 80, 82,
+            1, 7, 13, 23, 32, 43, 52, 63, 71, 79, 83,
+            2, 6, 14, 22, 33, 42, 53, 62, 72, 78, 84,
+            3, 5, 15, 21, 34, 41, 54, 61, 73, 77, 85,
+            Unused, 4, 16, 20, 35, 40, 55, 60, 74, 76, Unused,
+            Unused, Unused, 17, 19, 36, 39, 56, 59, 75, Unused, Unused,
+            Unused, Unused, Unused, 18, 37, 38, 57, 58, Unused, Unused, Unused};
+        const uint16_t LAY_2[] = {
+            0, Unused, Unused, 28, 29, 48, 49, 68, Unused, Unused, Unused,
+            Unused, Unused, 11, 27, 30, 47, 50, 67, 69, Unused, Unused,
+            Unused, 10, 12, 26, 31, 46, 51, 66, 70, 82, Unused,
+            1, 9, 13, 25, 32, 45, 52, 65, 71, 81, 83,
+            2, 8, 14, 24, 33, 44, 53, 64, 72, 80, 84,
+            3, 7, 15, 23, 34, 43, 54, 63, 73, 79, 85,
+            4, 6, 16, 22, 35, 42, 55, 62, 74, 78, 86,
+            Unused, 5, 17, 21, 36, 41, 56, 61, 75, 77, Unused,
+            Unused, Unused, 18, 20, 37, 40, 57, 60, 76, Unused, Unused,
+            Unused, Unused, Unused, 19, 38, 39, 58, 59, Unused, Unused, Unused};
+        Size = BuildFile(File, 11, 10, LAY_1, 110);
+        CHECK(LoadImage(File, Size, Count) == Vysi1LayoutFile::Result::Ok);
+        CHECK_EQ(Count, 86);
+        Size = BuildFile(File, 11, 10, LAY_2, 110);
+        CHECK(LoadImage(File, Size, Count) == Vysi1LayoutFile::Result::Ok);
+        CHECK_EQ(Count, 87);
+    }
+
+    // ---- a blank Layout File Name is "no layout", not "use a built-in default" ----
+    // The firmware ships no layout that could be installed without a file (owner rule, 2026-11-03),
+    // so the loader has to distinguish "the register names nothing" from "the file is missing": the
+    // boot path turns any non-Ok result into NO map (LedCount 0, nothing rendered).
+    {
+        const char Blank[] = "        ";
+        const char NulPadded[8] = {'\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0'};
+        const char Mixed[8] = {' ', '\0', ' ', '\0', ' ', '\0', ' ', '\0'};
+        const char Named[] = "LAY_1   ";
+        CHECK(Vysi1LayoutFile::IsBlankName(Blank));
+        CHECK(Vysi1LayoutFile::IsBlankName(NulPadded));
+        CHECK(Vysi1LayoutFile::IsBlankName(Mixed));
+        CHECK(!Vysi1LayoutFile::IsBlankName(Named));
+        CHECK(std::strstr(Vysi1LayoutFile::ResultName(Vysi1LayoutFile::Result::NoName), "name") != nullptr);
+    }
+
     // ---- malformed files ----
     uint32_t Parsed = 0;
     // Shorter than the 3-byte header.
@@ -164,7 +216,8 @@ int main()
     CHECK_EQ(Parsed, 110);
     // Every refusal has a name, and they are all distinct.
     const Vysi1LayoutFile::Result All[] = {
-        Vysi1LayoutFile::Result::Missing, Vysi1LayoutFile::Result::TooSmall,
+        Vysi1LayoutFile::Result::NoName, Vysi1LayoutFile::Result::Missing,
+        Vysi1LayoutFile::Result::TooSmall,
         Vysi1LayoutFile::Result::BadHeader, Vysi1LayoutFile::Result::ShortTable,
         Vysi1LayoutFile::Result::ReadFailed, Vysi1LayoutFile::Result::IndexBeyondCapacity};
     for (uint32_t i = 0; i < sizeof(All) / sizeof(All[0]); i++)

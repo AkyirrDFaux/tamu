@@ -146,13 +146,14 @@ int main(void)
     Storage.Init();
     LoadAllBackups();
 
-    // LED displays: preload the default layout file (LAY_1) if absent, then apply the
-    // (restored) LayoutFile to each display. The boot recall restores the LayoutFile RAM
-    // field but does not re-run its write trigger, so the layout must be applied explicitly
-    // (mirrors the core's boot sequence).
+    // LED displays: each panel's map is the FILE its Layout File Name register names - never a
+    // compiled-in table (owner rule, 2026-11-03). PreloadVysiLayout() only writes that file into
+    // STORAGE when absent, so the register's name resolves on a fresh board; the map itself comes
+    // from loading it, exactly as a register write does. The boot recall restores the field but
+    // does not re-run its write trigger, so the load is run once here.
     PreloadVysiLayout();
-    Vysi1BootLayout(Display1);
-    Vysi1BootLayout(Display2);
+    ApplyLayoutFromStorage(Display1);
+    ApplyLayoutFromStorage(Display2);
 
     ButtonsInit();
     MeasuringInit();

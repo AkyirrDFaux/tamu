@@ -15,8 +15,10 @@
 
 #include <cstddef> // offsetof
 
-// The compiled-in layout: 11x10 cells, 1-based LED indexes (0 = a cell with no LED). constexpr so
-// the capacity check below can read it at compile time.
+// The compiled-in layout: 11x10 cells, 1-based LED indexes (0 = a cell with no LED). DATA ONLY -
+// its one reader is PreloadVysiLayout(), which writes it into STORAGE as the file LAY_1 (Valu); it
+// is never installed on a panel (owner rule, 2026-11-03). constexpr so the capacity check below can
+// read it at compile time.
 constexpr uint8_t LayoutVysiv1_0[10 * 11]{
     0, 0, 0, 28, 29, 48, 49, 68, 0, 0, 0,
     0, 0, 11, 27, 30, 47, 50, 67, 69, 0, 0,
@@ -29,8 +31,10 @@ constexpr uint8_t LayoutVysiv1_0[10 * 11]{
     0, 0, 18, 20, 37, 40, 57, 60, 76, 0, 0,
     0, 0, 0, 19, 38, 39, 58, 59, 0, 0, 0};
 
-// Preloads the Vysi v1.0 LED layout into storage as "LAY_1" on first boot. Only created
-// when absent, so a user's customized layout is never overwritten. File format per
+// Preloads the Vysi v1.0 LED layout into STORAGE as the file "LAY_1" on first boot. This writes a
+// FILE - it never installs a map on a panel: the panel's map is the file its Layout File Name
+// register names, read back through LoadLayoutFromStorage() like any other layout file. Only
+// created when absent, so a user's customized layout is never overwritten. File format per
 // Docs/Modules/LED display.md: u8 brightness limit (0-255 as a percentage), u8 width, u8
 // height, then w*h u16 LE 0-based LED indices (0xFFFF = unused).
 inline void PreloadVysiLayout()
@@ -83,11 +87,11 @@ struct Vysi1Persistent
 {
     Matrix<2, 3> Offset = IdentityAffine23(); // 2x3 transformation, offset 0 (28 B: u16 height + u16 width + 6 Numbers)
     int32_t RenderBlock = -1; // Signed index into DynamicBlockRegistry; -1 = none, offset 28
-    // Layout File Name: plain 8-char storage file name, space padded. Defaults to the
-    // preloaded "LAY_1" file (identical to the compiled-in layout); a blank name means
-    // the built-in default layout. Written via trigger, which loads the layout file
-    // immediately (write is rejected if the file cannot be loaded).
-    char LayoutFile[8] = {'L', 'A', 'Y', '_', '1', ' ', ' ', ' '}; // offset 32
+    // Layout File Name: plain 8-char storage file name, space padded. It starts BLANK: the
+    // firmware names no layout, so a board nobody has given a layout file to has none (no map -
+    // the panel stays dark). The map is only ever the file this field names, loaded at boot and on
+    // a write of this field (a write is rejected if the file cannot be loaded).
+    char LayoutFile[8] = {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '}; // offset 32
 };
 
 // The dynamic field offsets in Vysi1_Entries must track the struct layout: the 2x3
@@ -130,13 +134,16 @@ public:
     static Vysi1Display *Instances[MaxInstances];
     static uint32_t InstanceCount;
 
-    uint16_t Layout[MaxLayoutEntries];
-    uint8_t Lw = 11;
-    uint8_t Lh = 10;
+    uint16_t Layout[MaxLayoutEntries] = {}; // cleared to "no LED" by ClearLayout()
+    // 0 x 0 = no map. The grid size is the loaded file's header; nothing in the firmware gives
+    // the panel a size (or a map) of its own.
+    uint8_t Lw = 0;
+    uint8_t Lh = 0;
     // Docs/Modules and blocks/LED display.md: the layout file's leading byte, a 0-255
-    // percentage cap on Vol.Brightness (178 = 70%). Replaced whenever a layout file loads;
-    // the built-in default carries the same value as the preloaded LAY_1.
-    uint8_t BrightnessLimit = 178;
+    // percentage cap on Vol.Brightness (178 = 70%). Replaced whenever a layout file loads; 0 while
+    // no layout is loaded, so an unloaded panel cannot show anything even if something filled its
+    // buffer.
+    uint8_t BrightnessLimit = 0;
     ColourClass Buffer[LedNum];
     // How many of those pixels this panel's layout actually uses: the highest LED index the loaded
     // layout carries, + 1. The per-panel send walks `LedCount` pixels, so the count follows the
@@ -176,7 +183,9 @@ public:
 
     Vysi1Display(Vysi1Volatile &Vol, Vysi1Persistent &Per) : Vol(Vol), Per(Per) {
         if (InstanceCount < MaxInstances) Instances[InstanceCount++] = this;
-        LoadDefaultLayout();
+        // Starts with NO map: nothing is pre-loaded. The panel's map arrives when the boot path
+        // loads the file the Layout File Name register names (ApplyLayoutFromStorage).
+        ClearLayout();
     }
 
     // Resolves the owning display from a block's persistent half (the field-write trigger only
@@ -215,7 +224,7 @@ public:
         {
             uint16_t Idx = Layout[Index];
             // The loader rejects an index beyond the chain before committing, so this guard only
-            // covers the compiled-in table and any future writer of Layout[].
+            // covers a future writer of Layout[] (there is no firmware-side table any more).
             if (Idx == 0xFFFF || Idx >= LedNum)
                 continue;
             LedX[Idx] = (uint8_t)(Index % Lw);
@@ -227,34 +236,41 @@ public:
         LayoutGen++;
     }
 
-    // Reverts to the compiled-in default layout (11x10, 0=missing converted to FFFF).
-    void LoadDefaultLayout()
+    // Drops the map: the panel has none. Used at construction and by the boot path when the named
+    // layout file cannot be loaded - never to install a firmware-side table (owner rule,
+    // 2026-11-03: "No layout should be pre-loaded in the firmware"). With no map every cell is
+    // "no LED", LedX/LedY/LedPresent are empty and LedCount is 0, so Render() fills nothing (its
+    // mask stays empty because no LED is present), the buffer stays cleared, and the per-panel send
+    // walks 0 pixels: the panel shows nothing.
+    void ClearLayout()
     {
-        Lw = 11;
-        Lh = 10;
-        BrightnessLimit = 178; // keep the built-in default's cap (70%)
+        Lw = 0;
+        Lh = 0;
+        BrightnessLimit = 0;
         for (uint32_t i = 0; i < MaxLayoutEntries; i++)
-            Layout[i] = 0xFFFF;
-        for (uint32_t i = 0; i < Lw * Lh && i < MaxLayoutEntries; i++)
-            Layout[i] = (LayoutVysiv1_0[i] == 0) ? 0xFFFF : (uint16_t)(LayoutVysiv1_0[i] - 1);
-        RebuildLedTable();
+            Layout[i] = Vysi1LayoutFile::Unused;
+        for (uint32_t i = 0; i < LedNum; i++)
+        {
+            LedPresent[i] = false;
+            LedX[i] = 0;
+            LedY[i] = 0;
+        }
+        LedCount = 0;
+        LayoutGen++; // a map was in use before: invalidate the geometry cache
     }
 
-    // Loads the layout file named by Per.LayoutFile (8-char storage name form). The file's cells
-    // decide how many LEDs the panel has (LedCount); the only limit the firmware adds is the chain
-    // capacity, and a cell beyond it rejects the whole file instead of blanking that pixel.
+    // Loads the layout file named by Per.LayoutFile (8-char storage name form). This is the ONLY
+    // way a map reaches the panel - there is no firmware-side table to fall back to. The file's
+    // cells decide how many LEDs the panel has (LedCount); the only limit the firmware adds is the
+    // chain capacity, and a cell beyond it rejects the whole file instead of blanking that pixel.
+    // The map is left untouched on any non-Ok result (blank name, missing/unreadable/bad file), so a
+    // failed write leaves the previous map in use.
     Vysi1LayoutFile::Result LoadLayoutFromStorage()
     {
-        // Blank name (all spaces or NULs; character fields are NUL-padded since B10) ->
-        // built-in default layout.
-        bool Empty = true;
-        for (int i = 0; i < 8; i++)
-            if (Per.LayoutFile[i] != ' ' && Per.LayoutFile[i] != '\0') Empty = false;
-        if (Empty)
-        {
-            LoadDefaultLayout();
-            return Vysi1LayoutFile::Result::Ok;
-        }
+        // Blank name (all spaces or NULs; character fields are NUL-padded since B10): the register
+        // names no file, so there is no layout to load. This is NOT a default layout request.
+        if (Vysi1LayoutFile::IsBlankName(Per.LayoutFile))
+            return Vysi1LayoutFile::Result::NoName;
 
         uint32_t Off, Size;
         if (!Storage.GetFileInfo(Per.LayoutFile, &Off, &Size))
@@ -262,7 +278,7 @@ public:
 
         // Docs/Modules and blocks/LED display.md: u8 brightness limit, u8 width, u8 height,
         // then the index table. Only this format is accepted - a file written to the older
-        // 2-byte header fails here and the caller falls back to the built-in default.
+        // 2-byte header fails here and the caller refuses it.
         uint32_t Entries = 0;
         uint8_t Hdr[3];
         Vysi1LayoutFile::Result Res;
@@ -295,8 +311,9 @@ public:
 };
 
 // The LED count is the layout file's, so these guard the two things a file cannot move: the
-// per-LED buffers are capacity-sized from LedNum (one number in one place), and the compiled-in
-// layout table must fit that capacity. Both fail the build rather than the panel.
+// per-LED buffers are capacity-sized from LedNum (one number in one place), and the built-in table
+// (data only: PreloadVysiLayout writes it into STORAGE as LAY_1 on a Valu, it is never installed on
+// a panel) must fit that capacity. Both fail the build rather than the panel.
 static_assert(sizeof(Vysi1Display::Buffer) == Vysi1Display::LedNum * sizeof(ColourClass),
               "Buffer must hold one ColourClass per LED of the chain capacity");
 static_assert(sizeof(Vysi1Display::Mask) == Vysi1Display::LedNum, "Mask must be one byte per LED");
@@ -321,22 +338,27 @@ static_assert(MaxBuiltinLayoutIndex() >= 1 && MaxBuiltinLayoutIndex() <= Vysi1Di
 inline Vysi1Display *Vysi1Display::Instances[Vysi1Display::MaxInstances] = {};
 inline uint32_t Vysi1Display::InstanceCount = 0;
 
-// Boot helper: loads the named layout file (blank name = compiled-in default). The boot
-// recall restores the LayoutFile RAM field but does not re-run its write trigger, so the
-// layout must be re-applied explicitly.
-inline void Vysi1BootLayout(Vysi1Display &Disp)
+// Boot apply: a panel's map comes from the FILE its Layout File Name register names - the same
+// load a register write runs. The boot recall restores that field (and the display index) but does
+// not re-run its write trigger, so the load is run once here.
+//
+// Nothing is pre-loaded: a blank name, a missing file or any other load refusal leaves the panel
+// with NO map (ClearLayout) - never a firmware-side default table. That is the correct state for a
+// board nobody has given a layout to (fresh flash, failed restore): it shows nothing until a setup
+// gives it a file and names it.
+inline Vysi1LayoutFile::Result ApplyLayoutFromStorage(Vysi1Display &Disp)
 {
-    // A file that cannot be loaded (missing, truncated, over-capacity, or an older 2-byte-header
-    // format) must not leave the display on its zero-initialised Layout[] - every cell there maps
-    // to LED 0 - so fall back to the built-in default. The refusal itself is named
-    // (Vysi1LayoutFile::ResultName) for whoever logs it.
-    if (Disp.LoadLayoutFromStorage() != Vysi1LayoutFile::Result::Ok)
-        Disp.LoadDefaultLayout();
+    const Vysi1LayoutFile::Result Res = Disp.LoadLayoutFromStorage();
+    if (Res != Vysi1LayoutFile::Result::Ok)
+        Disp.ClearLayout();
+    return Res;
 }
 
 // Layout-file write trigger: stores the new Name and loads the layout file immediately
-// so the stored name always matches the layout in use. The owning Vysi1Display is recovered
-// from the block's persistent half, which recovers the per-display runtime layout.
+// so the stored name always matches the layout in use. A name that cannot be loaded - blank, a
+// missing file, a bad file, a cell past the chain - is refused and the previous name (and map)
+// stay, so the register never claims a layout the panel is not showing. The owning Vysi1Display is
+// recovered from the block's persistent half, which recovers the per-display runtime layout.
 inline bool OnVysi1FieldWrite(const StaticBlockDescriptor& Block, uint16_t Index, const void* Data, uint16_t Len)
 {
     if (Index != 3 || Len != 8)

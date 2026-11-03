@@ -173,11 +173,31 @@ if (!AppInterface.Connected) { ESP_LOGI("INIT","b2 backups"); }
     WifiSettingsInit();
 #endif
 Script.BootLoad();         // loads SCR_XXX scripts flagged load-on-boot (Docs/Services/Script.md)
-// The Vysi layout is not touched at boot: the layout file and the LayoutFile field belong to the
-// setup. A restore writes both, and the field's write trigger loads the layout as it lands, so a
-// boot-time re-apply only duplicated that work - and a boot is not where the layout changes.
-// Without it the display keeps the compiled-in default, which is byte-identical to the LAY_1 the
-// firmware used to preload here.
+    // Each panel's map comes from the FILE its Layout File Name register names - the same load a
+    // register write runs, done once here because the boot recall restores the field but does not
+    // re-run its write trigger (owner rule, 2026-11-03: "No layout should be pre-loaded in the
+    // firmware"). Nothing compiled in is applied: a panel whose name is blank or whose file cannot
+    // be loaded ends up with NO map (LedCount 0), renders nothing and sends 0 pixels, which is the
+    // honest state of a board nobody has given a layout to. The line below names the file read and
+    // the result, so a dark panel says why.
+    {
+        Vysi1Display *Panels[2] = {&Display1, &Display2};
+        for (uint32_t Panel = 0; Panel < 2; Panel++)
+        {
+            Vysi1Display &Disp = *Panels[Panel];
+            const Vysi1LayoutFile::Result Applied = ApplyLayoutFromStorage(Disp);
+            if (AppInterface.Connected)
+                continue;
+            // The field is a fixed 8-char space-padded name with no terminator.
+            char Name[9];
+            memcpy(Name, Disp.Per.LayoutFile, 8);
+            Name[8] = '\0';
+            for (int i = 7; i >= 0 && (Name[i] == ' ' || Name[i] == '\0'); i--)
+                Name[i] = '\0';
+            ESP_LOGI("INIT", "layout %u '%s': %s, %u px", (unsigned)(Panel + 1), Name,
+                     Vysi1LayoutFile::ResultName(Applied), (unsigned)Disp.LedCount);
+        }
+    }
 if (!AppInterface.Connected) { ESP_LOGI("INIT","b3 appif"); }
     AppInterface.Init();
 
@@ -330,7 +350,11 @@ LED.Setup();
         // so the longer count is sent - a shorter chain passes the extra pixels out of its last
         // LED (a WS2812 latches the first N values it sees) and stays dark past its end.
         const uint16_t SendLen = Display1.LedCount > Display2.LedCount ? Display1.LedCount : Display2.LedCount;
-        LED.SendParallel(Display1.Buffer, Display2.Buffer, SendLen);
+        // No map, no frame: a panel whose layout file was not loaded (LedCount 0) is not driven at
+        // all. A strip that was never latched - a fresh board, or one whose layout could not be
+        // loaded - therefore stays dark instead of showing a frame built from nothing.
+        if (SendLen > 0)
+            LED.SendParallel(Display1.Buffer, Display2.Buffer, SendLen);
         {
             // FPS EMA weights (alpha = 0.1) in 16.16 fixed point; the pair sums to exactly
             // 1.0 so the average does not drift.

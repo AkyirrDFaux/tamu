@@ -101,6 +101,88 @@ if ! grep -q 'static const uint32_t LedNum = 87;' src/Blocks/Vysi1Layout.h; then
 fi
 echo
 
+# t_10273fcc, structural half: NO layout is pre-loaded. Each panel's map is the FILE its "Layout
+# File Name" register names - loaded at boot (after the persistent recall, which restores the field
+# but does not re-run its write trigger) and on every write of that register. The board's Main.h
+# cannot be linked on the host (it pulls the ESP-IDF, the app link and the whole static memory), so
+# the invariant is asserted on the source:
+#   - the display starts with NO map, the only writer of a map is LoadLayoutFromStorage (fed by a
+#     file), and ClearLayout writes "no LED" only - no built-in table is ever installed;
+#   - the compiled-in table is referenced only outside the class (PreloadVysiLayout writes it into
+#     STORAGE as LAY_1 on a Valu; MaxBuiltinLayoutIndex checks it at compile time), never by a
+#     member that could install it;
+#   - the boot load runs once per panel, after LoadAllBackups() and before the first Render;
+#   - a refusal (blank name, missing/bad file) clears the map, so the panel renders nothing.
+echo "### source guard: no layout is pre-loaded - each panel's map is the file its register names"
+VYSI_MAIN_SRC="src/Devices/Tamu_v2.0A/Main.h"
+VYSI_LAYOUT_SRC="src/Blocks/Vysi1Layout.h"
+vysi_fail=0
+
+if grep -q 'LoadDefaultLayout' "$VYSI_LAYOUT_SRC"; then
+    echo "FAIL $VYSI_LAYOUT_SRC: a compiled-in layout install path is back (LoadDefaultLayout)"
+    vysi_fail=1
+fi
+
+# The class body (the only code that can touch a display's map) must not name the built-in table.
+class_start=$(grep -n '^class Vysi1Display' "$VYSI_LAYOUT_SRC" | cut -d: -f1)
+class_end=$(awk -v s="$class_start" 'NR > s && /^};/ {print NR; exit}' "$VYSI_LAYOUT_SRC")
+if [ -z "$class_start" ] || [ -z "$class_end" ]; then
+    echo "FAIL $VYSI_LAYOUT_SRC: could not delimit class Vysi1Display"
+    vysi_fail=1
+else
+    inside=$(grep -n 'LayoutVysiv1_0' "$VYSI_LAYOUT_SRC" | cut -d: -f1 |
+             awk -v s="$class_start" -v e="$class_end" '$1 > s && $1 < e')
+    if [ -n "$inside" ]; then
+        echo "FAIL $VYSI_LAYOUT_SRC: the built-in table is used inside the display class (line(s) $(echo $inside)) -"
+        echo "      a member could install it on a panel; only PreloadVysiLayout (a storage write) may read it"
+        vysi_fail=1
+    fi
+fi
+
+# Every write to the map is either ClearLayout's "no LED" or the loader's committed file cells.
+map_writes=$(grep -cE '^ +Layout\[[^]]*\] = ' "$VYSI_LAYOUT_SRC" || true)
+if [ "$map_writes" != 2 ] ||
+   ! grep -qE '^ +Layout\[[^]]*\] = Vysi1LayoutFile::Unused;' "$VYSI_LAYOUT_SRC" ||
+   ! grep -qE '^ +Layout\[[^]]*\] = Pending\[i\];' "$VYSI_LAYOUT_SRC"; then
+    echo "FAIL $VYSI_LAYOUT_SRC: the map must only be written by ClearLayout (no LED) and LoadLayoutFromStorage (file cells) - found $map_writes write(s)"
+    vysi_fail=1
+fi
+
+# The constructor starts the panel with no map, and the boot apply clears it on a refusal.
+if [ "$(grep -c 'ClearLayout();' "$VYSI_LAYOUT_SRC" || true)" != 2 ] ||
+   ! sed -n '/^    Vysi1Display(Vysi1Volatile &Vol/,/^    }/p' "$VYSI_LAYOUT_SRC" | grep -q 'ClearLayout();'; then
+    echo "FAIL $VYSI_LAYOUT_SRC: the display must start with no map and the boot apply must clear on a refusal (expected exactly ClearLayout() in the constructor and in ApplyLayoutFromStorage)"
+    vysi_fail=1
+fi
+apply_body=$(sed -n '/^inline Vysi1LayoutFile::Result ApplyLayoutFromStorage/,/^}/p' "$VYSI_LAYOUT_SRC")
+if ! printf '%s\n' "$apply_body" | grep -q 'Disp.LoadLayoutFromStorage();' ||
+   ! printf '%s\n' "$apply_body" | grep -q 'Disp.ClearLayout();'; then
+    echo "FAIL $VYSI_LAYOUT_SRC: ApplyLayoutFromStorage must load the named file and clear the map (not install a default) when it cannot"
+    vysi_fail=1
+fi
+if ! sed -n '/Vysi1LayoutFile::Result LoadLayoutFromStorage()/,/^    }/p' "$VYSI_LAYOUT_SRC" | grep -q 'Result::NoName'; then
+    echo "FAIL $VYSI_LAYOUT_SRC: a blank Layout File Name must answer NoName (no map), not a built-in default"
+    vysi_fail=1
+fi
+
+# Boot order: one apply site, both panels, after the persistent recall and before the first Render.
+if [ "$(grep -c 'ApplyLayoutFromStorage(' "$VYSI_MAIN_SRC" || true)" != 1 ] ||
+   ! grep -q 'Vysi1Display \*Panels\[2\] = {&Display1, &Display2};' "$VYSI_MAIN_SRC"; then
+    echo "FAIL $VYSI_MAIN_SRC: the boot must apply each panel's layout in exactly one place, covering BOTH displays"
+    vysi_fail=1
+fi
+recall_line=$(grep -n '^    LoadAllBackups();' "$VYSI_MAIN_SRC" | cut -d: -f1)
+boot_layout_line=$(grep -n 'ApplyLayoutFromStorage(' "$VYSI_MAIN_SRC" | cut -d: -f1)
+render_line=$(grep -n 'Display1.Render();' "$VYSI_MAIN_SRC" | head -1 | cut -d: -f1)
+if [ -z "$recall_line" ] || [ -z "$boot_layout_line" ] || [ -z "$render_line" ] ||
+   [ "$boot_layout_line" -le "$recall_line" ] || [ "$boot_layout_line" -ge "$render_line" ]; then
+    echo "FAIL $VYSI_MAIN_SRC: the layout must be loaded from storage after the persistent recall and before the first Render"
+    vysi_fail=1
+fi
+[ $vysi_fail = 0 ] && echo "PASS: both panels load the file their register names at boot, nothing built-in is installed, and a refusal leaves no map"
+fail=$((fail + vysi_fail))
+echo
+
 echo "### native stride-offset tests (script VM symbol resolution)"
 build_run "stride" "stride_test.cpp"
 echo
