@@ -9,13 +9,19 @@
 //   ...
 //
 // Eighteen of those (9 fields x 2 eyes) are exactly the 18 `FAIL (FLAG_FAIL 0x40)` rows the owner
-// report quoted. They can never land: the firmware refuses every write with no value bytes
-// (`ValueUpdateApplicable`, `Core/Functions/MemoryTypes.h`), because storing one would set the
+// report quoted. They can never land as VALUE writes: the firmware refuses every write with no value
+// bytes (`ValueUpdateApplicable`, `Core/Functions/MemoryTypes.h`), because storing one would set the
 // row's Size to 0 and make the address dead for every later write. So the cases below pin the two
 // halves of the fix - never send such a write, and report the row as skipped - and the other half
 // of the same card: a row whose device-side type/size is NOT the archive's must be re-created, not
 // skipped (`Dynamic[0]` field 4 key 0 holds `Number` at size 1 where a Number is 4 bytes, and the
 // emote selector's read of it lands as SCRIPT_ERR_TYPE).
+//
+// Card t_8b5acae7 then split the zero-length case in two. An empty write of a DICTIONARY type is the
+// firmware's marker CREATE (`ValueMarkerCreatable`, `MemoryBlocks.h` `SetEntry`), because the
+// renderer learns a field's part only from the type on that key-0 row (`Blocks/Vysi1Render.h`) - so
+// the restore must make the marker a block is MISSING (the last cases below), while the markers the
+// device already holds stay untouched and every other empty write is still refused.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/backup.dart';
@@ -30,10 +36,11 @@ import 'package:tamuapp/core/types.dart';
 /// A dynamic device over the same request surface the restore uses: it answers block meta, the
 /// field/key table and per-row reads from [rows], and applies WRITES the way the firmware does.
 ///
-/// The write rule is the one the whole card turns on: a value with no bytes is refused
-/// (`ValueUpdateApplicable`), a rejected address answers `FLAG_FAIL` with no payload, and an
-/// accepted write stores the row's new type and length - which is what re-creates a row that was
-/// left at the wrong size.
+/// The write rules are the ones the whole card turns on: an empty write of a dictionary type
+/// CREATES a size-0 marker row (and is a no-op over one that already exists), every other empty
+/// write is refused (`ValueUpdateApplicable`/`ValueMarkerCreatable`), a rejected address answers
+/// `FLAG_FAIL` with no payload, and an accepted write stores the row's new type and length - which
+/// is what re-creates a row that was left at the wrong size.
 class _DynamicDevice implements RequestChannel {
   /// `'global:field:key'` -> the row the device holds.
   final rows = <String, ({int type, List<int> value, int flags})>{};
@@ -46,8 +53,11 @@ class _DynamicDevice implements RequestChannel {
   /// Every request, in the order it was sent.
   final sent = <({ServiceType service, int cid, List<int> payload})>[];
 
-  /// Writes that carried a value type but NO value bytes: the bug this card is about.
+  /// Empty writes the device REFUSED: not a dictionary type, or a row that holds bytes.
   int zeroLengthValueWrites = 0;
+
+  /// Empty writes that CREATED (or re-asserted) a dictionary marker row, as `'global:field:key'`.
+  final markerCreates = <String>[];
 
   /// Writes that carried no bytes ON PURPOSE (type None = delete).
   int deletions = 0;
@@ -276,9 +286,24 @@ class _DynamicDevice implements RequestChannel {
       return PacketResponse(payload: payload, success: true, fail: false);
     }
     if (value.isEmpty) {
-      // The firmware's gate: refuse, and answer nothing (`RespondStatus(Frame, false)`).
-      zeroLengthValueWrites++;
-      return _failed;
+      // `ValueMarkerCreatable`: an empty write of a DICTIONARY type creates the size-0 marker row
+      // (a no-op over one that already exists, so a restore may repeat it). Every other empty write
+      // is refused, and so is one over a row that already holds bytes - answered `FLAG_FAIL` with no
+      // payload, as `RespondStatus(Frame, false)` does.
+      final marker = isDictionaryMarkerType(DataType.fromValue(meta.type));
+      final held = rows[address];
+      if (!marker || (held != null && held.value.isNotEmpty)) {
+        zeroLengthValueWrites++;
+        return _failed;
+      }
+      markerCreates.add(address);
+      rows[address] = (
+        type: meta.type,
+        value: const <int>[],
+        flags: meta.flags,
+      );
+      // An accepted write echoes the request payload: BlockInfo + ValueInfo, no value bytes.
+      return PacketResponse(payload: payload, success: true, fail: false);
     }
     if (refuse.contains(address)) return _failed;
     // `SetEntry`: the stored length is the bytes present, so a row left at the wrong size is
@@ -1325,6 +1350,312 @@ void main() {
         isEmpty,
       );
       expect(device.rows['0:4:0']!.value, [1, 2, 3, 4]);
+    },
+  );
+
+  // Card t_8b5acae7: an appended field needs its key-0 dictionary MARKER, and the restore is what
+  // must make it. The renderer learns a part's kind only from the type on that row
+  // (`Blocks/Vysi1Render.h`), the row is a size-0 marker, and an empty write of a dictionary type is
+  // exactly the CREATE the firmware accepts (`ValueMarkerCreatable`, `MemoryBlocks.h` `SetEntry`).
+  // The cases below pin the three halves of the rule: make the marker a block is missing, leave one
+  // it already holds alone, and still never send an empty write that is not a marker create.
+
+  /// `Left Eye` as the setup archive carries it: the rig's nine picture fields (each a key-0 marker
+  /// plus its value keys) and then the two fields the app appended - `Field 9` a Geometry dictionary
+  /// and `Field 10` a Texture dictionary, each a size-0 key-0 marker with no value of its own.
+  BackupBlock leftEyeWithParts() => BackupBlock(
+    type: 'Dynamic',
+    typeIndex: dynamicTypeForIndex(1),
+    instance: 1,
+    name: 'Left Eye',
+    isDynamic: true,
+    entries: [
+      ..._eye('Left Eye', 1).entries,
+      BackupEntry(
+        field: 'Field 9',
+        fieldIndex: 9,
+        key: 'Key 0',
+        keyIndex: 0,
+        type: 'Geometry dict',
+        flags: const ['Persistent'],
+        value: const <Object>[],
+        size: 0,
+      ),
+      BackupEntry(
+        field: 'Field 10',
+        fieldIndex: 10,
+        key: 'Key 0',
+        keyIndex: 0,
+        type: 'Texture dict',
+        flags: const ['Persistent'],
+        value: const <Object>[],
+        size: 0,
+      ),
+    ],
+  );
+
+  /// Puts [eye]'s rows into [device] the way the rig holds them, and returns a snapshot of them so a
+  /// case can prove they are unchanged after the run.
+  Map<String, ({int type, List<int> value, int flags})> fill(
+    _DynamicDevice device,
+    LiveBlock eye,
+  ) {
+    final before = <String, ({int type, List<int> value, int flags})>{};
+    for (final e in eye.entries) {
+      final address = '${eye.instance}:${e.field}:${e.key}';
+      device.rows[address] = (
+        type: e.meta.type,
+        value: List<int>.of(e.value),
+        flags: ValueFlags.persistent,
+      );
+      before[address] = (
+        type: e.meta.type,
+        value: List<int>.of(e.value),
+        flags: ValueFlags.persistent,
+      );
+    }
+    return before;
+  }
+
+  test(
+    'a block missing its appended parts gets their key-0 markers, and keeps its nine',
+    () async {
+      final archive = _archive(blocks: [leftEyeWithParts()]);
+      final live = _live(blocks: [_liveEye('Left Eye', 1)]);
+      final device = _DynamicDevice();
+      // The rig's shape: nine fields, each with its key-0 marker and its value keys, and no f9/f10.
+      final before = fill(device, live.blocks.single);
+      _install(device);
+      final plan = _plan(archive: archive, live: live);
+
+      final report = await applyRestorePlan(plan);
+
+      // The two rows the renderer reads: the dictionary's type at Size 0, and no value bytes.
+      expect(device.rows['1:9:0']!.type, DataType.geometry.value);
+      expect(device.rows['1:9:0']!.value, isEmpty);
+      expect(device.rows['1:10:0']!.type, DataType.texture.value);
+      expect(device.rows['1:10:0']!.value, isEmpty);
+      // Exactly those two empty writes went out, and both were accepted (a refused one answers
+      // FLAG_FAIL, which the client reports as a failure).
+      expect(device.markerCreates, ['1:9:0', '1:10:0']);
+      expect(device.zeroLengthValueWrites, 0);
+      expect(report.failed, 0, reason: report.text);
+      expect(
+        report.counts,
+        '10 written · 2 created · 11 skipped (structural) · 0 failed',
+      );
+      RestoreStructureRow rowFor(int field) => report.created.firstWhere(
+        (r) => r.subject.contains('(field $field key 0)'),
+      );
+      expect(report.created, hasLength(2));
+      expect(rowFor(9).shape, 'Geometry dict, 0 byte(s)');
+      expect(rowFor(10).shape, 'Texture dict, 0 byte(s)');
+      expect(rowFor(9).verb, 'created');
+      expect(rowFor(9).held, isNull);
+      // The nine picture markers (0,0)..(8,0) are left alone: the same type, still empty of bytes.
+      for (var field = 0; field < 9; field++) {
+        final address = '1:$field:0';
+        expect(device.rows[address]!.type, before[address]!.type);
+        expect(device.rows[address]!.value, isEmpty);
+      }
+      // ... and so is every value row the device already held.
+      for (final address in before.keys) {
+        expect(device.rows[address]!.type, before[address]!.type);
+        expect(device.rows[address]!.value, before[address]!.value);
+      }
+
+      // Idempotent: the same plan applied again sends no second create - the rows are "already there
+      // in the declared shape" once this run's re-read has landed.
+      final again = await applyRestorePlan(plan);
+      expect(again.failed, 0, reason: again.text);
+      expect(again.created, isEmpty);
+      expect(device.markerCreates, ['1:9:0', '1:10:0']);
+
+      // ignore: avoid_print
+      print('--- marker create report ---\n${report.text}\n--- end ---');
+    },
+  );
+
+  test('a block that already holds (9,0) is not sent a create for it', () async {
+    final archive = _archive(blocks: [leftEyeWithParts()]);
+    // The device already carries both appended markers, in the archive's declared shape.
+    final liveEye = LiveBlock(
+      type: dynamicTypeForIndex(1),
+      instance: 1,
+      name: 'Left Eye',
+      isDynamic: true,
+      entries: [
+        ..._liveEye('Left Eye', 1).entries,
+        LiveEntry(
+          field: 9,
+          key: 0,
+          fieldName: 'Field 9',
+          keyName: 'Key 0',
+          meta: ValueInfo(
+            type: DataType.geometry.value,
+            size: 0,
+            flags: ValueFlags.persistent,
+          ),
+          value: const <int>[],
+        ),
+        LiveEntry(
+          field: 10,
+          key: 0,
+          fieldName: 'Field 10',
+          keyName: 'Key 0',
+          meta: ValueInfo(
+            type: DataType.texture.value,
+            size: 0,
+            flags: ValueFlags.persistent,
+          ),
+          value: const <int>[],
+        ),
+      ],
+    );
+    final device = _DynamicDevice();
+    fill(device, liveEye);
+    _install(device);
+
+    final report = await applyRestorePlan(
+      _plan(
+        archive: archive,
+        live: _live(blocks: [liveEye]),
+      ),
+    );
+
+    // The rows are there in the declared shape, so the structure phase builds nothing at all.
+    expect(report.failed, 0, reason: report.text);
+    expect(report.structure, isEmpty);
+    expect(report.created, isEmpty);
+    expect(device.markerCreates, isEmpty);
+    expect(device.zeroLengthValueWrites, 0);
+    expect(
+      device.sent.where(
+        (c) =>
+            c.service == ServiceType.register &&
+            c.cid == RegisterCid.write &&
+            c.payload.length == 8,
+      ),
+      isEmpty,
+      reason: 'an 8-byte write is an empty one, i.e. a marker create',
+    );
+    expect(device.rows['1:9:0']!.type, DataType.geometry.value);
+    expect(device.rows['1:10:0']!.type, DataType.texture.value);
+    // Both markers are reported as structure the device holds, not as rows to write.
+    expect(report.counts, '10 written · 11 skipped (structural) · 0 failed');
+    final skips = report.skipped
+        .where(
+          (s) =>
+              s.subject.contains('Field 9') || s.subject.contains('Field 10'),
+        )
+        .toList();
+    expect(skips, hasLength(2));
+    for (final skip in skips) {
+      expect(skip.reason, contains('the device carries the row'));
+      expect(skip.reason, isNot(contains('creates the marker')));
+    }
+  });
+
+  test(
+    'a zero-length write that is not a marker create is still never sent',
+    () async {
+      // A row that declares no length but is NOT a dictionary type has no create the firmware would
+      // accept, so it must never reach the bus - not from the structure phase and not from the
+      // client, which refuses it either way.
+      final archive = _archive(
+        blocks: [
+          BackupBlock(
+            type: 'Dynamic',
+            typeIndex: dynamicTypeBase,
+            instance: 0,
+            name: 'Subscriptions',
+            isDynamic: true,
+            entries: [
+              BackupEntry(
+                field: 'Field 4',
+                fieldIndex: 4,
+                key: 'Key 0',
+                keyIndex: 0,
+                type: 'Text',
+                flags: const ['Persistent'],
+                value: const <Object>[],
+                size: 0,
+              ),
+            ],
+          ),
+        ],
+      );
+      final liveBlock = LiveBlock(
+        type: dynamicTypeBase,
+        instance: 0,
+        name: 'Subscriptions',
+        isDynamic: true,
+        entries: const [],
+      );
+      final device = _DynamicDevice();
+      _install(device);
+
+      final report = await applyRestorePlan(
+        _plan(
+          archive: archive,
+          live: _live(blocks: [liveBlock]),
+        ),
+      );
+
+      expect(report.failed, 0, reason: report.text);
+      expect(report.created, isEmpty);
+      expect(report.structure, isEmpty);
+      expect(
+        report.skipped.single.reason,
+        contains('a row with no length cannot be created'),
+      );
+      expect(device.markerCreates, isEmpty);
+      expect(device.zeroLengthValueWrites, 0);
+      expect(
+        device.sent.where(
+          (c) =>
+              c.service == ServiceType.register && c.cid == RegisterCid.write,
+        ),
+        isEmpty,
+      );
+
+      // The client refuses the same empty write asked for directly, and refuses a marker create
+      // asked for with a type that is not a dictionary.
+      final client = RegisterClient(deviceId: 1);
+      final block = DynBlock(
+        index: 0,
+        meta: ValueInfo(type: dynamicTypeBase),
+        name: 'Subscriptions',
+      );
+      final refused = await client.writeDynamicEntry(
+        block,
+        4,
+        0,
+        ValueInfo(type: DataType.text.value, flags: ValueFlags.persistent),
+        const [],
+      );
+      expect(refused, isNull);
+      expect(client.trace.fault!.kind, RequestFaultKind.notSent);
+      expect(client.trace.fault!.detail, contains('no value bytes'));
+
+      client.trace.clear();
+      final notADictionary = await client.createDictionaryMarker(
+        block,
+        4,
+        0,
+        ValueInfo(type: DataType.text.value, flags: ValueFlags.persistent),
+      );
+      expect(notADictionary, isNull);
+      expect(client.trace.fault!.kind, RequestFaultKind.notSent);
+      expect(client.trace.fault!.detail, contains('not one'));
+      expect(
+        device.sent.where(
+          (c) =>
+              c.service == ServiceType.register && c.cid == RegisterCid.write,
+        ),
+        isEmpty,
+        reason: 'neither attempt was sent',
+      );
     },
   );
 }

@@ -355,8 +355,10 @@ are hardware-only.
   `t_ef2b1461` (owner defect, measured on the rig 2026-10-25: `Dynamic[0]` f4 k0 was a `Number` at 1
   byte where the archive declares `Bool` at 1, and the emote selector's register read of it landed as
   `SCRIPT_ERR_TYPE`) a restore makes a dynamic block's structure in the archive's DECLARED type and
-  size, re-creates a row the device holds in another `(type, size)`, leaves zero-length dictionary
-  markers alone, and reports each structure row as created or re-created - per row in the result
+  size, re-creates a row the device holds in another `(type, size)`, creates a dictionary field's
+  key-0 marker where the device lacks one (and leaves one it holds alone - since `t_8b5acae7`; the
+  firmware's firm `ValueMarkerCreatable` rule, `Core/Functions/MemoryTypes.h`), and reports each
+  structure row as created or re-created - per row in the result
   screen and the copied text, and in `RestoreReport.metadata` (`created`, `recreated`, `structure`).
   The counts line is now `N written · A created · B re-created · C skipped (structural) · D failed`
   (the two middle parts appear only when non-zero, and a created row whose value is then written is
@@ -365,7 +367,8 @@ are hardware-only.
   already covers, add: "A dynamic block's structure is made in the type and size the archive
   declares; a row the device holds in another type or size is re-created rather than written into,
   and the run names every row it created or re-created. A dictionary field's key-0 marker has no
-  value to write and is left as structure, never written."
+  value to write: where the device lacks it the run creates it as the marker the renderer
+  classifies the field by, and a marker the device already holds is left untouched."
 
 - **E52** **`Docs/Services/Subscriptions.md:80` still says the requester writes the derived `Bool`
   into the target, which the owner's pulse ruling supersedes.** The doc's edge bullet reads "The

@@ -241,6 +241,19 @@ DataType? dataTypeFromWord(String word) {
   return null;
 }
 
+/// Whether [type] is a DICTIONARY MARKER type: a keyed dictionary's key 0 declares one of these and
+/// "has no value of its own" (`Docs/Data Formats.md` "Dictionaries"; firmware `DataType::Geometry`,
+/// `Texture` and `UnknownKeyed`).
+///
+/// A size-0 row of one of these is the ONE empty write the firmware accepts: it CREATES the row with
+/// the declared type and Size 0 (`ValueMarkerCreatable` in `Core/Functions/MemoryTypes.h`), and that
+/// marker is the only place the renderer learns what a field's part is (`Blocks/Vysi1Render.h`).
+/// Every other empty write is still refused.
+bool isDictionaryMarkerType(DataType type) =>
+    type == DataType.geometry ||
+    type == DataType.texture ||
+    type == DataType.unknownKeyed;
+
 /// The System block is type 0 instance 0 in the Register service; it shares the numeric
 /// value with the dynamic "None" tombstone, so it is not a [BlockType] member (that would
 /// duplicate the enum value). Use this constant for system-block comparisons.

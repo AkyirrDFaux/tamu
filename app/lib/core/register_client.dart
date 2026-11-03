@@ -701,12 +701,37 @@ class RegisterClient {
     );
   }
 
+  /// Creates a field's key-0 dictionary MARKER (CID 3): an EMPTY write whose type is that field's
+  /// dictionary (`Geometry`, `Texture` or `UnknownKeyed`), which the firmware stores as a size-0 row.
+  ///
+  /// This is the only way a field APPENDED to a block can be told apart by the renderer: a part's
+  /// kind comes from the type on its field's key-0 marker and from nowhere else
+  /// (`Blocks/Vysi1Render.h`), so a field with value keys but no key-0 row is classified as nothing
+  /// and never paints. The firmware accepts exactly this shape (`ValueMarkerCreatable` in
+  /// `Core/Functions/MemoryTypes.h`: an empty write of a dictionary type creates the row at Size 0
+  /// and keeps the declared type) and treats a re-send over an existing marker as a no-op success,
+  /// so a restore that repeats it is idempotent. Every OTHER empty write is refused, and so is one
+  /// over a row that already holds bytes - which this client cannot see, so a caller must not use it
+  /// to overwrite a value row ([writeDynamicEntry] still refuses every empty write).
+  Future<List<int>?> createDictionaryMarker(
+    DynBlock block,
+    int field,
+    int key,
+    ValueInfo meta,
+  ) => _writeDynamicValue(
+    _dynBi(block.index, field, key),
+    ValueInfo(type: meta.type, flags: meta.flags, key: key, size: 0),
+    const [],
+    markerCreate: true,
+  );
+
   /// True when [entries] hold a row with NO value of its own: a keyed dictionary's MARKER
   /// (`Geometry`/`Texture` at key 0 - see `Blocks/Render.h`) or any other zero-length row.
   ///
   /// The one rule behind both the write guard ([_writeDynamicValue]) and the reorder refusals: a
-  /// zero-length row is structure the firmware owns, and no host write can create it or carry it
-  /// across a rebuild.
+  /// zero-length row is structure the device owns, and no ordinary host write (a value, a moved
+  /// address) can carry one across a rebuild - only a marker CREATE can make one
+  /// ([createDictionaryMarker]).
   static bool _holdsMarkers(
     Iterable<({int field, int key, ValueInfo meta, List<int> value})> entries,
   ) =>
@@ -717,26 +742,38 @@ class RegisterClient {
     ValueInfo meta,
     List<int> value, {
     Duration? timeout,
+    bool markerCreate = false,
   }) async {
-    // A write carrying NO value bytes is never sent. The firmware refuses one (`ValueUpdateApplicable`
-    // in `Core/Functions/MemoryTypes.h`) because storing it would set the row's Size to 0, and a
-    // size-0 row resolves to no data - every later write to that address is dropped until a write
-    // that carries a size comes along. A refused write answers FLAG_FAIL with no payload, so a
-    // caller can only ever report "FAIL", and the app spent 18 of those per restore on the eye
-    // blocks' dictionary MARKERS, which have no value by design (`Blocks/Render.h`: key 0 "has no
-    // value of its own"; `Docs/Data Formats.md` "Dictionaries": "a length of 0 ... which makes it a
-    // marker"). Deleting is the one zero-length request that means something, and it travels as type
-    // None, which the firmware handles before the length gate.
+    // A write carrying NO value bytes is not a value. Storing one would set the row's Size to 0, and
+    // a size-0 row resolves to no data - every later write to that address is dropped until a write
+    // that carries a size comes along. A refused write answers FLAG_FAIL with no payload, so a caller
+    // can only ever report "FAIL". The app spent 18 of those per restore on the eye blocks' dictionary
+    // MARKERS, which have no value by design (`Blocks/Render.h`: key 0 "has no value of its own";
+    // `Docs/Data Formats.md` "Dictionaries": "a length of 0 ... which makes it a marker").
+    //
+    // TWO requests are the exception, both meaning something:
+    //  - a DELETE travels as type None, which the firmware handles before the length gate;
+    //  - a dictionary MARKER's CREATE ([createDictionaryMarker]) is an empty write of a dictionary
+    //    type, which the firmware stores as the size-0 row the renderer classifies a part by
+    //    (`ValueMarkerCreatable`). It refuses every other type, and it refuses to empty a row that
+    //    already holds bytes - which this client cannot see, so the flag is passed explicitly by the
+    //    one caller that knows the address carries no value.
     if (value.isEmpty && meta.type != DataType.none.value) {
-      trace.notSent(
-        deviceId,
-        service: ServiceType.register,
-        cid: RegisterCid.write,
-        detail:
-            'a write with no value bytes is not a value: storing it would set the '
-            'row\'s size to 0 and every later write to it would be refused',
-      );
-      return null;
+      final markerType = isDictionaryMarkerType(DataType.fromValue(meta.type));
+      if (!markerCreate || !markerType) {
+        trace.notSent(
+          deviceId,
+          service: ServiceType.register,
+          cid: RegisterCid.write,
+          detail: markerCreate
+              ? 'a write with no value bytes only creates a dictionary marker: '
+                    'type ${meta.type} is not one, and the firmware refuses it'
+              : 'a write with no value bytes is not a value: storing it would '
+                    'set the row\'s size to 0 and every later write to it would '
+                    'be refused',
+        );
+        return null;
+      }
     }
     // Asked WITH the packet flags on purpose: a register write answers FAIL - and carries no payload
     // at all when it does (`RespondStatus(Frame, false)` in the firmware) - so the flag is the only

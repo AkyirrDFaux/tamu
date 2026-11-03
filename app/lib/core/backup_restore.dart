@@ -1900,11 +1900,13 @@ String createdRowKey(
 ///
 /// They are not plan items (see [restoresEntryValue]) and they are not failures. A keyed
 /// dictionary's key 0 is the case: it declares a field as a `Geometry` or `Texture` dictionary and
-/// "has no value of its own" (`Blocks/Render.h`), and every eye block carries nine of them. The
-/// firmware refuses every write with no value bytes, so a restore that wrote them turned the
-/// archive's own structure into a page of FAIL lines - 18 of them, none of which was a write that
-/// could ever have landed. The run reports them one line each instead, with what the device state
-/// makes of the row, so `0 failed` cannot be read as "nothing was left out".
+/// "has no value of its own" (`Blocks/Render.h`), and every eye block carries nine of them. Such a
+/// row has no VALUE to write, so sending one as a value turned the archive's own structure into a
+/// page of FAIL lines - 18 of them, none of which was a write that could ever have landed. What the
+/// row does need is its CREATE where the device lacks it, which the structure phase makes
+/// ([prepareDynamicBlocks]: an empty write of a dictionary type is a marker create). The run reports
+/// these rows one line each instead, with what the device state makes of the row, so `0 failed`
+/// cannot be read as "nothing was left out".
 ///
 /// Each reason says BOTH why the archive carries no value for the row
 /// ([_noValueSource]) and what the device state makes of it ([_noValueOutcome]): a dictionary
@@ -1936,11 +1938,7 @@ List<RestoreSkip> structuralSkips(RestorePlan plan) {
               );
         // A dictionary marker declares no length and sits beside the keys that carry the value:
         // its type is what makes the field a keyed dictionary, and it holds nothing else.
-        final marker =
-            entry.size == 0 &&
-            (type == DataType.geometry ||
-                type == DataType.texture ||
-                type == DataType.unknownKeyed);
+        final marker = entry.size == 0 && isDictionaryMarkerType(type);
         // A row the structure phase made during THIS run did not exist before it, so the report
         // must not describe the device as holding a value for it ([RestorePlan.createdStructure]);
         // a row it RE-created held something else, so that is said instead
@@ -1995,9 +1993,10 @@ String _noValueSource(BackupEntry entry, {required bool marker}) {
 ///
 /// It never claims the device's row is empty: a structural row with a declared length can hold its
 /// own value, and the structure phase creates a missing one zero-filled
-/// ([prepareDynamicBlocks], which carries the declared type and size). Only a row that declares no
-/// length is one no host write can create - the firmware refuses a write with no bytes - so only
-/// that case says "cannot be created".
+/// ([prepareDynamicBlocks], which carries the declared type and size). A dictionary MARKER is the
+/// one row WITH no length that a host write can create - an empty write of a dictionary type is its
+/// create (`ValueMarkerCreatable`) - so only a zero-length row of any OTHER type says "cannot be
+/// created".
 ///
 /// [created] is the case where the row did not exist before this run and [prepareDynamicBlocks]
 /// made it: there is no earlier value then, so the reason says what the run did instead of
@@ -2014,8 +2013,12 @@ String _noValueOutcome(
   bool recreated = false,
 }) {
   if (created) {
-    return 'the structure phase created it zero-filled this run, and no value '
-        'was written';
+    // A marker is made as a size-0 row, not zero-filled: there are no bytes to fill.
+    return entry.size == 0
+        ? 'the structure phase created the marker this run, and no value was '
+              'written'
+        : 'the structure phase created it zero-filled this run, and no value '
+              'was written';
   }
   if (recreated) {
     return 'the structure phase re-created it in the declared type and size '
@@ -2026,19 +2029,26 @@ String _noValueOutcome(
         'sent to it';
   }
   if (!hasBlock) {
-    return entry.size == 0
-        ? 'the device carries no such block, and a row with no length cannot '
-              'be created: the firmware refuses a write with no bytes'
-        : 'the device carries no such block; the structure phase builds the '
-              'block and this row zero-filled, and no value is written to it';
+    if (entry.size == 0) {
+      return marker
+          ? 'the device carries no such block; the structure phase builds the '
+                'block and this marker, and no value is written to it'
+          : 'the device carries no such block, and a row with no length cannot '
+                'be created: the firmware refuses a write with no bytes';
+    }
+    return 'the device carries no such block; the structure phase builds the '
+        'block and this row zero-filled, and no value is written to it';
   }
   if (!hasRow) {
-    return entry.size == 0
-        ? 'the device carries no such row, and a row with no length cannot be '
-              'created: the firmware refuses a write with no bytes'
-        : 'the device carries no such row; the structure phase creates a row '
-              'with a declared length zero-filled, and no value is written to '
-              'it';
+    if (entry.size == 0) {
+      return marker
+          ? 'the device carries no such row; the structure phase creates the '
+                'marker, and no value is written to it'
+          : 'the device carries no such row, and a row with no length cannot be '
+                'created: the firmware refuses a write with no bytes';
+    }
+    return 'the device carries no such row; the structure phase creates a row '
+        'with a declared length zero-filled, and no value is written to it';
   }
   if (marker) return 'the device carries the row';
   return entry.size == 0
@@ -2056,9 +2066,12 @@ String _noValueOutcome(
 ///
 /// The rows it creates are every row the archive carries for a dynamic block - a persistent one
 /// (whose value is then written) AND a structural one (whose value the archive does not carry and
-/// which therefore only ever lands as the entry's own default). The structure is the persistent
-/// part of a dynamic block: its table is device state (`.DT_<hex2>`), so a restore onto a wiped
-/// target has to build it from these rows or the block's addresses do not exist at all.
+/// which therefore only ever lands as the entry's own default). A size-0 dictionary MARKER is made
+/// as an empty write, which is the firmware's marker create: the row holds no bytes, but its TYPE is
+/// the only thing that tells the renderer what the field's part is (`Blocks/Vysi1Render.h`), so a
+/// field appended to a block is classified as nothing - and never paints - without it. The structure
+/// is the persistent part of a dynamic block: its table is device state (`.DT_<hex2>`), so a restore
+/// onto a wiped target has to build it from these rows or the block's addresses do not exist at all.
 ///
 /// Re-reads the live devices and re-points the plan afterwards, so it resolves against the
 /// structure that now exists; newly restorable items join the default selection. A structure that
@@ -2126,19 +2139,24 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
         if (!seen.add('${entry.fieldIndex}:${entry.keyIndex}')) continue;
         final type = dataTypeFromWord(entry.type);
         if (type == null) continue;
-        // A row that declares NO length has nothing a create could carry: the firmware refuses
-        // every write with no value bytes (`ValueUpdateApplicable`), so attempting one is the bug
-        // this card is about - nine dictionary MARKERS per eye block, each answered FAIL. The apply
-        // reports these rows as structural skips instead. A structural row that DOES declare a
-        // length is created below like any other, with its own default (all zeroes) - that is what
-        // gives the block the field the archive describes without inventing a value for it.
-        if (entry.size == 0) continue;
         final live = present['${entry.fieldIndex}:${entry.keyIndex}'];
-        // Already there in the declared shape: the ordinary value write will fill it.
+        // Already there in the declared shape: nothing to build. For a dictionary MARKER this is
+        // the ordinary case - the row the device carries is the one the renderer reads.
         if (live != null &&
             live.meta.dataType == type &&
             live.meta.size == entry.size) {
           continue;
+        }
+        // A row that declares NO length carries no value for a create to send. The one exception is
+        // a dictionary MARKER: an empty write of a dictionary type is its CREATE, and the renderer
+        // learns a field's kind only from the type on that key-0 row (`Blocks/Vysi1Render.h`), so a
+        // field appended to a block - `Left Eye`'s Geometry/Texture parts - has to be given one or
+        // the part is classified as nothing and never paints. The firmware refuses every OTHER empty
+        // write, and refuses one over a row that already holds bytes (an empty write cannot empty a
+        // value row), so a marker create is attempted only where the device holds no bytes.
+        final marker = entry.size == 0 && isDictionaryMarkerType(type);
+        if (entry.size == 0) {
+          if (!marker || (live != null && live.meta.size != 0)) continue;
         }
         final meta = ValueInfo(
           type: type.value,
@@ -2150,7 +2168,14 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
           flags: flagsFromWords(entry.flags),
         );
         final zero = List<int>.filled(entry.size, 0);
-        final added = entry.keyIndex == 0
+        final added = marker
+            ? await reg.createDictionaryMarker(
+                dyn,
+                entry.fieldIndex,
+                entry.keyIndex,
+                meta,
+              )
+            : entry.keyIndex == 0
             ? await reg.appendDynamicEntry(
                 dyn,
                 meta,
