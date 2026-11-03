@@ -10,7 +10,10 @@
 #                     (Core/Services/ScriptPow.h)
 #   crc_test.cpp      Crc8 (Core/Functions/Packet.h), both OPTIMIZE_SPEED shapes
 #   value_update_test.cpp  a 0-length value write is refused at the dynamic block
-#                     (Core/Functions/MemoryBlocks.h), so the target keeps its value
+#                     (Core/Functions/MemoryBlocks.h), so the target keeps its value - except a
+#                     zero-length write of a dictionary type, which CREATES the field's key-0 marker
+#                     row (ValueMarkerCreatable, Core/Functions/MemoryTypes.h) so an appended render
+#                     part can be classified
 #   register_read_test.cpp  a row with no bytes is unreadable - a read of it fails the access
 #                     (REGISTER), it is not an empty value whose type then complains (the read-side
 #                     ValueReadable, Core/Functions/MemoryTypes.h)
@@ -203,7 +206,7 @@ echo "### native log layout tests (LogMessage source/code/timestamp)"
 build_run "log" "log_test.cpp"
 echo
 
-echo "### native value-update tests (a 0-length value is refused; the dynamic target keeps its value)"
+echo "### native value-update tests (a 0-length value is refused; a dictionary marker is created)"
 build_run "valueupdate" "value_update_test.cpp"
 echo
 

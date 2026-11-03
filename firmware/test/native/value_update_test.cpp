@@ -100,6 +100,99 @@ int main() {
 
     Block.Release();
 
+    // ---- A dictionary marker CREATE (t_2da784f0): a render part's kind lives only on its field's
+    // key-0 row, which carries the dictionary's type and no value. Before this, no host write could
+    // create one: every empty write was refused, so a setup restore could append a field to a live
+    // block but the renderer could not classify it (kind 0, never applied).
+    DynamicBlockDescriptor Parts;
+    Parts.Present = true;
+    const ValueInfo Geo0 = { (uint16_t)DataType::Geometry, 0, 0 };
+    const ValueInfo Tex0 = { (uint16_t)DataType::Texture, 0, 0 };
+    const ValueInfo Keyed0 = { (uint16_t)DataType::UnknownKeyed, 0, 0 };
+
+    CHECK(ValueIsDictionaryType((uint16_t)DataType::Geometry));
+    CHECK(ValueIsDictionaryType((uint16_t)DataType::Texture));
+    CHECK(ValueIsDictionaryType((uint16_t)DataType::UnknownKeyed));
+    CHECK(!ValueIsDictionaryType((uint16_t)DataType::Number));
+    CHECK(!ValueIsDictionaryType((uint16_t)DataType::Bool));
+    CHECK(!ValueIsDictionaryType((uint16_t)DataType::None));
+
+    // An empty Geometry write at (9, 0) creates the marker row.
+    CHECK(Parts.SetEntry(9, 0, nullptr, 0, Geo0));
+    KeyResult M = Parts.GetKey(9, 0);
+    CHECK(M.Exists);
+    CHECK_EQ(ValueInfoType(M.Meta.Type), (uint16_t)DataType::Geometry);
+    CHECK_EQ(M.Meta.Size, 0);     // the row carries no value of its own
+    CHECK_EQ(M.DataLen, 0);
+    CHECK(M.DataPtr == nullptr);  // ... and resolves to no data, which is what a marker is
+    CHECK_EQ(Parts.EntryCount, 1);
+
+    // The field is now a field: a value key appended behind it lands normally.
+    const ValueInfo Shape = { (uint16_t)DataType::Enum, 1, 0 };
+    uint8_t Fill = 1;
+    CHECK(Parts.SetEntry(9, 1, &Fill, 1, Shape));
+    KeyResult S = Parts.GetKey(9, 1);
+    CHECK(S.Exists);
+    CHECK_EQ(S.Meta.Size, 1);
+    CHECK(S.DataPtr != nullptr);
+    if (S.DataPtr) CHECK_EQ(*(const uint8_t *)S.DataPtr, 1);
+    // ... and the marker row still reads back as a marker.
+    M = Parts.GetKey(9, 0);
+    CHECK(M.Exists);
+    CHECK_EQ(ValueInfoType(M.Meta.Type), (uint16_t)DataType::Geometry);
+    CHECK_EQ(M.Meta.Size, 0);
+    CHECK(M.DataPtr == nullptr);
+    CHECK_EQ(Parts.EntryCount, 2);
+
+    // The same write again is idempotent (a restore may re-send it).
+    CHECK(Parts.SetEntry(9, 0, nullptr, 0, Geo0));
+    CHECK_EQ(Parts.EntryCount, 2);
+    CHECK_EQ(Parts.GetKey(9, 0).Meta.Size, 0);
+
+    // Texture and UnknownKeyed markers work the same way; the field table still lists them.
+    CHECK(Parts.SetEntry(10, 0, nullptr, 0, Tex0));
+    CHECK_EQ(ValueInfoType(Parts.GetKey(10, 0).Meta.Type), (uint16_t)DataType::Texture);
+    CHECK(Parts.SetEntry(11, 0, nullptr, 0, Keyed0));
+    CHECK_EQ(ValueInfoType(Parts.GetKey(11, 0).Meta.Type), (uint16_t)DataType::UnknownKeyed);
+    {
+        uint8_t Fields[16];
+        CHECK_EQ(Parts.ListFields(Fields, 16), 3);
+        CHECK_EQ(Fields[0], 9);
+        CHECK_EQ(Fields[1], 10);
+        CHECK_EQ(Fields[2], 11);
+    }
+
+    // ---- ... while an EMPTY write of any other type is still refused and leaves no row: the
+    // poisoning case the gate exists for (a size-0 value row is dead for every later write).
+    const ValueInfo Num1 = { (uint16_t)DataType::Number, 4, 0 };
+    CHECK(!Parts.SetEntry(12, 3, nullptr, 0, Num1));
+    CHECK(!Parts.GetKey(12, 3).Exists);
+    CHECK(!Parts.SetEntry(9, 4, nullptr, 0, Num1)); // empty Number behind an existing field
+    CHECK(!Parts.GetKey(9, 4).Exists);
+
+    // ---- A row that already holds bytes is never emptied by an empty write, marker type or not:
+    // this is the measured bambi shape, and the marker create must not reopen it.
+    CHECK(Parts.SetEntry(9, 1, &Fill, 1, Shape));
+    CHECK(!Parts.SetEntry(9, 1, nullptr, 0, Shape));
+    S = Parts.GetKey(9, 1);
+    CHECK(S.Exists);
+    CHECK_EQ(S.Meta.Size, 1);
+    CHECK(S.DataPtr != nullptr);
+    if (S.DataPtr) CHECK_EQ(*(const uint8_t *)S.DataPtr, 1);
+    // A Geometry row that somehow carries bytes is a value row too: an empty Geometry write to it
+    // is refused, not converted into a marker.
+    DynamicBlockDescriptor Odd;
+    Odd.Present = true;
+    const ValueInfo Geo4 = { (uint16_t)DataType::Geometry, 4, 0 };
+    uint32_t Four = 0x04030201;
+    CHECK(Odd.SetEntry(9, 0, &Four, 4, Geo4));
+    CHECK(!Odd.SetEntry(9, 0, nullptr, 0, Geo0));
+    CHECK_EQ(Odd.GetKey(9, 0).Meta.Size, 4);
+    CHECK(Odd.GetKey(9, 0).DataPtr != nullptr);
+    Odd.Release();
+
+    Parts.Release();
+
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

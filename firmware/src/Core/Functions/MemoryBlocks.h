@@ -171,7 +171,14 @@ struct DynamicBlockDescriptor
         // make the key unresolvable for every later write (GetKey then hands back DataPtr =
         // nullptr), so the target would stay dead until the block is reloaded. The entry keeps its
         // previous value and descriptor. See ValueUpdateApplicable (MemoryTypes.h).
-        if (!ValueUpdateApplicable(Len)) return false;
+        //
+        // The one exception is a dictionary marker (see ValueMarkerCreatable): an empty write of a
+        // Geometry/Texture/UnknownKeyed type CREATES the field's key-0 row, which is how a field
+        // appended by a setup restore reaches the renderer. It creates only - a row that already
+        // holds bytes keeps them, because zeroing those is the poisoning case above.
+        if (!ValueUpdateApplicable(Len) &&
+            !ValueMarkerCreatable(Desc.Type, Exists, Exists ? Table[i].Info.Size : 0))
+            return false;
 
         ValueInfo Info = Desc;
         Info.Size = Len;              // the stored length is the bytes actually present

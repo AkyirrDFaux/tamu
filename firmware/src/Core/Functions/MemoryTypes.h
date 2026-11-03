@@ -53,6 +53,32 @@ inline bool ValueIsPersistent(const ValueInfo &Info) { return (Info.Flags & Valu
 // value write is therefore gated on this: refuse a 0-length value and leave the target as it was.
 static inline bool ValueUpdateApplicable(uint8_t Len) { return Len != 0; }
 
+// Dictionary marker rows. A render part (a Geometry or Texture dictionary) lives at a field whose
+// key-0 row carries the dictionary's TYPE and NO value of its own (Blocks/Render.h
+// GeometryKey::Dictionary / TextureKey::Dictionary); Docs/Data Formats.md adds the generic 0x0100
+// UnknownKeyed. The renderer reads that row alone to classify the field (Blocks/Vysi1Render.h:
+// ValueInfoType(GetKey(Field, 0).Meta.Type)), so a field appended to a live block by a host write is
+// invisible until such a row can be CREATED - and the zero-length gate above refuses every empty
+// write, which is why a setup restore could not append a renderable part.
+static inline bool ValueIsDictionaryType(uint16_t Type) {
+    switch (ValueInfoType(Type)) {
+    case (uint16_t)DataType::UnknownKeyed:
+    case (uint16_t)DataType::Geometry:
+    case (uint16_t)DataType::Texture:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Whether an EMPTY write (no value bytes) may stand as a marker create: only for a dictionary type,
+// and only where it does not take bytes away. A row that already holds value bytes is a value row
+// whatever its declared type, and zeroing it is exactly the poisoning case ValueUpdateApplicable
+// guards; a marker row (Size 0) may be re-sent, so a restore is idempotent.
+static inline bool ValueMarkerCreatable(uint16_t Type, bool Exists, uint8_t StoredSize) {
+    return ValueIsDictionaryType(Type) && !(Exists && StoredSize != 0);
+}
+
 // Whether a row's value can be read out at all - the read side of the line above.
 //
 // A row with no bytes is a register row that has nothing behind it: a dynamic entry can exist with
