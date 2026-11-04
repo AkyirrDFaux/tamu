@@ -509,32 +509,76 @@ class _RegisterPageState extends State<RegisterPage>
       fields.clear();
     }
 
+    /// Reads the pending (field, key) rows of this block, [blockReadBatch] at a time, and puts
+    /// them in [cache]. One read per row in sequence is what made a dynamic block with 53
+    /// rows take six seconds to open over Bluetooth (measured on the rig): the rows are
+    /// independent, so their round trips overlap instead of queueing.
+    Future<void> readRows(
+      List<(int field, int key)> pending,
+      Future<({ValueInfo meta, List<int> value})?> Function(int field, int key)
+      read,
+      void Function(
+        (int field, int key) row,
+        ({ValueInfo meta, List<int> value})? e,
+      )
+      store,
+    ) async {
+      for (
+        var start = 0;
+        start < pending.length;
+        start += RegisterClient.blockReadBatch
+      ) {
+        final end = (start + RegisterClient.blockReadBatch).clamp(
+          0,
+          pending.length,
+        );
+        final group = pending.sublist(start, end);
+        final results = await Future.wait([
+          for (final row in group) read(row.$1, row.$2),
+        ]);
+        for (var i = 0; i < group.length; i++) {
+          store(group[i], results[i]);
+        }
+      }
+    }
+
     // Dynamic blocks use the flat Field&Key model: enumerate the distinct fields and
     // read every (field, key) entry (cached as cache[field*256 + key]).
     if (isDynamicType(blockType)) {
-      final fieldList = await _client.getDynamicFields(instance) ?? <int>[];
+      // One enumeration gives EVERY (field, key) row, so the key map is built from it instead
+      // of asking the device once per field.
+      final words =
+          await _client.enumerateFieldKeys(blockType, instance & 0x3F) ??
+          const <int>[];
+      final keysByField = <int, List<int>>{};
+      for (final w in words) {
+        final f = w >> 8;
+        (keysByField[f] ??= <int>[]).add(w & 0xFF);
+      }
+      final fieldList = keysByField.keys.toList()..sort();
       fields
         ..clear()
         ..addAll(fieldList);
       final keyMap = _dynamicKeys.putIfAbsent(instance, () => {});
       for (final f in fieldList) {
-        final keys = await _client.getDynamicKeys(instance, f) ?? <int>[0];
-        keyMap[f] = keys;
-        for (final key in keys) {
-          if (!forceRefresh && cache.containsKey(f * 256 + key)) continue;
-          final entry = await _client.readBlockField(
-            blockType,
-            instance,
-            f,
-            key,
-          );
-          if (entry != null) {
-            cache[f * 256 + key] = entry;
-          } else {
-            cache.remove(f * 256 + key);
-          }
-        }
+        keyMap[f] = keysByField[f]!;
       }
+      final pending = <(int, int)>[
+        for (final f in fieldList)
+          for (final key in keysByField[f]!)
+            if (forceRefresh || !cache.containsKey(f * 256 + key)) (f, key),
+      ];
+      await readRows(
+        pending,
+        (f, key) => _client.readBlockField(blockType, instance, f, key),
+        (row, entry) {
+          if (entry != null) {
+            cache[row.$1 * 256 + row.$2] = entry;
+          } else {
+            cache.remove(row.$1 * 256 + row.$2);
+          }
+        },
+      );
       return;
     }
 
@@ -543,66 +587,87 @@ class _RegisterPageState extends State<RegisterPage>
     // categories are exposed here.
     if (isScriptType(blockType)) {
       final keyMap = _scriptKeys.putIfAbsent(cacheKey, () => {});
-      for (var f = ScriptField.input; f < block.meta.size; f++) {
-        final keys =
-            await _client.getBlockKeys(blockType, instance, f) ?? <int>[];
-        keyMap[f] = keys;
-        for (final key in keys) {
-          if (!forceRefresh && cache.containsKey(f * 256 + key)) continue;
-          final entry = await _client.readBlockField(
-            blockType,
-            instance,
-            f,
-            key,
-          );
-          if (entry != null) {
-            cache[f * 256 + key] = entry;
-          } else {
-            cache.remove(f * 256 + key);
-          }
-        }
+      final words =
+          await _client.enumerateFieldKeys(blockType, instance) ??
+          const <int>[];
+      final keysByField = <int, List<int>>{};
+      for (final w in words) {
+        final f = w >> 8;
+        (keysByField[f] ??= <int>[]).add(w & 0xFF);
       }
+      for (var f = ScriptField.input; f < block.meta.size; f++) {
+        keyMap[f] = keysByField[f] ?? <int>[];
+      }
+      final pending = <(int, int)>[
+        for (var f = ScriptField.input; f < block.meta.size; f++)
+          for (final key in keysByField[f] ?? const <int>[])
+            if (forceRefresh || !cache.containsKey(f * 256 + key)) (f, key),
+      ];
+      await readRows(
+        pending,
+        (f, key) => _client.readBlockField(blockType, instance, f, key),
+        (row, entry) {
+          if (entry != null) {
+            cache[row.$1 * 256 + row.$2] = entry;
+          } else {
+            cache.remove(row.$1 * 256 + row.$2);
+          }
+        },
+      );
       return;
     }
 
     final fieldCount = block.meta.size;
-    for (var f = 0; f < fieldCount; f++) {
-      if (!forceRefresh && cache.containsKey(f)) continue;
-      if (blockType == 0) {
+    if (blockType == 0) {
+      final pending = <(int, int)>[
+        for (var f = 0; f < fieldCount; f++)
+          if (forceRefresh || !cache.containsKey(f))
+            for (final key in systemKeysForField(f)) (f, key),
+      ];
+      final rows = <(int, int), ({ValueInfo meta, List<int> value})>{};
+      await readRows(pending, (f, key) => _client.readField(f, key), (
+        row,
+        entry,
+      ) {
+        if (entry != null) rows[row] = entry;
+      });
+      for (var f = 0; f < fieldCount; f++) {
         final keys = systemKeysForField(f);
-        final fieldMap = <int, ({ValueInfo meta, List<int> value})>{};
-        for (final key in keys) {
-          final field = await _client.readField(f, key);
-          if (field != null) {
-            fieldMap[key] = field;
-          }
-        }
+        final fieldMap = <int, ({ValueInfo meta, List<int> value})>{
+          for (final key in keys)
+            if (rows.containsKey((f, key))) key: rows[(f, key)]!,
+        };
         if (fieldMap.isNotEmpty) {
           final primaryKey = keys.first;
-          cache[f] = fieldMap[primaryKey]!;
+          cache[f] = fieldMap[primaryKey] ?? fieldMap.values.first;
           for (final entry in fieldMap.entries) {
             if (entry.key != primaryKey) {
               // Use offset 256 to avoid collision with primary field indices (0-255)
               cache[256 + f * 256 + entry.key] = entry.value;
             }
           }
-        } else {
-          cache.remove(f);
-        }
-      } else {
-        final field = await _client.readBlockField(
-          blockType,
-          instance,
-          f,
-          0xFF,
-        );
-        if (field != null) {
-          cache[f] = field;
-        } else {
+        } else if (!cache.containsKey(f) || forceRefresh) {
           cache.remove(f);
         }
       }
+      return;
     }
+    // Static blocks: one value row per field.
+    final pending = <int>[
+      for (var f = 0; f < fieldCount; f++)
+        if (forceRefresh || !cache.containsKey(f)) f,
+    ];
+    await readRows(
+      [for (final f in pending) (f, 0xFF)],
+      (f, _) => _client.readBlockField(blockType, instance, f, 0xFF),
+      (row, field) {
+        if (field != null) {
+          cache[row.$1] = field;
+        } else {
+          cache.remove(row.$1);
+        }
+      },
+    );
   }
 
   @override

@@ -410,37 +410,14 @@ class RegisterClient {
     final blocks = <ReportedBlock>[];
     final unread = <int>{};
 
-    // System block (type 0, inst 0): a virtual block not present in the static registry.
-    final sysBlock = await readBlockMeta(systemBlockTypeValue, 0);
-    if (sysBlock != null) {
-      blocks.add((
-        type: systemBlockTypeValue,
-        inst: 0,
-        meta: sysBlock.meta,
-        name: 'System',
-      ));
-    } else {
-      unread.add(systemBlockTypeValue);
-    }
-
-    // Use the already-fetched type list; static instances are dense (0..maxInstance),
-    // so no per-type re-enumeration is needed.
-    Future<void> addType(({int type, int maxInstance}) t) async {
-      for (var inst = 0; inst <= t.maxInstance; inst++) {
-        final block = await readBlockMeta(t.type, inst);
-        if (block == null) {
-          unread.add(t.type);
-          continue;
-        }
-        blocks.add((
-          type: t.type,
-          inst: inst,
-          meta: block.meta,
-          name: block.name,
-        ));
-      }
-    }
-
+    // The addresses to read, in the order the blocks are shown in. The reads themselves go out
+    // in batches (see [_readBlockMetas]): one round trip per block in sequence is what made the
+    // register page - and with it the block/field descriptor list of the LED display's emote
+    // blocks - take seconds to open over Bluetooth.
+    final addresses = <({int type, int inst, String? name})>[
+      // System block (type 0, inst 0): a virtual block not present in the static registry.
+      (type: systemBlockTypeValue, inst: 0, name: 'System'),
+    ];
     // The type list is the registry's first-seen order, which the static `.SV` layout depends
     // on - keep it, then append the dynamic and script memories the firmware omits.
     // The type list carries every static type *and* the dynamic memory when it has instances;
@@ -452,44 +429,66 @@ class RegisterClient {
       if (isDynamicType(t.type)) {
         // The banked range: iterate the global indices; a block's `inst` is its global index.
         for (var g = 0; g <= t.maxInstance; g++) {
-          final block = await readBlockMeta(
-            dynamicTypeForIndex(g),
-            dynamicInstanceForIndex(g),
-          );
-          if (block == null) {
-            unread.add(t.type);
-            continue;
-          }
-          blocks.add((
-            type: dynamicTypeForIndex(g),
-            inst: g,
-            meta: block.meta,
-            name: block.name,
-          ));
+          addresses.add((type: dynamicTypeForIndex(g), inst: g, name: null));
         }
         continue;
       }
-      await addType(t);
+      // Use the already-fetched type list; static instances are dense (0..maxInstance),
+      // so no per-type re-enumeration is needed.
+      for (var inst = 0; inst <= t.maxInstance; inst++) {
+        addresses.add((type: t.type, inst: inst, name: null));
+      }
     }
     // Loaded scripts: addressed by their global slot (the Script service owns the file↔slot map).
     for (final slot in scriptSlots ?? const []) {
-      final block = await readBlockMeta(
-        scriptTypeForIndex(slot),
-        scriptInstanceForIndex(slot),
-      );
+      addresses.add((type: scriptTypeForIndex(slot), inst: slot, name: null));
+    }
+
+    final metas = await _readBlockMetas(addresses);
+    for (var i = 0; i < addresses.length; i++) {
+      final a = addresses[i];
+      final block = metas[i];
       if (block == null) {
-        unread.add(scriptTypeForIndex(slot));
+        unread.add(a.type);
         continue;
       }
       blocks.add((
-        type: scriptTypeForIndex(slot),
-        inst: slot,
+        type: a.type,
+        inst: a.inst,
         meta: block.meta,
-        name: block.name,
+        // The script slot is the global index; the dynamic bank's `inst` is the global index
+        // too, while its block type is derived from it.
+        name: a.name ?? block.name,
       ));
     }
-
     return (blocks: blocks, unreadTypes: unread);
+  }
+
+  /// How many block-meta reads are in flight at once. The core dispatches one frame at a time,
+  /// so a large batch buys nothing but its receive queue (12 deep) is the limit worth staying
+  /// under.
+  static const int blockReadBatch = 8;
+
+  /// Reads the meta of every address, in batches, keeping the input order in the result.
+  Future<List<({ValueInfo meta, String name})?>> _readBlockMetas(
+    List<({int type, int inst, String? name})> addresses,
+  ) async {
+    final out = List<({ValueInfo meta, String name})?>.filled(
+      addresses.length,
+      null,
+    );
+    for (var start = 0; start < addresses.length; start += blockReadBatch) {
+      final end = (start + blockReadBatch).clamp(0, addresses.length);
+      final batch = [
+        for (var i = start; i < end; i++)
+          readBlockMeta(addresses[i].type, addresses[i].inst),
+      ];
+      final results = await Future.wait(batch);
+      for (var i = 0; i < results.length; i++) {
+        out[start + i] = results[i];
+      }
+    }
+    return out;
   }
 
   /// The persistent fields of each static block type, read from the device (CID 1 field list
@@ -506,11 +505,24 @@ class RegisterClient {
         continue;
       }
       final fields = await enumerateFieldIndexes(t.type, 0) ?? const <int>[];
+      if (fields.isEmpty) continue;
+      // The per-field ValueInfo reads are independent, so they are batched like the block
+      // metas: this layout is what a `.SV` view and the register page's backup view wait on.
+      final reads = <({ValueInfo meta, List<int> value})?>[];
+      for (var start = 0; start < fields.length; start += blockReadBatch) {
+        final end = (start + blockReadBatch).clamp(0, fields.length);
+        reads.addAll(
+          await Future.wait([
+            for (var i = start; i < end; i++)
+              readBlockField(t.type, 0, fields[i], 0),
+          ]),
+        );
+      }
       final list = <({int field, int size, int type})>[];
-      for (final f in fields) {
-        final r = await readBlockField(t.type, 0, f, 0);
+      for (var i = 0; i < fields.length; i++) {
+        final r = i < reads.length ? reads[i] : null;
         if (r == null || !r.meta.persistent) continue;
-        list.add((field: f, size: r.meta.size, type: r.meta.type));
+        list.add((field: fields[i], size: r.meta.size, type: r.meta.type));
       }
       if (list.isNotEmpty) out[t.type] = list;
     }

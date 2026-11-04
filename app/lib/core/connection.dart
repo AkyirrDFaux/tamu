@@ -190,7 +190,8 @@ class LinkTrouble {
       '${errorText == null ? '' : ', "$errorText"'})';
 }
 
-class ConnectionManager extends ChangeNotifier implements RequestChannel {
+class ConnectionManager extends ChangeNotifier
+    implements TolerantRequestChannel {
   ConnectionManager._({bool installChannel = true}) {
     // The service clients send through the installed channel (`request_channel.dart`), and the
     // app's channel is this connection. Installing it here arms the clients for anything that
@@ -390,6 +391,21 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
   final Map<int, Completer<PacketResponse>> _pending = {};
   // Reassembles multi-fragment replies ([FragmentReassembler]).
   final FragmentReassembler _reassembler = FragmentReassembler();
+
+  /// Requests whose reply must survive a lost fragment or a stream that stops without its STOP
+  /// frame (the long file reads - see [RequestChannel.requestTolerant]).
+  final Set<int> _tolerant = {};
+
+  /// One watchdog per in-flight fragmented reply, re-armed by every fragment it receives. A
+  /// stream that goes quiet finishes as truncated instead of burning the request's whole
+  /// timeout: the core answers a 16 kB file from a single handler, and when its transmit ring
+  /// drops the tail the app used to sit on the request for 10 s with the data already in hand.
+  final Map<int, Timer> _fragStall = {};
+
+  /// How long a fragmented reply may be silent before it counts as truncated. Measured on the
+  /// rig: fragments of a 16 kB file read arrive 2-11 ms apart, so half a second is far past any
+  /// normal gap and still an order of magnitude under the 10 s read timeout.
+  static const Duration fragmentStallTimeout = Duration(milliseconds: 500);
 
   // General listener for subscription value updates (service Subscriptions CID 0).
   // Only one listener is supported; SubscriptionClient uses it to feed its
@@ -835,6 +851,11 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
       }
     }
     _pending.clear();
+    for (final timer in _fragStall.values) {
+      timer.cancel();
+    }
+    _fragStall.clear();
+    _tolerant.clear();
     _reassembler.clear();
     final transport = _transport;
     _transport = null;
@@ -889,11 +910,26 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
       switch (_reassembler.feed(txId, frame)) {
         case FragmentPending():
           _pending[txId] = completer;
-        case FragmentComplete(:final payload, :final success, :final fail):
+          _armFragmentStall(txId);
+        case FragmentComplete(
+          :final payload,
+          :final success,
+          :final fail,
+          :final chunks,
+          :final missing,
+        ):
+          _cancelFragmentStall(txId);
           completer.complete(
-            PacketResponse(payload: payload, success: success, fail: fail),
+            PacketResponse(
+              payload: payload,
+              success: success,
+              fail: fail,
+              chunks: chunks,
+              missing: missing,
+            ),
           );
         case FragmentAbort(:final reason):
+          _cancelFragmentStall(txId);
           AppDiagnostics.log('link', 'fragment stream aborted: $reason');
           if (!completer.isCompleted) {
             completer.completeError(
@@ -902,6 +938,54 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
           }
       }
     }
+  }
+
+  /// (Re)arms the "this reply stopped arriving" watchdog for [txId].
+  ///
+  /// Only a reply that is actually streaming gets one, so a request the device never answers
+  /// is still a plain timeout. On expiry the reply is closed with what arrived: a tolerant
+  /// request gets the partial reply (the file readers can use most of a lost tail), anything
+  /// else fails with the fragment it stopped at - which is what the reassembler used to say,
+  /// 10 s later.
+  void _armFragmentStall(int txId) {
+    _fragStall[txId]?.cancel();
+    if (!_reassembler.inProgress(txId)) return;
+    _fragStall[txId] = Timer(fragmentStallTimeout, () {
+      _fragStall.remove(txId);
+      final completer = _pending[txId];
+      if (completer == null || completer.isCompleted) return;
+      final truncated = _reassembler.finish(txId);
+      if (_tolerant.contains(txId)) {
+        _pending.remove(txId);
+        _tolerant.remove(txId);
+        AppDiagnostics.log(
+          'link',
+          'reply truncated: ${truncated?.chunks.length ?? 0}/'
+              '${(truncated?.chunks.length ?? 0) + (truncated?.missing.length ?? 0)} '
+              'fragments, ${truncated?.payload.length ?? 0} bytes kept',
+        );
+        completer.complete(
+          PacketResponse(
+            payload: truncated?.payload ?? const <int>[],
+            success: true,
+            fail: false,
+            chunks: truncated?.chunks ?? const [],
+            missing: truncated?.missing ?? const [],
+          ),
+        );
+      } else if (!completer.isCompleted) {
+        completer.completeError(
+          TransportException(
+            'Fragment stream stopped after '
+            '${truncated?.chunks.length ?? 0} fragment(s)',
+          ),
+        );
+      }
+    });
+  }
+
+  void _cancelFragmentStall(int txId) {
+    _fragStall.remove(txId)?.cancel();
   }
 
   int _takeTxId() {
@@ -952,6 +1036,7 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
     Duration timeout = const Duration(seconds: 2),
     bool requestFrag = false,
     int? transactionId,
+    bool tolerant = false,
   }) async {
     final transport = _transport;
     if (transport == null) throw const TransportException('Not connected');
@@ -976,13 +1061,20 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
 
     final completer = Completer<PacketResponse>();
     _pending[txId] = completer;
-    _reassembler.begin(txId);
+    _reassembler.begin(txId, tolerant: tolerant);
+    if (tolerant) {
+      _tolerant.add(txId);
+    } else {
+      _tolerant.remove(txId);
+    }
     try {
       await transport.send(frame.toBytes());
       return await completer.future.timeout(
         timeout,
         onTimeout: () {
           _pending.remove(txId);
+          _tolerant.remove(txId);
+          _cancelFragmentStall(txId);
           _reassembler.discard(txId);
           throw TransportException(
             '${service.name} CID $functionCid request timed out',
@@ -991,10 +1083,35 @@ class ConnectionManager extends ChangeNotifier implements RequestChannel {
       );
     } catch (error) {
       _pending.remove(txId);
+      _tolerant.remove(txId);
+      _cancelFragmentStall(txId);
       _reassembler.discard(txId);
       rethrow;
     }
   }
+
+  /// A request whose reply may arrive incomplete: a lost fragment, or a stream that stops
+  /// before its STOP frame, completes as a partial [PacketResponse] instead of failing.
+  ///
+  /// This is what the storage reads use. The core answers a whole-file read from a single
+  /// handler into an 8 kB transmit ring, so over BLE a 16 kB reply loses fragments (measured on
+  /// the rig: 218-223 of 256 fragments and no STOP frame). Every byte that did arrive is here,
+  /// with its fragment index, and [PacketResponse.partial] says whether the reply is whole.
+  @override
+  Future<PacketResponse> requestTolerant(
+    int targetId,
+    ServiceType service,
+    int functionCid, {
+    List<int> payload = const [],
+    Duration timeout = const Duration(seconds: 2),
+  }) => requestWithFlags(
+    targetId,
+    service,
+    functionCid,
+    payload: payload,
+    timeout: timeout,
+    tolerant: true,
+  );
 
   @override
   void dispose() {

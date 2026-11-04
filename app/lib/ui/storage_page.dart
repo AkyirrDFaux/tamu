@@ -21,7 +21,14 @@ import 'widgets.dart';
 class StoragePage extends StatefulWidget {
   final int deviceId;
 
-  const StoragePage({super.key, required this.deviceId});
+  /// Whether the link is up, as the page's own guard. Overridable so a widget test can drive the
+  /// page without the app's connection singleton (the same seam [RegisterPage] has).
+  final bool Function()? isConnected;
+
+  const StoragePage({super.key, required this.deviceId, this.isConnected});
+
+  bool get _connected =>
+      (isConnected ?? () => ConnectionManager.instance.isConnected)();
 
   @override
   State<StoragePage> createState() => _StoragePageState();
@@ -50,7 +57,7 @@ class _StoragePageState extends State<StoragePage>
   }
 
   Future<void> _refresh() async {
-    if (!ConnectionManager.instance.isConnected || _refreshing) return;
+    if (!widget._connected || _refreshing) return;
     setState(() => _refreshing = true);
     final files = await _client.readFileTable();
     if (!mounted) return;
@@ -220,12 +227,27 @@ class _StoragePageState extends State<StoragePage>
   Widget _buildBody(BuildContext context) {
     final files = _files;
     if (files == null) return Center(child: Text(_error ?? 'Loading...'));
+    // A file-table read can come back incomplete over Bluetooth (the core streams the whole
+    // 16 kB reservation and its transmit ring drops the tail). Say so instead of letting the
+    // list read as the device's whole directory.
+    final partialNote = _client.lastPartial
+        ? Padding(
+            padding: Insets.row,
+            child: Text(
+              'The file table arrived incomplete (the device dropped part of the '
+              'stream). Every record shown was read from the device.',
+              style: Theme.of(
+                context,
+              ).textTheme.labelSmall?.copyWith(color: kTextMuted),
+            ),
+          )
+        : null;
     // The list is the toolkit's table shell: a type icon, the name, the type/size/
     // offset detail and the per-row actions. The file table itself is read-only but
     // still openable: tapping shows the decoded directory
     // (Docs/Services/Storage.md). Read-only-ness is signalled by the lock icon, not
     // by disabling the row.
-    return TamuTable<FileRecord>(
+    final list = TamuTable<FileRecord>(
       columns: [
         TamuColumn<FileRecord>(
           label: 'File',
@@ -283,6 +305,14 @@ class _StoragePageState extends State<StoragePage>
       onTap: (file) => file.isFiletable ? _showTable(file) : _showFile(file),
       emptyMessage: 'No file table',
     );
+    if (partialNote == null) return list;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        partialNote,
+        Expanded(child: list),
+      ],
+    );
   }
 
   /// The name a row prints: the stored name, marked when it is the directory itself.
@@ -299,8 +329,15 @@ class _StoragePageState extends State<StoragePage>
   /// The file table itself, decoded: one row per file record.
   Future<void> _showTable(FileRecord table) async {
     _snack('Reading file table...');
-    // Read the table file directly using CID 5 (read file) instead of CID 7.
-    final data = await _client.readFile(table.name, size: table.size);
+    // Read the table file directly using CID 5 (read file) instead of CID 7. The table is a
+    // fixed 16 kB reservation, so over BLE its reply is routinely truncated past the live
+    // records: this viewer decodes self-contained 16-byte records, so it shows the prefix that
+    // arrived (the loss is logged by the client) instead of refusing the whole file.
+    final data = await _client.readFile(
+      table.name,
+      size: table.size,
+      allowPartial: true,
+    );
     if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute(

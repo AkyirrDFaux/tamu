@@ -37,6 +37,11 @@ class DeviceIdentity {
 /// Reads [id]'s identity: a ping first, then the System fields. Returns null when the device
 /// does not answer the ping - it is not reachable on the bus.
 ///
+/// The five System reads go out TOGETHER rather than one after another. Each is an independent
+/// field of the same block, and the wire round trip (measured on the rig over BLE: ~22 ms per
+/// request) is most of what each one costs, so reading them concurrently is what makes an app
+/// start quick instead of spending five round trips per device to learn a name.
+///
 /// [readAttempts] is passed through to the Register reads: a caller that decides device SHAPE
 /// from this identity (a restore's snapshot, the setup tool's rig scan) passes
 /// `RegisterClient.snapshotReadAttempts`, because a lost Device Type read reports type 0 - a
@@ -57,30 +62,43 @@ Future<DeviceIdentity?> readDeviceIdentity(
   final reg = RegisterClient(deviceId: id, readAttempts: readAttempts);
   // System fields are exposed as one entry per field at key 0 (the struct position is not
   // on the wire; Docs/Services/System Block and Device Commands.md).
+  final snReply = reg.readField(1, 0);
+  final typeReply = reg.readField(0, 0);
+  final versionReply = reg.readField(0, 2);
+  final capReply = reg.readField(0, 1);
+  final nameReply = reg.readField(6, 0);
+  final replies = await Future.wait([
+    snReply,
+    typeReply,
+    versionReply,
+    capReply,
+    nameReply,
+  ]);
+  final sn = replies[0];
+  final type = replies[1];
+  final version = replies[2];
+  final caps = replies[3];
+  final nameField = replies[4];
+
   String? serial;
-  final snReply = await reg.readField(1, 0);
-  if (snReply != null && snReply.value.length >= 14) {
-    serial = serialNumberToHex(snReply.value.sublist(0, 14));
+  if (sn != null && sn.value.length >= 14) {
+    serial = serialNumberToHex(sn.value.sublist(0, 14));
   }
   var typeValue = 0;
-  final typeReply = await reg.readField(0, 0);
-  if (typeReply != null && typeReply.value.length >= 2) {
-    typeValue = typeReply.value[0] | (typeReply.value[1] << 8);
+  if (type != null && type.value.length >= 2) {
+    typeValue = type.value[0] | (type.value[1] << 8);
   }
-  String? version;
-  final versionReply = await reg.readField(0, 2);
-  if (versionReply != null && versionReply.value.length >= 4) {
-    version = formatSoftwareVersion(versionReply.value);
+  String? softwareVersion;
+  if (version != null && version.value.length >= 4) {
+    softwareVersion = formatSoftwareVersion(version.value);
   }
   var capabilities = 0;
-  final capReply = await reg.readField(0, 1);
-  if (capReply != null && capReply.value.length >= 4) {
-    capabilities = uint32FromBytes(capReply.value);
+  if (caps != null && caps.value.length >= 4) {
+    capabilities = uint32FromBytes(caps.value);
   }
   var name = 'Device ${idToString(id)}';
-  final nameReply = await reg.readField(6, 0);
-  if (nameReply != null && nameReply.value.isNotEmpty) {
-    name = decodePaddedString(nameReply.value);
+  if (nameField != null && nameField.value.isNotEmpty) {
+    name = decodePaddedString(nameField.value);
   }
   if (name.isEmpty) name = 'Device ${idToString(id)}';
 
@@ -88,7 +106,7 @@ Future<DeviceIdentity?> readDeviceIdentity(
     id: id,
     name: name,
     serial: serial,
-    softwareVersion: version,
+    softwareVersion: softwareVersion,
     capabilities: capabilities,
     typeValue: typeValue,
   );

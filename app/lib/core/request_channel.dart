@@ -8,6 +8,7 @@
 library;
 
 import 'protocol.dart';
+import 'fragment_reassembler.dart' show FragmentChunk;
 
 /// A completed service reply: its reassembled payload plus the packet-level
 /// SUCCESS/FAIL flags. Most callers only need the payload ([RequestChannel.request]);
@@ -17,10 +18,26 @@ class PacketResponse {
   final bool success;
   final bool fail;
 
+  /// The reply's fragments with their declared indexes, empty for a single-packet reply. A
+  /// reader that knows its fragment stride places each body at `index * stride` instead of
+  /// concatenating, which is how a long read keeps its byte offsets when a fragment is lost.
+  final List<FragmentChunk> chunks;
+
+  /// Fragment indexes the device's declared total announced and that never arrived, ascending.
+  final List<int> missing;
+
+  /// True when the reply arrived incomplete: a fragment never came, or the stream stopped
+  /// before its STOP frame (the core's transmit ring drops whole frames under BLE
+  /// back-pressure). Only a request sent with `tolerant: true` can complete this way; a strict
+  /// one fails instead. A caller that must not accept half a reply checks this.
+  bool get partial => missing.isNotEmpty;
+
   const PacketResponse({
     required this.payload,
     required this.success,
     required this.fail,
+    this.chunks = const [],
+    this.missing = const [],
   });
 
   /// A reply is accepted only when it is explicitly successful. A FAIL response (or a
@@ -64,6 +81,28 @@ abstract class RequestChannel {
   /// Registers the receiver of firmware-pushed subscription value updates
   /// (service Subscriptions CID 0), or clears it with null.
   void setSubscriptionListener(Function(List<int>)? listener);
+}
+
+/// A channel that can complete a reply it knows is INCOMPLETE instead of failing it.
+///
+/// Separate from [RequestChannel] on purpose: a channel that cannot lose frames (the upload
+/// tool's serial link, a test fake) has nothing to say here, and a client asks for it with an
+/// `is` check rather than every implementation having to answer. The app's connection implements
+/// it; the long storage reads use it when it is there and fall back to the strict request.
+abstract class TolerantRequestChannel implements RequestChannel {
+  /// Like [requestWithFlags], but a reply that lost a fragment - or stopped before its STOP
+  /// frame - completes as a PARTIAL reply ([PacketResponse.partial]) instead of failing.
+  ///
+  /// Long file reads ask for this: the core answers a 16 kB file from one handler into an 8 kB
+  /// transmit ring, so over BLE the tail of such a reply is routinely dropped. The caller keeps
+  /// the fragments it got (with their indexes) and checks [PacketResponse.partial].
+  Future<PacketResponse> requestTolerant(
+    int targetId,
+    ServiceType service,
+    int functionCid, {
+    List<int> payload = const [],
+    Duration timeout = const Duration(seconds: 2),
+  });
 }
 
 /// How a request ended, when the caller must report WHY a write did not land.

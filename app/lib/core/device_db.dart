@@ -147,16 +147,25 @@ class DeviceDatabase extends ChangeNotifier {
   }
 
   /// Reads live runtime values (uptime + loop times) via Register System block.
+  ///
+  /// The four live fields are independent reads of the same block, so they are issued together
+  /// and awaited once: over BLE each carries a ~22 ms round trip, and the app's start would
+  /// otherwise spend four of them in a row before the device list can show uptime.
   Future<void> refreshRuntime(int id) async {
     final entry = _devices[id];
     if (entry == null) return;
 
-    final uptimeReply = await _registerRead(id, 3, 0);
+    final uptimeF = _registerRead(id, 3, 0);
+    final loopAvgF = _registerRead(id, 3, 3);
+    final loopMaxF = _registerRead(id, 3, 4);
+    final activeF = _registerRead(id, 8, 0);
+    final uptimeReply = await uptimeF;
+    final loopAvg = await loopAvgF;
+    final loopMax = await loopMaxF;
+    final active = await activeF;
     if (uptimeReply != null && uptimeReply.length >= 4) {
       entry.uptimeMs = uint32FromBytes(uptimeReply);
     }
-    final loopAvg = await _registerRead(id, 3, 3);
-    final loopMax = await _registerRead(id, 3, 4);
     if (loopAvg != null && loopAvg.length >= 4) {
       entry.avgLoopTimeMs = numberFromBytes(loopAvg, 0);
     }
@@ -166,7 +175,6 @@ class DeviceDatabase extends ChangeNotifier {
     // System field 8 App Active: the interfaces the DEVICE reports live, as bits (a phone
     // can be paired while the USB host is attached, so this is not one enum value). A device
     // that answers with nothing keeps what it last reported.
-    final active = await _registerRead(id, 8, 0);
     if (active != null && active.isNotEmpty) {
       entry.appActiveBits = appActiveBitsFromBytes(active);
     }
@@ -284,14 +292,17 @@ class DeviceDatabase extends ChangeNotifier {
         device.stale = true;
       }
 
-      await refreshDevice(coreId);
-
-      final sndbReply = await _request(
+      // The core's identity and the SNDB roster are independent requests, so they go out
+      // together: the roster read alone costs ~315 ms on the rig, which used to be spent after
+      // the identity round trips rather than beside them.
+      final sndbFuture = _request(
         coreId,
         ServiceType.device,
         0x13,
         timeout: const Duration(seconds: 5),
       );
+      await refreshDevice(coreId);
+      final sndbReply = await sndbFuture;
       if (sndbReply == null) {
         throw Exception('SNDB read failed');
       }
@@ -303,25 +314,31 @@ class DeviceDatabase extends ChangeNotifier {
         for (final e in parsed)
           if (e.id != 0) e.id,
       };
-      for (final id in ids) {
-        final known = _devices[id];
-        if (known == null || known.serialNumber == null) {
-          await refreshDevice(id);
-        } else {
-          // Ping every known id: a device still present in the SNDB but offline must
-          // fall through to the stale/lost notification, not be marked fresh.
-          final ping = await _request(
-            id,
-            ServiceType.device,
-            1,
-            timeout: const Duration(milliseconds: 800),
-          );
-          if (ping != null) {
-            known.stale = false;
-            known.lastSeen = DateTime.now();
-          }
-        }
-      }
+      // Every reachable id is refreshed beside the others, not one after another: a device
+      // that is already known costs one ping, an unknown one its whole identity, and either
+      // way the round trips of one device overlap the next device's.
+      await Future.wait([
+        for (final id in ids)
+          () async {
+            final known = _devices[id];
+            if (known == null || known.serialNumber == null) {
+              await refreshDevice(id);
+            } else {
+              // Ping every known id: a device still present in the SNDB but offline must
+              // fall through to the stale/lost notification, not be marked fresh.
+              final ping = await _request(
+                id,
+                ServiceType.device,
+                1,
+                timeout: const Duration(milliseconds: 800),
+              );
+              if (ping != null) {
+                known.stale = false;
+                known.lastSeen = DateTime.now();
+              }
+            }
+          }(),
+      ]);
 
       // In-app notifications (Docs/App/Settings.md events):
       //   - a device that was unknown becomes a "discovered" event;
