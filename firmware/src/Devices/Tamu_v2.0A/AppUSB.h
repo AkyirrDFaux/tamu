@@ -241,9 +241,16 @@ bool AppUSBActive()
     return usb_serial_jtag_is_connected();
 }
 
-// Sends up to `len` stream bytes as one or more link frames. Blocks briefly until the
-// driver accepted the bytes (bounded by the write timeout).
-void AppUSBSend(const uint8_t *Data, uint16_t Len)
+// Sends up to `len` stream bytes as one or more link frames; returns the number of stream bytes
+// whose frames the port took whole.
+//
+// The driver's TX ring is 2 KB and `usb_serial_jtag_write_bytes` returns how much it accepted -
+// it can be LESS than asked when the host is not draining. Ignoring that return (which this did)
+// truncates a link frame: the host's framer then resyncs inside the packet stream and the packet
+// that straddled the truncation is lost. A frame is therefore retried until the driver has taken
+// all of it, and a frame that cannot be completed ends the call - the pump keeps the remaining
+// bytes in the TX ring (TxPeek/TxCommit in AppInterface.h) and tries again on its next pass.
+uint16_t AppUSBSend(const uint8_t *Data, uint16_t Len)
 {
     uint16_t Off = 0;
     while (Off < Len)
@@ -259,9 +266,22 @@ void AppUSBSend(const uint8_t *Data, uint16_t Len)
         Frame[3 + Chunk] = USB_FRAME_STOP;
         Frame[1] = Crc8(&Frame[2], (uint16_t)(1 + Chunk)); // CRC8 over Length + Payload
 
-        usb_serial_jtag_write_bytes(Frame, (size_t)(4 + Chunk), pdMS_TO_TICKS(50));
+        size_t Total = (size_t)(4 + Chunk);
+        size_t Sent = 0;
+        // Bounded: four 50 ms writes is 200 ms for 64 bytes, far beyond a host that is reading -
+        // a longer wait means the port is dead and holding the app task would stall the device.
+        for (int Attempt = 0; Attempt < 4 && Sent < Total; Attempt++)
+        {
+            int Wrote = usb_serial_jtag_write_bytes(Frame + Sent, Total - Sent, pdMS_TO_TICKS(50));
+            if (Wrote <= 0)
+                break;
+            Sent += (size_t)Wrote;
+        }
+        if (Sent < Total)
+            break; // the link is not taking bytes: the caller keeps the rest queued
         Off += Chunk;
     }
+    return Off;
 }
 
 // Called from the pump (ApplicationTask). Watches the physical USB link: when the host

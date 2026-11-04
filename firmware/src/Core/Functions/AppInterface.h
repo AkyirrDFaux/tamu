@@ -32,12 +32,20 @@ typedef int portMUX_TYPE;
 bool AppUsbSilent();
 
 // Outgoing stream ring: serialized frames waiting to be flushed to the app links.
-// A synchronous service reply (e.g. Storage Read File, which streams a whole
-// file in one handler) legitimately bursts well past a small ring before
-// AppInterface.Pump() drains it. Send() now drains the ring through TxFlush() when a frame does
-// not fit, so the ring no longer caps the size of a reply - it only has to absorb the burst
-// between two drains, and this keeps that burst cheap.
-#define APP_TX_RING_SIZE 8192
+//
+// Size: a whole-file reply must be able to sit in the ring in one burst. The largest file the
+// device serves the app is `.TABLE`, measured on the rig as 256 fragments of 64 B content
+// (16,384 B of file, 22,528 B on the wire: each fragment carries a 12 B header, 4 B frag info
+// and the 8 B name echo). 24 KiB leaves room for that whole reply plus the frames around it.
+//
+// Cost: the ring is malloc'd once in Init(). Measured free heap on the rig immediately before
+// this size was chosen (iteration 26.11.4.5, System field 4): 97,048 B, so the 24 KiB ring
+// (- 8 KiB it replaces) leaves ~80.6 kB of heap margin - the increase is not thin.
+//
+// The ring is NOT what makes a long reply complete: the storage read keeps a cursor and emits a
+// few fragments per app-task pass (Core/Services/Storage.h), so a reply of any size survives a
+// link that stops accepting notifications. The ring only absorbs the burst between two drains.
+#define APP_TX_RING_SIZE 24576
 
 // Inbound frame queue depth: frames parsed by the link readers, dispatched by the pump
 // in ApplicationTask context so ALL routing happens on one task (no concurrent dispatch).
@@ -68,11 +76,20 @@ inline bool AppFrameCameOverUsb() { return AppFrameSource == AppLinkSource::USB;
 // Link hooks (implemented per device: Devices/Tamu_v2.0A/AppUSB.h + AppBLE.h).
 bool AppUSBActive();
 bool AppBLEActive();
-void AppUSBSend(const uint8_t *Data, uint16_t Len);
+// Returns how many stream bytes' link frames the port actually took: a device whose USB stack
+// can refuse bytes mid-burst reports the shortfall, and the pump keeps the rest in the ring
+// (TxPeek/TxCommit) instead of losing it.
+uint16_t AppUSBSend(const uint8_t *Data, uint16_t Len);
 void AppUSBTick();
 void AppBLETick();
 // Defined in Dispatcher.h (single translation unit: forward declaration suffices here).
 void DispatchPacket(const PacketFrame &Frame);
+
+// The streamed storage read (Core/Services/Storage.h) is driven from Pump() and abandoned by
+// TxFlushAll(), so it is declared here - the service header is parsed after this one and keeps
+// only the cursor, not the ring.
+inline void StorageStreamTick();
+inline void StorageStreamAbort();
 
 // The App Interface service (Docs/Services/App Interface.md): one class, one instance. The
 // ring/queue state is public because the device link hooks read and write it directly.
@@ -115,6 +132,13 @@ public:
 // One instance per binary.
 AppInterfaceService AppInterface;
 
+// Ring state the streamed read asks about (declared inline in Core/Services/Storage.h, which is
+// parsed after this header). They live here because the ring's invariants - the mux, the
+// free-running head/tail, "empty means equal" - belong to their owner.
+inline bool AppTxRoomFor(uint16_t Bytes);
+inline bool AppTxIdle();
+inline uint32_t AppTxDropped();
+
 inline void AppInterfaceService::Init()
 {
     if (!TxRing)
@@ -135,9 +159,12 @@ inline bool AppInterfaceService::Send(const PacketFrame &Frame)
     uint16_t Count = PacketWireSize(&Frame);
 
     bool Ok = false;
-    // Try to enqueue; on a full ring, drain and try once more. The retry is what carries a long
-    // stream: without it a reply larger than the ring loses its tail fragments and its STOP frame,
-    // and the app's reassembler never completes (a whole-file read then returns nothing).
+    // Try to enqueue; on a full ring, drain and try once more. This carries a reply that is
+    // larger than the ring ONLY as far as one extra drain reaches - a streamed reply does not
+    // rely on it: the storage read (Core/Services/Storage.h) asks AppTxRoomFor() before it emits
+    // a fragment and holds the un-emitted remainder in its cursor, so a fragment is never
+    // refused. What this protects is the short burst (a few frames) that fills the ring between
+    // two drains.
     for (int Attempt = 0; Attempt < 2 && !Ok; Attempt++)
     {
         if (Attempt)
@@ -187,12 +214,12 @@ inline void AppInterfaceService::TxCommit(uint16_t Count)
 
 // Drains pending TX bytes to the active link.
 //
-// USB is popped directly (AppUSBSend blocks briefly, so popped bytes are delivered). BLE is
-// drained by AppBLETick (TxPeek/TxCommit, one notification per call), so a BLE session cannot
-// drain the ring the way USB does: a whole-file reply that bursts past the ring inside one
-// handler would find it still full on Send()'s retry and lose its tail fragments. Pump the BLE
-// tick here until the ring has room for the next frame, or the link stops making progress (the
-// app is not reading - a failed notify leaves its bytes queued, so this then terminates).
+// USB: peek, hand the bytes to the port, and commit only what its frames actually took - a port
+// that stops accepting mid-burst leaves the rest queued in the ring for the next pass, so no byte
+// of a reply is dropped on a live link. BLE is drained by AppBLETick (TxPeek/TxCommit, one
+// notification per call). Pump the BLE tick here until the ring has room for the next frame, or
+// the link stops making progress (the app is not reading - a failed notify leaves its bytes
+// queued, so this then terminates).
 // Called only from the app task: the sole caller of Send is the dispatcher, and the flush is the
 // same work Pump() does.
 inline void AppInterfaceService::TxFlush()
@@ -200,11 +227,15 @@ inline void AppInterfaceService::TxFlush()
     if (AppUSBActive() && TxRing && !(AppBLEActive() && AppUsbSilent()))
     {
         uint8_t Chunk[60];
-        uint16_t Count = TxPop(Chunk, sizeof(Chunk));
-        while (Count > 0)
+        for (;;)
         {
-            AppUSBSend(Chunk, Count);
-            Count = TxPop(Chunk, sizeof(Chunk));
+            uint16_t Count = TxPeek(Chunk, sizeof(Chunk));
+            if (Count == 0)
+                break;
+            uint16_t Sent = AppUSBSend(Chunk, Count);
+            TxCommit(Sent);
+            if (Sent < Count)
+                break; // the port is not taking bytes: keep the rest for the next pass
         }
         return;
     }
@@ -227,11 +258,46 @@ inline void AppInterfaceService::TxFlush()
 
 // Drops all pending TX data (called when an app session starts or ends: queued
 // responses belong to the previous session's transactions and must not leak).
+//
+// A dismissed session also ends any streamed file read: its remaining fragments belong to the
+// app that asked for them, and a re-request starts a fresh stream at fragment 0.
 inline void AppInterfaceService::TxFlushAll()
 {
+    StorageStreamAbort();
     portENTER_CRITICAL(&TxMux);
     TxTail = TxHead;
     portEXIT_CRITICAL(&TxMux);
+}
+
+// Whether the ring can take a frame of `Bytes` on a live link. The streamed read asks this
+// before it builds a fragment, so Send() can never refuse one (a refused fragment used to be
+// dropped, and the app's reassembler never completed).
+inline bool AppTxRoomFor(uint16_t Bytes)
+{
+    if (!AppInterface.Connected || !AppInterface.TxRing)
+        return false;
+    portENTER_CRITICAL(&AppInterface.TxMux);
+    uint16_t Used = (uint16_t)(AppInterface.TxHead - AppInterface.TxTail);
+    portEXIT_CRITICAL(&AppInterface.TxMux);
+    return (uint16_t)(APP_TX_RING_SIZE - 1 - Used) >= Bytes;
+}
+
+// Whether the ring has fully drained (head == tail: the free-running counters can wrap, so only
+// equality means empty). The stream's completion line waits for this instead of writing into a
+// ring that still owes the app bytes.
+inline bool AppTxIdle()
+{
+    portENTER_CRITICAL(&AppInterface.TxMux);
+    bool Empty = AppInterface.TxHead == AppInterface.TxTail;
+    portEXIT_CRITICAL(&AppInterface.TxMux);
+    return Empty;
+}
+
+// Frames the ring refused since boot. Only a streamed read reports it: a non-zero value on a
+// device that has served reads means a fragment was lost.
+inline uint32_t AppTxDropped()
+{
+    return AppInterface.TxDropped;
 }
 
 // Pops up to `Max` stream bytes into `Dst` (peek + commit).
@@ -305,6 +371,11 @@ void AppInterfaceService::Pump()
     }
 
     TxFlush();
+
+    // The streamed storage read: a few fragments per pass, each one only when the link can take
+    // it (Core/Services/Storage.h). Between fragments the pass ends, so the RSBus, the display
+    // and the scripts run at their own rate while a whole-file reply is in flight.
+    StorageStreamTick();
 
     AppBLETick();
 }

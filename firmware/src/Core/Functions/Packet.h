@@ -168,18 +168,28 @@ inline void PacketConstruct(PacketFrame *Frame,
     PacketFinalize(Frame, Len);
 }
 
+// Finalises a reply's routing fields without a request frame: the same work FinalizeReply does,
+// for a reply that outlives its request (the resumable storage read keeps only the three fields a
+// reply echoes). Every caller streams data, so the default is the Streams class.
+inline void FinalizeReplyTo(PacketFrame &Reply, uint16_t Tgt, uint16_t Cmd, uint16_t Trid,
+                            uint8_t Flags, uint16_t Len,
+                            uint8_t Priority = PRIORITY_STREAM)
+{
+    Reply.Flags = Flags;
+    Reply.Priority = Priority;
+    Reply.IdTgt = Tgt;
+    Reply.IdSrc = DeviceStatus.ShortAddress;
+    Reply.Cmd = Cmd;   // Destination service: the request's CMD names the service
+    Reply.Trid = Trid; // Responses echo the request's TRID (Docs "Transaction IDs")
+    PacketFinalize(&Reply, Len);
+}
+
 // Finalises a fragmented reply. Every caller streams data, so the default is the Streams class;
 // the log database stream overrides it with the Logs class.
 inline void FinalizeReply(PacketFrame &Reply, const PacketFrame &Req, uint8_t Flags, uint16_t Len,
                           uint8_t Priority = PRIORITY_STREAM)
 {
-    Reply.Flags = Flags;
-    Reply.Priority = Priority;
-    Reply.IdTgt = Req.IdSrc;
-    Reply.IdSrc = DeviceStatus.ShortAddress;
-    Reply.Cmd = Req.Cmd;   // Destination service: the request's CMD names the service
-    Reply.Trid = Req.Trid;     // Responses echo the request's TRID (Docs "Transaction IDs")
-    PacketFinalize(&Reply, Len);
+    FinalizeReplyTo(Reply, Req.IdSrc, Req.Cmd, Req.Trid, Flags, Len, Priority);
 }
 
 inline void WriteFragInfo(uint8_t *Out, uint16_t Current, uint16_t Total)

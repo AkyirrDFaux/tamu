@@ -60,6 +60,30 @@ __attribute__((noinline)) void SendFragFragment(const PacketFrame &Frame, uint16
     DispatchPacket(TxFrame);
 }
 
+// The same fragment, addressed by the request's routing fields instead of the request frame: a
+// reply that outlives the request (the resumable storage read keeps a cursor across app-task
+// passes) can only carry target/CMD/TRID. Produces exactly the frame SendFragFragment would.
+__attribute__((noinline)) void SendFragTo(uint16_t Tgt, uint16_t Cmd, uint16_t Trid,
+                                          uint16_t Frag, uint16_t Frags, uint16_t Len,
+                                          uint8_t Priority = PRIORITY_STREAM)
+{
+    uint8_t Flags = FLAG_TYPE | FLAG_FRAG;
+    if (Frag == 0) Flags |= FLAG_START;
+    if (Frag == Frags - 1) Flags |= FLAG_STOP;
+    WriteFragInfo(TxFrame.Payload, Frag, Frags);
+    FinalizeReplyTo(TxFrame, Tgt, Cmd, Trid, Flags, (uint16_t)(4 + Len), Priority);
+    DispatchPacket(TxFrame);
+}
+
+// A status reply (success/fail, no payload) to a stored request identity - the read stream's
+// failure answer once the request frame is gone.
+__attribute__((noinline)) void SendStatusTo(uint16_t Tgt, uint16_t Cmd, uint16_t Trid, uint8_t Status)
+{
+    FinalizeReplyTo(TxFrame, Tgt, Cmd, Trid,
+                    (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | Status), 0);
+    DispatchPacket(TxFrame);
+}
+
 // Replies with the success or fail packet flag and no payload. The flag is the whole reply;
 // a caller with more to say appends a payload after it.
 // Failures are logged on the core (DeviceLog is a no-op on textless nodes): the

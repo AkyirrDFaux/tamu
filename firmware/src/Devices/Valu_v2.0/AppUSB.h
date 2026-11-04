@@ -287,8 +287,9 @@ bool AppUSBActive()
     return tud_cdc_connected();
 }
 
-// Sends up to `len` stream bytes as one or more link frames.
-void AppUSBSend(const uint8_t *Data, uint16_t Len)
+// Sends up to `len` stream bytes as one or more link frames; returns the number of stream bytes
+// whose frames the port took whole (the pump keeps the rest queued in the TX ring).
+uint16_t AppUSBSend(const uint8_t *Data, uint16_t Len)
 {
     uint16_t Off = 0;
     while (Off < Len)
@@ -316,6 +317,7 @@ void AppUSBSend(const uint8_t *Data, uint16_t Len)
 
         Off += Chunk;
     }
+    return Off;
 }
 
 // No BLE link on this board (Docs/Devices.md lists USB only as the App interface). The core's

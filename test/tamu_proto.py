@@ -204,10 +204,15 @@ def parse_packet(buf):
     if len(buf) < 12:
         return None, 0
     size = 12 + buf[3]  # Payload Length is in bytes
-    if buf[0] != crc8(bytes(buf[1:size])):
-        return None, 1  # resync: drop a byte
+    # Wait for the whole packet BEFORE judging its CRC. A streamed reply arrives in chunks, so
+    # the buffer normally holds a packet's head only: computing the CRC over the bytes present so
+    # far never matches and each call would resync one byte at a time, destroying the very
+    # fragments the caller is trying to collect (measured: a complete 256-fragment .TABLE reply
+    # read as ~206 with ~2,700 resyncs, while the same bytes parsed in one go gave 256/256).
     if len(buf) < size:
         return None, 0
+    if buf[0] != crc8(bytes(buf[1:size])):
+        return None, 1  # resync: drop a byte
     src, tgt, cmd, srv_src = struct.unpack("<HHHH", bytes(buf[4:12]))
     p = Packet(buf[1], src, cmd >> 8, cmd & 0xFF, srv_src, bytes(buf[12:size]))
     p.tgt = tgt
