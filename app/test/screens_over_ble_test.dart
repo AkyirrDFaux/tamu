@@ -1,16 +1,19 @@
-/// Both screens the owner reported, rendered from data captured off the rig over BLE.
+/// Both screens the owner reported, rendered from data captured off the rig.
 ///
 /// The data comes from the same captures the diagnosis used:
-///   * `test/fixtures/ble_filetable_reply.bin` - the truncated `.TABLE  ` reply (223 of 256
-///     fragments, no STOP frame), replayed through the app's own reassembler;
+///   * `test/fixtures/ble_filetable_reply.bin` - the `.TABLE  ` reply over BLE (223 of 256
+///     fragments, first hole at 202, no STOP frame);
+///   * `test/fixtures/table_reply_usb.bin` - the same read over the rig's USB link (256 of 256
+///     fragments with the STOP frame), captured with `dart run tool/storage_read.dart --capture`;
 ///   * the `LAY_1` reply below - the LED layout ("emote") file, 4 fragments, 223 bytes, read
 ///     whole over BLE in 27 ms;
 ///   * the Left Eye block - 11 fields, 53 field/key rows, 11 of them size-0 dictionary markers
 ///     (Geometry 0x101 / Texture 0x102 at key 0), read field by field off the rig.
 ///
-/// What is pinned here is that each screen builds its widgets from that data without throwing:
-/// an empty Storage list and a Register page that never renders were the owner's report, and
-/// both were invisible to widget tests that never saw a real, truncated device reply.
+/// What is pinned here is what each screen ends in: data from a COMPLETE reply, or a visible error
+/// with a retry. A truncated file-table reply is never rendered as a file list (a table showing 32
+/// of N files is worse than an error), so the Storage page either recovers through the client's
+/// re-request or says the read failed.
 library;
 
 import 'dart:io';
@@ -30,9 +33,9 @@ import 'package:tamuapp/ui/register_page.dart';
 import 'package:tamuapp/ui/storage_page.dart';
 import 'package:tamuapp/ui/theme.dart';
 
-/// The `.TABLE  ` reply, reassembled the way the app's channel does it now.
-PacketResponse _capturedTableReply() {
-  final bytes = File('test/fixtures/ble_filetable_reply.bin').readAsBytesSync();
+/// Replays a captured packet stream the way the app's link does.
+PacketResponse _replay(String fixture) {
+  final bytes = File('test/fixtures/$fixture').readAsBytesSync();
   final parser = PacketStreamParser();
   final frames = <PacketFrame>[];
   for (var off = 0; off < bytes.length; off += 480) {
@@ -43,8 +46,20 @@ PacketResponse _capturedTableReply() {
     );
   }
   final reassembler = FragmentReassembler()..begin(0xF321, tolerant: true);
+  FragmentEvent? last;
   for (final frame in frames) {
-    reassembler.feed(0xF321, frame);
+    last = reassembler.feed(0xF321, frame);
+  }
+  if (last is FragmentComplete) {
+    return PacketResponse(
+      payload: last.payload,
+      success: true,
+      fail: false,
+      chunks: last.chunks,
+      missing: last.missing,
+      stopped: last.stopped,
+      total: last.total,
+    );
   }
   final done = reassembler.finish(0xF321)!;
   return PacketResponse(
@@ -53,8 +68,18 @@ PacketResponse _capturedTableReply() {
     fail: false,
     chunks: done.chunks,
     missing: done.missing,
+    // No STOP frame: the device never finished this reply.
+    stopped: false,
+    total: done.total,
   );
 }
+
+/// The `.TABLE  ` read over BLE on 2026-11-04: 223 of 256 fragments, first hole at 202, no STOP.
+PacketResponse _truncatedTableReply() => _replay('ble_filetable_reply.bin');
+
+/// The same read over the rig's USB link: 256 of 256 fragments and the STOP frame
+/// (`dart run tool/storage_read.dart --capture test/fixtures/table_reply_usb.bin`).
+PacketResponse _wholeTableReply() => _replay('table_reply_usb.bin');
 
 /// `LAY_1`, read off the rig over BLE on 2026-11-04: 4 fragments, 223 bytes (an 11 x 10 LED
 /// layout, brightness limit 178). Captured with the independent probe and stored as
@@ -62,7 +87,7 @@ PacketResponse _capturedTableReply() {
 List<int> _lay1Content() => File('test/fixtures/lay1.bin').readAsBytesSync();
 
 /// The reply a storage read of `LAY_1` produces: 4 fragments of [name][content].
-PacketResponse _lay1Reply() {
+PacketResponse _lay1Reply({bool loseTheLast = false}) {
   const chunk = 64;
   final content = _lay1Content();
   final chunks = <FragmentChunk>[];
@@ -76,20 +101,29 @@ PacketResponse _lay1Reply() {
       ]),
     );
   }
+  final kept = loseTheLast ? chunks.sublist(0, chunks.length - 1) : chunks;
   return PacketResponse(
-    payload: [for (final c in chunks) ...c.body],
+    payload: [for (final c in kept) ...c.body],
     success: true,
     fail: false,
-    chunks: chunks,
+    chunks: kept,
+    missing: loseTheLast ? [chunks.length - 1] : const [],
+    stopped: !loseTheLast,
+    total: chunks.length,
   );
 }
 
-/// A channel with the rig's answers: the truncated table, and whole files.
+/// A channel with the rig's answers: the file table as a queue of replies (so one run can be
+/// truncated and the next whole, which is what the re-request does), and whole files.
 class _RigChannel implements TolerantRequestChannel {
   _RigChannel(this.table);
 
-  final PacketResponse table;
+  final List<PacketResponse> table;
   final List<({ServiceType service, int cid, String name})> asked = [];
+
+  int _tableAsks = 0;
+
+  int get tableAsks => _tableAsks;
 
   @override
   bool get isConnected => true;
@@ -140,7 +174,11 @@ class _RigChannel implements TolerantRequestChannel {
   PacketResponse _answer(int cid, List<int> payload) {
     final name = payload.length >= 8 ? StorageClient.unpadName(payload) : '';
     asked.add((service: ServiceType.storage, cid: cid, name: name));
-    if (name == '.TABLE') return table;
+    if (name == '.TABLE') {
+      final index = _tableAsks < table.length ? _tableAsks : table.length - 1;
+      _tableAsks++;
+      return table[index];
+    }
     if (name == 'LAY_1') return _lay1Reply();
     return const PacketResponse(payload: [], success: true, fail: false);
   }
@@ -228,61 +266,169 @@ class _EyeRegisterClient extends RegisterClient {
 
 bool _alwaysConnected() => true;
 
+/// Lets the client's bounded retry policy run to completion in the test's fake clock: the two
+/// pauses are 200 ms and 600 ms, so this advances past both.
+Future<void> _settleRetries(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 150));
+  await tester.pump(const Duration(milliseconds: 250));
+  await tester.pump(const Duration(milliseconds: 700));
+  await tester.pump(const Duration(milliseconds: 10));
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('Storage lists the device files from the truncated real reply', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1000, 1800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+  group('the Storage page', () {
+    testWidgets('lists the device files from a complete reply', (tester) async {
+      tester.view.physicalSize = const Size(1000, 1800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
 
-    final channel = _RigChannel(_capturedTableReply());
-    installRequestChannel(channel);
-    addTearDown(() => installRequestChannel(null));
+      final channel = _RigChannel([_wholeTableReply()]);
+      installRequestChannel(channel);
+      addTearDown(() => installRequestChannel(null));
 
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: StoragePage(deviceId: 1, isConnected: _alwaysConnected),
-      ),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 10));
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: StoragePage(deviceId: 1, isConnected: _alwaysConnected),
+        ),
+      );
+      await _settleRetries(tester);
 
-    // The rows the owner needs: the directory itself, the serial registry and the emote.
-    expect(find.textContaining('LAY_1'), findsWidgets);
-    expect(find.textContaining('.TABLE'), findsWidgets);
-    expect(find.textContaining('.SNREG'), findsWidgets);
-    expect(
-      channel.asked.any((a) => a.name == '.TABLE'),
-      isTrue,
-      reason: 'the page read the file table through the tolerant request',
-    );
+      // The rows the owner needs: the directory itself, the serial registry and the emotes.
+      expect(find.textContaining('LAY_1'), findsWidgets);
+      expect(find.textContaining('.TABLE'), findsWidgets);
+      expect(find.textContaining('.SNREG'), findsWidgets);
+      expect(channel.tableAsks, 1, reason: 'a whole reply is not re-requested');
+    });
+
+    testWidgets('recovers a truncated reply with one re-request', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1000, 1800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final channel = _RigChannel([_truncatedTableReply(), _wholeTableReply()]);
+      installRequestChannel(channel);
+      addTearDown(() => installRequestChannel(null));
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: StoragePage(deviceId: 1, isConnected: _alwaysConnected),
+        ),
+      );
+      await _settleRetries(tester);
+
+      expect(channel.tableAsks, 2, reason: 'the BLE hole triggered a re-read');
+      expect(find.textContaining('LAY_1'), findsWidgets);
+    });
+
+    testWidgets('a table that never completes ends in an error, not a list', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1000, 1800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final channel = _RigChannel([_truncatedTableReply()]);
+      installRequestChannel(channel);
+      addTearDown(() => installRequestChannel(null));
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: StoragePage(deviceId: 1, isConnected: _alwaysConnected),
+        ),
+      );
+      await _settleRetries(tester);
+
+      expect(channel.tableAsks, StorageClient.readAttempts);
+      expect(find.text('The file table could not be read'), findsOneWidget);
+      // The hole is named, and there is an action - never an empty directory.
+      expect(
+        find.textContaining('fragment 202 of 256 never arrived'),
+        findsOneWidget,
+      );
+      expect(find.text('Try again'), findsOneWidget);
+      expect(find.textContaining('LAY_1'), findsNothing);
+    });
   });
 
-  testWidgets('the emote (LED layout) viewer opens on LAY_1', (tester) async {
-    tester.view.physicalSize = const Size(1000, 1800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+  group('the emote (LED layout) editor', () {
+    testWidgets('opens on LAY_1 from a complete read', (tester) async {
+      tester.view.physicalSize = const Size(1000, 1800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
 
-    final channel = _RigChannel(_capturedTableReply());
-    installRequestChannel(channel);
-    addTearDown(() => installRequestChannel(null));
+      final channel = _RigChannel([_wholeTableReply()]);
+      installRequestChannel(channel);
+      addTearDown(() => installRequestChannel(null));
 
-    final data = await StorageClient(deviceId: 1).readFile('LAY_1', size: 223);
-    expect(data, isNotNull, reason: 'the whole layout file arrived');
-    expect(data!.length, 223);
+      final data = await StorageClient(
+        deviceId: 1,
+      ).readFile('LAY_1', size: 223);
+      expect(data, isNotNull, reason: 'the whole layout file arrived');
+      expect(data!.length, 223);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: FileViewPage(deviceId: 1, name: 'LAY_1', size: 223, data: data),
-      ),
-    );
-    await tester.pump();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FileViewPage(deviceId: 1, name: 'LAY_1', size: 223, data: data),
+        ),
+      );
+      await tester.pump();
 
-    // The layout viewer's own header line: 11 x 10 LEDs at limit 178 (70 %).
-    expect(find.textContaining('11x10 LEDs'), findsOneWidget);
+      // The layout viewer's own header line: 11 x 10 LEDs at limit 178 (70 %).
+      expect(find.textContaining('11x10 LEDs'), findsOneWidget);
+    });
+
+    testWidgets('a layout that never arrives whole is an error with a retry', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1000, 1800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      var failures = 0;
+      final channel = _RigChannel([_wholeTableReply()]);
+      installRequestChannel(channel);
+      addTearDown(() => installRequestChannel(null));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildTheme(),
+          home: FileViewPage(
+            deviceId: 1,
+            name: 'LAY_1',
+            size: 223,
+            data: null,
+            error:
+                'Could not read "LAY_1": fragment 3 of 4 never arrived '
+                '(1 of 4 missing, 3 received); the stream stopped without its '
+                'STOP frame. It was asked 3 time(s); try again.',
+            onRetry: () async {
+              failures++;
+              // The second read is a re-request the device answers whole.
+              return _lay1Content();
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Could not read this file'), findsOneWidget);
+      expect(
+        find.textContaining('fragment 3 of 4 never arrived'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Try again'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(failures, 1);
+      expect(find.textContaining('11x10 LEDs'), findsOneWidget);
+    });
   });
 
   testWidgets('the Register page renders the Left Eye block and its markers', (

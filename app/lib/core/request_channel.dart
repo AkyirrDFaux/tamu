@@ -10,6 +10,53 @@ library;
 import 'protocol.dart';
 import 'fragment_reassembler.dart' show FragmentChunk;
 
+/// Why a reply is not whole: the fragments that never arrived, and whether the stream ended
+/// without its STOP frame.
+///
+/// One object for both failures on purpose. They are the same event to a caller - the device
+/// answered with less than the file - and both must fail a whole-file read (the storage client
+/// re-requests on either), so the wording lives here once and every surface quotes it.
+class ReplyGap {
+  /// Fragment indexes the stream declared and that never arrived, ascending.
+  final List<int> missing;
+
+  /// Fragments that did arrive.
+  final int received;
+
+  /// The fragment count the stream declared.
+  final int total;
+
+  /// True when the stream stopped arriving instead of ending on its STOP frame.
+  final bool stoppedShort;
+
+  const ReplyGap({
+    required this.missing,
+    required this.received,
+    required this.total,
+    required this.stoppedShort,
+  });
+
+  /// The first hole: the lowest fragment index that never arrived, or null when every fragment
+  /// arrived and only the STOP frame is missing.
+  int? get firstHole => missing.isEmpty ? null : missing.first;
+
+  /// One sentence naming the hole (its index first) and what the stream did.
+  String get message {
+    final hole = firstHole;
+    if (hole != null) {
+      final count = missing.length;
+      return 'fragment $hole of $total never arrived '
+          '($count of $total missing, $received received)'
+          '${stoppedShort ? '; the stream stopped without its STOP frame' : ''}';
+    }
+    return 'the stream stopped after fragment $received of $total, '
+        'without its STOP frame';
+  }
+
+  @override
+  String toString() => message;
+}
+
 /// A completed service reply: its reassembled payload plus the packet-level
 /// SUCCESS/FAIL flags. Most callers only need the payload ([RequestChannel.request]);
 /// the subscription client checks the flags to tell an accepted write from a refusal.
@@ -26,11 +73,30 @@ class PacketResponse {
   /// Fragment indexes the device's declared total announced and that never arrived, ascending.
   final List<int> missing;
 
+  /// True when the STOP frame ended the reply. False when the stream stopped arriving and the
+  /// link's stall watchdog closed it - the reply is a prefix even if every fragment arrived.
+  final bool stopped;
+
+  /// The fragment count the stream declared (0 for a single-packet reply).
+  final int total;
+
   /// True when the reply arrived incomplete: a fragment never came, or the stream stopped
   /// before its STOP frame (the core's transmit ring drops whole frames under BLE
-  /// back-pressure). Only a request sent with `tolerant: true` can complete this way; a strict
-  /// one fails instead. A caller that must not accept half a reply checks this.
-  bool get partial => missing.isNotEmpty;
+  /// back-pressure). Only a request sent with `tolerant: true` can complete this way in the app;
+  /// the rig tool's serial link has its own partial path. A caller that must not accept half a
+  /// reply checks [gap].
+  bool get partial => missing.isNotEmpty || !stopped;
+
+  /// Why the reply is not whole, or null when it is. [ReplyGap.message] names the hole's index,
+  /// which is what a caller logs and what a page shows instead of rendering a truncated file.
+  ReplyGap? get gap => partial
+      ? ReplyGap(
+          missing: missing,
+          received: chunks.isEmpty ? 0 : chunks.length,
+          total: total,
+          stoppedShort: !stopped,
+        )
+      : null;
 
   const PacketResponse({
     required this.payload,
@@ -38,6 +104,8 @@ class PacketResponse {
     required this.fail,
     this.chunks = const [],
     this.missing = const [],
+    this.stopped = true,
+    this.total = 0,
   });
 
   /// A reply is accepted only when it is explicitly successful. A FAIL response (or a

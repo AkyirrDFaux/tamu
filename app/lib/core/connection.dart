@@ -917,6 +917,8 @@ class ConnectionManager extends ChangeNotifier
           :final fail,
           :final chunks,
           :final missing,
+          :final stopped,
+          :final total,
         ):
           _cancelFragmentStall(txId);
           completer.complete(
@@ -926,6 +928,8 @@ class ConnectionManager extends ChangeNotifier
               fail: fail,
               chunks: chunks,
               missing: missing,
+              stopped: stopped,
+              total: total,
             ),
           );
         case FragmentAbort(:final reason):
@@ -971,6 +975,10 @@ class ConnectionManager extends ChangeNotifier
             fail: false,
             chunks: truncated?.chunks ?? const [],
             missing: truncated?.missing ?? const [],
+            // The STOP frame never came: this reply is a prefix, and a file read must re-request
+            // it rather than decode it (see StorageClient's read policy).
+            stopped: false,
+            total: truncated?.total ?? 0,
           ),
         );
       } else if (!completer.isCompleted) {

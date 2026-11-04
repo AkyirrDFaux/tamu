@@ -25,7 +25,7 @@ import '../core/types.dart';
 import 'formatters.dart';
 import 'theme.dart';
 import 'viewer_kit.dart';
-import 'widgets.dart' show BlockScrollBody;
+import 'widgets.dart' show BlockScrollBody, StateMessage;
 
 // ---------------------------------------------------------------------------
 // Known file types (Docs/Services/Storage.md: "the viewer/editor of files
@@ -119,6 +119,15 @@ class FileViewPage extends StatefulWidget {
   final int size;
   final List<int>? data;
 
+  /// Why [data] is null, when a read failed. A viewer that got no bytes says what the device
+  /// answered instead of a bare "Read failed" - the storage client names the hole or the
+  /// timeout that ended the read ([StorageClient.lastReadError]).
+  final String? error;
+
+  /// Re-reads the file when the viewer opened without bytes. The button below the error is
+  /// offered only when this is set, so a failure always ends in either data or an action.
+  final Future<List<int>?> Function()? onRetry;
+
   /// The device's static blocks in registry order (the `.SV` decoder computes its
   /// field layout from these). null when unknown.
   final List<({int type, int inst, ValueInfo meta, String name})?>? blocks;
@@ -133,6 +142,8 @@ class FileViewPage extends StatefulWidget {
     required this.name,
     required this.size,
     required this.data,
+    this.error,
+    this.onRetry,
     this.blocks,
     this.staticFields = const {},
   });
@@ -148,6 +159,15 @@ class _FileViewPageState extends State<FileViewPage> {
   List<int>?
   _dvTable; // sibling `.DT_<hex2>` bytes, for the `.DV_` value viewer
 
+  /// The bytes on show. Starts as the caller's read; a retry from the error view replaces it.
+  List<int>? _data;
+
+  /// Why there are no bytes, as the client worded it.
+  String? _error;
+
+  /// True while a retry is in flight (the error view shows a spinner instead of the button).
+  bool _retrying = false;
+
   // The LED grid's cell box: a fixed size so a 128-wide layout scrolls sideways by
   // pixels instead of reflowing. These are the grid's dimensions, not spacing steps.
   static const double _ledCellWidth = 44;
@@ -156,6 +176,8 @@ class _FileViewPageState extends State<FileViewPage> {
   @override
   void initState() {
     super.initState();
+    _data = widget.data;
+    _error = widget.error;
     _staticFields = widget.staticFields;
     // Only the `.SV` decoder needs the static field layout; skip the read for the other
     // file types (it is a device round-trip per opened file).
@@ -194,7 +216,7 @@ class _FileViewPageState extends State<FileViewPage> {
       storageFileType(widget.name) != StorageFileType.binary;
 
   bool get _looksTextual {
-    final data = widget.data;
+    final data = _data;
     if (data == null || data.isEmpty) return false;
     var printable = 0;
     for (final b in data) {
@@ -227,7 +249,7 @@ class _FileViewPageState extends State<FileViewPage> {
   /// the offset, grouped hex and ASCII, each row scrolling sideways so 32/64-byte
   /// widths scroll instead of overflowing.
   Widget _hexView() => HexView(
-    data: widget.data!,
+    data: _data!,
     bytesPerLine: _bytesPerLine,
     emptyMessage: '(empty file)',
   );
@@ -237,7 +259,7 @@ class _FileViewPageState extends State<FileViewPage> {
   /// net.device: local-net devices carry net 0, other cores their NetID with device 1.
   /// Markers: 0x55AA valid, 0x0000 removed, 0xFFFF unwritten.
   Widget _snregView() {
-    final data = widget.data!;
+    final data = _data!;
     final rows = <_SnregRow>[];
     for (var off = 0; off + 32 <= data.length; off += 32) {
       final valid = data[off] | (data[off + 1] << 8);
@@ -288,7 +310,7 @@ class _FileViewPageState extends State<FileViewPage> {
   /// Stays local: the cell's *position* is the datum, so this is a spatial map
   /// rather than a table of rows, which is the one shape [TamuTable] cannot print.
   Widget _layoutView(BuildContext context) {
-    final data = widget.data!;
+    final data = _data!;
     if (data.length < 3) return _textPreview(context, '(empty)');
     final limit = data[0];
     final w = data[1];
@@ -350,7 +372,7 @@ class _FileViewPageState extends State<FileViewPage> {
       // Still loading the sibling table, or it is missing: fall back to raw hex.
       return _hexView();
     }
-    final entries = decodeDynamicValues(inst, table, widget.data!);
+    final entries = decodeDynamicValues(inst, table, _data!);
     if (entries.isEmpty) return _hexView();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -385,7 +407,7 @@ class _FileViewPageState extends State<FileViewPage> {
   }
 
   Widget _formattedBody(BuildContext context) {
-    final data = widget.data!;
+    final data = _data!;
     switch (storageFileType(widget.name)) {
       case StorageFileType.snreg:
         return _snregView();
@@ -416,13 +438,44 @@ class _FileViewPageState extends State<FileViewPage> {
     }
   }
 
+  /// Asks the caller for the file again, after the viewer opened without bytes.
+  Future<void> _retry() async {
+    final retry = widget.onRetry;
+    if (retry == null || _retrying) return;
+    setState(() => _retrying = true);
+    final data = await retry();
+    if (!mounted) return;
+    setState(() {
+      _retrying = false;
+      _data = data;
+      _error = data == null ? (_error ?? 'The device did not answer.') : null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final data = widget.data;
+    final data = _data;
     if (data == null) {
       return Scaffold(
         appBar: AppBar(title: Text(widget.name)),
-        body: const Center(child: Text('Read failed')),
+        // The read failed: say what the device answered and offer the re-read, so the screen
+        // ends in either data or an action the user can take.
+        body: StateMessage.error(
+          message: 'Could not read this file',
+          details: _error,
+          action: widget.onRetry == null
+              ? null
+              : FilledButton(
+                  onPressed: _retrying ? null : _retry,
+                  child: _retrying
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Try again'),
+                ),
+        ),
       );
     }
     final raw = _showRaw || !_hasFormatted;

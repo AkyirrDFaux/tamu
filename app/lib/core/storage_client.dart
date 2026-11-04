@@ -184,77 +184,47 @@ class StorageClient {
   /// Reads the file table by reading the ".TABLE  " file directly (CID 5).
   /// The file table is self-describing: the first entry points to itself with its size.
   ///
-  /// The read is sent tolerantly ([RequestChannel.requestTolerant]): a core answers this file as
-  /// a 16 kB stream of 256 fragments, and over BLE its transmit ring drops whole fragments and
-  /// the closing STOP frame (measured on the rig: 218-223 of 256 arrive). Every fragment keeps
-  /// its declared index, so a lost fragment is a HOLE at a known offset rather than a shifted
-  /// stream - and the live records of the table all sit in the first ~100 fragments, well inside
-  /// the part that does arrive. The parse therefore walks the contiguous prefix from offset 0 to
-  /// the first hole, and stops at the first unwritten (all-0xFF) record exactly as before.
+  /// The read is sent tolerantly ([TolerantRequestChannel.requestTolerant]) so a reply that lost
+  /// fragments still ARRIVES - the core answers this file as a 16 kB stream of 256 fragments and
+  /// over BLE its transmit ring drops whole frames (measured on the rig: 218-223 of 256 and no
+  /// STOP frame). A partial stream is never decoded here: [readFileTable] sees the gap, logs the
+  /// hole's index and RE-REQUESTS the whole file (see [_readWhole], [readAttempts] sends in
+  /// total). A truncated table parsed from a prefix would show 32 of N files as if it were the
+  /// device's directory, which is worse than an error (Akyirr, 2026-11-04: "the app must process
+  /// it correctly no matter what").
   ///
-  /// Returns null only when no contiguous prefix could be read at all, which is the "no reply"
-  /// case; a prefix that ends before the table's terminator is reported through [lastPartial]
-  /// and logged, never silently treated as the whole table.
+  /// Returns null only when no complete table could be read - no link, a device that does not
+  /// answer, or every attempt truncated. [lastReadError] then says which, in one sentence the
+  /// page can show.
   Future<List<FileRecord>?> readFileTable() async {
-    final tableName = '.TABLE  ';
-    final channel = requestChannel;
-    if (channel == null) {
-      AppDiagnostics.log('storage', 'no link');
+    const tableName = '.TABLE  ';
+    final read = await _readWhole(tableName);
+    if (read.fault != null) {
+      _recordReadFault(read, cid: 5, detail: read.fault!);
+      lastReadError =
+          'The device could not send its file table: ${read.fault}. '
+          'It was asked $lastReadAttempts time(s); try refreshing, or '
+          'move closer if the link is Bluetooth.';
+      AppDiagnostics.log('storage', 'file table: ${lastReadError!}');
       return null;
     }
-    final PacketResponse response;
-    try {
-      response = await _readFileReply(channel, tableName);
-    } catch (error) {
-      AppDiagnostics.log('storage', 'file table read failed: $error');
-      trace.record(
-        RequestFault(
-          kind: RequestFaultKind.noReply,
-          deviceId: deviceId,
-          service: ServiceType.storage,
-          cid: 5,
-          detail: '$error',
-        ),
-      );
-      return null;
-    }
-    final placed = placeFragments(response);
-    if (placed == null || placed.bytes.isEmpty) {
-      // Nothing usable arrived. That is what a device which does not answer the command looks
-      // like on this path, so it stays the plain "no file table" answer it has always been - the
-      // caller's trace is for a reply that carries something and still cannot be used.
-      AppDiagnostics.log(
-        'storage',
-        'file table: nothing usable arrived (${response.payload.length} byte(s))',
-      );
-      return null;
-    }
-    final contents = placed.bytes;
+    final contents = read.placed!.bytes;
     final records = parseFileTable(contents);
-    final terminated = _endsAtUnwrittenRecord(contents);
-    lastPartial = response.partial || !terminated;
     AppDiagnostics.log(
       'storage',
       'file table: ${records.length} record(s) from '
-          '${placed.fragmentsUsed} fragment(s)'
-          '${lastPartial ? ' (PARTIAL: ${response.missing.length} fragment(s) missing, '
-                    '${placed.holes} hole(s), terminator ${terminated ? 'reached' : 'not reached'})' : ''}',
+          '${read.placed!.fragmentsUsed} fragment(s), '
+          '${contents.length} byte(s), attempt $lastReadAttempts/$readAttempts',
     );
-    if (!terminated && records.isNotEmpty) {
-      AppDiagnostics.log(
-        'storage',
-        'file table is incomplete: the read stopped before the table terminator, '
-            'so records past the last hole are unknown',
-      );
-    }
     return records;
   }
 
   /// Storage CID 5 for one file name, through whichever request the channel offers.
   ///
   /// The app's connection implements [TolerantRequestChannel], which is what lets a 16 kB reply
-  /// survive a dropped fragment; any other channel gets the plain request, whose reply is one
-  /// unfragmented payload.
+  /// arrive at all when the link drops fragments; any other channel gets the plain request, whose
+  /// reply is one unfragmented payload (or throws, which the retry loop treats as a failed
+  /// attempt).
   Future<PacketResponse> _readFileReply(
     RequestChannel channel,
     String name,
@@ -278,14 +248,129 @@ class StorageClient {
     return PacketResponse(payload: payload, success: true, fail: false);
   }
 
-  /// Whether [contents] holds the `0xFFFFFFFF/0xFFFFFFFF` record that ends a written table.
-  static bool _endsAtUnwrittenRecord(List<int> contents) {
-    for (var offset = 0; offset + 16 <= contents.length; offset += 16) {
-      final recOffset = uint32FromBytes(contents, offset);
-      final size = uint32FromBytes(contents, offset + 4);
-      if (recOffset == 0xFFFFFFFF && size == 0xFFFFFFFF) return true;
+  /// How many times one whole-file read is sent: the first attempt plus two re-requests.
+  ///
+  /// Storage CID 5 asks a file BY NAME and has no offset form, so a re-request is the whole file
+  /// again - there is nothing cheaper to retry. Three sends is the owner's "re-request if
+  /// something fails" made bounded: a truncated 16 kB reply is cut by the link's 500 ms stall
+  /// watchdog ([ConnectionManager.fragmentStallTimeout]), so the whole policy costs ~2 s over BLE
+  /// before the error is shown instead of a hang.
+  static const int readAttempts = 3;
+
+  /// The pause before each re-request; [readAttempts] - 1 entries. Short, because the failure it
+  /// recovers from is a busy transmit ring on the device, not a device that has gone away.
+  static const List<Duration> readRetryBackoff = [
+    Duration(milliseconds: 200),
+    Duration(milliseconds: 600),
+  ];
+
+  /// Reads one file whole, with the recovery policy.
+  ///
+  /// An attempt fails when the reply lost a fragment, when its STOP frame never came, when the
+  /// placed bytes are shorter than [size], or when the request itself threw. A failed attempt is
+  /// logged with the hole's index and the whole file is asked for again after the matching
+  /// [readRetryBackoff] pause; after [readAttempts] sends the last fault is returned and the
+  /// caller surfaces it. This never waits forever: every attempt is bounded by the request
+  /// timeout and a stream that stops by the stall watchdog.
+  Future<({PacketResponse? reply, PlacedFile? placed, String? fault})>
+  _readWhole(String name, {int? size}) async {
+    lastReadAttempts = 0;
+    lastReadError = null;
+    final channel = requestChannel;
+    // A read that cannot go out is not retried: there is no link, and three timeouts would only
+    // make the screen wait longer for the same sentence. (A link that DROPS mid-read is a failed
+    // attempt like any other - the request throws.)
+    if (channel == null || !channel.isConnected) {
+      return (
+        reply: null,
+        placed: null,
+        fault: 'there is no link to the device',
+      );
     }
-    return false;
+    PacketResponse? reply;
+    String? fault;
+    for (var attempt = 1; attempt <= readAttempts; attempt++) {
+      lastReadAttempts = attempt;
+      reply = null;
+      fault = null;
+      try {
+        reply = await _readFileReply(channel, name);
+      } catch (error) {
+        fault = 'the device did not answer ($error)';
+      }
+      PlacedFile? placed;
+      if (fault == null) {
+        final gap = reply!.gap;
+        if (gap != null) {
+          fault = gap.message;
+        } else {
+          placed = placeFragments(reply);
+          if (placed == null || placed.bytes.isEmpty) {
+            fault = 'the reply carried no file bytes';
+          } else if (size != null && placed.bytes.length < size) {
+            // A gap-free fragment set can still come up short of the record's size when the
+            // device answered with a prefix of the file: same loss, same recovery.
+            fault =
+                'only ${placed.bytes.length} of $size byte(s) arrived '
+                '(${placed.fragmentsUsed} fragment(s))';
+          }
+        }
+      }
+      if (fault == null) {
+        AppDiagnostics.log(
+          'storage',
+          'read "$name": complete on attempt $attempt/$readAttempts - '
+              '${_fragmentSummary(reply!)}',
+        );
+        return (reply: reply, placed: placed, fault: null);
+      }
+      final more = attempt < readAttempts;
+      final wait = more ? readRetryBackoff[attempt - 1] : Duration.zero;
+      AppDiagnostics.log(
+        'storage',
+        'read "$name": attempt $attempt/$readAttempts failed - $fault'
+            '${more ? '; re-requesting the whole file in '
+                      '${wait.inMilliseconds} ms' : '; giving up'}',
+      );
+      if (more) await Future<void>.delayed(wait);
+    }
+    return (reply: reply, placed: null, fault: fault);
+  }
+
+  /// `256 of 256 fragments, STOP received, 16384 byte(s)` - the shape a rig log quotes, so a
+  /// run's fragment counts can be read against the reply they belong to.
+  static String _fragmentSummary(PacketResponse reply) {
+    final bytes = reply.payload.length;
+    if (reply.chunks.isEmpty) return 'single packet, $bytes byte(s)';
+    return '${reply.chunks.length} of ${reply.total} fragments, '
+        'STOP received, $bytes byte(s)';
+  }
+
+  /// Records why a read ended without data, on the client's [trace] (the restore report's reason).
+  void _recordReadFault(
+    ({PacketResponse? reply, PlacedFile? placed, String? fault}) read, {
+    required int cid,
+    required String detail,
+  }) {
+    if (read.reply == null) {
+      trace.record(
+        RequestFault(
+          kind: RequestFaultKind.noReply,
+          deviceId: deviceId,
+          service: ServiceType.storage,
+          cid: cid,
+          detail: detail,
+        ),
+      );
+      return;
+    }
+    trace.unusable(
+      deviceId,
+      service: ServiceType.storage,
+      cid: cid,
+      payload: read.reply!.payload,
+      detail: detail,
+    );
   }
 
   /// The file bytes a fragmented reply carries, placed by fragment index.
@@ -293,9 +378,10 @@ class StorageClient {
   /// Each fragment is `[name echo (8)][content, at most [fragmentContentMax]]` after the 4-byte
   /// fragmentation info, and fragment `i` covers content bytes
   /// `[i * fragmentContentMax, i * fragmentContentMax + length)`. Placing by index is what makes
-  /// a reply with a lost fragment usable: the bytes after the hole keep their offsets instead of
-  /// shifting left by the lost fragment's length. [bytes] stops at the first hole, so no caller
-  /// ever parses across one; [holes] counts the gaps that were cut off.
+  /// a reply with a lost fragment measurable: the bytes after the hole keep their offsets instead
+  /// of shifting left by the lost fragment's length. [bytes] stops at the first hole, so nothing
+  /// is ever parsed across one; [hole index][holes] is left for the caller's log, and a whole-file
+  /// read treats a non-empty [PlacedFile.holes] or a short body as a failure to be re-requested.
   PlacedFile? placeFragments(PacketResponse response) {
     final chunks = response.chunks;
     if (chunks.isEmpty) {
@@ -329,8 +415,13 @@ class StorageClient {
     return PlacedFile(bytes: out, fragmentsUsed: index, holes: runs);
   }
 
-  /// Whether the last [readFileTable] call was answered by an incomplete stream.
-  bool lastPartial = false;
+  /// How many times the last whole-file read was sent (1 = it arrived whole first time).
+  int lastReadAttempts = 0;
+
+  /// Why the last whole-file read did not produce a complete file, in one sentence a page can
+  /// show - null when it did. A truncated reply is never rendered as data: the read is
+  /// re-requested ([readAttempts] sends) and only then does this get a value.
+  String? lastReadError;
 
   /// Parses 16-byte file-table records. Unwritten entries are all 0xFF and terminate the
   /// table. A record with offset 0 is a superseded/invalidated entry (rename/delete/table
@@ -383,69 +474,24 @@ class StorageClient {
 
   /// Reads the whole file per docs 03.05 CID5
   ///
-  /// Sent tolerantly like [readFileTable], but a file is only usable when EVERY byte arrived:
-  /// unlike the table (whose live records sit in the first fragments), a layout or a script file
-  /// with a hole in the middle cannot be decoded. A read that lost a fragment therefore returns
-  /// null with the reason logged, instead of handing a decoder a shifted stream.
-  ///
-  /// [allowPartial] is for a caller that decodes a self-contained prefix - the file-table viewer,
-  /// which walks 16-byte records - and can show what arrived with the loss stated.
-  Future<List<int>?> readFile(
-    String name, {
-    int? size,
-    bool allowPartial = false,
-  }) async {
-    final channel = requestChannel;
-    if (channel == null) {
-      AppDiagnostics.log('storage', 'no link');
+  /// A file is only usable when EVERY byte arrived: unlike a short status reply, a layout or a
+  /// script file with a hole in the middle cannot be decoded. A reply that lost a fragment, lost
+  /// its STOP frame or came up short of [size] therefore fails that attempt, and the whole file is
+  /// requested again ([readAttempts] sends, [readRetryBackoff] apart). When every attempt fails
+  /// this returns null with the reason in [lastReadError] - never a shifted or truncated body.
+  Future<List<int>?> readFile(String name, {int? size}) async {
+    final read = await _readWhole(name, size: size);
+    if (read.fault != null) {
+      _recordReadFault(read, cid: 5, detail: read.fault!);
+      lastReadError =
+          'Could not read "$name": ${read.fault}. '
+          'It was asked $lastReadAttempts time(s); try again.';
+      AppDiagnostics.log('storage', 'read "$name": ${lastReadError!}');
       return null;
     }
-    final PacketResponse response;
-    try {
-      response = await _readFileReply(channel, name);
-    } catch (error) {
-      AppDiagnostics.log('storage', 'read "$name" failed: $error');
-      trace.record(
-        RequestFault(
-          kind: RequestFaultKind.noReply,
-          deviceId: deviceId,
-          service: ServiceType.storage,
-          cid: 5,
-          detail: '$error',
-        ),
-      );
-      return null;
-    }
-    final placed = placeFragments(response);
-    if (placed == null || placed.bytes.isEmpty) {
-      AppDiagnostics.log(
-        'storage',
-        'read "$name": nothing usable arrived (${response.payload.length} byte(s))',
-      );
-      return null;
-    }
-    var contents = placed.bytes;
+    var contents = read.placed!.bytes;
     if (size != null && contents.length > size) {
       contents = contents.sublist(0, size);
-    }
-    if (size != null && contents.length < size) {
-      AppDiagnostics.log(
-        'storage',
-        'read "$name": partial reply, ${contents.length} of $size byte(s) '
-            '(${response.missing.length} fragment(s) missing)',
-      );
-      if (!allowPartial) {
-        trace.unusable(
-          deviceId,
-          service: ServiceType.storage,
-          cid: 5,
-          payload: response.payload,
-          detail:
-              'the reply lost ${response.missing.length} fragment(s), so only '
-              '${contents.length} of $size byte(s) arrived',
-        );
-        return null;
-      }
     }
     return contents;
   }

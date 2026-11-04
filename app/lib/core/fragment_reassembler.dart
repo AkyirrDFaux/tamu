@@ -48,9 +48,17 @@ class FragmentComplete extends FragmentEvent {
   /// can produce a non-empty list - a strict reply aborts instead.
   final List<int> missing;
 
+  /// True when the reply's STOP frame ended it. False when the stream stopped arriving and
+  /// [FragmentReassembler.finish] closed it: the bytes are a prefix, never a whole reply, even
+  /// when every declared fragment happened to arrive.
+  final bool stopped;
+
+  /// The fragment count the stream declared (0 for a single-packet reply).
+  final int total;
+
   /// True when the reply is known to be incomplete: a fragment never arrived, or the stream
   /// ended without its STOP frame. A caller that must not accept half a reply checks this.
-  bool get partial => missing.isNotEmpty;
+  bool get partial => missing.isNotEmpty || !stopped;
 
   const FragmentComplete({
     required this.payload,
@@ -58,6 +66,8 @@ class FragmentComplete extends FragmentEvent {
     required this.fail,
     this.chunks = const [],
     this.missing = const [],
+    this.stopped = true,
+    this.total = 0,
   });
 }
 
@@ -138,15 +148,16 @@ class FragmentReassembler {
   /// all" must stay a timeout.
   ///
   /// The completed reply reports `success: true` (no FAIL flag was ever seen) with [missing]
-  /// listing the fragments that never arrived, so [FragmentComplete.partial] is true and no
-  /// caller can mistake it for a whole reply.
+  /// listing the fragments that never arrived and `stopped: false` - the stream did not end on its
+  /// STOP frame - so [FragmentComplete.partial] is true and no caller can mistake it for a whole
+  /// reply.
   FragmentComplete? finish(int txId) {
     final state = _frag[txId];
     if (_buffers[txId] == null || state == null) {
       discard(txId);
       return null;
     }
-    return _complete(txId, success: true, fail: false);
+    return _complete(txId, success: true, fail: false, stopped: false);
   }
 
   /// Feeds one response [frame] for transaction [txId].
@@ -204,6 +215,7 @@ class FragmentReassembler {
     int txId, {
     bool success = true,
     bool fail = false,
+    bool stopped = true,
   }) {
     final buffer = _buffers[txId] ?? <int>[];
     final chunks = _chunks[txId] ?? const <FragmentChunk>[];
@@ -221,6 +233,8 @@ class FragmentReassembler {
       fail: fail,
       chunks: List<FragmentChunk>.unmodifiable(chunks),
       missing: List<int>.unmodifiable(missing),
+      stopped: stopped,
+      total: total,
     );
   }
 }

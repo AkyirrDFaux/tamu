@@ -63,9 +63,13 @@ class _StoragePageState extends State<StoragePage>
     if (!mounted) return;
     setState(() {
       _refreshing = false;
-      // readFileTable() reads the ".TABLE  " file directly using CID 5.
-      _error = null;
-      _files = files ?? [];
+      // readFileTable() reads the ".TABLE  " file directly using CID 5. A read that could not be
+      // completed is an ERROR, never an empty list: a truncated table shows 32 of N files as if
+      // it were the device's directory, which is worse than saying the read failed.
+      _files = files;
+      _error = files == null
+          ? (_client.lastReadError ?? 'The device did not answer.')
+          : null;
     });
   }
 
@@ -226,22 +230,22 @@ class _StoragePageState extends State<StoragePage>
 
   Widget _buildBody(BuildContext context) {
     final files = _files;
-    if (files == null) return Center(child: Text(_error ?? 'Loading...'));
-    // A file-table read can come back incomplete over Bluetooth (the core streams the whole
-    // 16 kB reservation and its transmit ring drops the tail). Say so instead of letting the
-    // list read as the device's whole directory.
-    final partialNote = _client.lastPartial
-        ? Padding(
-            padding: Insets.row,
-            child: Text(
-              'The file table arrived incomplete (the device dropped part of the '
-              'stream). Every record shown was read from the device.',
-              style: Theme.of(
-                context,
-              ).textTheme.labelSmall?.copyWith(color: kTextMuted),
-            ),
-          )
-        : null;
+    if (files == null) {
+      final error = _error;
+      if (error == null) {
+        return const Center(child: Text('Loading...'));
+      }
+      // A file-table read that could not be completed is a visible, actionable error: the page
+      // says what the device answered and offers the retry that the client already bounded.
+      return StateMessage.error(
+        message: 'The file table could not be read',
+        details: error,
+        action: FilledButton(
+          onPressed: _refresh,
+          child: const Text('Try again'),
+        ),
+      );
+    }
     // The list is the toolkit's table shell: a type icon, the name, the type/size/
     // offset detail and the per-row actions. The file table itself is read-only but
     // still openable: tapping shows the decoded directory
@@ -305,14 +309,7 @@ class _StoragePageState extends State<StoragePage>
       onTap: (file) => file.isFiletable ? _showTable(file) : _showFile(file),
       emptyMessage: 'No file table',
     );
-    if (partialNote == null) return list;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        partialNote,
-        Expanded(child: list),
-      ],
-    );
+    return list;
   }
 
   /// The name a row prints: the stored name, marked when it is the directory itself.
@@ -330,14 +327,10 @@ class _StoragePageState extends State<StoragePage>
   Future<void> _showTable(FileRecord table) async {
     _snack('Reading file table...');
     // Read the table file directly using CID 5 (read file) instead of CID 7. The table is a
-    // fixed 16 kB reservation, so over BLE its reply is routinely truncated past the live
-    // records: this viewer decodes self-contained 16-byte records, so it shows the prefix that
-    // arrived (the loss is logged by the client) instead of refusing the whole file.
-    final data = await _client.readFile(
-      table.name,
-      size: table.size,
-      allowPartial: true,
-    );
+    // fixed 16 kB reservation whose reply can lose fragments and its STOP frame over BLE: the
+    // client re-requests it whole rather than handing back a prefix, because a decoded prefix
+    // shows 32 of N records as if it were the directory.
+    final data = await _client.readFile(table.name, size: table.size);
     if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -345,6 +338,7 @@ class _StoragePageState extends State<StoragePage>
           deviceId: widget.deviceId,
           size: table.size,
           data: data,
+          error: data == null ? _client.lastReadError : null,
         ),
       ),
     );
@@ -352,7 +346,8 @@ class _StoragePageState extends State<StoragePage>
 
   Future<void> _showFile(FileRecord file) async {
     _snack('Reading ${file.name}...');
-    final data = await _client.readFile(file.name, size: file.size);
+    Future<List<int>?> read() => _client.readFile(file.name, size: file.size);
+    final data = await read();
     // `.SV` is a raw static persistent-space mirror; fetch the device's blocks so
     // the decoder can compute the field layout and name the blocks and fields.
     List<({int type, int inst, ValueInfo meta, String name})?>? blocks;
@@ -370,6 +365,8 @@ class _StoragePageState extends State<StoragePage>
           name: file.name,
           size: file.size,
           data: data,
+          error: data == null ? _client.lastReadError : null,
+          onRetry: read,
           blocks: blocks,
         ),
       ),
@@ -383,17 +380,26 @@ class FileTableViewPage extends StatelessWidget {
   final int size;
   final List<int>? data;
 
+  /// Why [data] is null, as the storage client worded it.
+  final String? error;
+
   const FileTableViewPage({
     super.key,
     required this.deviceId,
     required this.size,
     required this.data,
+    this.error,
   });
 
   @override
   Widget build(BuildContext context) {
+    // A table the client could not read whole is an error, never a decoded prefix: the records
+    // past a hole are unknown, and printing the ones before it reads as the whole directory.
     final body = data == null
-        ? const Center(child: Text('Read failed'))
+        ? StateMessage.error(
+            message: 'Could not read the file table',
+            details: error,
+          )
         : _TableBody(data: data!, size: size);
     return Scaffold(
       appBar: AppBar(title: const Text('File table')),

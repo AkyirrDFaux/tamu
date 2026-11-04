@@ -118,12 +118,21 @@ class RigReceivePath {
   final UsbFrameParser _frames = UsbFrameParser();
   final PacketStreamParser _packets = PacketStreamParser();
 
+  /// Called with the unwrapped packet-stream bytes (before parsing), so a tool can bank what the
+  /// device actually sent.
+  void Function(List<int> bytes)? onStreamBytes;
+
   /// Feeds wire bytes and returns the frames they completed (usually none, or one per reply).
-  List<PacketFrame> feed(List<int> bytes) => _packets.feed(_frames.feed(bytes));
+  List<PacketFrame> feed(List<int> bytes) {
+    final stream = _frames.feed(bytes);
+    if (stream.isEmpty) return const [];
+    onStreamBytes?.call(stream);
+    return _packets.feed(stream);
+  }
 }
 
 /// One request/response channel over a serial port (the core, at address 1).
-class RigChannel implements RigLink {
+class RigChannel implements RigLink, TolerantRequestChannel {
   RigChannel._(this._port, this._reader);
 
   final SerialPort _port;
@@ -132,10 +141,21 @@ class RigChannel implements RigLink {
   final RigReceivePath _receive = RigReceivePath();
   final FragmentReassembler _reassembler = FragmentReassembler();
   final Map<int, Completer<PacketResponse>> _pending = {};
+  final Set<int> _tolerant = {};
+  final Map<int, Timer> _stall = {};
   int _nextTxId = tridAppBase;
   Function(List<int>)? _listener;
   bool _open = true;
   String? lastError;
+
+  /// The packet-stream bytes this channel received, when [capture] is set: the same bytes the
+  /// app's parser sees, so a tool can bank a real reply as a fixture.
+  void Function(List<int> bytes)? capture;
+
+  /// Mirrors the app's link (`ConnectionManager.fragmentStallTimeout`): a stream that stops
+  /// arriving is closed with what came, so a truncated reply is a PARTIAL answer instead of a
+  /// 10 s timeout.
+  static const Duration fragmentStallTimeout = Duration(milliseconds: 500);
 
   /// Opens [portName] and starts reading. Opening asserts DTR/RTS, which resets the core, so
   /// the caller must wait for it to answer a ping before sending anything else.
@@ -175,6 +195,7 @@ class RigChannel implements RigLink {
       throw LinkException('cannot configure $portName: $configError');
     }
     final channel = RigChannel._(port, SerialPortReader(port));
+    channel._receive.onStreamBytes = (bytes) => channel.capture?.call(bytes);
     channel._sub = channel._reader.stream.listen(
       channel._onBytes,
       onError: (Object error) {
@@ -231,6 +252,7 @@ class RigChannel implements RigLink {
     Duration timeout = const Duration(seconds: 2),
     bool requestFrag = false,
     int? transactionId,
+    bool tolerant = false,
   }) async {
     if (!_open) throw const LinkException('link closed');
     // A caller-supplied transaction ID lets several requests share one TRID (the Subscriptions
@@ -251,22 +273,84 @@ class RigChannel implements RigLink {
     );
     final completer = Completer<PacketResponse>();
     _pending[txId] = completer;
-    _reassembler.begin(txId);
+    _reassembler.begin(txId, tolerant: tolerant);
+    if (tolerant) {
+      _tolerant.add(txId);
+    } else {
+      _tolerant.remove(txId);
+    }
     try {
       await send(frame.toBytes());
       return await completer.future.timeout(
         timeout,
         onTimeout: () {
           _pending.remove(txId);
+          _tolerant.remove(txId);
+          _stall.remove(txId)?.cancel();
           _reassembler.discard(txId);
           throw LinkException('${service.name} CID $functionCid timed out');
         },
       );
     } catch (error) {
       _pending.remove(txId);
+      _tolerant.remove(txId);
+      _stall.remove(txId)?.cancel();
       _reassembler.discard(txId);
       rethrow;
     }
+  }
+
+  /// A request whose reply may arrive incomplete (see [TolerantRequestChannel]) - what the
+  /// storage client asks through, so a tool exercises the app's own read policy.
+  @override
+  Future<PacketResponse> requestTolerant(
+    int targetId,
+    ServiceType service,
+    int functionCid, {
+    List<int> payload = const [],
+    Duration timeout = const Duration(seconds: 2),
+  }) => requestWithFlags(
+    targetId,
+    service,
+    functionCid,
+    payload: payload,
+    timeout: timeout,
+    tolerant: true,
+  );
+
+  /// Closes [txId]'s stream when nothing has arrived for [fragmentStallTimeout], exactly as the
+  /// app's link does: a tolerant request gets the prefix, a strict one fails.
+  void _armStall(int txId) {
+    _stall[txId]?.cancel();
+    if (!_reassembler.inProgress(txId)) return;
+    _stall[txId] = Timer(fragmentStallTimeout, () {
+      _stall.remove(txId);
+      final completer = _pending[txId];
+      if (completer == null || completer.isCompleted) return;
+      final truncated = _reassembler.finish(txId);
+      final tolerant = _tolerant.remove(txId);
+      _pending.remove(txId);
+      if (tolerant) {
+        completer.complete(
+          PacketResponse(
+            payload: truncated?.payload ?? const <int>[],
+            success: true,
+            fail: false,
+            chunks: truncated?.chunks ?? const [],
+            missing: truncated?.missing ?? const [],
+            stopped: false,
+            total: truncated?.total ?? 0,
+          ),
+        );
+      } else {
+        completer.completeError(
+          LinkException(
+            'fragment stream stopped after '
+            '${truncated?.chunks.length ?? 0} fragment(s)',
+          ),
+        );
+      }
+    });
   }
 
   /// Puts packet-stream bytes on the wire, framed per the USB link (max 60 bytes each).
@@ -311,11 +395,32 @@ class RigChannel implements RigLink {
       switch (_reassembler.feed(txId, frame)) {
         case FragmentPending():
           _pending[txId] = completer;
-        case FragmentComplete(:final payload, :final success, :final fail):
+          _armStall(txId);
+        case FragmentComplete(
+          :final payload,
+          :final success,
+          :final fail,
+          :final chunks,
+          :final missing,
+          :final stopped,
+          :final total,
+        ):
+          _stall.remove(txId)?.cancel();
+          _tolerant.remove(txId);
           completer.complete(
-            PacketResponse(payload: payload, success: success, fail: fail),
+            PacketResponse(
+              payload: payload,
+              success: success,
+              fail: fail,
+              chunks: chunks,
+              missing: missing,
+              stopped: stopped,
+              total: total,
+            ),
           );
         case FragmentAbort(:final reason):
+          _stall.remove(txId)?.cancel();
+          _tolerant.remove(txId);
           if (!completer.isCompleted) {
             completer.completeError(
               LinkException('fragment stream aborted: $reason'),
@@ -332,6 +437,11 @@ class RigChannel implements RigLink {
       }
     }
     _pending.clear();
+    for (final timer in _stall.values) {
+      timer.cancel();
+    }
+    _stall.clear();
+    _tolerant.clear();
     _reassembler.clear();
   }
 
