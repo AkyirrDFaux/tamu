@@ -20,14 +20,49 @@ import 'widgets.dart';
 /// as a zipfile of per-device JSON files, with per-part selection of synced
 /// items and target remapping when compatible.
 class BackupPage extends StatefulWidget {
-  const BackupPage({super.key});
+  const BackupPage({
+    super.key,
+    this.database,
+    this.isConnected,
+    this.pickArchive,
+    this.saveArchive,
+    this.planBuilder,
+  });
+
+  /// The device database the page lists. Null (the app's case) is the shared one.
+  @visibleForTesting
+  final DeviceDatabase? database;
+
+  /// Whether a link is up. Null (the app's case) asks [ConnectionManager].
+  @visibleForTesting
+  final bool Function()? isConnected;
+
+  /// Reads the archive the user picked, or null when they cancelled. A widget test replaces the
+  /// file picker, which needs a platform and cannot run inside one.
+  @visibleForTesting
+  final Future<List<int>?> Function()? pickArchive;
+
+  /// Stores the captured archive and answers where it went, or null when the user cancelled. A
+  /// widget test replaces the save dialog for the same reason as [pickArchive].
+  @visibleForTesting
+  final Future<String?> Function(String fileName, List<int> bytes)? saveArchive;
+
+  /// The restore plan builder. A widget test replaces it to reach the build's FAILED exit: every
+  /// read the real builder makes answers null for a lost reply instead of throwing, so the
+  /// failure the screen catches is a bug in the build, not something a fake bus can produce.
+  @visibleForTesting
+  final Future<RestorePlan> Function(
+    List<BackupDevice> devices,
+    RestoreProgressCallback? onProgress,
+  )?
+  planBuilder;
 
   @override
   State<BackupPage> createState() => _BackupPageState();
 }
 
 class _BackupPageState extends State<BackupPage> {
-  final _db = DeviceDatabase.instance;
+  DeviceDatabase get _db => widget.database ?? DeviceDatabase.instance;
   final _selected = <int>{};
   bool _busy = false;
   bool _includeFiles = true;
@@ -43,6 +78,17 @@ class _BackupPageState extends State<BackupPage> {
   }
 
   void _snack(String message) => showSnack(context, message);
+
+  /// The system file picker, for the archive a restore reads. Split out so a widget test can
+  /// supply [BackupPage.pickArchive] instead - the picker needs a platform.
+  Future<List<int>?> _pickArchiveBytes() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['zip'],
+    );
+    final file = result.singleOrNull;
+    return file?.readAsBytes();
+  }
 
   Future<void> _createBackup() async {
     if (_selected.isEmpty) return;
@@ -66,12 +112,16 @@ class _BackupPageState extends State<BackupPage> {
         return;
       }
       final zip = buildBackupZip(devices);
-      final target = await saveBytesWithPicker(
-        fileName:
+      final target =
+          await (widget.saveArchive ??
+              (name, bytes) => saveBytesWithPicker(
+                fileName: name,
+                bytes: bytes,
+                allowedExtensions: ['zip'],
+              ))(
             'tamu_backup_${DateTime.now().toIso8601String().substring(0, 10)}.zip',
-        bytes: zip,
-        allowedExtensions: ['zip'],
-      );
+            zip,
+          );
       if (target == null) return; // cancelled
       final items = devices.fold<int>(
         0,
@@ -93,16 +143,13 @@ class _BackupPageState extends State<BackupPage> {
   }
 
   Future<void> _restoreBackup() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['zip'],
-    );
-    final file = result.singleOrNull;
-    if (file == null) return;
+    final bytes = widget.pickArchive != null
+        ? await widget.pickArchive!()
+        : await _pickArchiveBytes();
+    if (bytes == null) return;
     setState(() => _busy = true);
     List<BackupDevice> devices;
     try {
-      final bytes = await file.readAsBytes();
       devices = parseBackupZip(bytes);
     } catch (error) {
       _snack('Restore failed: $error');
@@ -117,18 +164,18 @@ class _BackupPageState extends State<BackupPage> {
       // classifies every row against it. It runs behind a dialog that names each phase and counts
       // its items - and the synchronous classification inside it is sliced, so the bar moves
       // instead of the screen freezing (see planFromSnapshotChunked).
+      void progress(RestoreProgress p) => _wait.step(
+        label: p.label,
+        completed: p.determinate ? p.completed : null,
+        total: p.determinate ? p.total : null,
+      );
       final built = await runBehindWait<RestorePlan>(
         context,
         _wait,
         label: 'Reading the network',
-        task: () => buildRestorePlan(
-          devices,
-          onProgress: (p) => _wait.step(
-            label: p.label,
-            completed: p.determinate ? p.completed : null,
-            total: p.determinate ? p.total : null,
-          ),
-        ),
+        task: () => widget.planBuilder == null
+            ? buildRestorePlan(devices, onProgress: progress)
+            : widget.planBuilder!(devices, progress),
       );
       plan = built.value;
     } catch (error) {
@@ -156,7 +203,9 @@ class _BackupPageState extends State<BackupPage> {
     return ListenableBuilder(
       listenable: Listenable.merge([_db, ConnectionManager.instance]),
       builder: (context, _) {
-        final connected = ConnectionManager.instance.isConnected;
+        final connected =
+            (widget.isConnected ??
+            () => ConnectionManager.instance.isConnected)();
         final devices = _db.all;
         return Scaffold(
           appBar: AppBar(

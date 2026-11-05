@@ -337,6 +337,10 @@ class _RegisterPageState extends State<RegisterPage>
       _backupBusy = true;
       _backupError = null;
     });
+    // This wait is opened HERE, so it is closed HERE on every exit - the success, the error and the
+    // exception alike. The error state's own Retry ([_backupBody]) calls this method directly
+    // rather than going through [_refreshAll], so leaving the end to that caller's `finally` kept a
+    // frozen "Reading the stored backup" band over a table that had already loaded.
     _wait.begin('Reading the stored backup');
     try {
       final store = StorageClient(deviceId: widget.deviceId);
@@ -435,6 +439,7 @@ class _RegisterPageState extends State<RegisterPage>
       if (!mounted) return;
       setState(() => _backupError = '$e');
     } finally {
+      _wait.end();
       if (mounted) setState(() => _backupBusy = false);
     }
   }

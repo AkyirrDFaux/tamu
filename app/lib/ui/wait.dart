@@ -95,8 +95,26 @@ class WaitController extends ChangeNotifier {
   WaitProgress? _progress;
   bool _cancelRequested = false;
 
+  /// True once [dispose] ran. A page disposes its controller with itself, but the read it started
+  /// keeps running and calls back when it ends - a 16 kB table read over BLE outlives a page the
+  /// user popped. `ChangeNotifier.notifyListeners` asserts not-disposed in debug builds, so every
+  /// mutator here has to be inert after the page is gone: the wait has no screen left to draw.
+  bool _disposed = false;
+
   /// The wait as it stands, or null when nothing is being waited for.
   WaitProgress? get progress => _progress;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  /// Repaints the listening views - unless the page that owns this controller is gone.
+  void _notify() {
+    if (_disposed) return;
+    notifyListeners();
+  }
 
   bool get active => _progress != null;
 
@@ -112,6 +130,7 @@ class WaitController extends ChangeNotifier {
     String? note,
     String cancelLabel = '',
   }) {
+    if (_disposed) return;
     _cancelRequested = false;
     _progress = WaitProgress(
       label,
@@ -120,12 +139,13 @@ class WaitController extends ChangeNotifier {
       note: note,
       cancelLabel: cancelLabel,
     );
-    notifyListeners();
+    _notify();
   }
 
   /// Reports a step. A no-op when nothing is being waited for, so a stale callback from an
   /// abandoned read cannot re-open a wait the page already closed.
   void step({String? label, int? completed, int? total, String? note}) {
+    if (_disposed) return;
     final current = _progress;
     if (current == null) return;
     if (label == null && completed == null && total == null && note == null) {
@@ -139,24 +159,25 @@ class WaitController extends ChangeNotifier {
       cancelLabel: _cancelRequested ? '' : current.cancelLabel,
       cancelling: _cancelRequested,
     );
-    notifyListeners();
+    _notify();
   }
 
   /// The user's way out. The operation sees [cancelled] at its next safe point; the view says it is
   /// stopping so the screen is not still claiming to be working.
   void cancel() {
+    if (_disposed) return;
     final current = _progress;
     if (current == null || _cancelRequested) return;
     _cancelRequested = true;
     _progress = current.copyWith(cancelling: true, cancelLabel: '');
-    notifyListeners();
+    _notify();
   }
 
   /// Ends the wait: the screen stops drawing it.
   void end() {
-    if (_progress == null) return;
+    if (_disposed || _progress == null) return;
     _progress = null;
     _cancelRequested = false;
-    notifyListeners();
+    _notify();
   }
 }
