@@ -404,12 +404,22 @@ class BleTransport implements Transport {
   @override
   Future<void> send(List<int> streamBytes) async {
     for (final chunk in BleLengthParser.chunkOutgoing(streamBytes, mtu: _mtu)) {
+      // Every write is acknowledged, even a short one that would fit a
+      // write-without-response. A request has no other delivery guarantee: an
+      // unacknowledged write the controller or the device's receive path drops is
+      // invisible here, and the caller only sees its request time out and reports a
+      // healthy node as unreachable. Measured on the rig (2026-11-05): four pings
+      // written without response answered 1-3 of 4 per round, the same pings
+      // written with response answered 4 of 4 every round; the discovery sweep
+      // lost the DAS pings that way while their subscriptions kept working.
+      // The cost is one ATT ack per chunk, far below the round trip the request
+      // itself waits for.
       await UniversalBle.write(
         deviceId,
         appServiceUuid,
         appWriteCharUuid,
         chunk,
-        withoutResponse: chunk.length < _mtu - 8,
+        withoutResponse: false,
       );
     }
   }

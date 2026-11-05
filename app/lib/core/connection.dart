@@ -21,6 +21,7 @@ import 'fragment_reassembler.dart';
 import 'platform_caps.dart';
 import 'protocol.dart';
 import 'request_channel.dart';
+import 'request_gate.dart';
 import 'settings.dart';
 import 'transport.dart';
 
@@ -406,6 +407,20 @@ class ConnectionManager extends ChangeNotifier
   /// rig: fragments of a 16 kB file read arrive 2-11 ms apart, so half a second is far past any
   /// normal gap and still an order of magnitude under the 10 s read timeout.
   static const Duration fragmentStallTimeout = Duration(milliseconds: 500);
+
+  /// The most requests this link keeps in flight at once.
+  ///
+  /// The core parses app frames into a fixed inbound queue and drops what does not fit
+  /// (`APP_RX_QUEUE_DEPTH` 12, firmware/src/Core/Functions/AppInterface.h), so a burst bigger
+  /// than that is a LOST request, not a slow one. Measured on this rig over BLE (2026-11-05,
+  /// bursts sent at once): 12 and 16 concurrent register reads were all answered, 20 lost one.
+  /// The start-up sweep used to fire 20 (four nodes x five System reads) and lost DAS pings
+  /// outright - a node that was answering subscriptions read as unreachable. Eight keeps every
+  /// batch under the firmware's queue while still letting a page fan out.
+  static const int maxInFlightRequests = 8;
+
+  /// Bounds this link's in-flight requests (see [maxInFlightRequests]).
+  final RequestGate _requestGate = RequestGate(maxInFlightRequests);
 
   // General listener for subscription value updates (service Subscriptions CID 0).
   // Only one listener is supported; SubscriptionClient uses it to feed its
@@ -1049,52 +1064,60 @@ class ConnectionManager extends ChangeNotifier
     final transport = _transport;
     if (transport == null) throw const TransportException('Not connected');
 
-    // A caller-supplied transaction ID lets several requests share one TRID (used by
-    // the Subscriptions client to register both the requester and provider side of a
-    // subscription under the same ID, so value updates route correctly).
-    final txId = transactionId ?? _takeTxId();
-    if (transactionId != null && _pending.containsKey(txId)) {
-      throw TransportException('Transaction ID already in use');
-    }
-    final frame = PacketFrame.single(
-      targetId: targetId,
-      srvTarget: makeService(service, functionCid),
-      // The TRID field carries our transaction ID from the reserved App range (0xF000-0xFFFF).
-      // The device echoes it, so replies route back by TRID and are matched on the full value.
-      srvSource: txId,
-      response: false,
-      payload: payload,
-      requestFrag: requestFrag,
-    );
-
-    final completer = Completer<PacketResponse>();
-    _pending[txId] = completer;
-    _reassembler.begin(txId, tolerant: tolerant);
-    if (tolerant) {
-      _tolerant.add(txId);
-    } else {
-      _tolerant.remove(txId);
-    }
+    // One request at a time per slot: a burst wider than the core's inbound queue is dropped
+    // there (see [maxInFlightRequests]). The slot is held for the whole round trip, so it is
+    // taken before the send and given back in the `finally` on every path.
+    await _requestGate.acquire();
     try {
-      await transport.send(frame.toBytes());
-      return await completer.future.timeout(
-        timeout,
-        onTimeout: () {
-          _pending.remove(txId);
-          _tolerant.remove(txId);
-          _cancelFragmentStall(txId);
-          _reassembler.discard(txId);
-          throw TransportException(
-            '${service.name} CID $functionCid request timed out',
-          );
-        },
+      // A caller-supplied transaction ID lets several requests share one TRID (used by
+      // the Subscriptions client to register both the requester and provider side of a
+      // subscription under the same ID, so value updates route correctly).
+      final txId = transactionId ?? _takeTxId();
+      if (transactionId != null && _pending.containsKey(txId)) {
+        throw TransportException('Transaction ID already in use');
+      }
+      final frame = PacketFrame.single(
+        targetId: targetId,
+        srvTarget: makeService(service, functionCid),
+        // The TRID field carries our transaction ID from the reserved App range (0xF000-0xFFFF).
+        // The device echoes it, so replies route back by TRID and are matched on the full value.
+        srvSource: txId,
+        response: false,
+        payload: payload,
+        requestFrag: requestFrag,
       );
-    } catch (error) {
-      _pending.remove(txId);
-      _tolerant.remove(txId);
-      _cancelFragmentStall(txId);
-      _reassembler.discard(txId);
-      rethrow;
+
+      final completer = Completer<PacketResponse>();
+      _pending[txId] = completer;
+      _reassembler.begin(txId, tolerant: tolerant);
+      if (tolerant) {
+        _tolerant.add(txId);
+      } else {
+        _tolerant.remove(txId);
+      }
+      try {
+        await transport.send(frame.toBytes());
+        return await completer.future.timeout(
+          timeout,
+          onTimeout: () {
+            _pending.remove(txId);
+            _tolerant.remove(txId);
+            _cancelFragmentStall(txId);
+            _reassembler.discard(txId);
+            throw TransportException(
+              '${service.name} CID $functionCid request timed out',
+            );
+          },
+        );
+      } catch (error) {
+        _pending.remove(txId);
+        _tolerant.remove(txId);
+        _cancelFragmentStall(txId);
+        _reassembler.discard(txId);
+        rethrow;
+      }
+    } finally {
+      _requestGate.release();
     }
   }
 

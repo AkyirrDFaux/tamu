@@ -127,8 +127,10 @@ class DeviceDatabase extends ChangeNotifier {
     final entry = _devices.putIfAbsent(id, () => DeviceEntry(id: id));
 
     // One reader for those fields (`readDeviceIdentity`), shared with the restore's live
-    // snapshot: ping first, then the System block.
-    final identity = await readDeviceIdentity(id);
+    // snapshot: ping first, then the System block. Two attempts per read, because a single lost
+    // reply would otherwise leave the node on screen with no serial or the wrong type - and the
+    // deployed scenario keeps the bus busy enough for that to happen (2026-11-05).
+    final identity = await readDeviceIdentity(id, readAttempts: 2);
     if (identity == null) {
       entry.stale = true;
       notifyListeners();
@@ -295,18 +297,17 @@ class DeviceDatabase extends ChangeNotifier {
       // The core's identity and the SNDB roster are independent requests, so they go out
       // together: the roster read alone costs ~315 ms on the rig, which used to be spent after
       // the identity round trips rather than beside them.
-      final sndbFuture = _request(
-        coreId,
-        ServiceType.device,
-        0x13,
-        timeout: const Duration(seconds: 5),
-      );
+      final sndbFuture = sndb.readSndbRoster();
       await refreshDevice(coreId);
-      final sndbReply = await sndbFuture;
-      if (sndbReply == null) {
-        throw Exception('SNDB read failed');
+      final roster = await sndbFuture;
+      if (!roster.ok) {
+        // A roster that could not be read whole is NOT an empty network: say why instead of
+        // reporting every child device as gone (see sndb.readSndbRoster's re-request policy).
+        throw Exception(
+          'SNDB read failed after ${roster.attempts} attempt(s): ${roster.fault}',
+        );
       }
-      final parsed = sndb.parseSndb(sndbReply);
+      final parsed = roster.entries!;
       // ID 0 marks an unassigned entry; skip it so no phantom "device" is created
       // and no requests are fired at an invalid target.
       final ids = <int>{

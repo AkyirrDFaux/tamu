@@ -34,13 +34,27 @@ class DeviceIdentity {
   DeviceType get type => DeviceType.fromValue(typeValue);
 }
 
+/// How many times the identity read pings before it calls a device unreachable.
+///
+/// The ping is a READ, so re-sending it is safe, and a single lost frame must not turn a live
+/// node into a missing one. Measured on this rig over BLE (2026-11-05): with a request burst
+/// bounded and writes acknowledged, a few percent of requests are still lost while the deployed
+/// scenario keeps the RS485 bus busy with its subscription traffic (the core forwards an app
+/// request with CSMA and gives up after its retries), so a one-shot ping reported a healthy DAS
+/// as gone. Two attempts cost an absent device 800 ms + 250 ms before it is called lost.
+const int identityPingAttempts = 2;
+
+/// The pause between two identity pings.
+const Duration identityPingRetryDelay = Duration(milliseconds: 250);
+
 /// Reads [id]'s identity: a ping first, then the System fields. Returns null when the device
 /// does not answer the ping - it is not reachable on the bus.
 ///
 /// The five System reads go out TOGETHER rather than one after another. Each is an independent
 /// field of the same block, and the wire round trip (measured on the rig over BLE: ~22 ms per
 /// request) is most of what each one costs, so reading them concurrently is what makes an app
-/// start quick instead of spending five round trips per device to learn a name.
+/// start quick instead of spending five round trips per device to learn a name. The burst is
+/// bounded by the request layer (`ConnectionManager.maxInFlightRequests`), not here.
 ///
 /// [readAttempts] is passed through to the Register reads: a caller that decides device SHAPE
 /// from this identity (a restore's snapshot, the setup tool's rig scan) passes
@@ -50,14 +64,21 @@ Future<DeviceIdentity?> readDeviceIdentity(
   int id, {
   int readAttempts = 1,
 }) async {
-  final ping = await serviceRequest(
-    id,
-    ServiceType.device,
-    1,
-    timeout: const Duration(milliseconds: 800),
-    tag: 'identity',
-  );
-  if (ping == null) return null;
+  var pinged = false;
+  for (var attempt = 1; attempt <= identityPingAttempts && !pinged; attempt++) {
+    final ping = await serviceRequest(
+      id,
+      ServiceType.device,
+      1,
+      timeout: const Duration(milliseconds: 800),
+      tag: 'identity',
+    );
+    pinged = ping != null;
+    if (!pinged && attempt < identityPingAttempts) {
+      await Future<void>.delayed(identityPingRetryDelay);
+    }
+  }
+  if (!pinged) return null;
 
   final reg = RegisterClient(deviceId: id, readAttempts: readAttempts);
   // System fields are exposed as one entry per field at key 0 (the struct position is not
