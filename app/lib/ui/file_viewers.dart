@@ -159,6 +159,14 @@ class _FileViewPageState extends State<FileViewPage> {
   List<int>?
   _dvTable; // sibling `.DT_<hex2>` bytes, for the `.DV_` value viewer
 
+  /// Why the sibling `.DT_<hex2>` read produced no table, in the reader's words - null when it
+  /// read, or when the device legitimately holds no such table. An ABSENT table is the benign
+  /// hex fallback; a failed or partial read is not, and says so with a re-read.
+  String? _dvTableError;
+
+  /// True while the `.DT_` table is being (re-)read.
+  bool _dvTableLoading = false;
+
   /// The bytes on show. Starts as the caller's read; a retry from the error view replaces it.
   List<int>? _data;
 
@@ -204,12 +212,25 @@ class _FileViewPageState extends State<FileViewPage> {
     return int.tryParse(n.substring(4), radix: 16);
   }
 
+  /// Reads the sibling `.DT_` table through the one whole-file reader, keeping the three cases
+  /// apart: the table read (decode), the device holding no such table (an absent file - the
+  /// legitimate hex fallback), and a read that FAILED or came back partial. The last one used to
+  /// land in the same hex fallback as "no table", which presented a failure as the viewer's
+  /// normal shape.
   Future<void> _loadDynamicTable() async {
     final inst = _dvIndex();
-    if (inst == null) return;
+    if (inst == null || _dvTableLoading) return;
     final name = '.DT_${inst.toRadixString(16).padLeft(2, '0').toUpperCase()}';
-    final bytes = await StorageClient(deviceId: widget.deviceId).readFile(name);
-    if (mounted) setState(() => _dvTable = bytes);
+    setState(() => _dvTableLoading = true);
+    final read = await StorageClient(
+      deviceId: widget.deviceId,
+    ).readFileWhole(name);
+    if (!mounted) return;
+    setState(() {
+      _dvTableLoading = false;
+      _dvTable = read.ok ? read.bytes : null;
+      _dvTableError = read.ok || read.absent ? null : read.detail;
+    });
   }
 
   bool get _hasFormatted =>
@@ -365,11 +386,31 @@ class _FileViewPageState extends State<FileViewPage> {
   /// `.DV_<hex2>`: the block's packed persistent values, decoded against the sibling
   /// `.DT_<hex2>` table (offsets and sizes) so each field/key shows its typed value.
   Widget _dvView(BuildContext context) {
+    final tableError = _dvTableError;
+    if (tableError != null) {
+      // The sibling `.DT_` read failed or arrived incomplete: that is NOT "this block has no
+      // table", which is what the hex fallback would make it look like.
+      return StateMessage.error(
+        message: 'The block table (.DT_) could not be read',
+        details: tableError,
+        action: FilledButton(
+          onPressed: _dvTableLoading ? null : _loadDynamicTable,
+          child: _dvTableLoading
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Try again'),
+        ),
+      );
+    }
     final tableBytes = _dvTable;
     final table = tableBytes == null ? null : decodeDynamicTable(tableBytes);
     final inst = _dvIndex();
     if (table == null || inst == null) {
-      // Still loading the sibling table, or it is missing: fall back to raw hex.
+      // Still loading the sibling table, or the device holds no table for this block: the
+      // legitimate raw-hex fallback.
       return _hexView();
     }
     final entries = decodeDynamicValues(inst, table, _data!);

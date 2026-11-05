@@ -258,8 +258,19 @@ class _ScriptsPageState extends State<ScriptsPage>
       return;
     }
     // The file id and the loaded slot are independent: pick the lowest free slot from CID 0's
-    // slot map (the device reports which slots are empty).
-    final map = await _client.slotMap();
+    // slot map (the device reports which slots are empty). A slot map that was not ANSWERED is
+    // not a device with no free slot - it is a read that failed, and it says so (Akyirr,
+    // 2026-11-05: never present a failure as data).
+    final map = await _client.readSlotMap();
+    if (!mounted) return;
+    if (map == null) {
+      showSnack(
+        context,
+        'The script slot map could not be read (Script CID 0 did not answer), '
+        'so no free slot is known',
+      );
+      return;
+    }
     var free = -1;
     for (var i = 0; i < map.length; i++) {
       if (map[i] == scriptSlotEmpty) {
@@ -267,7 +278,6 @@ class _ScriptsPageState extends State<ScriptsPage>
         break;
       }
     }
-    if (!mounted) return;
     if (free < 0) {
       showSnack(context, 'No free script slot');
       return;

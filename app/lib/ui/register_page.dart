@@ -83,6 +83,13 @@ class _RegisterPageState extends State<RegisterPage>
   final Set<int> _expanded = {};
   bool _refreshing = false;
 
+  /// When the tree on screen was last read from the device.
+  ///
+  /// A refresh that fails keeps the tree (dropping it would claim the device carries no blocks)
+  /// but must not let it pass as current, so the stale banner names this moment. Null before the
+  /// first successful topology read - there is then no tree to age.
+  DateTime? _topologyReadAt;
+
   bool get _connected =>
       (widget.isConnected ?? (() => ConnectionManager.instance.isConnected))();
   bool _busy = false;
@@ -189,17 +196,36 @@ class _RegisterPageState extends State<RegisterPage>
       }
       // Script blocks are not in the type list (the Script service owns their slots), so
       // pass its loaded list to keep them in the view.
-      final blocks = (await _client.readBlocks(
+      final read = await _client.readBlocks(
         scriptSlots: await ScriptClient(
           deviceId: widget.deviceId,
         ).loadedScripts(),
-      ))?.blocks;
+      );
       if (!mounted) return;
-      if (blocks == null) {
-        setState(() => _error = 'Device did not respond');
+      // A block type lands in `unreadTypes` when an instance's metadata read came back with no
+      // answer. That is not "the device carries fewer blocks": it is a topology read that did
+      // not finish, so the tree would silently lose blocks and read as current.
+      final blocks = read?.blocks;
+      final unread = read?.unreadTypes ?? const <int>{};
+      if (blocks == null || unread.isNotEmpty) {
+        // The tree that is already on screen is KEPT: replacing it with an error page would
+        // claim the device carries no blocks, and dropping it silently would leave an old tree
+        // looking current. It is marked stale with the moment it was read, and the reason is
+        // shown with the retry that re-reads the topology.
+        setState(() {
+          _error = blocks == null
+              ? 'The device did not respond to the topology read'
+              : 'The device did not answer for '
+                    '${unread.map(blockTypeLabel).join(', ')}, so this tree is '
+                    'incomplete';
+          // Re-read the topology on the normal cadence rather than on every 0.5 s value tick:
+          // the device is not answering, and a failed refresh must not become a poll storm.
+          _ticksSinceTopology = 0;
+        });
         return;
       }
       _error = null;
+      _topologyReadAt = DateTime.now();
       _ticksSinceTopology = 0;
       // Preserve cache for blocks that still exist
       final newMetas = <({int type, int inst, ValueInfo meta, String name})?>[];
@@ -811,6 +837,56 @@ class _RegisterPageState extends State<RegisterPage>
     );
   }
 
+  /// The tree on screen was read before the last topology refresh failed: say when it was read
+  /// and why the refresh failed, with the retry that re-reads it. Without this the previous tree
+  /// is indistinguishable from a current one.
+  Widget _staleBanner(BuildContext context) {
+    final theme = Theme.of(context);
+    final at = _topologyReadAt;
+    final when = at == null
+        ? 'its age is unknown'
+        : 'last read at ${_clock(at)}';
+    return Card(
+      color: kSurfaceAlt,
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: Insets.row,
+        child: Row(
+          children: [
+            const Icon(Icons.error_outline, color: kError, size: IconSize.md),
+            const SizedBox(width: Spacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'This register tree is stale - $when.',
+                    style: theme.textTheme.bodySmall?.copyWith(color: kError),
+                  ),
+                  Text(
+                    '${_error ?? 'The device did not respond'}. '
+                    'What is shown is what the device reported then.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: kTextMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: Spacing.sm),
+            TextButton(onPressed: _refreshAll, child: const Text('Try again')),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// `HH:MM:SS`, so a stale tree carries the time it was read.
+  static String _clock(DateTime t) =>
+      '${t.hour.toString().padLeft(2, '0')}:'
+      '${t.minute.toString().padLeft(2, '0')}:'
+      '${t.second.toString().padLeft(2, '0')}';
+
   Widget _buildBody() {
     final blocks = _blockMetas;
     if (blocks == null) {
@@ -828,6 +904,11 @@ class _RegisterPageState extends State<RegisterPage>
       );
     }
     if (blocks.isEmpty) {
+      // An empty tree plus a failed refresh is not "this device carries no blocks" either: the
+      // banner says when the empty list was read.
+      if (_error != null) {
+        return BlockScrollBody(children: [_staleBanner(context)]);
+      }
       return const StateMessage.empty(message: 'No blocks found');
     }
     if (_backupMode) return _backupBody(blocks);
@@ -880,6 +961,7 @@ class _RegisterPageState extends State<RegisterPage>
     }
 
     final children = <Widget>[
+      if (_error != null) _staleBanner(context),
       for (final i in fixed) _blockCard(context, i, blocks[i]),
     ];
 

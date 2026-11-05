@@ -136,18 +136,26 @@ class ScriptClient {
   // ---- Management commands (0x0500-0x0507) ----
 
   /// CID 0: the whole slot map, in slot order - one uint16 file id per slot, [scriptSlotEmpty]
-  /// (`0xFFFF`) for an empty slot. The payload length is what tells the app the device's slot
-  /// count, so nothing assumes 256 (Docs/Services/Script.md CID 0: "the stream length gives the
-  /// slot count"; Stage 4: the app learns which slots are empty here, with no separate
-  /// slot-request command). Returns an empty list when the device does not answer.
-  Future<List<int>> slotMap() async {
+  /// (`0xFFFF`) for an empty slot.
+  ///
+  /// The payload length IS the device's slot count (Docs/Services/Script.md CID 0: "the stream
+  /// length gives the slot count"), so a caller that has to PICK a slot needs this form:
+  /// [slotMap] folds "no reply" into an empty list, and a page that then says "no free script
+  /// slot" is presenting a failed read as device state (Akyirr, 2026-11-05).
+  Future<List<int>?> readSlotMap() async {
     final reply = await _request(ServiceType.script, 0);
-    if (reply == null || reply.isEmpty) return const [];
-    final count = reply.length ~/ 2;
+    if (reply == null) return null;
     return [
-      for (var i = 0; i < count; i++) reply[2 * i] | (reply[2 * i + 1] << 8),
+      for (var i = 0; i + 1 < reply.length; i += 2)
+        reply[i] | (reply[i + 1] << 8),
     ];
   }
+
+  /// [readSlotMap] with "the device did not answer" folded into an empty list.
+  ///
+  /// Only for callers whose answer to "no reply" and "no slots" is the same. A page must read
+  /// [readSlotMap] (or [readLoadedSlotMap]) so it can say which of the two it saw.
+  Future<List<int>> slotMap() async => await readSlotMap() ?? const [];
 
   /// CID 0: the file ids of the currently loaded scripts, in slot order (empty slots dropped).
   /// Built from [slotMap], so the count follows the device rather than [maxScripts].
@@ -171,12 +179,8 @@ class ScriptClient {
   /// holds nothing loaded" from "the device could not be asked" - a sweep that would otherwise
   /// report a clean device it never read - needs the difference, and this is it.
   Future<Map<int, int>?> readLoadedSlotMap() async {
-    final reply = await _request(ServiceType.script, 0);
-    if (reply == null) return null;
-    final map = [
-      for (var i = 0; i + 1 < reply.length; i += 2)
-        reply[i] | (reply[i + 1] << 8),
-    ];
+    final map = await readSlotMap();
+    if (map == null) return null;
     return {
       for (var slot = 0; slot < map.length; slot++)
         if (map[slot] != scriptSlotEmpty) slot: map[slot],
