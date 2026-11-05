@@ -199,6 +199,24 @@ class Packet:
         return bytes(pkt)
 
 
+# Packets the probe refused because the CRC8 did not cover them.
+#
+# Owner ruling (2026-11-05): "the CRC of the individual packets already covers their entirety, no
+# packet should be accepted without a valid CRC" - so a failing packet is dropped whole and counted
+# here, never resynchronised into. Probes quote RejectCount() as their drop witness: a stream that
+# carries junk shows rejects, not a clean 256.
+REJECTS = 0
+
+
+def RejectCount():
+    return REJECTS
+
+
+def ResetRejects():
+    global REJECTS
+    REJECTS = 0
+
+
 def parse_packet(buf):
     """Returns (Packet, consumed) or (None, 0) when the buffer does not hold a full packet."""
     if len(buf) < 12:
@@ -212,7 +230,15 @@ def parse_packet(buf):
     if len(buf) < size:
         return None, 0
     if buf[0] != crc8(bytes(buf[1:size])):
-        return None, 1  # resync: drop a byte
+        # Owner ruling (2026-11-05): "the CRC of the individual packets already covers their
+        # entirety, no packet should be accepted without a valid CRC". So a packet whose CRC8 does
+        # not cover it is NOT a packet: drop the whole declared span and count it, never resync a
+        # byte at a time into the middle of it (that invented frames out of payload bytes and hid
+        # drops). Same rule the app applies (app/lib/core/protocol.dart tryParse throws on a
+        # mismatch).
+        global REJECTS
+        REJECTS += 1
+        return None, size
     src, tgt, cmd, srv_src = struct.unpack("<HHHH", bytes(buf[4:12]))
     p = Packet(buf[1], src, cmd >> 8, cmd & 0xFF, srv_src, bytes(buf[12:size]))
     p.tgt = tgt

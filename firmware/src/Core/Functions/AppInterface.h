@@ -33,19 +33,10 @@ bool AppUsbSilent();
 
 // Outgoing stream ring: serialized frames waiting to be flushed to the app links.
 //
-// Size: a whole-file reply must be able to sit in the ring in one burst. The largest file the
-// device serves the app is `.TABLE`, measured on the rig as 256 fragments of 64 B content
-// (16,384 B of file, 22,528 B on the wire: each fragment carries a 12 B header, 4 B frag info
-// and the 8 B name echo). 24 KiB leaves room for that whole reply plus the frames around it.
-//
-// Cost: the ring is malloc'd once in Init(). Measured free heap on the rig immediately before
-// this size was chosen (iteration 26.11.4.5, System field 4): 97,048 B, so the 24 KiB ring
-// (- 8 KiB it replaces) leaves ~80.6 kB of heap margin - the increase is not thin.
-//
-// The ring is NOT what makes a long reply complete: the storage read keeps a cursor and emits a
-// few fragments per app-task pass (Core/Services/Storage.h), so a reply of any size survives a
-// link that stops accepting notifications. The ring only absorbs the burst between two drains.
-#define APP_TX_RING_SIZE 24576
+// Size, cost and the 16-bit-counter indexing rule live with the ring's geometry in
+// Core/Functions/TxRing.h (E75's root cause was a position taken from a wider sum: a read then
+// handed out ring bytes 16384 positions from where they were written).
+#include "Core/Functions/TxRing.h"
 
 // Inbound frame queue depth: frames parsed by the link readers, dispatched by the pump
 // in ApplicationTask context so ALL routing happens on one task (no concurrent dispatch).
@@ -175,7 +166,7 @@ inline bool AppInterfaceService::Send(const PacketFrame &Frame)
         {
             for (uint16_t i = 0; i < Count; i++)
             {
-                TxRing[TxHead % APP_TX_RING_SIZE] = Wire[i];
+                TxRing[AppTxRingPos(TxHead)] = Wire[i];
                 TxHead = (uint16_t)(TxHead + 1);
             }
             Ok = true;
@@ -190,6 +181,10 @@ inline bool AppInterfaceService::Send(const PacketFrame &Frame)
 // Peek/commit variant: copies up to `Max` pending bytes WITHOUT consuming them; the
 // caller confirms consumption with TxCommit(n) once they are actually on the wire
 // (used by the BLE link so a failed notify does not lose data).
+//
+// The position comes from AppTxRingPos() with the counter narrowed to uint16_t first: the sum
+// `TxTail + Count` is an int, and 65536 is not a multiple of APP_TX_RING_SIZE, so a peek that
+// straddles the counter wrap would otherwise read 16384 bytes away from the writer (E75).
 inline uint16_t AppInterfaceService::TxPeek(uint8_t *Dst, uint16_t Max)
 {
     uint16_t Count = 0;
@@ -198,7 +193,7 @@ inline uint16_t AppInterfaceService::TxPeek(uint8_t *Dst, uint16_t Max)
     if (Used > Max)
         Used = Max;
     for (Count = 0; Count < Used; Count++)
-        Dst[Count] = TxRing[(TxTail + Count) % APP_TX_RING_SIZE];
+        Dst[Count] = TxRing[AppTxRingPos((uint16_t)(TxTail + Count))];
     portEXIT_CRITICAL(&TxMux);
     return Count;
 }

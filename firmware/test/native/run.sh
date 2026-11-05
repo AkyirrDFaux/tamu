@@ -249,6 +249,16 @@ echo "### native app-console guard tests (idle link writes the line, a busy one 
 build_run "appconsole" "appconsole_test.cpp"
 echo
 
+# t_7a1870db round 2 (E75). The TX ring's indexes are 16-bit free-running counters, and 65536 is
+# not a multiple of the 24 KiB ring, so a position taken from a wider sum lands 16384 bytes away
+# from where the writer put it. The model here drives the real header through twelve back-to-back
+# whole-file replies across the counter wrap (both link chunk sizes) and must deliver every byte;
+# the same model with the pre-fix `(Tail + Count) % SIZE` expression must fail, so the defect
+# stays pinned and the helper is not "simplified" back.
+echo "### native TX ring geometry tests (a whole reply survives the 16-bit counter wrap - E75)"
+build_run "txring" "txring_test.cpp"
+echo
+
 # t_367f86d0 round 2, structural half. Two rules the radio code owns, neither of which the host can
 # link (AppBLE.h pulls NimBLE, the host task and NVS), asserted on the source:
 #   - a link's security deadline comes from the policy, not from one fixed figure: a passkey pairing
