@@ -125,15 +125,15 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       _loadError = null;
     });
     try {
-      // `readFile` returns null for both a missing file and a transport failure, so the
-      // file table is consulted to tell them apart: a missing entry means "new script",
-      // but a file that is listed yet cannot be read is a load error - never overwrite it
-      // with a blank draft.
-      final table = await _storage.readFileTable();
-      if (table == null) {
-        throw const FormatException('Could not read the file table');
+      // The shared whole-table reader keeps the three cases apart: a table that could not be read
+      // is a load error (never "the script is gone"), an absent table or an unmatched name means
+      // "new script", and a listed file that will not read is a load error - never a blank draft
+      // that would overwrite it.
+      final table = await _storage.readFileTableResult();
+      if (!table.ok && !table.absent) {
+        throw FormatException(table.detail ?? 'Could not read the file table');
       }
-      final present = table.any(
+      final present = table.recordsOrEmpty.any(
         (f) =>
             normalizeFileName(f.name).toUpperCase() == _fileName.toUpperCase(),
       );
@@ -141,11 +141,11 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       if (!present) {
         draft = ScriptDraft(functionName: widget.name);
       } else {
-        final bytes = await _storage.readFile(_fileName);
-        if (bytes == null) {
-          throw FormatException('Could not read $_fileName');
+        final read = await _storage.readFileWhole(_fileName);
+        if (!read.ok) {
+          throw FormatException(read.detail ?? 'Could not read $_fileName');
         }
-        draft = ScriptDraft.fromFile(ScriptFileData.parse(bytes));
+        draft = ScriptDraft.fromFile(ScriptFileData.parse(read.bytes!));
       }
       if (!mounted) return;
       setState(() {

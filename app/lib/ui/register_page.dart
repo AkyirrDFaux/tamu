@@ -16,7 +16,7 @@ import '../core/render_dict.dart'
         textureKeysForType;
 import '../core/script_file.dart' show ScriptField;
 import '../core/storage_client.dart'
-    show FileRecord, StorageClient, normalizeFileName;
+    show FileRead, FileReadFault, StorageClient, normalizeFileName;
 import '../core/types.dart';
 import '../core/script_client.dart';
 import 'dialogs.dart';
@@ -265,6 +265,12 @@ class _RegisterPageState extends State<RegisterPage>
 
   /// Reads and decodes the device's backup files: `.SV` for the static/System fields
   /// and `.DT_`/`.DV_` for each dynamic slot (docs Register.md "Save").
+  ///
+  /// Every read goes through the ONE shared whole-file reader ([StorageClient.readFileWhole] /
+  /// [StorageClient.readFileTableResult]), and the three cases are kept apart: an absent file is a
+  /// backup step that was simply never saved (the rows print "not backed up"), while a read that
+  /// FAILED or came back PARTIAL is an error with the reason and a retry - never an empty backup
+  /// table, which would read as "this device has nothing saved".
   Future<void> _loadBackup() async {
     if (_backupBusy) return;
     setState(() {
@@ -273,21 +279,58 @@ class _RegisterPageState extends State<RegisterPage>
     });
     try {
       final store = StorageClient(deviceId: widget.deviceId);
-      final table = await store.readFileTable();
+      final table = await store.readFileTableResult();
+      if (!table.ok && !table.absent) {
+        if (!mounted) return;
+        setState(
+          () => _backupError =
+              table.detail ?? 'The file table could not be read.',
+        );
+        return;
+      }
       List<int>? sv;
       final tables = <int, List<int>>{};
       final values = <int, List<int>>{};
-      for (final f in table ?? const <FileRecord>[]) {
+      final failures = <String>[];
+      for (final f in table.recordsOrEmpty) {
         final name = normalizeFileName(f.name).toUpperCase();
-        if (name == '.SV') {
-          sv = await store.readFile(f.name, size: f.size);
-        } else if (name.startsWith('.DT_') || name.startsWith('.DV_')) {
-          final slot = int.tryParse(name.substring(4).trim(), radix: 16);
-          if (slot == null) continue;
-          final bytes = await store.readFile(f.name, size: f.size);
-          if (bytes == null) continue;
-          (name.startsWith('.DT_') ? tables : values)[slot] = bytes;
+        final isSv = name == '.SV';
+        final isDynamic = name.startsWith('.DT_') || name.startsWith('.DV_');
+        if (!isSv && !isDynamic) continue;
+        var slot = 0;
+        if (isDynamic) {
+          final parsed = int.tryParse(name.substring(4).trim(), radix: 16);
+          if (parsed == null) continue;
+          slot = parsed;
         }
+        final read = await store.readFileWhole(f.name, size: f.size);
+        if (read.absent) {
+          // The record vanished between the table read and the read itself: that step is not
+          // stored, which is a device state, not a failure.
+          continue;
+        }
+        if (!read.ok) {
+          failures.add(read.detail ?? 'Could not read ${f.name}.');
+          continue;
+        }
+        if (isSv) {
+          sv = read.bytes;
+        } else if (name.startsWith('.DT_')) {
+          tables[slot] = read.bytes!;
+        } else {
+          values[slot] = read.bytes!;
+        }
+      }
+      if (failures.isNotEmpty) {
+        // A partial backup decoded as if it were the whole thing is the defect: say which files
+        // failed and let the retry re-ask, instead of showing "not backed up" for them.
+        if (!mounted) return;
+        setState(
+          () => _backupError =
+              'Some backup files could not be read, so the stored values are '
+              'unknown: ${failures.join(' ')}',
+        );
+        return;
       }
       // `.SV` is a raw mirror of the static persistent space, so the registry must be the same
       // ordered list the layout is computed from: every non-System block, in page order.
@@ -342,16 +385,36 @@ class _RegisterPageState extends State<RegisterPage>
   /// it changes the System segment size in the `.SV` space.
   bool get _hasNetId => hasNetIdFor(_blockMetas);
 
-  /// Reads one storage file's bytes, or null when it is missing.
-  Future<List<int>?> _readFile(String name) async {
+  /// Reads one storage file through the ONE shared tolerant reader, keeping its three cases.
+  ///
+  /// The file table tells the size to check the reply against and whether the file is there at
+  /// all: a name the table does not carry is [FileReadFault.absent] (a legitimate empty - a
+  /// backup step never saved), while a failed or partial read keeps the reader's sentence.
+  Future<FileRead> _readFile(String name) async {
     final store = StorageClient(deviceId: widget.deviceId);
-    final table = await store.readFileTable();
-    for (final f in table ?? const <FileRecord>[]) {
-      if (normalizeFileName(f.name).toUpperCase() == name) {
-        return store.readFile(f.name, size: f.size);
+    final table = await store.readFileTableResult();
+    if (!table.ok) {
+      return FileRead(
+        name: name,
+        fault: table.fault ?? FileReadFault.failed,
+        detail: table.fault == FileReadFault.absent
+            ? 'The device holds no file "$name".'
+            : (table.detail ?? 'The file table could not be read.'),
+        attempts: table.attempts,
+      );
+    }
+    final key = normalizeFileName(name).toUpperCase();
+    for (final f in table.recordsOrEmpty) {
+      if (normalizeFileName(f.name).toUpperCase() == key) {
+        return store.readFileWhole(f.name, size: f.size);
       }
     }
-    return null;
+    return FileRead(
+      name: name,
+      fault: FileReadFault.absent,
+      detail: 'The device holds no file "$name".',
+      attempts: table.attempts,
+    );
   }
 
   /// Writes one field's live value into its backup file - the app-side half of a partial save
@@ -371,14 +434,17 @@ class _RegisterPageState extends State<RegisterPage>
 
     if (isDynamic) {
       final suffix = inst.toRadixString(16).toUpperCase().padLeft(2, '0');
-      final tableBytes = await _readFile('.DT_$suffix');
-      final values = await _readFile('.DV_$suffix');
-      if (tableBytes == null) return false;
-      final table = decodeDynamicTable(tableBytes);
+      final tableRead = await _readFile('.DT_$suffix');
+      final valuesRead = await _readFile('.DV_$suffix');
+      // Both files are needed to rewrite the table: a FAILED read is not an empty one, or the
+      // save would write a blank over the entries the device does hold.
+      if (!tableRead.ok) return false;
+      if (valuesRead.failed || valuesRead.partial) return false;
+      final table = decodeDynamicTable(tableRead.bytes!);
       if (table == null) return false;
       final next = dvSaveField(
         table,
-        values ?? const [],
+        valuesRead.bytes ?? const [],
         field,
         key,
         live.value,
@@ -401,7 +467,11 @@ class _RegisterPageState extends State<RegisterPage>
       // numeric buffers stay 0.
       value = [...value, ...List<int>.filled(size - value.length, 0)];
     }
-    final sv = await _readFile('.SV') ?? const <int>[];
+    final svRead = await _readFile('.SV');
+    // An ABSENT `.SV` is a first save (there is nothing to preserve); a failed or partial one is
+    // NOT an empty space - writing a blank over it would erase the device's stored values.
+    if (svRead.failed || svRead.partial) return false;
+    final sv = svRead.bytes ?? const <int>[];
     final next = svSaveField(sv, layout, blockType, inst, field, value);
     if (next == null) return false;
     return store.writeFile('.SV', next);
@@ -744,9 +814,18 @@ class _RegisterPageState extends State<RegisterPage>
   Widget _buildBody() {
     final blocks = _blockMetas;
     if (blocks == null) {
-      return _error == null
-          ? const StateMessage.loading()
-          : StateMessage.error(message: _error);
+      final error = _error;
+      if (error == null) return const StateMessage.loading();
+      // A block list that could not be read is an error with the reason and the retry, never an
+      // empty tree ("No blocks found" would read as a device with nothing in it).
+      return StateMessage.error(
+        message: 'The register could not be read',
+        details: error,
+        action: FilledButton(
+          onPressed: _refreshAll,
+          child: const Text('Try again'),
+        ),
+      );
     }
     if (blocks.isEmpty) {
       return const StateMessage.empty(message: 'No blocks found');
@@ -759,17 +838,23 @@ class _RegisterPageState extends State<RegisterPage>
   Widget _backupBody(
     List<({int type, int inst, ValueInfo meta, String name})?> blocks,
   ) {
-    if (_backup == null && _backupBusy) {
-      return const StateMessage.loading();
-    }
-    if (_backupError != null) {
+    final error = _backupError;
+    if (error != null) {
+      // A backup that could not be read is an error with the reason and a retry - never an empty
+      // table, which would read as "this device has nothing saved".
       return StateMessage.error(
-        message: 'Could not read the backup',
-        details: _backupError,
+        message: 'The stored backup could not be read',
+        details: error,
+        action: FilledButton(
+          onPressed: _loadBackup,
+          child: const Text('Try again'),
+        ),
       );
     }
+    final backup = _backup;
+    if (backup == null) return const StateMessage.loading();
     return RegisterBackupView(
-      backup: _backup ?? DeviceBackup.empty,
+      backup: backup,
       blocks: blocks,
       busy: _busy,
       hasNetId: _hasNetId,

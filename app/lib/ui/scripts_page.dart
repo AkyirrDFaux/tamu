@@ -28,6 +28,10 @@ class _LoadedScript {
   /// "Error Model"). Built from the CID 3 report against the stored file's own program.
   final ScriptFault? fault;
 
+  /// Why this slot's file could not be read, in the reader's own words - null when it read. A
+  /// failed or partial read is shown on the row, never as an empty input list.
+  final String? fileError;
+
   const _LoadedScript({
     required this.slot,
     required this.fileId,
@@ -37,6 +41,7 @@ class _LoadedScript {
     this.inputSpecs = const [],
     this.inputNames = const [],
     this.fault,
+    this.fileError,
   });
 
   String get fileName => scriptFileName(fileId);
@@ -63,9 +68,17 @@ class _ScriptsPageState extends State<ScriptsPage>
 
   bool _showLoaded = true;
   bool _refreshing = false;
+
+  /// Why the visible mode has no list, in the reader's own words - null when it read. A failure
+  /// is NEVER rendered as "there is nothing here" (Akyirr, 2026-11-05): both modes show this
+  /// sentence and a Try again instead of an empty state.
   String? _error;
+
   List<_LoadedScript> _loaded = [];
-  List<FileRecord> _available = [];
+
+  /// The whole-table read the Available view is showing: the records, an absent table (a device
+  /// with no filesystem - legitimately empty) or the failure to say out loud.
+  FileTableRead? _table;
   int _revision = 0;
 
   @override
@@ -102,20 +115,38 @@ class _ScriptsPageState extends State<ScriptsPage>
   /// Resolves the loaded scripts from CID 0's streamed slot map (Stage 4): the map gives both
   /// which slots are occupied and the device's actual slot count, so nothing assumes 256. The
   /// slot is the addressable register instance; the file id is independent of it.
-  Future<List<({int slot, int fileId, String metaName})>> _probeLoaded() async {
-    final map = await _client.slotMap();
+  ///
+  /// NULL when the device did not answer: [ScriptClient.readLoadedSlotMap] keeps "no reply" and
+  /// "an empty slot map" apart, and this page must too - an unanswered slot map rendered as
+  /// "No scripts loaded" is a failure shown as device state.
+  Future<List<({int slot, int fileId, String metaName})>?>
+  _probeLoaded() async {
+    final map = await _client.readLoadedSlotMap();
+    if (map == null) return null;
     final out = <({int slot, int fileId, String metaName})>[];
-    for (var slot = 0; slot < map.length; slot++) {
-      final fileId = map[slot];
-      if (fileId == scriptSlotEmpty) continue;
-      final meta = await _client.readBlockMeta(slot);
-      out.add((slot: slot, fileId: fileId, metaName: meta?.name ?? ''));
+    for (final entry in map.entries) {
+      final meta = await _client.readBlockMeta(entry.key);
+      out.add((
+        slot: entry.key,
+        fileId: entry.value,
+        metaName: meta?.name ?? '',
+      ));
     }
     return out;
   }
 
   Future<void> _loadLoaded() async {
     final probed = await _probeLoaded();
+    if (!mounted) return;
+    if (probed == null) {
+      setState(() {
+        _loaded = const [];
+        _error =
+            'The device did not answer the slot map request (Script CID 0), so '
+            'its loaded slots are unknown. This is not "no scripts loaded".';
+      });
+      return;
+    }
     final list = <_LoadedScript>[];
     for (final p in probed) {
       final report = await _client.readState(p.slot);
@@ -124,10 +155,14 @@ class _ScriptsPageState extends State<ScriptsPage>
       var names = const <String>[];
       var display = p.metaName;
       ScriptFault? fault;
-      final bytes = await _storage.readFile(scriptFileName(p.fileId));
-      if (bytes != null) {
+      String? fileError;
+      // The same tolerant whole-file reader the Storage page uses: whole bytes, an absent file,
+      // or a failed/partial read. A file that could not be read is said out loud on the row
+      // instead of rendering as "this script has no inputs".
+      final read = await _storage.readFileWhole(scriptFileName(p.fileId));
+      if (read.ok) {
         try {
-          final parsed = ScriptFileData.parse(bytes);
+          final parsed = ScriptFileData.parse(read.bytes!);
           specs = parsed.inputSpecs;
           names = parsed.inputNames;
           if (parsed.functionName.isNotEmpty) display = parsed.functionName;
@@ -138,6 +173,12 @@ class _ScriptsPageState extends State<ScriptsPage>
           specs = const [];
           names = const [];
         }
+      } else if (read.absent) {
+        // The slot names a file the device does not hold: that IS a device state, and the row
+        // says so rather than pretending the script has no inputs.
+        fileError = '${scriptFileName(p.fileId)}: ${read.detail}';
+      } else {
+        fileError = read.detail;
       }
       // A file that is missing or malformed still decodes the instruction and the error.
       fault ??= report == null || !report.hasError
@@ -153,31 +194,34 @@ class _ScriptsPageState extends State<ScriptsPage>
           inputSpecs: specs,
           inputNames: names,
           fault: fault,
+          fileError: fileError,
         ),
       );
     }
     if (!mounted) return;
     setState(() {
       _loaded = list;
+      _error = null;
       _revision++;
     });
   }
 
   Future<void> _loadAvailable() async {
-    final table = await _storage.readFileTable();
+    // The ONE shared whole-table reader (StorageClient.readFileTableResult): a failed read comes
+    // back with its reason instead of as a list, and an absent table is flagged as such.
+    final table = await _storage.readFileTableResult();
     if (!mounted) return;
-    if (table == null) {
-      setState(() => _error = 'Device did not respond');
-      return;
-    }
     setState(() {
-      _available = table
-          .where(
-            (f) => normalizeFileName(f.name).toUpperCase().startsWith('SCR_'),
-          )
-          .toList();
+      _table = table;
+      _error = table.ok || table.absent ? null : table.detail;
     });
   }
+
+  /// The stored SCR_ files of the last whole-table read (empty for an absent or unread table -
+  /// the builders check [_table] / [_error] first).
+  List<FileRecord> get _available => (_table?.records ?? const <FileRecord>[])
+      .where((f) => normalizeFileName(f.name).toUpperCase().startsWith('SCR_'))
+      .toList();
 
   void _setMode(bool loaded) {
     setState(() => _showLoaded = loaded);
@@ -235,9 +279,16 @@ class _ScriptsPageState extends State<ScriptsPage>
   }
 
   Future<void> _createScript() async {
-    final table = await _storage.readFileTable() ?? const <FileRecord>[];
+    // A failed read is not "nothing is used": choosing an id from an unread table could overwrite
+    // a file the device does hold, so the create is refused with the reason instead.
+    final table = await _storage.readFileTableResult();
+    if (!mounted) return;
+    if (!table.ok) {
+      showSnack(context, table.detail ?? 'Could not read the file table');
+      return;
+    }
     final used = <int>{};
-    for (final f in table) {
+    for (final f in table.recordsOrEmpty) {
       final id = scriptFileId(f.name);
       if (id != null) used.add(id);
     }
@@ -331,6 +382,19 @@ class _ScriptsPageState extends State<ScriptsPage>
   }
 
   Widget _buildLoaded() {
+    // A failure is not an empty list: the slot map read (or a slot's file read) failing says so
+    // and offers the retry that re-asks the device.
+    final error = _error;
+    if (error != null) {
+      return StateMessage.error(
+        message: 'The loaded scripts could not be read',
+        details: error,
+        action: FilledButton(
+          onPressed: _refresh,
+          child: const Text('Try again'),
+        ),
+      );
+    }
     if (_loaded.isEmpty) {
       return const StateMessage.empty(
         message: 'No scripts loaded',
@@ -363,6 +427,16 @@ class _ScriptsPageState extends State<ScriptsPage>
             // The fault sits directly under the state it belongs to: a state of Error without
             // the decoded sentence is the "error 2 at cat 4 op 1" the owner reported.
             if (s.fault case final fault?) ScriptFaultRow(fault, dense: true),
+            // A file that could not be read is said here, on the row, in the reader's words -
+            // the inputs below are then unknown rather than empty.
+            if (s.fileError case final fileError?)
+              Padding(
+                padding: const EdgeInsets.only(top: Spacing.xs),
+                child: Text(
+                  fileError,
+                  style: theme.textTheme.bodySmall?.copyWith(color: kError),
+                ),
+              ),
           ],
         ),
         childrenPadding: const EdgeInsets.only(bottom: Spacing.md),
@@ -419,7 +493,31 @@ class _ScriptsPageState extends State<ScriptsPage>
   }
 
   Widget _buildAvailable() {
-    if (_available.isEmpty) {
+    // Three cases, told apart (Akyirr, 2026-11-05): the read failed / came back partial (error +
+    // the reason + a retry), the device holds no file table (a legitimate empty list), or the
+    // table arrived and simply has no SCR_XXX record in it.
+    final error = _error;
+    if (error != null) {
+      return StateMessage.error(
+        message: 'The stored script list could not be read',
+        details: error,
+        action: FilledButton(
+          onPressed: _refresh,
+          child: const Text('Try again'),
+        ),
+      );
+    }
+    final table = _table;
+    if (table == null) return const StateMessage.loading();
+    if (table.absent) {
+      return const StateMessage.empty(
+        message: 'No stored scripts',
+        details:
+            'The device holds no file table, so it has no stored SCR_XXX files.',
+      );
+    }
+    final available = _available;
+    if (available.isEmpty) {
       return const StateMessage.empty(
         message: 'No stored scripts',
         details: 'Use "New script" to create one, or upload a SCR_XXX file.',
@@ -427,10 +525,10 @@ class _ScriptsPageState extends State<ScriptsPage>
     }
     return ListView.separated(
       padding: Insets.row,
-      itemCount: _available.length,
+      itemCount: available.length,
       separatorBuilder: (context, index) => const SizedBox(height: Spacing.md),
       itemBuilder: (context, i) {
-        final file = _available[i];
+        final file = available[i];
         final name = normalizeFileName(file.name);
         return Card(
           child: ListTile(

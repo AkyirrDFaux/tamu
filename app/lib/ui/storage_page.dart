@@ -59,17 +59,19 @@ class _StoragePageState extends State<StoragePage>
   Future<void> _refresh() async {
     if (!widget._connected || _refreshing) return;
     setState(() => _refreshing = true);
-    final files = await _client.readFileTable();
+    // The one shared whole-table reader: `null` is NOT the only failure shape any more - an absent
+    // table (a device with no filesystem) is an empty directory, and a failed or partial read keeps
+    // its reason so the page can say it instead of rendering an empty list.
+    final table = await _client.readFileTableResult();
     if (!mounted) return;
     setState(() {
       _refreshing = false;
-      // readFileTable() reads the ".TABLE  " file directly using CID 5. A read that could not be
-      // completed is an ERROR, never an empty list: a truncated table shows 32 of N files as if
-      // it were the device's directory, which is worse than saying the read failed.
-      _files = files;
-      _error = files == null
-          ? (_client.lastReadError ?? 'The device did not answer.')
-          : null;
+      _files = table.ok ? table.records : (table.absent ? const [] : null);
+      _error = table.ok || table.absent
+          ? null
+          : (table.detail ??
+                _client.lastReadError ??
+                'The device did not answer.');
     });
   }
 
@@ -330,15 +332,15 @@ class _StoragePageState extends State<StoragePage>
     // fixed 16 kB reservation whose reply can lose fragments and its STOP frame over BLE: the
     // client re-requests it whole rather than handing back a prefix, because a decoded prefix
     // shows 32 of N records as if it were the directory.
-    final data = await _client.readFile(table.name, size: table.size);
+    final read = await _client.readFileWhole(table.name, size: table.size);
     if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => FileTableViewPage(
           deviceId: widget.deviceId,
           size: table.size,
-          data: data,
-          error: data == null ? _client.lastReadError : null,
+          data: read.bytes,
+          error: read.detail,
         ),
       ),
     );
@@ -346,8 +348,10 @@ class _StoragePageState extends State<StoragePage>
 
   Future<void> _showFile(FileRecord file) async {
     _snack('Reading ${file.name}...');
-    Future<List<int>?> read() => _client.readFile(file.name, size: file.size);
-    final data = await read();
+    Future<List<int>?> read() async =>
+        (await _client.readFileWhole(file.name, size: file.size)).bytes;
+    final fileRead = await _client.readFileWhole(file.name, size: file.size);
+    final data = fileRead.bytes;
     // `.SV` is a raw static persistent-space mirror; fetch the device's blocks so
     // the decoder can compute the field layout and name the blocks and fields.
     List<({int type, int inst, ValueInfo meta, String name})?>? blocks;
@@ -365,7 +369,7 @@ class _StoragePageState extends State<StoragePage>
           name: file.name,
           size: file.size,
           data: data,
-          error: data == null ? _client.lastReadError : null,
+          error: fileRead.detail,
           onRetry: read,
           blocks: blocks,
         ),
