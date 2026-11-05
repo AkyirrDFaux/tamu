@@ -80,7 +80,7 @@ class _FakeWifiDevice extends RegisterClient {
   }
 
   @override
-  Future<bool> saveAll() async {
+  Future<bool> saveAll({Duration timeout = const Duration(seconds: 25)}) async {
     saves++;
     return true;
   }

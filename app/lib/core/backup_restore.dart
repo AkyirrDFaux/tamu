@@ -739,6 +739,16 @@ class RestorePlan {
   /// not name. Rebuilt by [classify] on every [resolve], keeping the user's per-row choice.
   final List<RestoreRemoval> removals;
 
+  /// Block types the CURRENT LINK cannot write, each with the sentence a row that targets one
+  /// reports - see `linkWriteRefusals` in `ble_security.dart`.
+  ///
+  /// The firmware refuses every write to `BLE Settings` that did not arrive over USB, so a restore
+  /// planned over Bluetooth cannot restore those rows however often it is applied. They are
+  /// unplaceable on that link (not selected, never sent, with the reason) instead of being sent
+  /// and reported as a bare FAIL: the same rows restore cleanly over USB, which is exactly what
+  /// made the Bluetooth run look broken rather than link-limited.
+  final Map<int, String> linkRefusedBlocks;
+
   /// The selection each removal had before the last [classify], by [RestoreRemoval.identity], so
   /// re-pointing a source device at another target does not silently re-tick a delete the user
   /// turned off.
@@ -779,6 +789,7 @@ class RestorePlan {
     required this.blockTargets,
     this.unreadDevices = const {},
     this.inventories = const {},
+    this.linkRefusedBlocks = const {},
     List<RestoreRemoval>? removals,
   }) : removals = removals ?? [];
 
@@ -902,6 +913,13 @@ class RestorePlan {
           item.targetBlock = override ?? target.findBlock(item.block!);
           if (item.targetBlock == null) {
             item.issue = noBlockIssue;
+            break;
+          }
+          // A block the LINK cannot write (BLE Settings over Bluetooth) is unplaceable however
+          // well the row matches: the firmware refuses the write before it looks at the value.
+          final refused = linkRefusedBlocks[item.block!.typeIndex];
+          if (refused != null) {
+            item.issue = refused;
             break;
           }
           item.targetEntry = _matchEntry(entry, item.targetBlock!);
@@ -1737,6 +1755,7 @@ _readLiveDevices({RestoreProgressCallback? onProgress}) async {
 Future<RestorePlan> buildRestorePlan(
   List<BackupDevice> devices, {
   RestoreProgressCallback? onProgress,
+  Map<int, String> linkRefusedBlocks = const {},
 }) async {
   final read = await _readLiveDevices(onProgress: onProgress);
   final inventories = await _readInventories(
@@ -1749,6 +1768,7 @@ Future<RestorePlan> buildRestorePlan(
     live: read.live,
     unread: read.unread,
     inventories: inventories,
+    linkRefusedBlocks: linkRefusedBlocks,
     onProgress: onProgress,
   );
 }
@@ -1764,6 +1784,7 @@ RestorePlan planFromSnapshot({
   required List<LiveDevice> live,
   Map<int, UnreadNode> unread = const {},
   Map<int, LiveInventory> inventories = const {},
+  Map<int, String> linkRefusedBlocks = const {},
 }) {
   final targets = _matchTargets(devices, live);
   final items = <RestoreItem>[];
@@ -1777,6 +1798,7 @@ RestorePlan planFromSnapshot({
     targets: targets,
     unread: unread,
     inventories: inventories,
+    linkRefusedBlocks: linkRefusedBlocks,
   );
   plan.resolve();
   _tickRestorable(plan);
@@ -1794,6 +1816,7 @@ Future<RestorePlan> planFromSnapshotChunked({
   required List<LiveDevice> live,
   Map<int, UnreadNode> unread = const {},
   Map<int, LiveInventory> inventories = const {},
+  Map<int, String> linkRefusedBlocks = const {},
   RestoreProgressCallback? onProgress,
 }) async {
   final targets = _matchTargets(devices, live);
@@ -1817,6 +1840,7 @@ Future<RestorePlan> planFromSnapshotChunked({
     targets: targets,
     unread: unread,
     inventories: inventories,
+    linkRefusedBlocks: linkRefusedBlocks,
   );
   await plan.resolveChunked(onProgress: onProgress);
   _tickRestorable(plan);
@@ -1926,6 +1950,7 @@ RestorePlan _assemblePlan({
   required Map<int, LiveDevice> targets,
   required Map<int, UnreadNode> unread,
   required Map<int, LiveInventory> inventories,
+  Map<int, String> linkRefusedBlocks = const {},
 }) => RestorePlan(
   devices: devices,
   liveDevices: live,
@@ -1934,6 +1959,7 @@ RestorePlan _assemblePlan({
   blockTargets: {},
   unreadDevices: unread,
   inventories: inventories,
+  linkRefusedBlocks: linkRefusedBlocks,
 );
 
 /// Default selection: restorable items - adds, replaces AND deletes, because a restore makes the
@@ -2417,17 +2443,64 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
   return created;
 }
 
-/// Saves every device a restore has written to.
+/// Saves every device a restore has written to, and reports the ones that never confirmed it.
 ///
 /// A write sits in RAM until the device is told to save. Without this the whole run works until
 /// the next power cycle and then vanishes: the core recalls requester entries pointing at
 /// providers the nodes no longer carry, a node forgets the provider entry that fed one, and a
 /// device that carried no subscription entries at all loses every value it was just given. So
 /// every device the run touched is saved, not only the ones that carried subscription tables.
-Future<void> _persistWrites(Set<int> deviceIds) async {
+///
+/// **A save that does not answer is re-sent, and then REPORTED.** Save All is one forwarded
+/// transaction, and this rig loses a few percent of those: measured 2026-11-05 over BLE, three
+/// device saves in one restore ran out the 25 s timeout with no reply at all, while the same
+/// three answered in 124-336 ms on the next run and over USB - and the run still said the restore
+/// had been applied. The result used to be dropped at the call site, so a restore that never
+/// reached flash read as a success. The retry is the read policy's shape (a lost reply, not a
+/// refusal, is what a timeout means here) with a shorter window on the second attempt: the first
+/// one keeps the 25 s a real save may need, and a device that answers at all answers in
+/// milliseconds.
+Future<List<RestoreFailure>> _persistWrites(
+  RestorePlan plan,
+  Set<int> deviceIds,
+) async {
+  const attempts = 2;
+  const retryDelay = Duration(milliseconds: 250);
+  final failures = <RestoreFailure>[];
   for (final id in deviceIds) {
-    await RegisterClient(deviceId: id).saveAll();
+    final client = RegisterClient(deviceId: id);
+    var saved = false;
+    for (var attempt = 1; attempt <= attempts && !saved; attempt++) {
+      client.trace.clear();
+      saved = await client.saveAll(
+        timeout: attempt == 1
+            ? const Duration(seconds: 25)
+            : const Duration(seconds: 5),
+      );
+      if (!saved && attempt < attempts) {
+        await Future<void>.delayed(retryDelay);
+      }
+    }
+    if (saved) continue;
+    final target = plan.liveDevices
+        .where((device) => device.id == id)
+        .firstOrNull;
+    failures.add(
+      RestoreFailure.device(
+        target ?? LiveDevice(id: id, name: idToString(id), blocks: const []),
+        kindWord: 'save all',
+        subject: 'Save All (Register CID 5)',
+        meaning:
+            'the device never confirmed Save All, so everything this run wrote to it is '
+            'in its RAM only and will be lost at the next power cycle',
+        fault: client.trace.fault,
+        clientReason: client.trace.fault == null
+            ? 'no reply to Save All after $attempts attempts'
+            : null,
+      ),
+    );
   }
+  return failures;
 }
 
 /// Whether a restored script is a function library.
@@ -4549,7 +4622,7 @@ Future<RestoreReport> applyRestorePlan(
   // deciding that on a half-written device is not what "stop" means. What was written is saved -
   // those bytes sit in RAM, so leaving them unsaved would lose the work the user did allow.
   if (cancelled) {
-    await _persistWrites(writtenDevices);
+    reasons.addAll(await _persistWrites(plan, writtenDevices));
     final stopped = RestoreReport(
       at: DateTime.now(),
       written: written,
@@ -4570,8 +4643,9 @@ Future<RestoreReport> applyRestorePlan(
   final pruned = await pruneRequesterTable(plan);
   reasons.addAll(pruned.failures);
   // Every device this run wrote to is saved - the writes sit in RAM until then - and the scripts
-  // are loaded last, so they read the values the restore has just written.
-  await _persistWrites(writtenDevices);
+  // are loaded last, so they read the values the restore has just written. A device whose save
+  // never answered is reported, because a restore that stays in RAM is not a restore.
+  reasons.addAll(await _persistWrites(plan, writtenDevices));
   // Then the reload rule: a script this run CHANGED is unloaded and loaded again, because the
   // device runs the image it loaded rather than the file on flash - a restore that only rewrote the
   // file would leave the rig on stale code. It runs BEFORE the bring-up so a slot the bring-up is

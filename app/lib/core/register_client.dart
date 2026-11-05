@@ -1075,14 +1075,10 @@ class RegisterClient {
   /// fields, every static block, and every dynamic block's .DT_/.DV_ files. Per
   /// Docs/Services/Register.md the command carries no BlockInfo; partial saving is the app's
   /// job (direct file writes - see `saveFieldToBackup`).
-  Future<bool> saveAll() async {
+  Future<bool> saveAll({Duration timeout = const Duration(seconds: 25)}) async {
     // Writing every dynamic block runs the 64-slot orphan cleanup (flash page erases), which
     // can exceed the default request timeout.
-    return _requestOk(
-      RegisterCid.saveAll,
-      payload: const [],
-      timeout: const Duration(seconds: 25),
-    );
+    return _requestOk(RegisterCid.saveAll, payload: const [], timeout: timeout);
   }
 
   /// Recalls the whole device from its backup (CID 3 "Recall All"), the counterpart of

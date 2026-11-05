@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 
 import '../core/backup.dart';
 import '../core/backup_format.dart';
+import '../core/ble_security.dart';
 import '../core/connection.dart';
 import '../core/device_db.dart';
 import '../core/host_files.dart';
 import '../core/notifications.dart';
 import '../core/script_file.dart';
+import '../core/transport.dart' show UsbTransport;
 import '../core/types.dart';
 import '../core/notice.dart';
 import 'theme.dart';
@@ -25,6 +27,7 @@ class BackupPage extends StatefulWidget {
     super.key,
     this.database,
     this.isConnected,
+    this.overUsb,
     this.pickArchive,
     this.saveArchive,
     this.planBuilder,
@@ -37,6 +40,11 @@ class BackupPage extends StatefulWidget {
   /// Whether a link is up. Null (the app's case) asks [ConnectionManager].
   @visibleForTesting
   final bool Function()? isConnected;
+
+  /// Whether the live link is USB, which decides what a restore may even attempt (see
+  /// `linkWriteRefusals`). Null (the app's case) asks [ConnectionManager].
+  @visibleForTesting
+  final bool Function()? overUsb;
 
   /// Reads the archive the user picked, or null when they cancelled. A widget test replaces the
   /// file picker, which needs a platform and cannot run inside one.
@@ -175,7 +183,19 @@ class _BackupPageState extends State<BackupPage> {
         _wait,
         label: 'Reading the network',
         task: () => widget.planBuilder == null
-            ? buildRestorePlan(devices, onProgress: progress)
+            ? buildRestorePlan(
+                devices,
+                onProgress: progress,
+                // A restore over Bluetooth cannot write the blocks the firmware only accepts
+                // over USB; the plan says so per row instead of sending two doomed writes.
+                linkRefusedBlocks: linkWriteRefusals(
+                  overUsb:
+                      (widget.overUsb ??
+                      () =>
+                          ConnectionManager.instance.transport
+                              is UsbTransport)(),
+                ),
+              )
             : widget.planBuilder!(devices, progress),
       );
       plan = built.value;

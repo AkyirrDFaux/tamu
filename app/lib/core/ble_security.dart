@@ -537,6 +537,18 @@ String bleWriteRefusal({required bool overUsb, String? valueHint}) {
       : 'The device refused the change: $valueHint';
 }
 
+/// The block types the CURRENT LINK cannot write, each with the sentence to show for a row that
+/// targets one.
+///
+/// `BLE Settings` refuses every write that did not arrive over USB
+/// (`Docs/Services/App Interface.md`, `BleBlockWritable`), so a restore planned over Bluetooth
+/// would send writes the firmware answers FAIL to and could only report "the device refused the
+/// write" - the same two rows that restore cleanly over USB. The rule lives beside
+/// [bleWriteRefusal] so the panel, the plan and the report cannot drift apart.
+Map<int, String> linkWriteRefusals({required bool overUsb}) => overUsb
+    ? const <int, String>{}
+    : <int, String>{bleSettingsBlockTypeValue: bleWriteRefusal(overUsb: false)};
+
 /// How long the firmware lets a new link stay unsecured before it drops it, from
 /// `firmware/src/Blocks/BleSecurityPolicy.h` (`BleSecureBudgetJustWorksMs` /
 /// `BleSecureBudgetPasskeyMs`, pinned against that header by

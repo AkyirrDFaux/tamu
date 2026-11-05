@@ -42,6 +42,10 @@ class _RefusingBus implements RequestChannel {
   /// The commands the device never answers at all, as `service/cid` - a timeout.
   final silent = <String>{};
 
+  /// The commands the device drops the FIRST time and answers afterwards, as `service/cid` - the
+  /// shape of a lost reply that a re-send recovers.
+  final silentOnce = <String>{};
+
   /// Answers for the requester writes (`subscriptions/17`), consumed in order. `null` is an entry
   /// the device never answers; an empty queue means the write is accepted, the normal answer.
   ///
@@ -158,6 +162,9 @@ class _RefusingBus implements RequestChannel {
     // as different reasons, so a case can tell them apart.
     final command = '${service.name}/$functionCid';
     if (silent.contains(command)) throw TimeoutException('$command: no reply');
+    if (silentOnce.remove(command)) {
+      throw TimeoutException('$command: no reply');
+    }
     if (service == ServiceType.subscriptions &&
         functionCid == 0x11 &&
         requesterWriteAnswers.isNotEmpty) {
@@ -552,6 +559,67 @@ void main() {
 
       // And the diagnostics ring keeps the line, which the Logs page dumps and copies.
       expect(AppDiagnostics.dump(), contains('block field'));
+    },
+  );
+
+  test('a Save All the device never answers is re-sent, then reported', () async {
+    // Save All is what puts the run's writes in flash: a save the device never confirms used to
+    // be dropped at the call site, so a restore that stayed in RAM read as applied (measured on
+    // the rig over BLE: three device saves in one run ran out their timeout and the report still
+    // said every item landed).
+    final bus = _RefusingBus()..silent.add('register/5');
+    installRequestChannel(bus);
+    addTearDown(() => installRequestChannel(null));
+
+    final report = await applyRestorePlan(_plan());
+
+    expect(
+      report.written,
+      greaterThan(0),
+      reason: 'the items themselves landed',
+    );
+    final save = report.reasons.singleWhere((r) => r.kindWord == 'save all');
+    expect(save.subject, contains('Save All'));
+    expect(save.target, 'Tamu (1.1)');
+    expect(save.code, contains('no reply'));
+    expect(save.meaning, contains('RAM only'));
+    expect(
+      bus.sent
+          .where(
+            (r) =>
+                r.service == ServiceType.register &&
+                r.cid == RegisterCid.saveAll,
+          )
+          .length,
+      2,
+      reason: 'a lost save is re-sent once before it is called lost',
+    );
+  });
+
+  test(
+    'a Save All whose first reply is lost is recovered, and nothing is reported',
+    () async {
+      final bus = _RefusingBus()..silentOnce.add('register/5');
+      installRequestChannel(bus);
+      addTearDown(() => installRequestChannel(null));
+
+      final report = await applyRestorePlan(_plan());
+
+      expect(
+        report.reasons.where((r) => r.kindWord == 'save all'),
+        isEmpty,
+        reason: report.failures.join(' | '),
+      );
+      expect(
+        bus.sent
+            .where(
+              (r) =>
+                  r.service == ServiceType.register &&
+                  r.cid == RegisterCid.saveAll,
+            )
+            .length,
+        2,
+      );
     },
   );
 
