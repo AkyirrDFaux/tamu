@@ -118,10 +118,70 @@ public:
     volatile uint8_t RxCount = 0;
     volatile uint8_t RxTail = 0; // dequeue position (ring; avoids shifting the queue)
     portMUX_TYPE RxMux = portMUX_INITIALIZER_UNLOCKED;
+
+    // The one forwarded app transaction the bus owes an answer to (see AppBusForwardPending).
+    volatile bool BusPending = false;
+    volatile uint16_t BusPendingTrid = 0;
+    uint32_t BusPendingSince = 0;
 };
 
 // One instance per binary.
 AppInterfaceService AppInterface;
+
+// One forwarded app transaction at a time.
+//
+// The RSBus is one half-duplex medium, and SendAndVerifyPacket only proves that OUR bytes went
+// out intact - it verifies the transceiver echo and does not wait for the target's answer. So
+// two app frames dispatched back to back put the second request on the wire while the first
+// target's answer is still on its way, and the two collide. Measured on the rig 2026-11-05
+// (firmware/.pio/probe/burst_probe.py, image 26.11.5.1): a 5-frame identity burst written in one
+// go - the shape `app/lib/core/device_identity.dart` uses, five concurrent reads - answered
+// 4/20 over four rounds on every node (1/5 each), the same five reads 10 ms apart answered
+// 20/20, and the same burst addressed at the CORE's own System block answered 20/20. So an
+// app-origin unicast forward holds the rest of the queue until its reply lands.
+#define APP_BUS_REPLY_TIMEOUT_MS 50
+
+inline void AppBusForwardStart(uint16_t Trid)
+{
+    AppInterface.BusPendingTrid = Trid;
+    AppInterface.BusPendingSince = DeviceStatus.UptimeMs;
+    AppInterface.BusPending = true;
+}
+
+inline void AppBusForwardFinish()
+{
+    AppInterface.BusPending = false;
+}
+
+// True while a forwarded request still owes the bus a reply. It expires, so a lost reply (or a
+// node that is gone) costs the queue one timeout and the app's own retry takes over instead of
+// the queue wedging.
+inline bool AppBusForwardPending()
+{
+    if (!AppInterface.BusPending)
+        return false;
+    if ((uint32_t)(DeviceStatus.UptimeMs - AppInterface.BusPendingSince) >= APP_BUS_REPLY_TIMEOUT_MS)
+    {
+        AppInterface.BusPending = false;
+        return false;
+    }
+    return true;
+}
+
+// The answer to a forwarded request came back (a response from another device).
+inline void AppBusForwardSawReply(uint16_t Trid)
+{
+    if (AppInterface.BusPending && AppInterface.BusPendingTrid == Trid)
+        AppInterface.BusPending = false;
+}
+
+// Whether an app frame has to leave this core (a unicast to another address). A broadcast is not
+// held: several devices may answer one, so there is no single reply to wait for.
+inline bool AppLinkFrameNeedsBus(const PacketFrame &Frame)
+{
+    return Frame.IdTgt != ADDR_BROADCAST &&
+           NetQualifyLocal(Frame.IdTgt, DeviceStatus.NetId) != DeviceStatus.ShortAddress;
+}
 
 // Ring state the streamed read asks about (declared inline in Core/Services/Storage.h, which is
 // parsed after this header). They live here because the ring's invariants - the mux, the
@@ -355,6 +415,13 @@ void AppInterfaceService::Pump()
         }
         Frame = RxQueue[RxTail];
         From = RxFrom[RxTail];
+        portEXIT_CRITICAL(&RxMux);
+        // One bus transaction at a time (AppBusForwardPending): a frame that has to leave the
+        // core waits in the queue while an earlier forward still owes the bus a reply, so the
+        // node's answer and our next request never share the wire.
+        if (AppBusForwardPending() && AppLinkFrameNeedsBus(Frame))
+            break;
+        portENTER_CRITICAL(&RxMux);
         RxTail = (uint8_t)((RxTail + 1) % APP_RX_QUEUE_DEPTH);
         RxCount = (uint8_t)(RxCount - 1);
         portEXIT_CRITICAL(&RxMux);

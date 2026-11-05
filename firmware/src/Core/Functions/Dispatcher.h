@@ -55,6 +55,13 @@ void DispatchPacket(const PacketFrame &Frame)
         uint8_t Cid = GetServiceCID(Frame.Cmd);
         DeviceLog("DISP", "local interest IdTgt=%d IdSrc=%d Cmd=0x%04X Trid=0x%04X -> service=%d cid=%d",
                   Frame.IdTgt, Frame.IdSrc, Frame.Cmd, Frame.Trid, TargetSrv, Cid);
+#ifdef USE_APP_INTERFACE
+        // A response from another device is the answer a forwarded app request was waiting for:
+        // it ends that bus transaction (AppInterface.h AppBusForwardPending), which is what lets
+        // the next queued app frame go out.
+        if ((Frame.Flags & FLAG_TYPE) && Frame.IdSrc != DeviceStatus.ShortAddress)
+            AppBusForwardSawReply(Frame.Trid);
+#endif
         // Only the gated routing blocks below read this, so declare it under the same guard;
         // a target with none of them enabled (a DAS node) must not carry an unused local.
 #if defined(USE_SUB_REQUEST) || defined(USE_APP_INTERFACE) || defined(USE_SCRIPTS)
@@ -139,7 +146,20 @@ void DispatchPacket(const PacketFrame &Frame)
     if (NetQualifyLocal(Frame.IdTgt, DeviceStatus.NetId) != DeviceStatus.ShortAddress &&
         Frame.IdSrc == DeviceStatus.ShortAddress)
     {
+#ifdef USE_APP_INTERFACE
+        // An app-origin unicast opens a bus transaction: the next queued app frame is held back
+        // until this one's answer arrives (AppInterface.h AppBusForwardPending), because
+        // SendAndVerifyPacket only verifies our own echo and would otherwise start the next
+        // request on top of the reply that is still on the wire.
+        const bool BusTx = AppFrameSource != AppLinkSource::None && Frame.IdTgt != ADDR_BROADCAST;
+        if (BusTx)
+            AppBusForwardStart(Frame.Trid);
+        const bool Sent = SendAndVerifyPacket(Frame);
+        if (BusTx && !Sent)
+            AppBusForwardFinish(); // nothing went out: do not hold the queue for a reply
+#else
         SendAndVerifyPacket(Frame);
+#endif
     }
 }
 
