@@ -58,6 +58,16 @@ static_assert(BleSecureBudgetPasskeyMs < BLE_WINDOW_MS,
               "a passkey pairing must fit inside the window that opened it");
 
 static volatile bool BleSecured = false;      // current link encrypted, bonded (and authenticated)
+// The session flag as a question: a link is a SESSION only when the security procedure completed
+// under the policy in force (onAuthenticationComplete) and the session gate admitted it. Cleared on
+// disconnect and whenever the radio is taken down. This is what the `BLE Settings` block's write
+// rule asks (Blocks/BleWritePolicy.h): a BLE frame may write the block only on such a link, never
+// merely because it is not the cable.
+bool AppBLELinkSecured()
+{
+    return BleSecured && BleConnected;
+}
+
 static uint32_t BleWindowEndMs = 0;           // 0 = the connectable window is closed
 static uint32_t BleSecureDeadlineMs = 0;      // 0 = no unsecured link pending
 static uint32_t BleSecureBudgetUsedMs = 0;    // the budget the pending link was granted (for the log)
@@ -255,18 +265,28 @@ bool AppBLESetWindow(uint32_t Ms)
 }
 
 // The automatic window: five minutes of discoverability the device owes to an explicit event - a
-// radio that came up with no bond stored, or a forget that emptied the store (Blocks/BleWindowPolicy.h,
-// Issues.md E69). Never opened because the store merely reads empty: the caller decides that with
-// BleAutoWindowGranted, and the store is asked again here so a bond made in the meantime wins.
-bool AppBLEAutoWindow()
+// radio that came up with no bond stored, a forget that emptied the store (Blocks/BleWindowPolicy.h,
+// Issues.md E69), or a GPIO8 reset performed by a person at the device. Never opened because the
+// store merely reads empty: the caller decides that with BleAutoWindowGranted, and the store is asked
+// again here so a bond made in the meantime wins - except for `BleWindowCauseReset`, the one cause
+// that grants over a stored bond (re-pairing without USB is what the input is for; a physical press
+// cannot be produced by a link, which is the property E69 needed).
+//
+// One caller (AppBLETick), one deadline (BleWindowEndMs): the reset does not open the window
+// itself, it names its own cause and lets the tick do it, so a reset and the automatic rule cannot
+// each set a different deadline for the same event.
+bool AppBLEAutoWindow(BleWindowCause Cause)
 {
-    if (!BleRadioUp || !BleEnabled || AppBLEBondCount() != 0)
+    if (!BleRadioUp || !BleEnabled)
+        return false;
+    if (Cause != BleWindowCauseReset && AppBLEBondCount() != 0)
         return false;
     const uint32_t NewEnd = TimeFromBoot() + BLE_AUTO_WINDOW_MS;
     if (BleWindowEndMs != 0 && (int32_t)(NewEnd - BleWindowEndMs) <= 0)
         return true; // a longer window is already open
     BleWindowEndMs = NewEnd;
-    DeviceLog("APPBLE", "no bonds stored: window open for %u ms", (unsigned)BLE_AUTO_WINDOW_MS);
+    DeviceLog("APPBLE", "window open for %u ms (%s)", (unsigned)BLE_AUTO_WINDOW_MS,
+              BleWindowCauseName(Cause));
     return true;
 }
 
@@ -1126,6 +1146,105 @@ void AppBLESettingsApply()
     }
 }
 
+// ===== The USB-less reset (GPIO8) =====
+//
+// The owner's ruling is that the device must be recoverable without a cable: a contact held on GPIO8
+// for 2..10 s restarts the BLE stack when it is released, and one held for 10 s clears the bonds
+// first. Blocks/BleResetHold.h owns the timing and the LED; Devices/Tamu_v2.0A/BleResetPin.h feeds it
+// the pin; this is the ACTION.
+//
+// Why a stack restart and not just an advertising rebuild: the point is to recover a wedged host or
+// a controller state that no longer advertises, and to apply a fresh pairing state without a whole
+// reset of the device (the app must reconnect afterwards). `NimBLEDevice::deinit(true)` is the
+// stack's own shutdown - it stops the host task, de-initialises the controller and deletes the
+// server/advertising objects (managed_components/h2zero__esp-nimble-cpp/src/NimBLEDevice.cpp) - and
+// ESP-IDF's nimble_port_init() is written to start a new cycle after it. Everything this file holds
+// a pointer to is owned by that deleted server, so the pointers are cleared here and the radio is
+// rebuilt through AppBLERadioStart(), the ONE start site, rather than a second copy of it.
+//
+// Bonds: the sub-10 s path keeps them (the phone reconnects with its stored key). The 10 s path runs
+// the same forget every other path uses (AppBLEForgetAllBonds: advertisement down for the unpair,
+// E65, `deleteAllBonds()` -> `ble_gap_unpair()` per peer, the epoch stamp re-written only if the
+// store really came up empty, and the "forgotten" window event queued). What survives in NVS: the
+// passkey (namespace `ble`, key `passkey`) and the epoch stamp beside it - both untouched by a bond
+// delete; the peer LABELS (BleBondLabelStore) are pruned by the next BleBondArrayFormat, which the
+// generation bump in the forget schedules.
+//
+// The window: both paths open BLE_AUTO_WINDOW_MS (300 s), and the reset does NOT set the deadline
+// itself. It names its own cause and the tick opens it (AppBLEAutoWindow), so there is one owner of
+// `BleWindowEndMs` per event and the automatic rule cannot later open a second, different one for
+// the same contact: the radio start inside this function queues its own cause and this assignment
+// replaces it.
+//
+// The block stays the source of truth for whether the radio may be used at all: a device whose
+// Enabled field is false comes back with the radio down (no advertisement), exactly as it was.
+bool AppBLEStackReset(bool ForgetBonds)
+{
+    if (!BleServer)
+    {
+        // The radio was never started (Enabled false at boot): there is nothing on the air to
+        // restart, and NimBLE was never initialised to take down.
+        DeviceLog("APPBLE", "reset refused: the BLE radio was never started");
+        return false;
+    }
+
+    DeviceLog("APPBLE", "reset: %s - restarting the BLE stack",
+              ForgetBonds ? "clearing the bonds first" : "bonds kept");
+
+    if (ForgetBonds && !AppBLEForgetAllBonds())
+    {
+        // The restart still happens: a store that would not empty is a reason to log, not a reason
+        // to leave the owner without the reset they asked for. The next radio start retries the
+        // revocation through AppBLEEnforceBondPolicy (the epoch was deliberately not stamped).
+        DeviceLog("APPBLE", "reset: the bond store did not come up empty - restarting anyway");
+    }
+
+    // Shut the stack down. Everything below assumes it is gone: after this call the server, the
+    // characteristics and the advertising object no longer exist.
+    if (!NimBLEDevice::deinit(true))
+        DeviceLog("APPBLE", "reset: deinit reported a failure - re-initialising anyway");
+
+    BleServer = nullptr;
+    BleTx = nullptr;
+    BleRadioUp = false;
+    BleEnabled = false;
+    BleConnHandle = 0xFFFF;
+    BleSecured = false;
+    BleConnected = false;
+    BleOldConnected = false;
+    BleAdvRestart = false;
+    BleAdvStateApplied = false;
+    BleWindowEndMs = 0;
+    BleSecureDeadlineMs = 0;
+    BleMtu = 23;
+    BleLinkBondCount = 0;
+    BleLinkBondingClosed = false;
+    StaticBleRxAssembler.Reset();
+    BleParser.Reset();
+    AppInterface.TxFlushAll(); // pending responses belonged to the sessions that just died
+
+    if (!AppBLERadioStart())
+    {
+        DeviceLog("APPBLE", "reset: the radio did not come back up");
+        return false;
+    }
+
+    // The block's Enabled field is still the master switch: a radio the owner had switched off
+    // comes back off (AppBLERadioStart brought it up with its settings, AppBLESettingsApply takes
+    // it back down and stops the advertisement).
+    if (StaticPer.BleSet.Enabled == 0)
+        AppBLESettingsApply();
+
+    // One owner of the window per event - this press. The radio start above may have queued its
+    // own cause (it came up with an empty store on the forget path); the reset's cause replaces it.
+    BleAutoWindowCause = BleWindowCauseReset;
+    // The tick rebuilds and starts the advertisement (AppBLETick -> StartAppAdvertising), which is
+    // also what puts the device back in front of the app. Requesting it by clearing the "applied"
+    // flag is the same shape every other change to the advertisement uses.
+    BleAdvStateApplied = false;
+    return true;
+}
+
 void AppBLEInit(const char *DeviceName)
 {
     // The fallback advertised name: the persisted System Name, used while the block's Display
@@ -1174,7 +1293,7 @@ void AppBLETick()
     // notification LED and forces the button state false while the LED is driven, so a press is
     // invisible exactly when it blinks (owner ruling, 2026-10-28).
     if (BleAutoWindowGranted(BleAutoWindowCause, AppBLEBondCount()))
-        AppBLEAutoWindow();
+        AppBLEAutoWindow(BleAutoWindowCause);
     BleAutoWindowCause = BleWindowCauseNone;
 
     // Advertising itself (BleAdvWanted) has one condition and is unchanged by the window or by the

@@ -49,7 +49,7 @@ if [ "$count" != 0 ]; then
 fi
 
 # 2. The one automatic-window call in the file is in the tick, behind the tested predicate.
-calls=$(grep -c 'AppBLEAutoWindow();' "$SRC")
+calls=$(grep -c 'AppBLEAutoWindow(BleAutoWindowCause);' "$SRC")
 if [ "$calls" != 1 ]; then
     note "AppBLEAutoWindow() must have exactly one caller (the tick's gated block), found $calls"
 fi
@@ -58,7 +58,7 @@ if [ "$gate" != 1 ]; then
     note "the tick's automatic window must be gated on BleAutoWindowGranted(BleAutoWindowCause, AppBLEBondCount()) exactly once, found $gate"
 fi
 gate_line=$(printf '%s\n' "$tick" | grep -n 'BleAutoWindowGranted(BleAutoWindowCause' | head -1 | cut -d: -f1)
-call_line=$(printf '%s\n' "$tick" | grep -n 'AppBLEAutoWindow();' | head -1 | cut -d: -f1)
+call_line=$(printf '%s\n' "$tick" | grep -n 'AppBLEAutoWindow(BleAutoWindowCause);' | head -1 | cut -d: -f1)
 if [ -z "$gate_line" ] || [ -z "$call_line" ] || [ "$gate_line" -ge "$call_line" ]; then
     note "the automatic window must be opened inside the grant, not before it"
 fi
@@ -82,10 +82,19 @@ if [ "$(grep -c 'BleAutoWindowCause = BleWindowCauseRadioStart;' "$SRC")" != 1 ]
    ! printf '%s\n' "$radio" | grep -q 'BleAutoWindowCause = BleWindowCauseRadioStart;'; then
     note "the radio start must be the one and only first-use grant site"
 fi
-#    ... and nothing else may set it: declaration + 2 grants + 1 clear = 4 assignments in the file.
+#    ... and the GPIO8 reset is the third grant site, in the function that performs the reset
+#    (AppBLEStackReset): a person at the device asked for a pairing window, so that one grants over a
+#    stored bond as well. Nothing else may set the cause:
+#    declaration + 3 grants + 1 clear = 5 assignments in the file.
+resetfn=$(sed -n '/^bool AppBLEStackReset(bool ForgetBonds)/,/^}/p' "$SRC")
+[ -n "$resetfn" ] || note "AppBLEStackReset() not found - the GPIO8 reset's window cause is not the tested one"
+if [ "$(grep -c 'BleAutoWindowCause = BleWindowCauseReset;' "$SRC")" != 1 ] ||
+   ! printf '%s\n' "$resetfn" | grep -q 'BleAutoWindowCause = BleWindowCauseReset;'; then
+    note "the GPIO8 reset (AppBLEStackReset) must be the one and only reset grant site"
+fi
 sets=$(grep -c 'BleAutoWindowCause = BleWindowCause' "$SRC")
-if [ "$sets" != 4 ]; then
-    note "the automatic window's cause may only be set at the two owner events and cleared in the tick (found $sets assignments)"
+if [ "$sets" != 5 ]; then
+    note "the automatic window's cause may only be set at the three owner events and cleared in the tick (found $sets assignments)"
 fi
 
 # 5. Both sites decide with the host-tested predicate, and the forget passes the count read back
@@ -108,6 +117,6 @@ if [ "$(grep -c 'BleAutoWindowDone' "$SRC")" != 0 ]; then
 fi
 
 if [ "$fail" = 0 ]; then
-    echo "PASS: the automatic window follows two owner events only, is consumed once by the tick, and nothing triggers on the bond count"
+    echo "PASS: the automatic window follows the three owner events only (radio start, forget, GPIO8 reset), is consumed once by the tick, and nothing triggers on the bond count"
 fi
 exit "$fail"

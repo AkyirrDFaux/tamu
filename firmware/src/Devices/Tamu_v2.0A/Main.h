@@ -138,6 +138,7 @@ LEDDriver LED(3, 0); // both LED strips: pins 3 (Display1) and 0 (Display2), sen
 #include "AppUSB.h"
 #include "AppBLE.h"
 #include "BleSettingsGlue.h" // the BLE Settings block's write triggers and read-only refresh
+#include "BleResetPin.h"     // the GPIO8 BLE reset: its input, its LED and its action (AppBLEStackReset)
 #ifdef USE_WIFI_SETTINGS
 #include "WifiSettingsGlue.h" // the WiFi Settings block's write triggers, NVS password, per-loop state
 #endif
@@ -232,6 +233,10 @@ LED.Setup();
     // generic re-application of the fields the recall restored.
     OnLEDStateChange(StaticBlockRegistry[0], 3, (const void *)&StaticVol.LedButton.LEDState, sizeof(bool));
 
+    // The USB-less BLE reset: GPIO8 as an input with the pull-up, sampled from the main loop below.
+    // Its first sample is the boot level, so a contact held across a reset is not read as a hold.
+    BleResetInit();
+
     // Restored net-ID (LoadAllBackups), or a random one: 0 and 0x3F are not allowed.
     if (DeviceStatus.NetId == 0 || DeviceStatus.NetId >= 0x3F)
     {
@@ -321,6 +326,10 @@ LED.Setup();
         WifiSettingsSync(); // the WiFi Settings block's State/IP follow its configuration (no radio)
 #endif
         ButtonUpdate();
+        // The GPIO8 BLE reset: one sample of its input per pass, the LED it owns while a sequence
+        // runs, and the stack restart / bond clear when a threshold is crossed. After ButtonUpdate so
+        // the button's report and the sequencer's ownership are decided in the same pass.
+        BleResetService();
 
         // Sample the IMU at its configured output data rate instead of every loop
         // (the sensor registers only change at ODR, so faster reads are wasted bus time).

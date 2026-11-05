@@ -64,6 +64,11 @@ AppLinkSource AppFrameSource = AppLinkSource::None;
 // True only while the frame being handled was received over the USB link.
 inline bool AppFrameCameOverUsb() { return AppFrameSource == AppLinkSource::USB; }
 
+// True only while the frame being handled was received over the BLE link. A service that allows a
+// write from the radio (the `BLE Settings` block since the GPIO8 reset exists) still has to ask
+// whether THAT link is a secured session - the source says which transport, not how trusted it is.
+inline bool AppFrameCameOverBle() { return AppFrameSource == AppLinkSource::BLE; }
+
 // Link hooks (implemented per device: Devices/Tamu_v2.0A/AppUSB.h + AppBLE.h).
 bool AppUSBActive();
 bool AppBLEActive();

@@ -4,25 +4,29 @@
 // load of the passkey store and the per-loop hook that keeps the block's read-only fields level
 // with the radio. Included from Main.h AFTER AppBLE.h, because it drives the link.
 //
-// Who may change the block: EVERY write to it is refused unless the frame arrived over the USB
-// link. The source is not inferred from which interfaces happen to be up - AppInterface publishes
-// the link a frame arrived on while it is dispatched (Core/Functions/AppInterface.h,
-// AppFrameCameOverUsb), so a write from a bonded, authenticated phone is refused with a normal
-// FLAG_FAIL reply the app can show. A bonded phone must not be able to rotate the key, wipe the
-// bonds, rename the device or switch its radio off; renaming therefore needs USB.
+// Who may change the block: every write is judged by Blocks/BleWritePolicy.h - a frame that arrived
+// over the USB link, or one that arrived over a BLE link that is a SECURED SESSION (encrypted,
+// bonded, and authenticated when a passkey is set). The source is not inferred from which interfaces
+// happen to be up - AppInterface publishes the link a frame arrived on while it is dispatched
+// (Core/Functions/AppInterface.h, AppFrameCameOverUsb/AppFrameCameOverBle), and the session flag is
+// AppBLELinkSecured() - so an unpaired peer still cannot rotate the key, wipe the bonds, rename the
+// device or switch its radio off, while a bonded phone now can (the GPIO8 reset is the way back if it
+// gets the radio wrong, Blocks/BleResetHold.h).
 
 #include "Blocks/BleSettings.h"
+#include "Blocks/BleWritePolicy.h"
 #include "BlePasskeyStore.h"
 #include "BleBondLabelStore.h" // the peer names the Bonds array carries (NVS, keyed by address)
 
 static_assert(BLE_SETTINGS_BOND_SLOTS == CONFIG_BT_NIMBLE_MAX_BONDS,
               "the Bonds array must expose exactly the bond store's capacity");
 
-// The block's one write rule. `AppFrameCameOverUsb` is true only for a frame that arrived on the
-// USB link: a BLE frame, a bus frame and a locally generated write all fail it.
+// The block's one write rule. A USB frame is the owner's cable; a BLE frame only counts while the
+// link it arrived on is the secured session the radio admitted. A bus frame and a locally generated
+// write are neither.
 static bool BleBlockWritable()
 {
-    return AppFrameCameOverUsb();
+    return BleWriteAllowed(AppFrameCameOverUsb(), AppFrameCameOverBle(), AppBLELinkSecured());
 }
 
 // Boot: prime the passkey from NVS and purge any secret an older build persisted in `.SV`.
@@ -162,10 +166,11 @@ void BleSettingsSync()
     Vol->WindowMs = AppBLEWindowLeftMs();
 }
 
-// Field 0: the radio's enable state. USB-only like the rest of the block: switching the radio off
-// is exactly the change a bonded phone must not be able to make, because it takes the device off
-// the air it is being reached through. USB writes keep working with the radio down (the register
-// path and the NVS store never depend on NimBLE), so an accidental `Enabled = false` is undone by
+// Field 0: the radio's enable state. Writable from the cable or from a secured BLE session
+// (Blocks/BleWritePolicy.h) - the GPIO8 reset is the way back from a radio that was switched off
+// from the air, which is what made this field USB-only before. Writes keep working with the radio
+// down (the register path and the NVS store never depend on NimBLE), so an accidental
+// `Enabled = false` is undone by
 // one USB write - no reflash, no erase.
 bool OnBleEnabledWrite(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t Length)
 {
@@ -174,7 +179,7 @@ bool OnBleEnabledWrite(const StaticBlockDescriptor &Block, uint16_t Index, const
         return false;
     if (!BleBlockWritable())
     {
-        DeviceLog("BLESEC", "Enabled refused: the block is written over USB only");
+        DeviceLog("BLESEC", "Enabled refused: the write did not arrive on a USB or a secured BLE link");
         return false;
     }
 
@@ -202,7 +207,7 @@ bool OnBlePasskeyWrite(const StaticBlockDescriptor &Block, uint16_t Index, const
     }
     if (!BleBlockWritable())
     {
-        DeviceLog("BLESEC", "passkey refused: the block is written over USB only");
+        DeviceLog("BLESEC", "passkey refused: the write did not arrive on a USB or a secured BLE link");
         return false;
     }
     if (!BlePasskeyStoreSave(Text))
@@ -217,8 +222,9 @@ bool OnBlePasskeyWrite(const StaticBlockDescriptor &Block, uint16_t Index, const
     return true;
 }
 
-// Field 3: the advertised name. USB-only as well - a device whose name a phone can change is a
-// device that can be made to impersonate another. The value is a plain copy into the persistent
+// Field 3: the advertised name. Same rule (the cable, or a secured BLE session): only a bond this
+// device admitted may rename it, so an unpaired peer still cannot. The value is a plain copy into
+// the persistent
 // space (the generic path does not copy when a trigger runs); BleSettingsSync -> AppBLESettingsApply
 // re-advertises in this same pass, so the air carries the new name before the reply is sent - the
 // field IS the name, and "applied at the next advertising start" could mean never on a device that
@@ -230,7 +236,7 @@ bool OnBleDisplayNameWrite(const StaticBlockDescriptor &Block, uint16_t Index, c
         return false;
     if (!BleBlockWritable())
     {
-        DeviceLog("BLESEC", "Display name refused: the block is written over USB only");
+        DeviceLog("BLESEC", "Display name refused: the write did not arrive on a USB or a secured BLE link");
         return false;
     }
 
@@ -265,7 +271,7 @@ bool OnBleBondsWrite(const StaticBlockDescriptor &Block, uint16_t Index, const v
         return false;
     if (!BleBlockWritable())
     {
-        DeviceLog("BLESEC", "Bonds refused: the block is written over USB only");
+        DeviceLog("BLESEC", "Bonds refused: the write did not arrive on a USB or a secured BLE link");
         return false;
     }
 
@@ -338,8 +344,8 @@ bool OnBleBondsWrite(const StaticBlockDescriptor &Block, uint16_t Index, const v
 }
 
 // Field 5: the connectable window. Reads the milliseconds LEFT; a write sets the deadline, and 0
-// closes it. USB-only like every other write to the block - a phone must not be able to open its own
-// pairing window. The `Action` enum that used to carry this command (and the forget-all) is gone:
+// closes it. Judged like every other write to the block (the cable, or a secured BLE session): a
+// phone that is already bonded may open a window for another, an unpaired peer may not. The `Action` enum that used to carry this command (and the forget-all) is gone:
 // opening a window is a plain write of the period, and forgetting everything is zeroing `Bonds`.
 bool OnBleWindowWrite(const StaticBlockDescriptor &Block, uint16_t Index, const void *Data, uint16_t Length)
 {
@@ -349,7 +355,7 @@ bool OnBleWindowWrite(const StaticBlockDescriptor &Block, uint16_t Index, const 
         return false;
     if (!BleBlockWritable())
     {
-        DeviceLog("BLESEC", "Window refused: the block is written over USB only");
+        DeviceLog("BLESEC", "Window refused: the write did not arrive on a USB or a secured BLE link");
         return false;
     }
 

@@ -29,18 +29,29 @@ bool OnLEDStateChange(const StaticBlockDescriptor& Block, uint16_t Index, const 
     return true;
 }
 
+// The GPIO8 BLE reset's sequencer (Blocks/BleResetHold.h) owns this pin while it runs: it needs the
+// level to time the hold and, on the clear path, drives it for the five blinks. Declared here because
+// this header comes first in Main.h's include order; defined in BleResetPin.h.
+bool BleResetOwnsPin();
+bool BleResetButtonPressed();
+
 // Samples the notification pin and reports the button state while the LED is off.
 // Polarity per the hardware: pulling the pin LOW lights the LED and reads as the
 // button pressed (the line idles HIGH via the pull-up, so ButtonState = false at rest).
 // The button only reports its state (field 0) - it does not drive the LED. While the
 // LED is on the shared line is driven, so the button cannot be read (ButtonState = false).
+//
+// The same line is the GPIO8-reset sequencer's input, so the report is QUALIFIED by it
+// (Blocks/BleResetHold.h, BleResetButtonPressed): a contact that reaches the sequencer's 2 s window
+// is a reset hold and is never reported (the owner's emote reset must not fire behind a reset), while
+// a shorter contact is a tap and is reported for a short window after its lift.
 void ButtonUpdate()
 {
-    if (StaticVol.LedButton.LEDState != false)
+    if (StaticVol.LedButton.LEDState != false || BleResetOwnsPin())
     {
-        StaticVol.LedButton.ButtonState = false; // line is driven by the LED: not readable
+        StaticVol.LedButton.ButtonState = false; // line is driven (LED) or the reset sequence owns it
         return;
     }
 
-    StaticVol.LedButton.ButtonState = !PinRead(LED_NOTIFICATION_PIN);
+    StaticVol.LedButton.ButtonState = BleResetButtonPressed();
 }

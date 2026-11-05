@@ -245,6 +245,116 @@ echo "### native BLE window tests (the automatic window follows an owner event, 
 build_run "blewindow" "ble_window_test.cpp"
 echo
 
+echo "### native GPIO8 reset tests (timing table, LED sequence, button suppression)"
+build_run "blereset" "ble_reset_test.cpp"
+echo
+
+echo "### native BLE Settings write-rule tests (the cable, or a secured BLE session)"
+build_run "blewrite" "ble_write_test.cpp"
+echo
+
+# The GPIO8 reset and the write rule, structural half. The sequencer's decision is host-tested above;
+# what the device wires it to cannot be linked on the host (GPIO, NimBLE, the static memory), so it is
+# asserted on the source:
+#   - GPIO8 is the reset input and is not claimed by anything else;
+#   - the input is an input with the pull-up, and the notification pin is only ever driven LOW or back
+#     to an input - never HIGH, which a closed contact would short to ground;
+#   - the button read asks the sequencer (BleResetOwnsPin/BleResetButtonPressed), so a hold is not
+#     reported as a press;
+#   - the pin is handed back to the notification driver (OnLEDStateChange) when the sequence ends;
+#   - the boot brings the input up and the main loop services it once per pass;
+#   - the `BLE Settings` write rule is BleWriteAllowed over the frame's own link plus the session flag,
+#     and the old "USB only" rule is gone.
+echo "### source guard: GPIO8 reset wired to the button, the LED and the stack restart; writes by link"
+RST_SRC="src/Blocks/BleResetHold.h"
+RSTPIN_SRC="src/Devices/Tamu_v2.0A/BleResetPin.h"
+RSTBTN_SRC="src/Devices/Tamu_v2.0A/Button.h"
+RSTMAIN_SRC="src/Devices/Tamu_v2.0A/Main.h"
+RSTGLUE_SRC="src/Devices/Tamu_v2.0A/BleSettingsGlue.h"
+rst_guard_fail=0
+
+# The four numbers the card names, in the one header that owns them.
+for pinned in \
+    "#define BLE_RESET_IGNORE_MS 2000u" \
+    "#define BLE_RESET_CLEAR_MS 10000u" \
+    "#define BLE_RESET_BLINK_HALF_MS 250u" \
+    "#define BLE_RESET_BLINK_COUNT 5u"; do
+    if [ "$(grep -cF "$pinned" "$RST_SRC")" != 1 ]; then
+        echo "FAIL $RST_SRC: '$pinned' is missing or duplicated (the timing table's own constant)"
+        rst_guard_fail=1
+    fi
+done
+
+# GPIO8: the reset input, and nothing else claims it.
+if [ "$(grep -c 'BLE_RESET_PIN = GPIO_NUM_8' "$RSTPIN_SRC")" != 1 ]; then
+    echo "FAIL $RSTPIN_SRC: the reset input must be GPIO8"
+    rst_guard_fail=1
+fi
+if [ "$(grep -rn 'GPIO_NUM_8' src --include=*.h | grep -vc "$RSTPIN_SRC")" != 0 ]; then
+    echo "FAIL: GPIO8 is claimed somewhere other than the reset input"
+    rst_guard_fail=1
+fi
+
+# The pin's own use: input with the pull-up, and the LED only ever LOW or INPUT (never driven HIGH).
+if [ "$(grep -c 'PinModeInputPullUp(BLE_RESET_PIN)' "$RSTPIN_SRC")" != 1 ]; then
+    echo "FAIL $RSTPIN_SRC: the reset input must be an input with the pull-up"
+    rst_guard_fail=1
+fi
+if [ "$(grep -c 'PinHigh(LED_NOTIFICATION_PIN)' "$RSTPIN_SRC")" != 0 ]; then
+    echo "FAIL $RSTPIN_SRC: the notification pin must never be driven HIGH (a held contact would short it)"
+    rst_guard_fail=1
+fi
+if [ "$(grep -c 'PinLow(LED_NOTIFICATION_PIN)' "$RSTPIN_SRC")" != 1 ] ||
+   [ "$(grep -c 'PinModeInputPullUp(LED_NOTIFICATION_PIN)' "$RSTPIN_SRC")" != 1 ]; then
+    echo "FAIL $RSTPIN_SRC: the LED phases must be exactly 'drive low = lit' and 'input pull-up = dark'"
+    rst_guard_fail=1
+fi
+if [ "$(grep -c 'OnLEDStateChange(StaticBlockRegistry\[0\], 3' "$RSTPIN_SRC")" != 1 ]; then
+    echo "FAIL $RSTPIN_SRC: the pin must be handed back to the notification driver when the sequence ends"
+    rst_guard_fail=1
+fi
+if [ "$(grep -c 'AppBLEStackReset(Clear)' "$RSTPIN_SRC")" != 1 ]; then
+    echo "FAIL $RSTPIN_SRC: the action must be the one stack restart (AppBLEStackReset)"
+    rst_guard_fail=1
+fi
+
+# The button read is qualified by the sequencer, and the raw pin is no longer read directly.
+if [ "$(grep -c '|| BleResetOwnsPin()' "$RSTBTN_SRC")" != 1 ] ||
+   [ "$(grep -c '= BleResetButtonPressed();' "$RSTBTN_SRC")" != 1 ]; then
+    echo "FAIL $RSTBTN_SRC: ButtonUpdate must suppress while the sequencer owns the pin and report through it"
+    rst_guard_fail=1
+fi
+if [ "$(grep -c '!PinRead(LED_NOTIFICATION_PIN)' "$RSTBTN_SRC")" != 0 ]; then
+    echo "FAIL $RSTBTN_SRC: the button must not read the raw pin any more - the reset sequencer owns it"
+    rst_guard_fail=1
+fi
+
+# Boot brings the input up; the main loop services it once per pass, after the button.
+if [ "$(grep -c 'BleResetInit();' "$RSTMAIN_SRC")" != 1 ] ||
+   [ "$(grep -c 'BleResetService();' "$RSTMAIN_SRC")" != 1 ]; then
+    echo "FAIL $RSTMAIN_SRC: the reset input must be set up once and serviced once per pass"
+    rst_guard_fail=1
+fi
+btn_line=$(grep -n 'ButtonUpdate();' "$RSTMAIN_SRC" | head -1 | cut -d: -f1)
+svc_line=$(grep -n 'BleResetService();' "$RSTMAIN_SRC" | head -1 | cut -d: -f1)
+if [ -z "$btn_line" ] || [ -z "$svc_line" ] || [ "$svc_line" -le "$btn_line" ]; then
+    echo "FAIL $RSTMAIN_SRC: the reset must be serviced after ButtonUpdate in the same loop pass"
+    rst_guard_fail=1
+fi
+
+# The write rule: the frame's own link plus the session flag, and no USB-only shortcut left.
+if [ "$(grep -c 'BleWriteAllowed(AppFrameCameOverUsb(), AppFrameCameOverBle(), AppBLELinkSecured())' "$RSTGLUE_SRC")" != 1 ]; then
+    echo "FAIL $RSTGLUE_SRC: BleBlockWritable must ask BleWriteAllowed with the frame's link and the session flag"
+    rst_guard_fail=1
+fi
+if [ "$(grep -c 'return AppFrameCameOverUsb();' "$RSTGLUE_SRC")" != 0 ]; then
+    echo "FAIL $RSTGLUE_SRC: the USB-only write rule is back"
+    rst_guard_fail=1
+fi
+[ $rst_guard_fail = 0 ] && echo "PASS: GPIO8 times the reset, the button is suppressed through it, the LED is handed back, writes are decided by the link"
+fail=$((fail + rst_guard_fail))
+echo
+
 echo "### native app-console guard tests (idle link writes the line, a busy one suppresses it - E67)"
 build_run "appconsole" "appconsole_test.cpp"
 echo
