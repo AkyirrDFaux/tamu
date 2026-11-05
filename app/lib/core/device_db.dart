@@ -325,16 +325,34 @@ class DeviceDatabase extends ChangeNotifier {
     }
   }
 
+  /// The nodes a session already held when its first whole sweep completed: what a discovery
+  /// notice is measured against.
+  ///
+  /// Null means this session has no baseline yet - it is captured by the first sweep that gets
+  /// all the way through ([_doRefresh]'s last statement), and by every later sweep of the same
+  /// session it is the set a node must be ABSENT from to count as newly discovered.
+  Set<int>? _discoveryBaseline;
+
+  /// Starts a new discovery baseline: the next whole sweep becomes it, and announces nothing.
+  ///
+  /// Called when a session comes up (`ConnectionManager.connectTo`), so a reconnect never replays
+  /// the nodes it already knew as discoveries. A connect whose first sweep fails leaves this null
+  /// and the next successful sweep captures it - a failed baseline cannot silence the session.
+  void resetDiscoveryBaseline() {
+    _discoveryBaseline = null;
+  }
+
+  /// The baseline as it stands, or null before the session's first whole sweep. Read by tests to
+  /// name the baseline point; the app has no other reason to look at it.
+  @visibleForTesting
+  Set<int>? get discoveryBaselineForTest => _discoveryBaseline == null
+      ? null
+      : Set<int>.unmodifiable(_discoveryBaseline!);
+
   Future<void> _doRefresh() async {
     _refreshing = true;
     lastError = null;
     notifyListeners();
-
-    // Reachable devices at the start of this sweep (for lost/discovered events).
-    final reachableBefore = _devices.entries
-        .where((e) => !e.value.stale)
-        .map((e) => e.key)
-        .toSet();
 
     try {
       // No blanket "everything is stale until it answers" here: a known node's state is the
@@ -383,20 +401,42 @@ class DeviceDatabase extends ChangeNotifier {
           }(),
       ]);
 
-      // In-app notifications (Docs/App/Settings.md events):
-      //   - a device that was unknown becomes a "discovered" event;
-      //   - a device that was reachable but failed this sweep is "lost".
-      for (final id in _devices.keys) {
-        final entry = _devices[id]!;
-        if (!reachableBefore.contains(id)) {
-          if (!entry.stale) {
+      // In-app notifications (Docs/App/Settings.md events). A discovery is measured against the
+      // session's BASELINE, never against "was this id in the database before this sweep".
+      //
+      // The baseline is captured HERE, by the first sweep of the session that gets this far (the
+      // whole roster was read and every id refreshed): whatever is present then was already there
+      // when the app connected, so that sweep announces nothing - it was the owner's complaint
+      // that a normal connect with four nodes read as four "discovered" lines (2026-11-05). A
+      // discovery notice therefore means "a node appeared while the app was already connected".
+      //
+      // A first sweep that FAILS never reaches this block (the exception above unwinds to the
+      // catch), so the baseline stays unset and the next whole sweep becomes it: a failed
+      // baseline delays the announcements, it cannot suppress them for the session.
+      final baseline = _discoveryBaseline;
+      if (baseline == null) {
+        _discoveryBaseline = <int>{
+          for (final entry in _devices.values)
+            if (!entry.stale) entry.id,
+        };
+      } else {
+        for (final entry in _devices.values) {
+          final wasKnown = baseline.contains(entry.id);
+          if (!entry.stale && !wasKnown) {
             notifyAppEvent(
               'Device discovered',
               '${entry.displayName} discovered',
             );
+            // It is part of the network from now on: one notice per arrival, not one per sweep.
+            baseline.add(entry.id);
+          } else if (entry.stale && wasKnown) {
+            // Only a device that was present in this session can be lost, and only a device that
+            // WAS announced lost leaves the baseline - so a node that flakes out and back inside
+            // the presence debounce (fewer than [deviceMissThreshold] consecutive misses) keeps
+            // its place and announces nothing.
+            notifyAppEvent('Device lost', '${entry.displayName} lost');
+            baseline.remove(entry.id);
           }
-        } else if (entry.stale) {
-          notifyAppEvent('Device lost', '${entry.displayName} lost');
         }
       }
     } catch (error) {

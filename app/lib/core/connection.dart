@@ -776,6 +776,10 @@ class ConnectionManager extends ChangeNotifier
       }
       _activeLink = link;
       _invalidateLinks();
+      // A new session starts with no discovery baseline: the first sweep is the network as the
+      // app found it when it connected, so it announces nothing (`DeviceDatabase.
+      // _discoveryBaseline`). Without this a reconnect would replay every node it already knew.
+      DeviceDatabase.instance.resetDiscoveryBaseline();
       // Pull the live network (core + SNDB devices) now that the link is up,
       // so the UI shows real data immediately after an autoconnect.
       unawaited(DeviceDatabase.instance.refreshNetwork());
