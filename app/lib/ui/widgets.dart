@@ -435,11 +435,6 @@ class BlockScrollBody extends StatelessWidget {
   }
 }
 
-/// Shows a transient status message (shared by the memory/service pages).
-void showSnack(BuildContext context, String message) {
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-}
-
 /// Cancel/Confirm alert shared by the destructive actions across pages.
 Future<bool> confirmDialog(
   BuildContext context, {

@@ -14,6 +14,7 @@ import '../core/script_client.dart';
 import '../core/script_fault.dart';
 import '../core/script_file.dart';
 import '../core/types.dart';
+import '../core/notice.dart';
 import 'formatters.dart';
 import 'theme.dart';
 import 'value_editor.dart';
@@ -74,7 +75,7 @@ class ScriptFaultRow extends StatelessWidget {
           onPressed: () async {
             await Clipboard.setData(ClipboardData(text: fault.text));
             if (!context.mounted) return;
-            showSnack(context, 'Fault copied');
+            showNotice('Fault copied');
           },
         ),
       ],
@@ -294,7 +295,7 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
       next,
     );
     if (!mounted) return;
-    showSnack(context, ok ? '${widget.title} $key updated' : 'Write failed');
+    showNotice(ok ? '${widget.title} $key updated' : 'Write failed');
     widget.onChanged?.call();
   }
 
@@ -446,7 +447,7 @@ class _ScriptInputControlState extends State<ScriptInputControl> {
       bytes,
     );
     if (!mounted) return;
-    if (!ok) showSnack(context, 'Write failed');
+    if (!ok) showNotice('Write failed');
     widget.onChanged?.call();
   }
 

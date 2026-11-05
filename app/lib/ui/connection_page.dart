@@ -8,6 +8,7 @@ import '../core/connection.dart';
 import '../core/device_db.dart';
 import '../core/platform_caps.dart';
 import '../core/settings.dart';
+import '../core/notice.dart';
 import 'ble_security_page.dart' show showBleLinkGuidance;
 import 'loading.dart';
 import 'theme.dart';
@@ -45,10 +46,6 @@ class _ConnectionPageState extends State<ConnectionPage>
   /// The link loss this page has already explained, so one drop is not explained twice.
   LinkTrouble? _explainedTrouble;
 
-  /// The attempt outcome this page has already shown, so one attempt's line is not repeated by
-  /// the manager's later notifications (it keeps the notice until the next attempt starts).
-  ConnectNotice? _shownNotice;
-
   @override
   void initState() {
     super.initState();
@@ -77,6 +74,9 @@ class _ConnectionPageState extends State<ConnectionPage>
   ///
   /// A pending attempt that ended without a session is explained from the manager's one
   /// [ConnectNotice], so Cancel, the timeout and a refusal all leave the panel the same way.
+  /// The notice carries its own occurrence number, so a manager notification that repeats the
+  /// same outcome is one line while a second cancel (the same `const` notice object) is a new
+  /// one - see [ConnectNotice.sequence].
   void _onManagerEvent() {
     _showConnectNotice();
     _explainLinkTrouble();
@@ -84,18 +84,15 @@ class _ConnectionPageState extends State<ConnectionPage>
 
   void _showConnectNotice() {
     final notice = _manager.lastConnectNotice;
-    if (notice == null) {
-      // A new attempt clears the manager's notice, and this page forgets what it showed so the
-      // new attempt's line is its own. Without this reset, identity alone would swallow a repeat:
-      // the cancel and timeout notices are `const` expressions and Dart canonicalises those, so
-      // two cancels in a row hand the page the very same object (and the second line never shows).
-      _shownNotice = null;
-      return;
-    }
-    if (identical(notice, _shownNotice)) return;
-    _shownNotice = notice;
-    if (!mounted) return;
-    showSnack(context, notice.message);
+    if (notice == null || !mounted) return;
+    showNotice(
+      notice.message,
+      event: 'connect',
+      sequence: notice.sequence,
+      tone: notice.end == ConnectEnd.noAnswer
+          ? NoticeTone.warning
+          : NoticeTone.info,
+    );
   }
 
   void _explainLinkTrouble() {
@@ -113,7 +110,7 @@ class _ConnectionPageState extends State<ConnectionPage>
       // never got to finish: the link itself went away (range, a reset, the user's own settings).
       // A snack is the honest amount of alarm; the two-cause guidance would be a diagnosis the
       // evidence does not support.
-      showSnack(context, 'Bluetooth link lost');
+      showNotice('Bluetooth link lost');
       return;
     }
     unawaited(
@@ -167,7 +164,7 @@ class _ConnectionPageState extends State<ConnectionPage>
         settings.autoConnectDeviceId = '';
       });
       if (!mounted) return;
-      showSnack(context, 'Autoconnect disabled');
+      showNotice('Autoconnect disabled');
       return;
     }
     settings.update(() {
@@ -176,7 +173,7 @@ class _ConnectionPageState extends State<ConnectionPage>
           _manager.connectedId ?? _manager.connectedName ?? '';
     });
     if (!mounted) return;
-    showSnack(context, 'Autoconnect target set: ${_manager.connectedName}');
+    showNotice('Autoconnect target set: ${_manager.connectedName}');
   }
 
   bool _isAutoTarget(DiscoveredLink link) =>
@@ -192,8 +189,7 @@ class _ConnectionPageState extends State<ConnectionPage>
       settings.autoConnectDeviceId = isTarget ? '' : link.id;
     });
     if (!mounted) return;
-    showSnack(
-      context,
+    showNotice(
       isTarget
           ? 'Autoconnect disabled'
           : 'Autoconnect target set: ${link.name}',
@@ -430,7 +426,7 @@ class _ConnectionPageState extends State<ConnectionPage>
         if (notice == null) {
           // Only a refusal that never became an attempt (already connected/connecting, USB on a
           // phone) has no notice behind it; the returned line is all there is to show.
-          if (error != null) showSnack(context, error);
+          if (error != null) showNotice(error);
           return;
         }
         // A Bluetooth attempt that failed on its own was answered - by the device turning this

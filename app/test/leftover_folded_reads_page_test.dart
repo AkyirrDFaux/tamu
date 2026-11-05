@@ -16,12 +16,14 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/fragment_reassembler.dart';
+import 'package:tamuapp/core/notice.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/file_viewers.dart';
 import 'package:tamuapp/ui/formatters.dart';
+import 'package:tamuapp/ui/notice_host.dart';
 import 'package:tamuapp/ui/register_page.dart';
 import 'package:tamuapp/ui/scripts_page.dart';
 import 'package:tamuapp/ui/theme.dart';
@@ -380,6 +382,10 @@ final List<int> _dvValues = [...numberToBytes(1.5), ...'hello'.codeUnits];
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  // The strip remembers the last occurrence per event, and a fresh page starts its
+  // own count: the memory must not cross tests.
+  setUp(NoticeCenter.instance.reset);
+
   final scriptTable = <int>[
     ..._record(0x1000, 200, 'SCR_000'),
     ..._record(0x2000, 300, 'SCR_001'),
@@ -393,6 +399,8 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: buildTheme(),
+          // The app's own chrome: a page's notice is drawn by the window's strip.
+          builder: noticeHostBuilder,
           home: const ScriptsPage(deviceId: 1, deviceName: 'Core'),
         ),
       );
@@ -429,19 +437,18 @@ void main() {
         reason: 'no slot is picked from a map that was never read',
       );
 
-      // The retry re-reads the map and loads into the lowest free slot. The failure's snack
-      // bar is still up (ScaffoldMessenger queues), so let it go away first.
-      for (
-        var i = 0;
-        i < 20 &&
-            find
-                .textContaining('The script slot map could not be read')
-                .evaluate()
-                .isNotEmpty;
-        i++
-      ) {
-        await tester.pump(const Duration(milliseconds: 500));
-      }
+      // The retry re-reads the map and loads into the lowest free slot. The failure's notice
+      // is still up, so close it the way the user does - the failure line must not stand in
+      // front of the retry, and the close control is what takes it away. The strip grows into
+      // place over 180 ms, so let that finish before reaching for its control.
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(NoticeBand.closeKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.textContaining('The script slot map could not be read'),
+        findsNothing,
+      );
       device.slotMapAnswers = true;
       await tester.tap(find.text('Load').first);
       await tester.pump();

@@ -9,6 +9,7 @@ import '../core/platform_caps.dart';
 import '../core/register_client.dart';
 import '../core/storage_client.dart';
 import '../core/types.dart';
+import '../core/notice.dart';
 import 'formatters.dart';
 import 'loading.dart';
 import 'theme.dart';
@@ -67,7 +68,7 @@ class _StoragePageState extends State<StoragePage>
 
   void _snack(String message) {
     if (!mounted) return;
-    showSnack(context, message);
+    showNotice(message);
   }
 
   Future<void> _refresh() async {

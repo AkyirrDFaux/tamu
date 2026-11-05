@@ -9,6 +9,7 @@ import '../core/device_db.dart';
 import '../core/diagnostics.dart';
 import '../core/protocol.dart';
 import '../core/types.dart';
+import '../core/notice.dart';
 import 'formatters.dart';
 import 'theme.dart';
 import 'viewer_kit.dart';
@@ -175,7 +176,7 @@ class _LogViewerPageState extends State<LogViewerPage>
                 ? null
                 : () {
                     Clipboard.setData(ClipboardData(text: text));
-                    showSnack(context, 'Diagnostics copied');
+                    showNotice('Diagnostics copied');
                   },
             child: const Text('Copy'),
           ),

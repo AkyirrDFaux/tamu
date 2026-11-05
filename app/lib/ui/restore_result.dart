@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/backup.dart';
+import '../core/notice.dart';
 import 'dialogs.dart';
 import 'theme.dart';
 import 'viewer_kit.dart';
@@ -158,7 +159,7 @@ class RestoreResultView extends StatelessWidget {
 /// Makes [text] the clipboard's content and says so. Nothing is copied silently.
 void copyRestoreReport(BuildContext context, String text, String snack) {
   Clipboard.setData(ClipboardData(text: text));
-  showSnack(context, snack);
+  showNotice(snack);
 }
 
 /// Shows the run's result: the counts, the reasons grouped by device, and a Copy that puts the

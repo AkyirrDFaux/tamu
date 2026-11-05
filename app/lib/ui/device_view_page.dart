@@ -5,6 +5,7 @@ import '../core/device_db.dart';
 import '../core/register_client.dart';
 import '../core/types.dart';
 import '../core/wifi_settings.dart' show hasWifiSettingsBlock;
+import '../core/notice.dart';
 import 'ble_security_page.dart';
 import 'formatters.dart';
 import 'log_page.dart';
@@ -103,7 +104,7 @@ class _DeviceViewPageState extends State<DeviceViewPage>
               onPressed: () async {
                 final ok = await _db.identify(widget.deviceId);
                 if (!ok && context.mounted) {
-                  showSnack(context, 'Identify request failed');
+                  showNotice('Identify request failed');
                 }
               },
             ),

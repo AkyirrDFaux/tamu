@@ -18,6 +18,7 @@ import '../core/script_functions.dart';
 import '../core/script_instructions.dart';
 import '../core/storage_client.dart';
 import '../core/types.dart';
+import '../core/notice.dart';
 import 'dialogs.dart';
 import 'formatters.dart';
 import 'script_instruction_picker.dart';
@@ -283,7 +284,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       _busy = false;
       if (ok) _dirty = false;
     });
-    showSnack(context, ok ? 'Uploaded $_fileName' : 'Upload failed');
+    showNotice(ok ? 'Uploaded $_fileName' : 'Upload failed');
     if (ok && widget.loaded && mounted) {
       final reload = await confirmDialog(
         context,
@@ -339,7 +340,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       final written = await _storage.writeFile(_fileName, draft.toImage());
       if (!mounted) return;
       if (!written) {
-        showSnack(context, 'Upload failed');
+        showNotice('Upload failed');
         return;
       }
       setState(() => _dirty = false);
@@ -347,14 +348,14 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     await _client.unload(_slot);
     final ok = await _client.load(widget.fileId, _slot);
     if (!mounted) return;
-    showSnack(context, ok ? 'Reloaded' : 'Reload failed');
+    showNotice(ok ? 'Reloaded' : 'Reload failed');
     await _refresh();
   }
 
   Future<void> _unloadScript() async {
     final ok = await _client.unload(_slot);
     if (!mounted) return;
-    showSnack(context, ok ? 'Unloaded' : 'Unload failed');
+    showNotice(ok ? 'Unloaded' : 'Unload failed');
     if (ok && mounted) {
       setState(() => _dirty = false);
       Navigator.of(context).pop();
@@ -372,8 +373,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       ),
     ];
     setState(() => _errors = errors);
-    showSnack(
-      context,
+    showNotice(
       errors.isEmpty ? 'Script is valid' : '${errors.length} problem(s) found',
     );
   }
@@ -382,7 +382,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     if (reset) await _client.moveToInstruction(_slot, 0);
     final ok = await _client.setAction(_slot, action);
     if (!mounted) return;
-    showSnack(context, ok ? ScriptAction.label(action) : 'Command failed');
+    showNotice(ok ? ScriptAction.label(action) : 'Command failed');
     await _refresh();
   }
 

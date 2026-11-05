@@ -9,6 +9,7 @@ import '../core/host_files.dart';
 import '../core/notifications.dart';
 import '../core/script_file.dart';
 import '../core/types.dart';
+import '../core/notice.dart';
 import 'theme.dart';
 import 'loading.dart';
 import 'restore_result.dart';
@@ -77,7 +78,7 @@ class _BackupPageState extends State<BackupPage> {
     super.dispose();
   }
 
-  void _snack(String message) => showSnack(context, message);
+  void _snack(String message) => showNotice(message);
 
   /// The system file picker, for the archive a restore reads. Split out so a widget test can
   /// supply [BackupPage.pickArchive] instead - the picker needs a platform.
@@ -389,7 +390,7 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
       if (mounted) await showRestoreResult(context, report);
     } catch (error) {
       _wait.end();
-      if (mounted) showSnack(context, 'Restore failed: $error');
+      if (mounted) showNotice('Restore failed: $error');
     } finally {
       _wait.end();
       if (mounted) setState(() => _busy = false);

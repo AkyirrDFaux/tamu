@@ -19,6 +19,7 @@ import '../core/storage_client.dart'
     show FileRead, FileReadFault, StorageClient, normalizeFileName;
 import '../core/types.dart';
 import '../core/script_client.dart';
+import '../core/notice.dart';
 import 'dialogs.dart';
 import 'formatters.dart';
 import 'loading.dart';
@@ -188,7 +189,7 @@ class _RegisterPageState extends State<RegisterPage>
 
   void _snack(String message) {
     if (!mounted) return;
-    showSnack(context, message);
+    showNotice(message);
   }
 
   /// State update used by the part-file extensions: `setState` is @protected and an

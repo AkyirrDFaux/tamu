@@ -18,8 +18,8 @@ import '../core/types.dart'
         RequesterSubscription,
         TriggerType,
         makeBlockInfo;
+import '../core/notice.dart';
 import 'dialogs.dart';
-import 'widgets.dart' show showSnack;
 
 part 'subscriptions_pickers.dart';
 
@@ -592,7 +592,7 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
     final index = widget.existing?.index ?? _findFreeIndex();
     if (index >= 16) {
       if (!mounted) return;
-      showSnack(context, 'Max subscriptions reached');
+      showNotice('Max subscriptions reached');
       return;
     }
 
@@ -618,17 +618,14 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
     if (ok) {
       await widget.onSaved();
       if (mounted) {
-        showSnack(
-          context,
-          isEdit ? 'Subscription updated' : 'Subscription added',
-        );
+        showNotice(isEdit ? 'Subscription updated' : 'Subscription added');
         Navigator.pop(context);
       }
     } else {
       // NOTE: the client reports success when a reply arrives, but a FLAG_FAIL reply also
       // carries a payload (Issues.md "App (subscriptions)"); true failure needs the core
       // request() to surface the response flags.
-      if (mounted) showSnack(context, 'Failed to save subscription');
+      if (mounted) showNotice('Failed to save subscription');
     }
   }
 

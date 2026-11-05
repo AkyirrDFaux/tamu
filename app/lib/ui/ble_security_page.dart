@@ -8,6 +8,7 @@ import '../core/connection.dart';
 import '../core/register_client.dart';
 import '../core/transport.dart' show UsbTransport;
 import '../core/types.dart';
+import '../core/notice.dart';
 import 'formatters.dart' show kSecretMask;
 import 'theme.dart';
 import 'widgets.dart';
@@ -116,7 +117,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
 
   void _snack(String message) {
     if (!mounted) return;
-    showSnack(context, message);
+    showNotice(message);
   }
 
   Future<void> _refresh() async {

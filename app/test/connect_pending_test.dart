@@ -12,12 +12,23 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/connection.dart';
+import 'package:tamuapp/core/notice.dart';
 import 'package:tamuapp/core/transport.dart';
 import 'package:tamuapp/ui/connection_page.dart';
+import 'package:tamuapp/ui/notice_host.dart';
 import 'package:tamuapp/ui/theme.dart';
+
+/// The app's own chrome around the page: the pages raise notices, and a notice is
+/// drawn by the window's strip (`NoticeHost`), not by the page.
+Widget _app(Widget home) =>
+    MaterialApp(theme: buildTheme(), builder: noticeHostBuilder, home: home);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  // A page keeps one notice per event occurrence, and the occurrence numbers restart with
+  // each test's manager: forget them, or a repeat here reads as "already shown".
+  setUp(NoticeCenter.instance.reset);
 
   const bleLink = DiscoveredLink(
     id: 'AA:BB:CC:DD:EE:01',
@@ -176,12 +187,7 @@ void main() {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: buildTheme(),
-          home: ConnectionPage(manager: manager),
-        ),
-      );
+      await tester.pumpWidget(_app(ConnectionPage(manager: manager)));
       await tester.pump();
 
       unawaited(manager.connectTo(bleLink));
@@ -219,12 +225,7 @@ void main() {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: buildTheme(),
-          home: ConnectionPage(manager: manager),
-        ),
-      );
+      await tester.pumpWidget(_app(ConnectionPage(manager: manager)));
       await tester.pump();
 
       unawaited(manager.connectTo(bleLink));
@@ -251,12 +252,7 @@ void main() {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: buildTheme(),
-          home: ConnectionPage(manager: manager),
-        ),
-      );
+      await tester.pumpWidget(_app(ConnectionPage(manager: manager)));
       await tester.pump();
 
       // First attempt, cancelled by hand.
@@ -268,14 +264,15 @@ void main() {
       expect(find.text(connectCancelledMessage), findsOneWidget);
 
       // That line has had its time on screen.
-      tester
-          .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
-          .removeCurrentSnackBar();
-      await tester.pump(const Duration(milliseconds: 400));
+      // The line is closable: the close control takes it away at once, no timer to wait out.
+      await tester.tap(find.byKey(NoticeBand.closeKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.text(connectCancelledMessage), findsNothing);
 
       // The next attempt says the same thing, and must still be able to say it: the cancel
-      // notice is a `const` expression, so Dart hands the page the very same object twice.
+      // notice is a `const` expression, so Dart hands the page the very same object twice. The
+      // strip therefore dedupes on the manager's occurrence number, never on identity.
       unawaited(manager.connectTo(bleLink));
       await tester.pump();
       expect(find.widgetWithText(TextButton, 'Cancel'), findsOneWidget);
@@ -302,12 +299,7 @@ void main() {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: buildTheme(),
-          home: ConnectionPage(manager: manager),
-        ),
-      );
+      await tester.pumpWidget(_app(ConnectionPage(manager: manager)));
       await tester.pump();
 
       unawaited(manager.connectTo(bleLink));
@@ -316,13 +308,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text(connectNoAnswerMessage), findsOneWidget);
 
-      tester
-          .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
-          .removeCurrentSnackBar();
-      await tester.pump(const Duration(milliseconds: 400));
+      // The line is closable: the close control takes it away at once, no timer to wait out.
+      await tester.tap(find.byKey(NoticeBand.closeKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.text(connectNoAnswerMessage), findsNothing);
 
-      // Same shape, second time: the timeout notice is `const` as well.
+      // Same shape, second time: the timeout notice is `const` as well, and its own
+      // occurrence number is what lets it show.
       unawaited(manager.connectTo(bleLink));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 60));
@@ -347,12 +340,7 @@ void main() {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: buildTheme(),
-          home: ConnectionPage(manager: manager),
-        ),
-      );
+      await tester.pumpWidget(_app(ConnectionPage(manager: manager)));
       await tester.pump();
 
       await tester.tap(find.text('Tamu core'));

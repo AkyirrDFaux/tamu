@@ -11,10 +11,10 @@ import 'package:tamuapp/core/types.dart'
         ProviderSubscription,
         RequesterSubscription,
         blockInfoLabel;
+import '../core/notice.dart';
 import 'subscriptions_dialog.dart' show SubscriptionDialog;
 import 'theme.dart';
 import 'viewer_kit.dart';
-import 'widgets.dart' show showSnack;
 
 class SubscriptionsPage extends StatefulWidget {
   final int deviceId;
@@ -319,10 +319,10 @@ class _SubscriptionsPageState extends State<SubscriptionsPage>
     if (ok) {
       await _loadSubscriptions();
       if (mounted) {
-        showSnack(context, 'Subscription deleted');
+        showNotice('Subscription deleted');
       }
     } else {
-      if (mounted) showSnack(context, 'Failed to delete subscription');
+      if (mounted) showNotice('Failed to delete subscription');
     }
   }
 }

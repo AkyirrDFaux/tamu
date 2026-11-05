@@ -9,6 +9,7 @@ import '../core/script_client.dart';
 import '../core/script_fault.dart';
 import '../core/script_file.dart';
 import '../core/storage_client.dart';
+import '../core/notice.dart';
 import 'loading.dart';
 import 'script_editor_page.dart';
 import 'script_create_dialog.dart';
@@ -271,8 +272,7 @@ class _ScriptsPageState extends State<ScriptsPage>
     if (reset) await _client.moveToInstruction(s.slot, 0);
     final ok = await _client.setAction(s.slot, action);
     if (!mounted) return;
-    showSnack(
-      context,
+    showNotice(
       ok ? '${s.name}: ${ScriptAction.label(action)}' : 'Command failed',
     );
     await _loadLoaded();
@@ -281,7 +281,7 @@ class _ScriptsPageState extends State<ScriptsPage>
   Future<void> _unload(_LoadedScript s) async {
     final ok = await _client.unload(s.slot);
     if (!mounted) return;
-    showSnack(context, ok ? 'Unloaded ${s.name}' : 'Unload failed');
+    showNotice(ok ? 'Unloaded ${s.name}' : 'Unload failed');
     await _loadLoaded();
   }
 
@@ -289,7 +289,7 @@ class _ScriptsPageState extends State<ScriptsPage>
     final name = normalizeFileName(file.name);
     final id = scriptFileId(name);
     if (id == null) {
-      showSnack(context, 'Bad script file name');
+      showNotice('Bad script file name');
       return;
     }
     // The file id and the loaded slot are independent: pick the lowest free slot from CID 0's
@@ -299,8 +299,7 @@ class _ScriptsPageState extends State<ScriptsPage>
     final map = await _client.readSlotMap();
     if (!mounted) return;
     if (map == null) {
-      showSnack(
-        context,
+      showNotice(
         'The script slot map could not be read (Script CID 0 did not answer), '
         'so no free slot is known',
       );
@@ -314,7 +313,7 @@ class _ScriptsPageState extends State<ScriptsPage>
       }
     }
     if (free < 0) {
-      showSnack(context, 'No free script slot');
+      showNotice('No free script slot');
       return;
     }
     final loaded = (await runBehindWait<bool>(
@@ -324,7 +323,7 @@ class _ScriptsPageState extends State<ScriptsPage>
       task: () => _client.load(id, free),
     )).value;
     if (!mounted) return;
-    showSnack(context, loaded ? 'Loaded $name into slot $free' : 'Load failed');
+    showNotice(loaded ? 'Loaded $name into slot $free' : 'Load failed');
     await _loadLoaded();
   }
 
@@ -334,7 +333,7 @@ class _ScriptsPageState extends State<ScriptsPage>
     final table = await _storage.readFileTableResult();
     if (!mounted) return;
     if (!table.ok) {
-      showSnack(context, table.detail ?? 'Could not read the file table');
+      showNotice(table.detail ?? 'Could not read the file table');
       return;
     }
     final used = <int>{};
@@ -348,7 +347,7 @@ class _ScriptsPageState extends State<ScriptsPage>
     ];
     if (!mounted) return;
     if (free.isEmpty) {
-      showSnack(context, 'No free script id');
+      showNotice('No free script id');
       return;
     }
     final result = await showNewScriptDialog(context, freeSlots: free);
@@ -366,7 +365,7 @@ class _ScriptsPageState extends State<ScriptsPage>
     final fileName = scriptFileName(result.fileId);
     final ok = await _storage.writeFile(fileName, image);
     if (!mounted) return;
-    showSnack(context, ok ? 'Created $fileName (not loaded)' : 'Create failed');
+    showNotice(ok ? 'Created $fileName (not loaded)' : 'Create failed');
     setState(() => _showLoaded = false);
     await _loadAvailable();
   }
@@ -383,7 +382,7 @@ class _ScriptsPageState extends State<ScriptsPage>
     }
     final ok = await _storage.deleteFile(name);
     if (!mounted) return;
-    showSnack(context, ok ? 'Deleted $name' : 'Delete failed');
+    showNotice(ok ? 'Deleted $name' : 'Delete failed');
     await _loadAvailable();
   }
 

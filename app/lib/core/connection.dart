@@ -87,6 +87,7 @@ class ConnectNotice {
     required this.message,
     this.detail,
     this.isBle = false,
+    this.sequence = 0,
   });
 
   final ConnectEnd end;
@@ -100,9 +101,28 @@ class ConnectNotice {
   /// Whether the attempt went over Bluetooth (the refusal classification is BLE-shaped).
   final bool isBle;
 
+  /// Which occurrence of "an attempt ended without a session" this is: the manager stamps
+  /// it when it publishes the notice ([ConnectionManager.lastConnectNotice]), and the panel
+  /// hands it to the notice strip so each occurrence shows exactly once.
+  ///
+  /// This is not bookkeeping: the cancel and timeout notices are `const` expressions, so Dart
+  /// canonicalises them and the manager hands the panel the very same object for two cancels in
+  /// a row. A panel that deduped on identity would show the first and silently drop the second;
+  /// a sequence makes the repeat a new occurrence without showing one occurrence twice.
+  final int sequence;
+
+  /// This notice stamped as occurrence [sequence].
+  ConnectNotice withSequence(int sequence) => ConnectNotice(
+    end: end,
+    message: message,
+    detail: detail,
+    isBle: isBle,
+    sequence: sequence,
+  );
+
   @override
   String toString() =>
-      'ConnectNotice(${end.name}, "$message"'
+      'ConnectNotice(${end.name}, "$message", #$sequence'
       '${detail == null ? '' : ', detail: "$detail"'})';
 }
 
@@ -385,6 +405,9 @@ class ConnectionManager extends ChangeNotifier
   /// refusal all leave the pending state the same way - idle, with one plain line - no matter
   /// which code path (a tap or autoconnect) started the attempt.
   ConnectNotice? lastConnectNotice;
+
+  /// Occurrence counter for [lastConnectNotice]; see [ConnectNotice.sequence].
+  int _connectNoticeSeq = 0;
 
   final PacketStreamParser _parser = PacketStreamParser();
   StreamSubscription<Uint8List>? _streamSub;
@@ -776,7 +799,7 @@ class ConnectionManager extends ChangeNotifier
       attempt.deadline?.cancel();
       if (identical(_attempt, attempt)) _attempt = null;
       if (notice != null) {
-        lastConnectNotice = notice;
+        lastConnectNotice = notice.withSequence(++_connectNoticeSeq);
         final suffix = notice.message.isEmpty ? '' : ' (${notice.message})';
         AppDiagnostics.log(
           'link',

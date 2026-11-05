@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../core/connection.dart';
 import '../core/device_db.dart';
 import '../core/types.dart';
+import '../core/notice.dart';
 import 'theme.dart';
 import 'viewer_kit.dart';
 import 'widgets.dart';
@@ -132,7 +133,7 @@ class _SndbPageState extends State<SndbPage> with AutoRefreshMixin<SndbPage> {
 
   void _snack(String message) {
     if (!mounted) return;
-    showSnack(context, message);
+    showNotice(message);
   }
 
   @override

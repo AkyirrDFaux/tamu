@@ -7,6 +7,7 @@ import '../core/bootloader_client.dart';
 import '../core/connection.dart';
 import '../core/device_db.dart';
 import '../core/transport.dart';
+import '../core/notice.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -70,7 +71,7 @@ class _UpdatePageState extends State<UpdatePage> {
     final bytes = await file.readAsBytes();
     if (!mounted) return;
     if (bytes.isEmpty) {
-      showSnack(context, 'That file is empty');
+      showNotice('That file is empty');
       return;
     }
     setState(() {
@@ -120,11 +121,11 @@ class _UpdatePageState extends State<UpdatePage> {
   Future<void> _startUpdate() async {
     final image = _image;
     if (image == null) {
-      showSnack(context, 'Choose a firmware file first');
+      showNotice('Choose a firmware file first');
       return;
     }
     if (!_link.isConnected) {
-      showSnack(context, 'Connect to the core first');
+      showNotice('Connect to the core first');
       return;
     }
 

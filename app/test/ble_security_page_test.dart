@@ -4,6 +4,7 @@ import 'package:tamuapp/core/ble_security.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/ble_security_page.dart';
+import 'package:tamuapp/ui/notice_host.dart';
 import 'package:tamuapp/ui/theme.dart';
 
 /// The Bluetooth panel, served by a fake device so every state is reachable off the rig.
@@ -194,6 +195,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildTheme(),
+        // The app's chrome: a page's notice is drawn by the window's strip.
+        builder: noticeHostBuilder,
         home: BleSecurityPage(
           deviceId: 1,
           isConnected: () => true,

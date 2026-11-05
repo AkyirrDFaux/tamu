@@ -5,6 +5,7 @@ import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/core/wifi_settings.dart';
 import 'package:tamuapp/ui/formatters.dart';
 import 'package:tamuapp/ui/theme.dart';
+import 'package:tamuapp/ui/notice_host.dart';
 import 'package:tamuapp/ui/wifi_page.dart';
 
 /// The WiFi panel, served by a fake device so the states are reachable off-rig.
@@ -161,6 +162,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildTheme(),
+        // The app's chrome: a page's notice is drawn by the window's strip.
+        builder: noticeHostBuilder,
         home: WifiPage(
           deviceId: 1,
           isConnected: () => true,

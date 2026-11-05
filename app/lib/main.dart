@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 
 import 'core/connection.dart';
 import 'core/diagnostics.dart';
-import 'core/notifications.dart';
 import 'core/settings.dart';
 import 'ui/backup_page.dart';
 import 'ui/connection_page.dart';
 import 'ui/devices_page.dart';
+import 'ui/notice_host.dart';
 import 'ui/settings_page.dart';
 import 'ui/theme.dart';
 import 'ui/update_page.dart';
@@ -37,7 +37,10 @@ class TamuApp extends StatelessWidget {
       title: 'Tamu',
       theme: buildTheme(),
       themeMode: ThemeMode.dark,
-      scaffoldMessengerKey: appMessengerKey,
+      // Every route - pages, pushed editors, dialogs - is wrapped so the app's one
+      // in-app notice gets a strip of its own below the page instead of a snack bar
+      // floating over it (ui/notice_host.dart).
+      builder: noticeHostBuilder,
       home: const ShellPage(),
     );
   }

@@ -7,6 +7,7 @@ import '../core/register_client.dart';
 import '../core/transport.dart' show UsbTransport;
 import '../core/types.dart';
 import '../core/wifi_settings.dart';
+import '../core/notice.dart';
 import 'formatters.dart' show kSecretMask;
 import 'theme.dart';
 import 'widgets.dart';
@@ -87,7 +88,7 @@ class _WifiPageState extends State<WifiPage> with AutoRefreshMixin<WifiPage> {
 
   void _snack(String message) {
     if (!mounted) return;
-    showSnack(context, message);
+    showNotice(message);
   }
 
   Future<void> _refresh() async {

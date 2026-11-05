@@ -21,6 +21,7 @@ import 'package:tamuapp/core/backup_format.dart';
 import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/fragment_reassembler.dart';
+import 'package:tamuapp/core/notice.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/request_channel.dart';
@@ -28,6 +29,7 @@ import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/backup_page.dart';
+import 'package:tamuapp/ui/notice_host.dart';
 import 'package:tamuapp/ui/register_page.dart';
 import 'package:tamuapp/ui/scripts_page.dart';
 import 'package:tamuapp/ui/storage_page.dart';
@@ -36,7 +38,10 @@ import 'package:tamuapp/ui/wait.dart';
 
 bool _connected() => true;
 
-Widget _app(Widget home) => MaterialApp(theme: buildTheme(), home: home);
+// The app's own chrome around a page: notices are drawn by the window's strip, so
+// a page test that asserts one has to mount it.
+Widget _app(Widget home) =>
+    MaterialApp(theme: buildTheme(), builder: noticeHostBuilder, home: home);
 
 /// Pumps [steps] frames of [slice] each, so a chain of short awaits (a read per register field, a
 /// read per file) can finish without guessing the exact number of turns.
@@ -322,6 +327,10 @@ DeviceDatabase _databaseWithDevice() {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  // The strip remembers the last occurrence per event; a page that reports one
+  // occurrence per action starts its own count, so the memory must not cross tests.
+  setUp(NoticeCenter.instance.reset);
 
   group('a wait whose page is gone', () {
     test('a disposed controller ignores begin, step, cancel and end', () {
