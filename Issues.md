@@ -1393,3 +1393,28 @@ behaviour change - if it must change, raise it rather than doing it"). The shipp
 behaviour was implemented and the wording was left alone. If the serial belongs in it, it is one
 string in that call plus the message expectation in `app/test/device_discovery_notice_test.dart`;
 the event name (`Device discovered`, `Docs/App/Settings.md:10`) does not change.
+
+## GPIO8 BLE reset: two limits that come from the shared pin (2026-11-05)
+
+The USB-less reset (card `t_1ff14f60`, `Blocks/BleResetHold.h`) reads GPIO8 and shows its progress on
+the notification LED, which is GPIO2 - the same pin the button input uses, active low on both. Two
+consequences the owner should know about, neither of which is a defect:
+
+- **The reset input is not sampled while the notification LED is switched on.** With `LEDState = true`
+  the notification driver holds GPIO2 low, which is exactly the level a closed contact gives, so the
+  sequencer is told the line is unreadable and holds its state instead of inventing a contact. A GPIO8
+  hold started (or kept) while the LED is on is not timed; the sequence simply does not begin.
+- **A button tap is reported at its lift, not at its press.** The button's own action (the emote reset
+  to Normal) must not fire for a hold that is really a reset, and the two are the same contact until
+  the 2 s ignore window has passed. A contact that ends inside the window is a tap and is reported for
+  `BLE_RESET_TAP_REPORT_MS` (250 ms) after its lift; a contact that reaches the window is a reset hold
+  and is never reported. Tap latency is therefore up to 2 s, and only for taps.
+
+Rig state on 2026-11-05 (`firmware.bin` sha256 `5330c322b4df218ee05c4de41c6413437a249654779194206a65db34ac634afc`,
+697,440 B; written at `0x70000`, read back 697,440 B, `cmp` identical; the device then reports
+`26.11.05 iteration 4`). Measured: a write to `BLE Settings` from the BONDED BLE link is accepted
+(`flags 0x0E`, payload echoes the request; it was `FLAG_FAIL` before this build), the block still reads
+`Enabled 1`, `Window 0`, 2 bonds, and no reset fired while the rig sat idle. **The two physical passes
+(5 s hold -> restart with bonds kept and a 300 s window; 10 s hold -> bonds cleared, five blinks, LED
+back to the notification driver) were NOT run: they need a hand shorting GPIO8 to ground for 5 s and
+10 s, and there is no actuator for that pin on the rig.**
