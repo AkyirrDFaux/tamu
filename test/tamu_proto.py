@@ -281,6 +281,11 @@ class BleLink:
         self.address = address
         self.rx = bytearray()        # unwrapped packet-stream bytes
         self._buf = bytearray()      # partial length-prefixed transfer
+        # `rx` is appended by the asyncio thread (`_on_notify`) and drained by the caller's
+        # thread (`read`). Copy-then-clear is not atomic, so a notification that lands between
+        # the two used to be lost - measured as a few missing fragments with a resync burst when
+        # a burst of queued notifications arrives at once (a stalled consumer's resume).
+        self._rx_lock = threading.Lock()
         self._error = None
         self._ready = threading.Event()
         self._loop = asyncio.new_event_loop()
@@ -341,8 +346,10 @@ class BleLink:
             n = self._buf[0] | (self._buf[1] << 8)
             if len(self._buf) < 2 + n:
                 break
-            self.rx += bytes(self._buf[2:2 + n])
+            chunk = bytes(self._buf[2:2 + n])
             del self._buf[:2 + n]
+            with self._rx_lock:
+                self.rx += chunk
 
     # --- the synchronous side ---
     def write_stream(self, stream):
@@ -368,8 +375,9 @@ class BleLink:
         deadline = time.time() + timeout
         while time.time() < deadline and not self.rx:
             time.sleep(0.002)
-        out = bytes(self.rx)
-        self.rx.clear()
+        with self._rx_lock:
+            out = bytes(self.rx)
+            self.rx.clear()
         return out
 
     def close(self):
