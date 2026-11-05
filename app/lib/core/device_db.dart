@@ -10,9 +10,11 @@ import 'package:flutter/foundation.dart';
 import 'app_active.dart';
 import 'connection.dart';
 import 'device_identity.dart';
+import 'diagnostics.dart';
 import 'notifications.dart';
 import 'protocol.dart';
 import 'register_client.dart';
+import 'request_channel.dart';
 import 'service_request.dart';
 import 'sndb.dart' as sndb;
 import 'types.dart';
@@ -56,14 +58,58 @@ class DeviceEntry {
   /// The name shown in the UI (the reported System Name, with a per-id fallback).
   String get displayName => name;
 
+  /// How many replies in a row this device failed to give: a lost frame, a refused ping, or a
+  /// reply that arrived with a fragment hole or without its STOP frame.
+  ///
+  /// Cleared by any whole answer. Only [deviceMissThreshold] misses in a row make a known node
+  /// read stale, so one lost frame cannot demote a device that is on the bus and answering.
+  int consecutiveMisses = 0;
+
   /// Marks a device unreachable this sweep.
   bool stale = false;
 }
+
+/// How many consecutive missed replies a KNOWN device may have before it reads as stale.
+///
+/// One lost frame must never demote a live node: on this rig a few percent of one-shot reads are
+/// still lost while the deployed scenario keeps the RS485 bus busy with subscription traffic
+/// (2026-11-05), and the owner's report was exactly that - a DAS dropped out of the list for a
+/// moment while its subscriptions and buttons kept working, because it had never been gone.
+/// A sweep therefore re-sends a ping that did not come back whole ([devicePingAttempts] sends),
+/// and only [deviceMissThreshold] unanswered sends in a row mark the node stale. Any whole answer
+/// clears the count.
+const int deviceMissThreshold = 3;
+
+/// The pause before each ping re-send; [devicePingAttempts] - 1 entries.
+///
+/// The roster read's own backoff (`sndb.sndbReadRetryBackoff`), so discovery re-tries a missed
+/// reply on one schedule rather than two: a ping and a roster fragment fail for the same reason.
+const List<Duration> devicePingBackoff = [
+  Duration(milliseconds: 200),
+  Duration(milliseconds: 600),
+];
+
+/// Sends one known device's ping per sweep: the first, plus one re-send per
+/// [devicePingBackoff] entry. A device that answers costs ONE send, so a healthy sweep is exactly
+/// as fast as before; only a device that missed pays for the re-sends, inside the same sweep.
+const int devicePingAttempts = 3;
 
 class DeviceDatabase extends ChangeNotifier {
   DeviceDatabase._();
 
   static final DeviceDatabase instance = DeviceDatabase._();
+
+  /// A database that is not the app's singleton, so a test can drive a whole sweep through a
+  /// fake channel without touching the app's state.
+  @visibleForTesting
+  factory DeviceDatabase.forTest() => DeviceDatabase._();
+
+  /// The link gate a sweep checks, when a test drives one without a radio or a serial port.
+  /// Null (the app's case) means "ask the connection".
+  @visibleForTesting
+  bool? linkIsUpOverride;
+
+  bool get _linkIsUp => linkIsUpOverride ?? _link.isConnected;
 
   final Map<int, DeviceEntry> _devices = {};
   // One Register client per target, reused across sweeps (no per-read allocation).
@@ -122,7 +168,7 @@ class DeviceDatabase extends ChangeNotifier {
 
   /// Refreshes one device's identity fields into the database via Register System block.
   Future<DeviceEntry?> refreshDevice(int id) async {
-    if (!_link.isConnected) return null;
+    if (!_linkIsUp) return null;
 
     final entry = _devices.putIfAbsent(id, () => DeviceEntry(id: id));
 
@@ -137,6 +183,7 @@ class DeviceDatabase extends ChangeNotifier {
       return null;
     }
     entry.stale = false;
+    entry.consecutiveMisses = 0;
     entry.lastSeen = DateTime.now();
     entry.serialNumber = identity.serial;
     entry.type = identity.type;
@@ -260,7 +307,7 @@ class DeviceDatabase extends ChangeNotifier {
   Future<void>? _refreshInFlight;
 
   Future<void> refreshNetwork() async {
-    if (!_link.isConnected) return;
+    if (!_linkIsUp) return;
     // Coalesce concurrent refreshes: `connectTo` kicks one off and page code may
     // trigger another while it is still running. Returning the in-flight future
     // means callers actually wait for the full refresh instead of racing ahead
@@ -290,9 +337,10 @@ class DeviceDatabase extends ChangeNotifier {
         .toSet();
 
     try {
-      for (final device in _devices.values) {
-        device.stale = true;
-      }
+      // No blanket "everything is stale until it answers" here: a known node's state is the
+      // sweep's own verdict (see [_pingDevice] and [deviceMissThreshold]), and a device the
+      // roster no longer names is marked below. Pre-marking stale is what made one lost ping
+      // render as a node that had vanished.
 
       // The core's identity and the SNDB roster are independent requests, so they go out
       // together: the roster read alone costs ~315 ms on the rig, which used to be spent after
@@ -315,6 +363,11 @@ class DeviceDatabase extends ChangeNotifier {
         for (final e in parsed)
           if (e.id != 0) e.id,
       };
+      // A device the roster no longer names is gone from the registry, not merely quiet: a
+      // whole roster read is the one place an absence is real, so it reads stale at once.
+      for (final entry in _devices.values) {
+        if (!ids.contains(entry.id)) entry.stale = true;
+      }
       // Every reachable id is refreshed beside the others, not one after another: a device
       // that is already known costs one ping, an unknown one its whole identity, and either
       // way the round trips of one device overlap the next device's.
@@ -325,18 +378,7 @@ class DeviceDatabase extends ChangeNotifier {
             if (known == null || known.serialNumber == null) {
               await refreshDevice(id);
             } else {
-              // Ping every known id: a device still present in the SNDB but offline must
-              // fall through to the stale/lost notification, not be marked fresh.
-              final ping = await _request(
-                id,
-                ServiceType.device,
-                1,
-                timeout: const Duration(milliseconds: 800),
-              );
-              if (ping != null) {
-                known.stale = false;
-                known.lastSeen = DateTime.now();
-              }
+              await _pingKnownDevice(known);
             }
           }(),
       ]);
@@ -364,6 +406,88 @@ class DeviceDatabase extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  /// Records one whole answer: the node is present and its miss count starts over.
+  void _markAnswered(DeviceEntry entry) {
+    entry.consecutiveMisses = 0;
+    entry.stale = false;
+    entry.lastSeen = DateTime.now();
+  }
+
+  /// Records one missed reply; the node reads stale only once [deviceMissThreshold] run together.
+  void _markMissed(DeviceEntry entry) {
+    entry.consecutiveMisses++;
+    if (entry.consecutiveMisses >= deviceMissThreshold) entry.stale = true;
+  }
+
+  /// One known device's ping for this sweep, re-sent until a whole reply arrives.
+  ///
+  /// A refused reply (FAIL), or one that lost a fragment or stopped before its STOP frame, is NOT
+  /// an answer: `PacketResponse.gap` is the same test `sndb.readSndbRoster` applies to the roster,
+  /// so discovery judges a truncated reply one way rather than two. Every lost reply is one
+  /// consecutive miss and every whole answer clears the count ([_markAnswered]), so a single lost
+  /// frame leaves the node PRESENT while a device that is really gone still reaches
+  /// [deviceMissThreshold] inside this same sweep - the stale bound stays one refresh, and a
+  /// sweep in which nothing is lost still costs one send per device.
+  Future<void> _pingKnownDevice(DeviceEntry entry) async {
+    final id = entry.id;
+    for (var attempt = 1; attempt <= devicePingAttempts; attempt++) {
+      final reply = await _pingReply(id);
+      if (reply != null && !reply.fail && reply.gap == null) {
+        _markAnswered(entry);
+        return;
+      }
+      final why = reply == null
+          ? 'no reply'
+          : reply.fail
+          ? 'the device refused the ping (FAIL)'
+          : reply.gap!.message;
+      _markMissed(entry);
+      AppDiagnostics.log(
+        'db',
+        'dev ${idToString(id)} ping $attempt/$devicePingAttempts lost - $why '
+            '(miss ${entry.consecutiveMisses}/$deviceMissThreshold)',
+      );
+      if (attempt < devicePingAttempts) {
+        await Future<void>.delayed(devicePingBackoff[attempt - 1]);
+      }
+    }
+  }
+
+  /// Device CID 1 (Ping) through whichever request the channel offers.
+  ///
+  /// The app's connection implements [TolerantRequestChannel], which is what lets a reply that
+  /// lost a fragment arrive at all; the caller then rejects it by its [PacketResponse.gap]
+  /// instead of reading a prefix as an answer. Any other channel gets the plain request.
+  Future<PacketResponse?> _pingReply(int id) async {
+    final channel = requestChannel;
+    if (channel == null || !channel.isConnected) return null;
+    try {
+      if (channel is TolerantRequestChannel) {
+        return await channel.requestTolerant(
+          id,
+          ServiceType.device,
+          1,
+          timeout: const Duration(milliseconds: 800),
+        );
+      }
+      final payload = await channel.request(
+        id,
+        ServiceType.device,
+        1,
+        timeout: const Duration(milliseconds: 800),
+      );
+      return PacketResponse(payload: payload, success: true, fail: false);
+    } catch (error) {
+      AppDiagnostics.log('db', 'dev ${idToString(id)} ping failed: $error');
+      return null;
+    }
+  }
+
+  /// Plants a known device (one with a serial), so a test can drive the ping branch of a sweep
+  /// without a bus.
+  @visibleForTesting
+  void seedDeviceForTest(DeviceEntry entry) => _devices[entry.id] = entry;
 
   /// SNDB Write per docs 00.12
   Future<bool> sndbWrite(List<int> sn, int id) => sndb.sndbWrite(sn, id);
