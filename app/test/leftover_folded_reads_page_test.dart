@@ -401,7 +401,11 @@ void main() {
           theme: buildTheme(),
           // The app's own chrome: a page's notice is drawn by the window's strip.
           builder: noticeHostBuilder,
-          home: const ScriptsPage(deviceId: 1, deviceName: 'Core'),
+          home: ScriptsPage(
+            deviceId: 1,
+            deviceName: 'Core',
+            isConnected: () => true,
+          ),
         ),
       );
       await tester.pump(); // initState's Loaded read (the slot map)

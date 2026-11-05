@@ -382,7 +382,9 @@ void main() {
       installRequestChannel(bus);
       addTearDown(() => installRequestChannel(null));
       await tester.pumpWidget(
-        _app(const ScriptsPage(deviceId: 1, deviceName: 'Core')),
+        _app(
+          ScriptsPage(deviceId: 1, deviceName: 'Core', isConnected: () => true),
+        ),
       );
       await tester.pump();
       await _drain(tester, steps: 4);

@@ -5,6 +5,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../core/connection.dart';
 import '../core/script_client.dart';
 import '../core/script_fault.dart';
 import '../core/script_file.dart';
@@ -54,10 +55,26 @@ class ScriptsPage extends StatefulWidget {
   final int deviceId;
   final String deviceName;
 
+  /// Whether the link is up, as the page's own guard. Overridable so a widget test can drive the
+  /// page without the app's connection singleton (the same seam [RegisterPage] and [StoragePage]
+  /// carry). A page with no link sends nothing: the answer could only be "Not connected", and
+  /// saying "the device did not answer" for that is a failure shown as device state.
+  final bool Function()? isConnected;
+
+  /// Notifies when the link comes up or goes away; defaults to the app's connection manager.
+  ///
+  /// It is what makes the first load survive a Bluetooth session: a BLE connect takes seconds and
+  /// a BLE link drops, so the page is often opened with no link. It says it is waiting for the
+  /// link and loads by itself when the link arrives (Akyirr, 2026-11-05: "the script page error
+  /// was about initial load failing").
+  final Listenable? linkChanges;
+
   const ScriptsPage({
     super.key,
     required this.deviceId,
     required this.deviceName,
+    this.isConnected,
+    this.linkChanges,
   });
 
   @override
@@ -68,6 +85,26 @@ class _ScriptsPageState extends State<ScriptsPage>
     with AutoRefreshMixin<ScriptsPage> {
   late final ScriptClient _client = ScriptClient(deviceId: widget.deviceId);
   late final StorageClient _storage = StorageClient(deviceId: widget.deviceId);
+
+  /// The link as the last build saw it, so a manager notification (which fires for every scan
+  /// result and connect step) is only acted on when the link actually changed.
+  late bool _linkUp = _connected;
+
+  /// A reload asked for while a load was still in flight, run when that load ends: a request
+  /// pending on a link that went away has already failed, so the reload must not be swallowed by
+  /// the [_refreshing] guard.
+  bool _reloadWhenIdle = false;
+
+  bool get _connected => widget.isConnected?.call() ?? _appLink!.isConnected;
+
+  /// The app's connection, or null when the page was given its own link state.
+  ///
+  /// A test that supplies [ScriptsPage.isConnected] also keeps its fake request channel: touching
+  /// the singleton would install the real connection over it.
+  ConnectionManager? get _appLink =>
+      widget.isConnected == null ? ConnectionManager.instance : null;
+
+  Listenable? get _link => widget.linkChanges ?? _appLink;
 
   bool _showLoaded = true;
   bool _refreshing = false;
@@ -91,13 +128,36 @@ class _ScriptsPageState extends State<ScriptsPage>
   @override
   void initState() {
     super.initState();
+    _link?.addListener(_onLinkChanged);
     _refresh();
   }
 
   @override
   void dispose() {
+    _link?.removeListener(_onLinkChanged);
     _wait.dispose();
     super.dispose();
+  }
+
+  /// The link came up or went away.
+  ///
+  /// A page that could not read because there was no link loads as soon as there is one: the
+  /// first load over Bluetooth would otherwise sit on "the device did not answer" for a link that
+  /// was merely still coming up (or coming back).
+  void _onLinkChanged() {
+    if (!mounted) return;
+    final up = _connected;
+    if (up == _linkUp) return;
+    _linkUp = up;
+    if (up) {
+      if (_refreshing) {
+        _reloadWhenIdle = true;
+      } else {
+        _refresh();
+      }
+    } else {
+      setState(() {});
+    }
   }
 
   @override
@@ -108,6 +168,18 @@ class _ScriptsPageState extends State<ScriptsPage>
 
   Future<void> _refresh() async {
     if (_refreshing) return;
+    // Nothing is sent with no link. The request layer would answer "Not connected" for every
+    // read, and the page would report the device as silent - the initial-load error this page
+    // used to raise whenever it was opened before the link was up (Akyirr, 2026-11-05). It waits
+    // for the link instead, and [_onLinkChanged] loads when it arrives.
+    if (!_linkUp) {
+      setState(() {
+        _error = null;
+        _loaded = const [];
+        _table = null;
+      });
+      return;
+    }
     setState(() {
       _refreshing = true;
       _error = null;
@@ -128,6 +200,10 @@ class _ScriptsPageState extends State<ScriptsPage>
     } finally {
       _wait.end();
       if (mounted) setState(() => _refreshing = false);
+      if (_reloadWhenIdle) {
+        _reloadWhenIdle = false;
+        _refresh();
+      }
     }
   }
 
@@ -158,6 +234,16 @@ class _ScriptsPageState extends State<ScriptsPage>
     final probed = await _probeLoaded();
     if (!mounted) return;
     if (probed == null) {
+      // The link going away mid-read is not a device that stayed silent: the page waits for the
+      // link again (the listener reloads) instead of reporting the device as unanswering.
+      if (!_connected) {
+        _linkUp = false;
+        setState(() {
+          _loaded = const [];
+          _error = null;
+        });
+        return;
+      }
       setState(() {
         _loaded = const [];
         _error =
@@ -429,10 +515,13 @@ class _ScriptsPageState extends State<ScriptsPage>
               children: [
                 // A refresh keeps what is on screen and puts the wait above it; the panel inside
                 // the view is for the first load, when there is nothing to keep.
-                if (_showLoaded ? _loaded.isNotEmpty : _table != null)
+                if (_linkUp &&
+                    (_showLoaded ? _loaded.isNotEmpty : _table != null))
                   WaitView(controller: _wait, shape: WaitShape.banner),
                 Expanded(
-                  child: _showLoaded ? _buildLoaded() : _buildAvailable(),
+                  child: !_linkUp
+                      ? _buildWaitingForLink()
+                      : (_showLoaded ? _buildLoaded() : _buildAvailable()),
                 ),
               ],
             ),
@@ -441,6 +530,17 @@ class _ScriptsPageState extends State<ScriptsPage>
       ),
     );
   }
+
+  /// No link, so nothing was asked: a wait that names the link, with its own way out, and never an
+  /// error about a device that was not reached. It clears itself when the link comes up.
+  Widget _buildWaitingForLink() => StateMessage.loading(
+    message: 'No link to the device',
+    details:
+        'The scripts are read as soon as the link is up; nothing has been '
+        'asked yet.',
+    progress: const WaitProgress('Waiting for the link'),
+    action: FilledButton(onPressed: _refresh, child: const Text('Try again')),
+  );
 
   Widget _buildLoaded() {
     // A failure is not an empty list: the slot map read (or a slot's file read) failing says so

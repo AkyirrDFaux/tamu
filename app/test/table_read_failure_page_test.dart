@@ -195,7 +195,11 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildTheme(),
-        home: const ScriptsPage(deviceId: 1, deviceName: 'Core'),
+        home: ScriptsPage(
+          deviceId: 1,
+          deviceName: 'Core',
+          isConnected: () => true,
+        ),
       ),
     );
     await tester

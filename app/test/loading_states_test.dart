@@ -530,7 +530,9 @@ void main() {
       addTearDown(() => installRequestChannel(null));
 
       await tester.pumpWidget(
-        _app(const ScriptsPage(deviceId: 1, deviceName: 'Core')),
+        _app(
+          ScriptsPage(deviceId: 1, deviceName: 'Core', isConnected: () => true),
+        ),
       );
       await tester.pump();
 
@@ -553,7 +555,13 @@ void main() {
         addTearDown(() => installRequestChannel(null));
 
         await tester.pumpWidget(
-          _app(const ScriptsPage(deviceId: 1, deviceName: 'Core')),
+          _app(
+            ScriptsPage(
+              deviceId: 1,
+              deviceName: 'Core',
+              isConnected: () => true,
+            ),
+          ),
         );
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 50));
