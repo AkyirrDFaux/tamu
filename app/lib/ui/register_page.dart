@@ -21,11 +21,13 @@ import '../core/types.dart';
 import '../core/script_client.dart';
 import 'dialogs.dart';
 import 'formatters.dart';
+import 'loading.dart';
 import 'register_backup_view.dart';
 import 'theme.dart';
 import 'value_editor.dart' show showValueEditor;
 import 'system_block_view.dart';
 import 'viewer_kit.dart';
+import 'wait.dart';
 import 'widgets.dart';
 
 part 'register_page_tiles.dart';
@@ -107,6 +109,16 @@ class _RegisterPageState extends State<RegisterPage>
   /// Re-read with the topology so the app never mirrors the firmware's compile-time table.
   StaticFieldLayout _staticFields = const {};
 
+  /// What the page is reading: the register tree (a panel before the first tree, a band over it
+  /// afterwards) and the stored backup (its files, one at a time, with their fragments).
+  final WaitController _wait = WaitController();
+
+  @override
+  void dispose() {
+    _wait.dispose();
+    super.dispose();
+  }
+
   /// Reads the static field layout once per topology generation.
   Future<StaticFieldLayout> _ensureStaticFields() async {
     if (_staticFields.isEmpty) {
@@ -187,6 +199,14 @@ class _RegisterPageState extends State<RegisterPage>
   Future<void> _refreshAll() async {
     if (_refreshing) return;
     _refreshing = true;
+    // The band is for a wait with nothing to show yet. The 5.5 s topology tick re-reads on its own
+    // schedule, and a bar flashing on every tick would be noise, so only a first read (or a
+    // Backup view with no decoded backup) opens a wait here.
+    if (_backupMode ? _backup == null : _blockMetas == null) {
+      _wait.begin(
+        _backupMode ? 'Reading the stored backup' : 'Reading the register tree',
+      );
+    }
     try {
       if (!_connected) return;
       if (_backupMode) {
@@ -247,6 +267,7 @@ class _RegisterPageState extends State<RegisterPage>
       await _loadVisibleFields();
     } finally {
       _refreshing = false;
+      _wait.end();
     }
   }
 
@@ -256,10 +277,23 @@ class _RegisterPageState extends State<RegisterPage>
     }
     final blocks = _blockMetas;
     if (blocks == null) return;
+    final open = [
+      for (var i = 0; i < blocks.length; i++)
+        if (_expanded.contains(i) && blocks[i] != null) i,
+    ];
+    var done = 0;
     for (var i = 0; i < blocks.length; i++) {
       if (!_expanded.contains(i)) continue;
       final block = blocks[i];
       if (block != null) {
+        done++;
+        // Items of N over the expanded blocks, which is what a refresh of the visible fields
+        // actually costs: each one walks its fields and their keys.
+        _wait.step(
+          label: 'Reading ${block.name}',
+          completed: done,
+          total: open.length,
+        );
         await _loadBlockFields(
           block.type,
           block.inst,
@@ -303,9 +337,13 @@ class _RegisterPageState extends State<RegisterPage>
       _backupBusy = true;
       _backupError = null;
     });
+    _wait.begin('Reading the stored backup');
     try {
       final store = StorageClient(deviceId: widget.deviceId);
-      final table = await store.readFileTableResult();
+      final table = await store.readFileTableResult(
+        onProgress: (received, total) =>
+            _wait.step(note: 'file table: fragment $received of $total'),
+      );
       if (!table.ok && !table.absent) {
         if (!mounted) return;
         setState(
@@ -318,6 +356,13 @@ class _RegisterPageState extends State<RegisterPage>
       final tables = <int, List<int>>{};
       final values = <int, List<int>>{};
       final failures = <String>[];
+      final wanted = table.recordsOrEmpty.where((f) {
+        final name = normalizeFileName(f.name).toUpperCase();
+        return name == '.SV' ||
+            name.startsWith('.DT_') ||
+            name.startsWith('.DV_');
+      }).toList();
+      var fileIndex = 0;
       for (final f in table.recordsOrEmpty) {
         final name = normalizeFileName(f.name).toUpperCase();
         final isSv = name == '.SV';
@@ -329,7 +374,19 @@ class _RegisterPageState extends State<RegisterPage>
           if (parsed == null) continue;
           slot = parsed;
         }
-        final read = await store.readFileWhole(f.name, size: f.size);
+        fileIndex++;
+        // Items of N over the backup files, with the file's own fragment count underneath.
+        _wait.step(
+          label: 'Reading $name (${formatFileSize(f.size)})',
+          completed: fileIndex,
+          total: wanted.length,
+        );
+        final read = await store.readFileWhole(
+          f.name,
+          size: f.size,
+          onProgress: (received, total) =>
+              _wait.step(note: '$name: fragment $received of $total'),
+        );
         if (read.absent) {
           // The record vanished between the table read and the read itself: that step is not
           // stored, which is a device state, not a failure.
@@ -891,7 +948,10 @@ class _RegisterPageState extends State<RegisterPage>
     final blocks = _blockMetas;
     if (blocks == null) {
       final error = _error;
-      if (error == null) return const StateMessage.loading();
+      if (error == null) {
+        // The first topology read: the wait names the tree read instead of a bare spinner.
+        return WaitView(controller: _wait, shape: WaitShape.panel);
+      }
       // A block list that could not be read is an error with the reason and the retry, never an
       // empty tree ("No blocks found" would read as a device with nothing in it).
       return StateMessage.error(
@@ -911,8 +971,25 @@ class _RegisterPageState extends State<RegisterPage>
       }
       return const StateMessage.empty(message: 'No blocks found');
     }
-    if (_backupMode) return _backupBody(blocks);
-    return _liveBody(blocks);
+    if (_backupMode) {
+      // A backup still being read gets the same kind of panel as the tree, naming the file it is
+      // on and the fragments of that file.
+      final body = _backupBody(blocks);
+      return _wrapWithWait(body, banner: _backup != null);
+    }
+    return _wrapWithWait(_liveBody(blocks), banner: true);
+  }
+
+  /// Puts the wait above content that is already on screen (a band) - or leaves the panel inside
+  /// the view alone when there is nothing to keep.
+  Widget _wrapWithWait(Widget body, {required bool banner}) {
+    if (!banner) return body;
+    return Column(
+      children: [
+        WaitView(controller: _wait, shape: WaitShape.banner),
+        Expanded(child: body),
+      ],
+    );
   }
 
   /// The Backup view: the stored values, read-only, with a per-field recall.
@@ -933,7 +1010,10 @@ class _RegisterPageState extends State<RegisterPage>
       );
     }
     final backup = _backup;
-    if (backup == null) return const StateMessage.loading();
+    if (backup == null) {
+      // The stored backup is still being read: name the file and count its fragments.
+      return WaitView(controller: _wait, shape: WaitShape.panel);
+    }
     return RegisterBackupView(
       backup: backup,
       blocks: blocks,

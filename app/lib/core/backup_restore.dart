@@ -828,7 +828,59 @@ class RestorePlan {
     // A row the archive carries for the device it describes is not a row at all: it is dropped
     // before anything is placed or classified (see [_dropSelfSndb]).
     _dropSelfSndb();
-    for (final item in items) {
+    _resolveItems(items);
+    // The rows are placed; what they would DO is a comparison against the target, and it belongs
+    // to the same pass (see [classify]).
+    classify();
+  }
+
+  /// How many rows one slice of [resolveChunked] costs. Measured on this host's debug VM: a
+  /// 12,288-row plan resolves + classifies in ~87 ms as one synchronous block
+  /// (`test/long_wait_hitch_test.dart`), so a slice of 256 rows keeps a single hitch inside one
+  /// frame instead of dropping four.
+  static const int resolveSlice = 256;
+
+  /// [resolve], cut into slices with a yield between them.
+  ///
+  /// A restore plan is built while its page is on screen, and the classification of a big archive
+  /// (a display with a running script carries thousands of rows) is far past one frame of work.
+  /// Yielding between slices is what turns that freeze into a bar that moves: the caller shows
+  /// [onProgress] as *items scanned of N*.
+  Future<void> resolveChunked({RestoreProgressCallback? onProgress}) async {
+    _dropSelfSndb();
+    final total = items.length;
+    for (var start = 0; start < total; start += resolveSlice) {
+      final end = start + resolveSlice < total ? start + resolveSlice : total;
+      _resolveItems(items.sublist(start, end));
+      onProgress?.call(
+        RestoreProgress(
+          phase: 'resolve',
+          label: 'Comparing against the device',
+          completed: end,
+          total: total,
+        ),
+      );
+      await _yieldFrame();
+    }
+    for (var start = 0; start < total; start += resolveSlice) {
+      final end = start + resolveSlice < total ? start + resolveSlice : total;
+      _classifyItems(items.sublist(start, end));
+      onProgress?.call(
+        RestoreProgress(
+          phase: 'classify',
+          label: 'Classifying changes',
+          completed: end,
+          total: total,
+        ),
+      );
+      await _yieldFrame();
+    }
+    _buildRemovals();
+  }
+
+  /// Places a slice of rows against their targets (the body of [resolve]'s loop).
+  void _resolveItems(Iterable<RestoreItem> slice) {
+    for (final item in slice) {
       item.targetDevice = deviceTargets[item.device.id];
       item.targetBlock = null;
       item.targetEntry = null;
@@ -903,9 +955,6 @@ class RestorePlan {
           break;
       }
     }
-    // The rows are placed; what they would DO is a comparison against the target, and it belongs
-    // to the same pass (see [classify]).
-    classify();
   }
 
   /// Drops the archive's SNDB row(s) for the device it describes, and for the device it is being
@@ -954,12 +1003,17 @@ class RestorePlan {
   /// Called from [resolve], so a device or block remap re-classifies without touching the bus:
   /// the live snapshot and the inventories are the plan's own facts.
   void classify() {
-    for (final item in items) {
+    _classifyItems(items);
+    _buildRemovals();
+  }
+
+  /// Classifies a slice of rows against their targets (the body of [classify]).
+  void _classifyItems(Iterable<RestoreItem> slice) {
+    for (final item in slice) {
       item.diff = null;
       item.diffNote = null;
       _classifyItem(item);
     }
-    _buildRemovals();
   }
 
   /// This plan seen through [filter]: the rows it shows and the counts its footer prints.
@@ -1640,10 +1694,20 @@ Future<List<int>> _networkNodeIds() async {
 /// being dropped from `live`: dropping it would make a live device look like one that is not on
 /// the rig at all.
 Future<({List<LiveDevice> live, Map<int, UnreadNode> unread})>
-_readLiveDevices() async {
+_readLiveDevices({RestoreProgressCallback? onProgress}) async {
   final live = <LiveDevice>[];
   final unread = <int, UnreadNode>{};
-  for (final id in await _networkNodeIds()) {
+  final ids = await _networkNodeIds();
+  for (var i = 0; i < ids.length; i++) {
+    final id = ids[i];
+    onProgress?.call(
+      RestoreProgress(
+        phase: 'scan',
+        label: 'Scanning ${idToString(id)}',
+        completed: i,
+        total: ids.length,
+      ),
+    );
     final read = await readLiveDevice(id);
     final snapshot = read.device;
     if (snapshot != null) {
@@ -1651,6 +1715,14 @@ _readLiveDevices() async {
     } else if (read.unread != null) {
       unread[id] = read.unread!;
     }
+    onProgress?.call(
+      RestoreProgress(
+        phase: 'scan',
+        label: 'Scanning ${idToString(id)}',
+        completed: i + 1,
+        total: ids.length,
+      ),
+    );
   }
   return (live: live, unread: unread);
 }
@@ -1662,14 +1734,22 @@ _readLiveDevices() async {
 /// device, plus one file read per archive file the table names) are what let the plan classify
 /// every row as add / replace / same / delete. A register entry costs nothing extra: the walk
 /// already read its value with its metadata.
-Future<RestorePlan> buildRestorePlan(List<BackupDevice> devices) async {
-  final read = await _readLiveDevices();
-  final inventories = await _readInventories(read.live, devices);
-  return planFromSnapshot(
+Future<RestorePlan> buildRestorePlan(
+  List<BackupDevice> devices, {
+  RestoreProgressCallback? onProgress,
+}) async {
+  final read = await _readLiveDevices(onProgress: onProgress);
+  final inventories = await _readInventories(
+    read.live,
+    devices,
+    onProgress: onProgress,
+  );
+  return planFromSnapshotChunked(
     devices: devices,
     live: read.live,
     unread: read.unread,
     inventories: inventories,
+    onProgress: onProgress,
   );
 }
 
@@ -1685,115 +1765,186 @@ RestorePlan planFromSnapshot({
   Map<int, UnreadNode> unread = const {},
   Map<int, LiveInventory> inventories = const {},
 }) {
+  final targets = _matchTargets(devices, live);
+  final items = <RestoreItem>[];
+  for (final device in devices) {
+    _planDeviceItems(device, items);
+  }
+  final plan = _assemblePlan(
+    devices: devices,
+    live: live,
+    items: items,
+    targets: targets,
+    unread: unread,
+    inventories: inventories,
+  );
+  plan.resolve();
+  _tickRestorable(plan);
+  return plan;
+}
+
+/// [planFromSnapshot], with a bar that moves.
+///
+/// The same plan, built and classified in slices with a frame between them: a big archive's
+/// classification is ~90 ms of pure CPU as one block, which is four dropped frames on the page that
+/// is showing it. [onProgress] is called with *items scanned of N* - the real row count, not an
+/// estimate.
+Future<RestorePlan> planFromSnapshotChunked({
+  required List<BackupDevice> devices,
+  required List<LiveDevice> live,
+  Map<int, UnreadNode> unread = const {},
+  Map<int, LiveInventory> inventories = const {},
+  RestoreProgressCallback? onProgress,
+}) async {
+  final targets = _matchTargets(devices, live);
+  final items = <RestoreItem>[];
+  for (var i = 0; i < devices.length; i++) {
+    _planDeviceItems(devices[i], items);
+    onProgress?.call(
+      RestoreProgress(
+        phase: 'plan',
+        label: 'Planning ${devices[i].name}',
+        completed: i + 1,
+        total: devices.length,
+      ),
+    );
+    await _yieldFrame();
+  }
+  final plan = _assemblePlan(
+    devices: devices,
+    live: live,
+    items: items,
+    targets: targets,
+    unread: unread,
+    inventories: inventories,
+  );
+  await plan.resolveChunked(onProgress: onProgress);
+  _tickRestorable(plan);
+  return plan;
+}
+
+/// The live device each archived device restores onto, by source device id.
+Map<int, LiveDevice> _matchTargets(
+  List<BackupDevice> devices,
+  List<LiveDevice> live,
+) {
   final targets = <int, LiveDevice>{};
   for (final source in devices) {
     final match = matchLiveDevice(source, live);
     if (match != null) targets[source.id] = match;
   }
+  return targets;
+}
 
-  final items = <RestoreItem>[];
-  for (final device in devices) {
-    for (final block in device.blocks) {
-      for (final entry in block.entries) {
-        // A reserved placeholder carries neither a type nor a value, so there is nothing to
-        // write; planning it would report it as an unready item on every restore forever.
-        // A structural row (a dynamic block's non-persistent entry) is planned the same way -
-        // not at all: it carries no value, its only job is the structure that
-        // `prepareDynamicBlocks` rebuilds from these same rows.
-        if (!restoresEntryValue(entry)) continue;
-        items.add(
-          RestoreItem(
-            kind: RestoreKind.entry,
-            device: device,
-            block: block,
-            entry: entry,
-          ),
-        );
-      }
-    }
-    for (final script in device.scripts) {
-      items.add(
-        RestoreItem(kind: RestoreKind.script, device: device, script: script),
-      );
-    }
-    for (final sub in device.requesterSubscriptions) {
+/// One archived device's rows, in the order a restore writes them.
+void _planDeviceItems(BackupDevice device, List<RestoreItem> items) {
+  for (final block in device.blocks) {
+    for (final entry in block.entries) {
+      // A reserved placeholder carries neither a type nor a value, so there is nothing to
+      // write; planning it would report it as an unready item on every restore forever.
+      // A structural row (a dynamic block's non-persistent entry) is planned the same way -
+      // not at all: it carries no value, its only job is the structure that
+      // `prepareDynamicBlocks` rebuilds from these same rows.
+      if (!restoresEntryValue(entry)) continue;
       items.add(
         RestoreItem(
-          kind: RestoreKind.subscription,
+          kind: RestoreKind.entry,
           device: device,
-          subscription: sub,
+          block: block,
+          entry: entry,
         ),
       );
     }
-    // The provider entries the device serves are NOT restored: a provider entry is created by
-    // the requester that owns it, and the restored requester re-registers itself (CID 0x01 Change
-    // on the first tick after it is written, and again at boot), so the node's provider table is
-    // rebuilt by that mechanism. Writing it here as well duplicated the work and its read-back
-    // verification raced with the node's own table churn (B34).
-    for (final sndb in device.sndb) {
+  }
+  for (final script in device.scripts) {
+    items.add(
+      RestoreItem(kind: RestoreKind.script, device: device, script: script),
+    );
+  }
+  for (final sub in device.requesterSubscriptions) {
+    items.add(
+      RestoreItem(
+        kind: RestoreKind.subscription,
+        device: device,
+        subscription: sub,
+      ),
+    );
+  }
+  // The provider entries the device serves are NOT restored: a provider entry is created by
+  // the requester that owns it, and the restored requester re-registers itself (CID 0x01 Change
+  // on the first tick after it is written, and again at boot), so the node's provider table is
+  // rebuilt by that mechanism. Writing it here as well duplicated the work and its read-back
+  // verification raced with the node's own table churn (B34).
+  for (final sndb in device.sndb) {
+    items.add(
+      RestoreItem(kind: RestoreKind.sndb, device: device, sndbEntry: sndb),
+    );
+  }
+  // A layout has a semantic form, so its bytes are rebuilt from the semantic map and written
+  // through the SAME file item the raw path uses: the layout file is written before the block
+  // entries, and the display's LayoutFile entry (an ordinary entry item) is written after it, so
+  // the field's trigger loads the layout as it lands. A layout the rebuild cannot describe is
+  // reported and skipped rather than written as a truncated map; the capture never produces one
+  // (it only stores what the decoder accepted), so this is an edited-archive case.
+  for (final layout in device.layouts) {
+    try {
       items.add(
-        RestoreItem(kind: RestoreKind.sndb, device: device, sndbEntry: sndb),
-      );
-    }
-    // A layout has a semantic form, so its bytes are rebuilt from the semantic map and written
-    // through the SAME file item the raw path uses: the layout file is written before the block
-    // entries, and the display's LayoutFile entry (an ordinary entry item) is written after it, so
-    // the field's trigger loads the layout as it lands. A layout the rebuild cannot describe is
-    // reported and skipped rather than written as a truncated map; the capture never produces one
-    // (it only stores what the decoder accepted), so this is an edited-archive case.
-    for (final layout in device.layouts) {
-      try {
-        items.add(
-          RestoreItem(
-            kind: RestoreKind.file,
-            device: device,
-            file: BackupFile(
-              name: layout.file,
-              kind: 'LED layout',
-              data: base64Encode(layout.toImage()),
-            ),
+        RestoreItem(
+          kind: RestoreKind.file,
+          device: device,
+          file: BackupFile(
+            name: layout.file,
+            kind: 'LED layout',
+            data: base64Encode(layout.toImage()),
           ),
-        );
-      } on FormatException catch (error) {
-        AppDiagnostics.log(
-          'backup',
-          'layout ${layout.file} of ${device.name} cannot be rebuilt: $error',
-        );
-      }
-    }
-    for (final file in device.files) {
-      // A file is skipped only when it has a semantic form: a Script rebuilt from
-      // `RestoreKind.script`, a layout rebuilt from `device.layouts`, or the requester-subscription
-      // table from `RestoreKind.subscription` (the device regenerates its own `.SUBREQ` when it
-      // saves). A Script or layout whose image failed to parse has no semantic form and is written
-      // back from its raw bytes - which is how an archive captured before layouts had a semantic
-      // form still restores its `LAY_1`.
-      if (!restoresAsRawFile(device, file)) continue;
-      items.add(
-        RestoreItem(kind: RestoreKind.file, device: device, file: file),
+        ),
+      );
+    } on FormatException catch (error) {
+      AppDiagnostics.log(
+        'backup',
+        'layout ${layout.file} of ${device.name} cannot be rebuilt: $error',
       );
     }
   }
+  for (final file in device.files) {
+    // A file is skipped only when it has a semantic form: a Script rebuilt from
+    // `RestoreKind.script`, a layout rebuilt from `device.layouts`, or the requester-subscription
+    // table from `RestoreKind.subscription` (the device regenerates its own `.SUBREQ` when it
+    // saves). A Script or layout whose image failed to parse has no semantic form and is written
+    // back from its raw bytes - which is how an archive captured before layouts had a semantic
+    // form still restores its `LAY_1`.
+    if (!restoresAsRawFile(device, file)) continue;
+    items.add(RestoreItem(kind: RestoreKind.file, device: device, file: file));
+  }
+}
 
-  final plan = RestorePlan(
-    devices: devices,
-    liveDevices: live,
-    items: items,
-    deviceTargets: targets,
-    blockTargets: {},
-    unreadDevices: unread,
-    inventories: inventories,
-  );
-  plan.resolve();
-  // Default selection: restorable items - adds, replaces AND deletes, because a restore makes the
-  // device match the archive - while read-only entries and rows that cannot be placed stay
-  // informational. Untouched rows are ticked too: writing an identical value is a no-op, and the
-  // load a script needs to run comes from the bring-up, which only walks the rows this run writes.
-  // What is ticked is therefore unchanged from before the diff view existed.
+/// The plan object itself, before it is resolved against its targets.
+RestorePlan _assemblePlan({
+  required List<BackupDevice> devices,
+  required List<LiveDevice> live,
+  required List<RestoreItem> items,
+  required Map<int, LiveDevice> targets,
+  required Map<int, UnreadNode> unread,
+  required Map<int, LiveInventory> inventories,
+}) => RestorePlan(
+  devices: devices,
+  liveDevices: live,
+  items: items,
+  deviceTargets: targets,
+  blockTargets: {},
+  unreadDevices: unread,
+  inventories: inventories,
+);
+
+/// Default selection: restorable items - adds, replaces AND deletes, because a restore makes the
+/// device match the archive - while read-only entries and rows that cannot be placed stay
+/// informational. Untouched rows are ticked too: writing an identical value is a no-op, and the
+/// load a script needs to run comes from the bring-up, which only walks the rows this run writes.
+/// What is ticked is therefore unchanged from before the diff view existed.
+void _tickRestorable(RestorePlan plan) {
   for (final item in plan.items) {
     item.selected = item.ready;
   }
-  return plan;
 }
 
 /// Reads what each live device holds beyond its block walk, for the plan's diff: its file table
@@ -1808,12 +1959,22 @@ RestorePlan planFromSnapshot({
 /// and the classification says so in the row's note instead of claiming the device is empty.
 Future<Map<int, LiveInventory>> _readInventories(
   List<LiveDevice> live,
-  List<BackupDevice> devices,
-) async {
+  List<BackupDevice> devices, {
+  RestoreProgressCallback? onProgress,
+}) async {
   final sndb = await readSndbEntries();
   final wanted = _filesThePlanWrites(devices);
   final out = <int, LiveInventory>{};
-  for (final device in live) {
+  for (var i = 0; i < live.length; i++) {
+    final device = live[i];
+    onProgress?.call(
+      RestoreProgress(
+        phase: 'inventory',
+        label: 'Reading what ${device.name} holds',
+        completed: i,
+        total: live.length,
+      ),
+    );
     final storage = StorageClient(deviceId: device.id);
     final table = await storage.readFileTable();
     Set<String>? names;
@@ -1855,6 +2016,14 @@ Future<Map<int, LiveInventory>> _readInventories(
       loadedSlots: loaded,
       requesters: requesters,
       sndb: sndb,
+    );
+    onProgress?.call(
+      RestoreProgress(
+        phase: 'inventory',
+        label: 'Reading what ${device.name} holds',
+        completed: i + 1,
+        total: live.length,
+      ),
     );
   }
   return out;
@@ -3916,8 +4085,18 @@ pruneRequesterTable(RestorePlan plan) async {
 /// A run reports each failure as it happens rather than only counting them: a count without a cause
 /// is what Akyirr's card is about, and a truncated list would be the same defect wearing a smaller
 /// number. Nothing is capped, and the successes stay out of the report entirely.
-Future<RestoreReport> applyRestorePlan(RestorePlan plan) async {
+Future<RestoreReport> applyRestorePlan(
+  RestorePlan plan, {
+  RestoreProgressCallback? onProgress,
+  bool Function()? isCancelled,
+}) async {
   // A dynamic block's values can only be written into a block that exists.
+  onProgress?.call(
+    const RestoreProgress(
+      phase: 'structure',
+      label: 'Making the rows the archive needs',
+    ),
+  );
   await prepareDynamicBlocks(plan);
 
   // The rows that are STRUCTURE and never a write (see [structuralSkips]). Collected after the
@@ -3936,6 +4115,10 @@ Future<RestoreReport> applyRestorePlan(RestorePlan plan) async {
   final storage = <int, StorageClient>{};
   final subscriptions = <int, SubscriptionClient>{};
   final sndbWritten = <String>{};
+
+  /// Set when the user stopped the run; [notRun] then counts what was never written.
+  var cancelled = false;
+  var notRun = 0;
   // The devices this run has actually written to. A write sits in RAM until the device is told to
   // save, so the run saves every device it touched at the end (B15).
   final writtenDevices = <int>{};
@@ -4009,7 +4192,24 @@ Future<RestoreReport> applyRestorePlan(RestorePlan plan) async {
   // failure, for a device whose archive names a subscription that does not resolve (the case the
   // previous "never prune" rule guarded against, now reported instead of silently tolerated).
 
-  for (final item in ordered) {
+  for (var index = 0; index < ordered.length; index++) {
+    final item = ordered[index];
+    // The user's stop: a restore writes item by item, so it can always stop between two writes.
+    // What is left is reported (never silently dropped), and the sweeps below are skipped - they
+    // DELETE things the archive does not carry, which is not a decision to make on a partial run.
+    if (isCancelled?.call() ?? false) {
+      cancelled = true;
+      notRun = ordered.length - index;
+      break;
+    }
+    onProgress?.call(
+      RestoreProgress(
+        phase: 'write',
+        label: 'Writing item ${index + 1} of ${ordered.length}',
+        completed: index,
+        total: ordered.length,
+      ),
+    );
     // An unready item is never written, so if it is skipped here it is counted in neither
     // `written` nor `failed` - a caller reading `failed 0` cannot tell it was dropped, which is
     // how a restore reported success while losing entries. Only the by-design read-only skip is
@@ -4344,6 +4544,23 @@ Future<RestoreReport> applyRestorePlan(RestorePlan plan) async {
           failItem(item, 'the file could not be written: $error');
         }
     }
+  }
+  // A stopped run does not go on to the sweeps: pruning deletes rows the archive does not name, and
+  // deciding that on a half-written device is not what "stop" means. What was written is saved -
+  // those bytes sit in RAM, so leaving them unsaved would lose the work the user did allow.
+  if (cancelled) {
+    await _persistWrites(writtenDevices);
+    final stopped = RestoreReport(
+      at: DateTime.now(),
+      written: written,
+      reasons: reasons,
+      cancelled: true,
+      notRun: notRun,
+      skipped: skipped,
+      structure: [...plan.structureRows],
+    );
+    RestoreSession.record(stopped);
+    return stopped;
   }
   // The requester table is part of the snapshot, so it is brought to the archive's before the
   // device is saved: every entry the archive does not name is cancelled through the device's own

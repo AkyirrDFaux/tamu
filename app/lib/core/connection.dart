@@ -192,7 +192,7 @@ class LinkTrouble {
 }
 
 class ConnectionManager extends ChangeNotifier
-    implements TolerantRequestChannel {
+    implements TolerantRequestChannel, ProgressReportingChannel {
   ConnectionManager._({bool installChannel = true}) {
     // The service clients send through the installed channel (`request_channel.dart`), and the
     // app's channel is this connection. Installing it here arms the clients for anything that
@@ -392,6 +392,35 @@ class ConnectionManager extends ChangeNotifier
   final Map<int, Completer<PacketResponse>> _pending = {};
   // Reassembles multi-fragment replies ([FragmentReassembler]).
   final FragmentReassembler _reassembler = FragmentReassembler();
+
+  /// Who each in-flight transaction is talking to, so a fragment arrival can be reported with the
+  /// device/service/CID it belongs to ([streamProgress]).
+  final Map<int, ({int deviceId, ServiceType service, int cid})> _inFlight = {};
+
+  /// Fragment arrivals, for a page that shows *fragments received of expected* on a long read.
+  final StreamController<ReplyStreamProgress> _streamProgress =
+      StreamController<ReplyStreamProgress>.broadcast();
+
+  @override
+  Stream<ReplyStreamProgress> get streamProgress => _streamProgress.stream;
+
+  /// Publishes one fragment arrival for [txId]; a no-op for a single-packet reply (nothing to
+  /// count) or for a transaction the app did not start itself.
+  void _reportStreamProgress(int txId) {
+    final who = _inFlight[txId];
+    final position = _reassembler.progress(txId);
+    if (who == null || position == null || _streamProgress.isClosed) return;
+    _streamProgress.add(
+      ReplyStreamProgress(
+        deviceId: who.deviceId,
+        service: who.service,
+        cid: who.cid,
+        txId: txId,
+        received: position.received,
+        total: position.total,
+      ),
+    );
+  }
 
   /// Requests whose reply must survive a lost fragment or a stream that stops without its STOP
   /// frame (the long file reads - see [RequestChannel.requestTolerant]).
@@ -871,6 +900,7 @@ class ConnectionManager extends ChangeNotifier
     }
     _fragStall.clear();
     _tolerant.clear();
+    _inFlight.clear();
     _reassembler.clear();
     final transport = _transport;
     _transport = null;
@@ -926,6 +956,7 @@ class ConnectionManager extends ChangeNotifier
         case FragmentPending():
           _pending[txId] = completer;
           _armFragmentStall(txId);
+          _reportStreamProgress(txId);
         case FragmentComplete(
           :final payload,
           :final success,
@@ -1089,6 +1120,11 @@ class ConnectionManager extends ChangeNotifier
 
       final completer = Completer<PacketResponse>();
       _pending[txId] = completer;
+      _inFlight[txId] = (
+        deviceId: targetId,
+        service: service,
+        cid: functionCid,
+      );
       _reassembler.begin(txId, tolerant: tolerant);
       if (tolerant) {
         _tolerant.add(txId);
@@ -1115,6 +1151,8 @@ class ConnectionManager extends ChangeNotifier
         _cancelFragmentStall(txId);
         _reassembler.discard(txId);
         rethrow;
+      } finally {
+        _inFlight.remove(txId);
       }
     } finally {
       _requestGate.release();
@@ -1152,6 +1190,7 @@ class ConnectionManager extends ChangeNotifier
     if (attempt != null) _abandonAttempt(attempt, timedOut: false);
     stopScan();
     _detach();
+    _streamProgress.close();
     super.dispose();
   }
 }

@@ -9,10 +9,12 @@ import '../core/script_client.dart';
 import '../core/script_fault.dart';
 import '../core/script_file.dart';
 import '../core/storage_client.dart';
+import 'loading.dart';
 import 'script_editor_page.dart';
 import 'script_create_dialog.dart';
 import 'script_widgets.dart';
 import 'theme.dart';
+import 'wait.dart';
 import 'widgets.dart';
 
 class _LoadedScript {
@@ -81,10 +83,20 @@ class _ScriptsPageState extends State<ScriptsPage>
   FileTableRead? _table;
   int _revision = 0;
 
+  /// What the page is reading, named and counted: the slot map, then one entry per loaded slot
+  /// (with the file read's fragment count under it), or the stored table's fragments.
+  final WaitController _wait = WaitController();
+
   @override
   void initState() {
     super.initState();
     _refresh();
+  }
+
+  @override
+  void dispose() {
+    _wait.dispose();
+    super.dispose();
   }
 
   @override
@@ -99,6 +111,11 @@ class _ScriptsPageState extends State<ScriptsPage>
       _refreshing = true;
       _error = null;
     });
+    _wait.begin(
+      _showLoaded
+          ? 'Reading the loaded script list'
+          : 'Reading the stored scripts',
+    );
     try {
       if (_showLoaded) {
         await _loadLoaded();
@@ -108,6 +125,7 @@ class _ScriptsPageState extends State<ScriptsPage>
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     } finally {
+      _wait.end();
       if (mounted) setState(() => _refreshing = false);
     }
   }
@@ -148,7 +166,16 @@ class _ScriptsPageState extends State<ScriptsPage>
       return;
     }
     final list = <_LoadedScript>[];
+    var index = 0;
     for (final p in probed) {
+      index++;
+      // Items of N: the whole loaded list is one slot at a time, and the file read inside each
+      // one reports its own fragments underneath.
+      _wait.step(
+        label: 'Reading ${scriptFileName(p.fileId)} (slot ${p.slot})',
+        completed: index,
+        total: probed.length,
+      );
       final report = await _client.readState(p.slot);
       // The input UI specifications and function name live in the script file.
       var specs = const <ScriptInputSpec>[];
@@ -159,7 +186,11 @@ class _ScriptsPageState extends State<ScriptsPage>
       // The same tolerant whole-file reader the Storage page uses: whole bytes, an absent file,
       // or a failed/partial read. A file that could not be read is said out loud on the row
       // instead of rendering as "this script has no inputs".
-      final read = await _storage.readFileWhole(scriptFileName(p.fileId));
+      final read = await _storage.readFileWhole(
+        scriptFileName(p.fileId),
+        onProgress: (received, total) =>
+            _wait.step(note: 'fragment $received of $total'),
+      );
       if (read.ok) {
         try {
           final parsed = ScriptFileData.parse(read.bytes!);
@@ -208,8 +239,12 @@ class _ScriptsPageState extends State<ScriptsPage>
 
   Future<void> _loadAvailable() async {
     // The ONE shared whole-table reader (StorageClient.readFileTableResult): a failed read comes
-    // back with its reason instead of as a list, and an absent table is flagged as such.
-    final table = await _storage.readFileTableResult();
+    // back with its reason instead of as a list, and an absent table is flagged as such. Its
+    // fragment count is what the page shows while the 16 kB table streams in.
+    final table = await _storage.readFileTableResult(
+      onProgress: (received, total) =>
+          _wait.step(note: 'fragment $received of $total'),
+    );
     if (!mounted) return;
     setState(() {
       _table = table;
@@ -282,7 +317,12 @@ class _ScriptsPageState extends State<ScriptsPage>
       showSnack(context, 'No free script slot');
       return;
     }
-    final loaded = await _client.load(id, free);
+    final loaded = (await runBehindWait<bool>(
+      context,
+      _wait,
+      label: 'Loading $name into slot $free',
+      task: () => _client.load(id, free),
+    )).value;
     if (!mounted) return;
     showSnack(context, loaded ? 'Loaded $name into slot $free' : 'Load failed');
     await _loadLoaded();
@@ -385,7 +425,19 @@ class _ScriptsPageState extends State<ScriptsPage>
               onSelectionChanged: (s) => _setMode(s.first),
             ),
           ),
-          Expanded(child: _showLoaded ? _buildLoaded() : _buildAvailable()),
+          Expanded(
+            child: Column(
+              children: [
+                // A refresh keeps what is on screen and puts the wait above it; the panel inside
+                // the view is for the first load, when there is nothing to keep.
+                if (_showLoaded ? _loaded.isNotEmpty : _table != null)
+                  WaitView(controller: _wait, shape: WaitShape.banner),
+                Expanded(
+                  child: _showLoaded ? _buildLoaded() : _buildAvailable(),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -406,6 +458,11 @@ class _ScriptsPageState extends State<ScriptsPage>
       );
     }
     if (_loaded.isEmpty) {
+      // A read in flight is NOT "no scripts loaded": the wait names it (and counts the slots it
+      // has walked) instead of the page claiming the device runs nothing.
+      if (_wait.active) {
+        return WaitView(controller: _wait, shape: WaitShape.panel);
+      }
       return const StateMessage.empty(
         message: 'No scripts loaded',
         details: 'Switch to "Available" and load a stored SCR_XXX file.',
@@ -518,7 +575,10 @@ class _ScriptsPageState extends State<ScriptsPage>
       );
     }
     final table = _table;
-    if (table == null) return const StateMessage.loading();
+    if (table == null) {
+      // The table read is in flight: name it and count its fragments rather than a bare spinner.
+      return WaitView(controller: _wait, shape: WaitShape.panel);
+    }
     if (table.absent) {
       return const StateMessage.empty(
         message: 'No stored scripts',

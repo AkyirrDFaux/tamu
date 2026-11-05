@@ -54,8 +54,10 @@ void main() {
           ),
         ),
       );
-      // First frame: the read is still in flight.
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      // First frame: the read is still in flight, so the frame names it and its bar - the failure
+      // copy belongs to the error state only.
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      expect(find.text('Reading the file table'), findsOneWidget);
       expect(find.text('Could not load SCR_000'), findsNothing);
       expect(find.widgetWithText(FilledButton, 'Retry'), findsNothing);
 
@@ -63,6 +65,7 @@ void main() {
       await tester.pump();
       expect(find.text('Could not load SCR_000'), findsOneWidget);
       expect(find.widgetWithText(FilledButton, 'Retry'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
     },
   );
 

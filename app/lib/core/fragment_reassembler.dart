@@ -140,6 +140,18 @@ class FragmentReassembler {
   /// stream is in between its first fragment and its STOP frame.
   bool inProgress(int txId) => _frag.containsKey(txId);
 
+  /// Where [txId]'s stream stands: the fragments placed and the total it declared, or null when no
+  /// fragment has arrived yet (a single-packet reply never gets here - it has no fragmentation
+  /// info at all, so its "total" would be a guess).
+  ///
+  /// This is what a page shows as *fragments received of expected* while a long read streams; the
+  /// totals are the device's own declared count, not one derived from the file size.
+  ({int received, int total})? progress(int txId) {
+    final state = _frag[txId];
+    if (state == null) return null;
+    return (received: _chunks[txId]?.length ?? 0, total: state.total);
+  }
+
   /// Ends a reply that stopped arriving without its STOP frame, returning what was reassembled.
   ///
   /// This is how a truncated stream becomes a usable partial reply instead of burning the whole

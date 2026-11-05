@@ -2,6 +2,7 @@
 /// file create/delete/resize/rename/read/write.
 library;
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'diagnostics.dart';
@@ -305,9 +306,16 @@ class StorageClient {
   /// device holds no `.TABLE` file, which is an empty filesystem and renders as an empty list), and
   /// [FileTableRead.failed] / [FileTableRead.partial] (an error with the reason in
   /// [FileTableRead.detail], never an empty list).
-  Future<FileTableRead> readFileTableResult() async {
+  Future<FileTableRead> readFileTableResult({
+    void Function(int received, int total)? onProgress,
+    bool Function()? isCancelled,
+  }) async {
     const tableName = '.TABLE  ';
-    final read = await _readWhole(tableName);
+    final read = await _readWhole(
+      tableName,
+      onProgress: onProgress,
+      isCancelled: isCancelled,
+    );
     if (read.kind == FileReadFault.absent) {
       final detail =
           'The device holds no file table: it reports an empty filesystem.';
@@ -371,28 +379,47 @@ class StorageClient {
   /// live link never takes this path; it is the CLI tools and the test fakes.)
   Future<PacketResponse> _readFileReply(
     RequestChannel channel,
-    String name,
-  ) async {
-    if (channel is TolerantRequestChannel) {
-      return channel.requestTolerant(
+    String name, {
+    void Function(int received, int total)? onProgress,
+  }) async {
+    // A long reply is a fragment stream: when the channel can say how many fragments the device
+    // declared and how many have arrived, publish that while the reply is still being reassembled
+    // (a 16 kB `.TABLE` is 256 fragments over BLE). Only this read's own reply counts - the
+    // channel is shared with the roster pings and the subscribe traffic around it.
+    StreamSubscription<ReplyStreamProgress>? progress;
+    if (onProgress != null && channel is ProgressReportingChannel) {
+      progress = (channel as ProgressReportingChannel).streamProgress.listen((
+        event,
+      ) {
+        if (event.deviceId != deviceId) return;
+        if (event.service != ServiceType.storage || event.cid != 5) return;
+        onProgress(event.received, event.total);
+      });
+    }
+    try {
+      if (channel is TolerantRequestChannel) {
+        return await channel.requestTolerant(
+          deviceId,
+          ServiceType.storage,
+          5,
+          payload: padName(name),
+          timeout: const Duration(seconds: 10),
+        );
+      }
+      final payload = await channel.request(
         deviceId,
         ServiceType.storage,
         5,
         payload: padName(name),
         timeout: const Duration(seconds: 10),
       );
+      if (payload.isEmpty) {
+        return const PacketResponse(payload: [], success: false, fail: true);
+      }
+      return PacketResponse(payload: payload, success: true, fail: false);
+    } finally {
+      await progress?.cancel();
     }
-    final payload = await channel.request(
-      deviceId,
-      ServiceType.storage,
-      5,
-      payload: padName(name),
-      timeout: const Duration(seconds: 10),
-    );
-    if (payload.isEmpty) {
-      return const PacketResponse(payload: [], success: false, fail: true);
-    }
-    return PacketResponse(payload: payload, success: true, fail: false);
   }
 
   /// How many times one whole-file read is sent: the first attempt plus two re-requests.
@@ -432,7 +459,12 @@ class StorageClient {
       FileReadFault? kind,
     })
   >
-  _readWhole(String name, {int? size}) async {
+  _readWhole(
+    String name, {
+    int? size,
+    void Function(int received, int total)? onProgress,
+    bool Function()? isCancelled,
+  }) async {
     lastReadAttempts = 0;
     lastReadError = null;
     final channel = requestChannel;
@@ -451,12 +483,22 @@ class StorageClient {
     String? fault;
     FileReadFault? kind;
     for (var attempt = 1; attempt <= readAttempts; attempt++) {
+      // A cancelled read sends nothing further: the page has stopped waiting and the user asked it
+      // to stop, so only the attempt already in flight can still land.
+      if (isCancelled?.call() ?? false) {
+        return (
+          reply: reply,
+          placed: null,
+          fault: 'the read was cancelled',
+          kind: FileReadFault.failed,
+        );
+      }
       lastReadAttempts = attempt;
       reply = null;
       fault = null;
       kind = null;
       try {
-        reply = await _readFileReply(channel, name);
+        reply = await _readFileReply(channel, name, onProgress: onProgress);
       } catch (error) {
         fault = 'the device did not answer ($error)';
         kind = FileReadFault.failed;
@@ -670,8 +712,18 @@ class StorageClient {
   /// sends, [readRetryBackoff] apart). The result keeps the three cases apart - whole bytes, an
   /// ABSENT file (the device answered FAIL: a legitimate empty result), or a failed/partial read
   /// with the reason in [FileRead.detail] - and a partial body is never returned as data.
-  Future<FileRead> readFileWhole(String name, {int? size}) async {
-    final read = await _readWhole(name, size: size);
+  Future<FileRead> readFileWhole(
+    String name, {
+    int? size,
+    void Function(int received, int total)? onProgress,
+    bool Function()? isCancelled,
+  }) async {
+    final read = await _readWhole(
+      name,
+      size: size,
+      onProgress: onProgress,
+      isCancelled: isCancelled,
+    );
     if (read.kind == FileReadFault.absent) {
       return FileRead(
         name: name,

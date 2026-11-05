@@ -17,7 +17,16 @@ const double _coreStarSize = 18;
 /// Devices page (Docs/App/Devices.md): main interaction layer with list and
 /// graph views.
 class DevicesPage extends StatefulWidget {
-  const DevicesPage({super.key});
+  const DevicesPage({super.key, this.database, this.isConnected});
+
+  /// The roster to show. Defaults to the app's [DeviceDatabase.instance]; a widget test hands in a
+  /// `DeviceDatabase.forTest()` so the page's three states (reading / loaded / failed) can be
+  /// driven without a rig or the app's singleton.
+  final DeviceDatabase? database;
+
+  /// Whether the link is up, as the page's own guard - the same seam [StoragePage] and
+  /// [RegisterPage] have.
+  final bool Function()? isConnected;
 
   @override
   State<DevicesPage> createState() => _DevicesPageState();
@@ -27,7 +36,10 @@ enum _ViewMode { list, graph }
 
 class _DevicesPageState extends State<DevicesPage>
     with AutoRefreshMixin<DevicesPage> {
-  final _db = DeviceDatabase.instance;
+  late final DeviceDatabase _db = widget.database ?? DeviceDatabase.instance;
+
+  bool get _connected =>
+      (widget.isConnected ?? (() => ConnectionManager.instance.isConnected))();
   _ViewMode _mode = _ViewMode.list;
   bool _refreshing = false;
 
@@ -75,7 +87,7 @@ class _DevicesPageState extends State<DevicesPage>
   }
 
   Future<void> _refresh() async {
-    if (_refreshing || !ConnectionManager.instance.isConnected) return;
+    if (_refreshing || !_connected) return;
     setState(() => _refreshing = true);
     try {
       await _db.refreshNetwork();
@@ -132,23 +144,98 @@ class _DevicesPageState extends State<DevicesPage>
   }
 
   Widget _buildBody() {
-    if (!ConnectionManager.instance.isConnected) {
+    if (!_connected) {
       return const Center(child: Text('Not connected'));
     }
     final devices = _filtered;
+    final busy = _db.isRefreshing || _refreshing;
     if (devices.isEmpty) {
-      return Center(child: Text(_db.lastError ?? 'No devices discovered yet'));
+      final error = _db.lastError;
+      // A sweep in flight has no total to count (the roster is the device's own list), so the bar
+      // is indeterminate and the label names the operation - the page never claims "no devices
+      // discovered" while it is still asking.
+      if (busy) {
+        return Center(
+          child: TaskProgress(
+            label: 'Reading the device roster',
+            note: 'Asking the core for the nodes it knows',
+          ),
+        );
+      }
+      if (error != null) {
+        return StateMessage.error(
+          message: 'The device roster could not be read',
+          details: error,
+          action: FilledButton(
+            onPressed: _refresh,
+            child: const Text('Try again'),
+          ),
+        );
+      }
+      return const StateMessage.empty(
+        message: 'No devices discovered yet',
+        details: 'Refresh once the core is up, or check its network.',
+      );
     }
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 150),
-      child: _mode == _ViewMode.list
-          ? ListView.builder(
-              key: const ValueKey('list'),
-              itemCount: devices.length,
-              itemBuilder: (context, index) =>
-                  _deviceTile(context, devices[index]),
-            )
-          : GraphView(key: const ValueKey('graph'), devices: devices),
+    // A sweep over an existing roster keeps the list and puts the wait above it; a roster read
+    // that failed says so in the same place, with the retry, instead of leaving the previous list
+    // to pass as current.
+    return Column(
+      children: [
+        if (busy)
+          const Card(
+            color: kSurfaceAlt,
+            margin: EdgeInsets.fromLTRB(8, 8, 8, 0),
+            child: Padding(
+              padding: Insets.row,
+              child: TaskProgress(
+                label: 'Refreshing the device roster',
+                note: 'Every known node is pinged once',
+              ),
+            ),
+          ),
+        if (!busy && _db.lastError != null)
+          Card(
+            color: kSurfaceAlt,
+            margin: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+            child: Padding(
+              padding: Insets.row,
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.error_outline,
+                    color: kError,
+                    size: IconSize.md,
+                  ),
+                  const SizedBox(width: Spacing.sm),
+                  Expanded(
+                    child: Text(
+                      'The device roster could not be read: ${_db.lastError}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _refresh,
+                    child: const Text('Try again'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        Expanded(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 150),
+            child: _mode == _ViewMode.list
+                ? ListView.builder(
+                    key: const ValueKey('list'),
+                    itemCount: devices.length,
+                    itemBuilder: (context, index) =>
+                        _deviceTile(context, devices[index]),
+                  )
+                : GraphView(key: const ValueKey('graph'), devices: devices),
+          ),
+        ),
+      ],
     );
   }
 

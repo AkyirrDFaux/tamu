@@ -187,24 +187,20 @@ void main() {
       unawaited(manager.connectTo(bleLink));
       await tester.pump();
 
-      // Before: a spinner, the target, and an explicit way out.
-      final row = find.widgetWithText(ListTile, 'Connecting to Tamu core');
-      expect(row, findsOneWidget);
-      expect(
-        find.descendant(
-          of: row,
-          matching: find.byType(CircularProgressIndicator),
-        ),
-        findsOneWidget,
-      );
+      // Before: a labelled progress bar naming the target, and an explicit way out. The old row
+      // was a bare spinner (Akyirr, 2026-11-05: "some places just wait and freeze up").
+      expect(find.text('Connecting to Tamu core'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      expect(find.text('Establishing session'), findsOneWidget);
       expect(find.widgetWithText(TextButton, 'Cancel'), findsOneWidget);
 
       await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
 
-      // After: no half-open row, no spinner, and one plain line.
-      expect(row, findsNothing);
+      // After: no half-open row, no bar, and one plain line.
+      expect(find.text('Connecting to Tamu core'), findsNothing);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
       expect(find.widgetWithText(TextButton, 'Cancel'), findsNothing);
       expect(find.text(connectCancelledMessage), findsOneWidget);
       expect(transport.closeCount, 1);
@@ -233,13 +229,14 @@ void main() {
 
       unawaited(manager.connectTo(bleLink));
       await tester.pump();
-      final row = find.widgetWithText(ListTile, 'Connecting to Tamu core');
-      expect(row, findsOneWidget);
+      expect(find.text('Connecting to Tamu core'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
 
       await tester.pump(const Duration(milliseconds: 60));
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(row, findsNothing);
+      expect(find.text('Connecting to Tamu core'), findsNothing);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
       expect(find.text(connectNoAnswerMessage), findsOneWidget);
       expect(transport.closeCount, 1);
 

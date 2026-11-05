@@ -10,9 +10,11 @@ import '../core/register_client.dart';
 import '../core/storage_client.dart';
 import '../core/types.dart';
 import 'formatters.dart';
+import 'loading.dart';
 import 'theme.dart';
 import 'file_viewers.dart';
 import 'viewer_kit.dart';
+import 'wait.dart';
 import 'widgets.dart';
 
 /// Storage service view (Docs/App/Service views/Storage.md): file table with
@@ -42,10 +44,22 @@ class _StoragePageState extends State<StoragePage>
   String? _error;
   bool _refreshing = false;
 
+  /// The wait the page is in: the table read for the list (drawn as a panel on the first load and
+  /// as a band above the list on a refresh) and the whole-file read behind its modal dialog.
+  final WaitController _listWait = WaitController();
+  final WaitController _readWait = WaitController();
+
   @override
   void initState() {
     super.initState();
     _refresh();
+  }
+
+  @override
+  void dispose() {
+    _listWait.dispose();
+    _readWait.dispose();
+    super.dispose();
   }
 
   @override
@@ -59,10 +73,20 @@ class _StoragePageState extends State<StoragePage>
   Future<void> _refresh() async {
     if (!widget._connected || _refreshing) return;
     setState(() => _refreshing = true);
+    _listWait.begin(
+      _files == null ? 'Reading the file table' : 'Refreshing the file table',
+    );
     // The one shared whole-table reader: `null` is NOT the only failure shape any more - an absent
     // table (a device with no filesystem) is an empty directory, and a failed or partial read keeps
     // its reason so the page can say it instead of rendering an empty list.
-    final table = await _client.readFileTableResult();
+    final table = await _client.readFileTableResult(
+      onProgress: (received, total) => _listWait.step(
+        completed: received,
+        total: total,
+        note: 'fragment $received of $total',
+      ),
+    );
+    _listWait.end();
     if (!mounted) return;
     setState(() {
       _refreshing = false;
@@ -182,10 +206,26 @@ class _StoragePageState extends State<StoragePage>
 
   /// Downloads the whole file to a user-chosen location.
   Future<void> _downloadFile(FileRecord file) async {
-    _snack('Downloading ${file.name}...');
-    final data = await _client.readFile(file.name, size: file.size);
+    final read = await runBehindWait<FileRead>(
+      context,
+      _readWait,
+      label: 'Downloading ${normalizeFileName(file.name)}',
+      cancelLabel: 'Cancel',
+      task: () => _client.readFileWhole(
+        file.name,
+        size: file.size,
+        onProgress: (received, total) => _readWait.step(
+          completed: received,
+          total: total,
+          note: 'fragment $received of $total',
+        ),
+        isCancelled: () => _readWait.cancelled,
+      ),
+    );
+    if (!mounted || read.cancelled) return;
+    final data = read.value.bytes;
     if (data == null) {
-      _snack('Download failed');
+      _snack(read.value.detail ?? 'Download failed');
       return;
     }
     final target = await saveBytesWithPicker(
@@ -235,7 +275,9 @@ class _StoragePageState extends State<StoragePage>
     if (files == null) {
       final error = _error;
       if (error == null) {
-        return const Center(child: Text('Loading...'));
+        // Nothing is known yet: the wait names the read and counts its fragments as they land,
+        // instead of a bare "Loading..." over an empty panel.
+        return WaitView(controller: _listWait, shape: WaitShape.panel);
       }
       // A file-table read that could not be completed is a visible, actionable error: the page
       // says what the device answered and offers the retry that the client already bounded.
@@ -311,7 +353,14 @@ class _StoragePageState extends State<StoragePage>
       onTap: (file) => file.isFiletable ? _showTable(file) : _showFile(file),
       emptyMessage: 'No file table',
     );
-    return list;
+    // A refresh keeps the list on screen and puts the wait above it, so the page never goes blank
+    // between two reads.
+    return Column(
+      children: [
+        WaitView(controller: _listWait, shape: WaitShape.banner),
+        Expanded(child: list),
+      ],
+    );
   }
 
   /// The name a row prints: the stored name, marked when it is the directory itself.
@@ -325,32 +374,86 @@ class _StoragePageState extends State<StoragePage>
       '${formatFileSize(file.size)}   '
       'offset ${hex32(file.offset)}';
 
+  /// Reads one file behind the modal wait that names it and counts its fragments.
+  ///
+  /// The dialog is the "no blank piece" answer for a read the viewer cannot draw yet: it says what
+  /// is being read, shows *fragments received of expected* while the stream lands, and its Cancel
+  /// closes it at once - the page then drops the result and stops the retry policy.
+  Future<FileRead> _readBehindDialog(FileRecord file) async {
+    final read = await runBehindWait<FileRead>(
+      context,
+      _readWait,
+      label: 'Reading ${normalizeFileName(file.name)}',
+      cancelLabel: 'Cancel',
+      task: () => _client.readFileWhole(
+        file.name,
+        size: file.size,
+        onProgress: (received, total) => _readWait.step(
+          completed: received,
+          total: total,
+          note: 'fragment $received of $total',
+        ),
+        isCancelled: () => _readWait.cancelled,
+      ),
+    );
+    return read.value;
+  }
+
   /// The file table itself, decoded: one row per file record.
   Future<void> _showTable(FileRecord table) async {
-    _snack('Reading file table...');
     // Read the table file directly using CID 5 (read file) instead of CID 7. The table is a
     // fixed 16 kB reservation whose reply can lose fragments and its STOP frame over BLE: the
     // client re-requests it whole rather than handing back a prefix, because a decoded prefix
     // shows 32 of N records as if it were the directory.
-    final read = await _client.readFileWhole(table.name, size: table.size);
-    if (!mounted) return;
+    final read = await runBehindWait<FileRead>(
+      context,
+      _readWait,
+      label: 'Reading the file table (${formatFileSize(table.size)})',
+      cancelLabel: 'Cancel',
+      task: () => _client.readFileWhole(
+        table.name,
+        size: table.size,
+        onProgress: (received, total) => _readWait.step(
+          completed: received,
+          total: total,
+          note: 'fragment $received of $total',
+        ),
+        isCancelled: () => _readWait.cancelled,
+      ),
+    );
+    if (!mounted || read.cancelled) return;
+    final tableRead = read.value;
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => FileTableViewPage(
           deviceId: widget.deviceId,
           size: table.size,
-          data: read.bytes,
-          error: read.detail,
+          data: tableRead.bytes,
+          error: tableRead.detail,
         ),
       ),
     );
   }
 
   Future<void> _showFile(FileRecord file) async {
-    _snack('Reading ${file.name}...');
-    Future<List<int>?> read() async =>
-        (await _client.readFileWhole(file.name, size: file.size)).bytes;
-    final fileRead = await _client.readFileWhole(file.name, size: file.size);
+    final read = await runBehindWait<FileRead>(
+      context,
+      _readWait,
+      label: 'Reading ${normalizeFileName(file.name)}',
+      cancelLabel: 'Cancel',
+      task: () => _client.readFileWhole(
+        file.name,
+        size: file.size,
+        onProgress: (received, total) => _readWait.step(
+          completed: received,
+          total: total,
+          note: 'fragment $received of $total',
+        ),
+        isCancelled: () => _readWait.cancelled,
+      ),
+    );
+    if (!mounted || read.cancelled) return;
+    final fileRead = read.value;
     final data = fileRead.bytes;
     // `.SV` is a raw static persistent-space mirror; fetch the device's blocks so
     // the decoder can compute the field layout and name the blocks and fields.
@@ -370,7 +473,7 @@ class _StoragePageState extends State<StoragePage>
           size: file.size,
           data: data,
           error: fileRead.detail,
-          onRetry: read,
+          onRetry: () async => (await _readBehindDialog(file)).bytes,
           blocks: blocks,
         ),
       ),

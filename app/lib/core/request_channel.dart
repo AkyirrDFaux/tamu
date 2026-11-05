@@ -9,6 +9,7 @@ library;
 
 import 'protocol.dart';
 import 'fragment_reassembler.dart' show FragmentChunk;
+import 'types.dart';
 
 /// Why a reply is not whole: the fragments that never arrived, and whether the stream ended
 /// without its STOP frame.
@@ -171,6 +172,52 @@ abstract class TolerantRequestChannel implements RequestChannel {
     List<int> payload = const [],
     Duration timeout = const Duration(seconds: 2),
   });
+}
+
+/// One reply's position in a fragment stream, reported WHILE it arrives.
+///
+/// A long read (a 16 kB `.TABLE` is 256 fragments over BLE) otherwise has nothing to show until it
+/// completes: the page knows only "a read is in flight". This is the count a page shows as
+/// *fragments received of expected* (Akyirr, 2026-11-05).
+class ReplyStreamProgress {
+  /// The device answering.
+  final int deviceId;
+
+  /// The service and command the reply belongs to.
+  final ServiceType service;
+  final int cid;
+
+  /// The app transaction the reply is being reassembled under.
+  final int txId;
+
+  /// Fragments placed so far, and the total the stream declared.
+  final int received;
+  final int total;
+
+  const ReplyStreamProgress({
+    required this.deviceId,
+    required this.service,
+    required this.cid,
+    required this.txId,
+    required this.received,
+    required this.total,
+  });
+
+  @override
+  String toString() =>
+      'dev ${idToString(deviceId)} $service/$cid: $received of $total fragments';
+}
+
+/// A channel that can report a reply's fragment arrivals while it streams.
+///
+/// Separate from [RequestChannel] on purpose, for the same reason [TolerantRequestChannel] is: a
+/// channel that never fragments (a serial tool, a test fake) has nothing to say here, and a client
+/// asks for it with an `is` check instead of every implementation having to answer. The app's
+/// connection implements it; a storage read listens when it is there and shows a plain
+/// indeterminate wait when it is not.
+abstract class ProgressReportingChannel {
+  /// Every fragment placed, for every reply in flight, in arrival order.
+  Stream<ReplyStreamProgress> get streamProgress;
 }
 
 /// How a request ended, when the caller must report WHY a write did not land.

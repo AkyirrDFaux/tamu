@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../core/types.dart';
 import 'theme.dart';
+import 'wait.dart';
 
 /// The autorefresh state a page app-bar action reads. [AutoRefreshMixin]
 /// implements it, so a page on the mixin can hand itself straight to
@@ -608,26 +609,30 @@ class StateMessage extends StatelessWidget {
     this.details,
     this.icon,
     this.action,
+    this.progress,
   });
 
-  /// A loading state (a small spinner in place of the icon).
+  /// A loading state (a labelled progress bar when [progress] is given, otherwise a spinner).
   const StateMessage.loading({
     super.key,
     this.message,
     this.details,
     this.action,
+    this.progress,
   }) : kind = StateKind.loading,
        icon = null;
 
   /// An empty state.
   const StateMessage.empty({super.key, this.message, this.details, this.action})
     : kind = StateKind.empty,
-      icon = null;
+      icon = null,
+      progress = null;
 
   /// A failure state.
   const StateMessage.error({super.key, this.message, this.details, this.action})
     : kind = StateKind.error,
-      icon = null;
+      icon = null,
+      progress = null;
 
   final StateKind kind;
 
@@ -642,6 +647,11 @@ class StateMessage extends StatelessWidget {
 
   /// An optional action under the message, e.g. a Retry button.
   final Widget? action;
+
+  /// What a loading state is waiting for: the operation's name and, when it can count its units,
+  /// a determinate bar. A loading state without one falls back to the bare spinner - which is the
+  /// shape a page should stop using, so a new wait passes this.
+  final WaitProgress? progress;
 
   IconData get _defaultIcon => switch (kind) {
     StateKind.loading => Icons.hourglass_empty,
@@ -669,7 +679,21 @@ class StateMessage extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (kind == StateKind.loading)
+            // A loading state that knows what it is waiting for draws the shared labelled bar
+            // instead of a bare spinner: the bar names the operation and, when the operation can
+            // count its units, shows how far it has got.
+            if (kind == StateKind.loading && progress != null)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: TaskProgress(
+                  label: progress!.label,
+                  value: progress!.value,
+                  completed: progress!.determinate ? progress!.completed : null,
+                  total: progress!.determinate ? progress!.total : null,
+                  note: progress!.note,
+                ),
+              )
+            else if (kind == StateKind.loading)
               const SizedBox(
                 width: IconSize.lg,
                 height: IconSize.lg,
@@ -677,12 +701,21 @@ class StateMessage extends StatelessWidget {
               )
             else
               Icon(icon ?? _defaultIcon, size: IconSize.xl, color: color),
-            const SizedBox(height: Spacing.lg),
-            Text(
-              message ?? _defaultMessage,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.titleSmall,
-            ),
+            if (kind != StateKind.loading || progress == null) ...[
+              const SizedBox(height: Spacing.lg),
+              Text(
+                message ?? _defaultMessage,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleSmall,
+              ),
+            ] else if (message != null && message != progress!.label) ...[
+              const SizedBox(height: Spacing.sm),
+              Text(
+                message!,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleSmall,
+              ),
+            ],
             if (details != null) ...[
               const SizedBox(height: Spacing.xs),
               Text(
@@ -722,6 +755,7 @@ class TamuPage extends StatelessWidget {
     this.stateMessage,
     this.stateDetails,
     this.stateAction,
+    this.stateProgress,
     this.bottomNavigationBar,
     this.floatingActionButton,
   });
@@ -764,6 +798,10 @@ class TamuPage extends StatelessWidget {
   /// Action for [state].
   final Widget? stateAction;
 
+  /// What a [StateKind.loading] state is waiting for: the operation's name and, when it counts its
+  /// units, its position. Passed straight to [StateMessage.progress].
+  final WaitProgress? stateProgress;
+
   final Widget? bottomNavigationBar;
 
   /// A page-level action button (the Scripts page's "New script").
@@ -790,6 +828,7 @@ class TamuPage extends StatelessWidget {
               message: stateMessage,
               details: stateDetails,
               action: stateAction,
+              progress: stateProgress,
             )
           : child,
       bottomNavigationBar: bottomNavigationBar,

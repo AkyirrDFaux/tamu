@@ -39,6 +39,46 @@ part 'backup_capture.dart'; // capture a device into the semantic backup model
 part 'backup_failure.dart'; // why a restore item failed, and the run's report
 part 'backup_restore.dart'; // live model, restore plan and apply
 
+/// One step of a restore plan build or apply, as a page shows it.
+///
+/// The plan is built from the live devices (a scan, then what each one holds) and applied item by
+/// item, so both have a REAL total to count against - which is why the backup page draws a
+/// determinate bar rather than a spinner (Akyirr, 2026-11-05).
+class RestoreProgress {
+  /// Which part of the run this is: `scan`, `inventory`, `plan`, `resolve`, `classify`, `write`,
+  /// `sweep`.
+  final String phase;
+
+  /// One line naming what is happening, in the user's words.
+  final String label;
+
+  /// Units done and units expected; [total] is 0 when the phase cannot know it.
+  final int completed;
+  final int total;
+
+  const RestoreProgress({
+    required this.phase,
+    required this.label,
+    this.completed = 0,
+    this.total = 0,
+  });
+
+  /// True when a real total is known, i.e. the bar can be determinate.
+  bool get determinate => total > 0;
+
+  @override
+  String toString() => 'RestoreProgress($phase: $label $completed/$total)';
+}
+
+/// A restore run's progress, for a page that shows it.
+typedef RestoreProgressCallback = void Function(RestoreProgress progress);
+
+/// Lets the UI breathe: one macrotask boundary, during which Flutter can build and paint a frame.
+///
+/// This is the whole freeze fix - a synchronous loop that takes 60 ms starves the frame, and the
+/// same loop cut into slices separated by this call paints a moving bar instead.
+Future<void> _yieldFrame() => Future<void>.delayed(Duration.zero);
+
 /// Files larger than this are not captured (the 64-byte Storage fragments make
 /// large reads prohibitively slow); the value can be raised by the caller.
 const int defaultMaxFileBytes = 128 * 1024;

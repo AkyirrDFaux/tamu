@@ -10,8 +10,10 @@ import '../core/notifications.dart';
 import '../core/script_file.dart';
 import '../core/types.dart';
 import 'theme.dart';
+import 'loading.dart';
 import 'restore_result.dart';
 import 'viewer_kit.dart';
+import 'wait.dart';
 import 'widgets.dart';
 
 /// Backup page (Docs/App/Backup.md): unified whole-network backup and restore
@@ -30,14 +32,32 @@ class _BackupPageState extends State<BackupPage> {
   bool _busy = false;
   bool _includeFiles = true;
 
+  /// The capture/plan wait, drawn as a band over the device list: both operations count their
+  /// units (devices captured, then rows scanned), so the bar is determinate.
+  final WaitController _wait = WaitController();
+
+  @override
+  void dispose() {
+    _wait.dispose();
+    super.dispose();
+  }
+
   void _snack(String message) => showSnack(context, message);
 
   Future<void> _createBackup() async {
     if (_selected.isEmpty) return;
     setState(() => _busy = true);
+    _wait.begin('Capturing the devices', total: _selected.length);
     try {
       final devices = <BackupDevice>[];
+      var index = 0;
       for (final id in _selected) {
+        index++;
+        _wait.step(
+          label: 'Capturing ${idToString(id)}',
+          completed: index,
+          total: _selected.length,
+        );
         final captured = await captureDevice(id, includeFiles: _includeFiles);
         if (captured != null) devices.add(captured);
       }
@@ -67,6 +87,7 @@ class _BackupPageState extends State<BackupPage> {
     } catch (error) {
       _snack('Backup failed: $error');
     } finally {
+      _wait.end();
       if (mounted) setState(() => _busy = false);
     }
   }
@@ -90,9 +111,28 @@ class _BackupPageState extends State<BackupPage> {
     }
 
     RestorePlan plan;
+    if (!mounted) return;
     try {
-      plan = await buildRestorePlan(devices);
+      // The plan build is the long one: it scans every node, reads what each one holds and then
+      // classifies every row against it. It runs behind a dialog that names each phase and counts
+      // its items - and the synchronous classification inside it is sliced, so the bar moves
+      // instead of the screen freezing (see planFromSnapshotChunked).
+      final built = await runBehindWait<RestorePlan>(
+        context,
+        _wait,
+        label: 'Reading the network',
+        task: () => buildRestorePlan(
+          devices,
+          onProgress: (p) => _wait.step(
+            label: p.label,
+            completed: p.determinate ? p.completed : null,
+            total: p.determinate ? p.total : null,
+          ),
+        ),
+      );
+      plan = built.value;
     } catch (error) {
+      _wait.end();
       _snack('Could not build the restore plan: $error');
       if (mounted) setState(() => _busy = false);
       return;
@@ -138,6 +178,9 @@ class _BackupPageState extends State<BackupPage> {
               ? const Center(child: Text('Not connected'))
               : Column(
                   children: [
+                    // A capture runs over the list (the file picker comes after it), so its wait is
+                    // a band here rather than a dialog.
+                    WaitView(controller: _wait, shape: WaitShape.banner),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
                       child: Row(
@@ -242,6 +285,15 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
   RestorePlan get plan => widget.plan;
   bool _busy = false;
 
+  /// The apply, as it runs: *items of N* written, with a Stop that ends the run between two items.
+  final WaitController _wait = WaitController();
+
+  @override
+  void dispose() {
+    _wait.dispose();
+    super.dispose();
+  }
+
   /// The view filter. [PlanFilter.diff] by default: a restore plan exists to show what it would
   /// change, not the hundred rows it would rewrite with the same value.
   PlanFilter _filter = PlanFilter.diff;
@@ -265,13 +317,32 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
     setState(() => _busy = true);
     RestoreReport? report;
     try {
-      report = await applyRestorePlan(plan);
+      // The run writes item by item, so its bar is determinate and its Stop is real: the apply
+      // checks the flag between two writes and reports what it never got to.
+      final applied = await runBehindWait<RestoreReport>(
+        context,
+        _wait,
+        label: 'Applying the restore plan',
+        cancelLabel: 'Stop',
+        task: () => applyRestorePlan(
+          plan,
+          onProgress: (p) => _wait.step(
+            label: p.label,
+            completed: p.determinate ? p.completed : null,
+            total: p.determinate ? p.total : null,
+          ),
+          isCancelled: () => _wait.cancelled,
+        ),
+      );
+      report = applied.value;
       // The counts and - above all - the reasons per item: a bare "17 failed" in a snackbar is the
       // report Akyirr's card is about. The dialog is also the screen the text is copied from.
       if (mounted) await showRestoreResult(context, report);
     } catch (error) {
+      _wait.end();
       if (mounted) showSnack(context, 'Restore failed: $error');
     } finally {
+      _wait.end();
       if (mounted) setState(() => _busy = false);
     }
     if (report != null && mounted) Navigator.of(context).pop(true);

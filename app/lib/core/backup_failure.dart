@@ -348,6 +348,16 @@ class RestoreReport {
   final DateTime at;
   final int written;
 
+  /// True when the user stopped the run between two items.
+  ///
+  /// A stopped run is not a finished one: the items after the stop were never written, and the
+  /// sweeps that DELETE what the archive does not carry never ran. Saying so is the difference
+  /// between "the device now matches the archive" and "the device is half written".
+  final bool cancelled;
+
+  /// How many planned items were never written because the run was stopped.
+  final int notRun;
+
   /// Every failure of the run, in the order it happened, each with its reason.
   final List<RestoreFailure> reasons;
 
@@ -374,6 +384,8 @@ class RestoreReport {
     required this.at,
     required this.written,
     required this.reasons,
+    this.cancelled = false,
+    this.notRun = 0,
     this.skipped = const [],
     this.structure = const [],
     this.requesterPrune = const [],
@@ -494,6 +506,16 @@ class RestoreReport {
     final buffer = StringBuffer()
       ..writeln('Restore report ${_stamp(at)}')
       ..writeln(counts);
+    if (cancelled) {
+      // A stopped run says so before anything else: the rows past the stop are not written and the
+      // deletions the run would have mirrored never ran.
+      buffer
+        ..writeln()
+        ..writeln(
+          'Stopped at your request: $notRun item(s) were never written, and nothing was deleted '
+          'from the devices.',
+        );
+    }
     if (reasons.isEmpty) {
       buffer
         ..writeln()

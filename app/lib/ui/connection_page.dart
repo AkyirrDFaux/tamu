@@ -9,7 +9,9 @@ import '../core/device_db.dart';
 import '../core/platform_caps.dart';
 import '../core/settings.dart';
 import 'ble_security_page.dart' show showBleLinkGuidance;
+import 'loading.dart';
 import 'theme.dart';
+import 'wait.dart';
 import 'widgets.dart';
 
 /// Size of the BLE signal icon inside a device row. A declared size, not a
@@ -317,24 +319,17 @@ class _ConnectionPageState extends State<ConnectionPage>
             children: [
               _statusBanner(),
               if (_manager.isConnecting)
-                ListTile(
-                  leading: const SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  title: Text(
+                // The pending state is a labelled bar, not a lone spinner: it names the device and
+                // the step, and Cancel abandons the attempt (ConnectionManager.cancelConnect) — the
+                // same exit the 10 s timeout takes away when nobody answers.
+                WaitView(
+                  progress: WaitProgress(
                     'Connecting to ${_manager.connectingTarget ?? ''}',
+                    note: 'Establishing session',
+                    cancelLabel: 'Cancel',
                   ),
-                  subtitle: const Text('Establishing session'),
-                  // The pending state's explicit way out: it abandons the attempt (see
-                  // ConnectionManager.cancelConnect), and the same row is what the 10 s
-                  // timeout takes away when nobody answers.
-                  trailing: TextButton.icon(
-                    onPressed: () => unawaited(_manager.cancelConnect()),
-                    icon: const Icon(Icons.close, size: 18),
-                    label: const Text('Cancel'),
-                  ),
+                  shape: WaitShape.banner,
+                  onCancel: () => unawaited(_manager.cancelConnect()),
                 ),
               if (_manager.isConnected)
                 ListTile(

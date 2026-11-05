@@ -26,6 +26,7 @@ import 'script_value_dialog.dart';
 import 'script_widgets.dart';
 import 'theme.dart';
 import 'viewer_kit.dart';
+import 'wait.dart';
 import 'widgets.dart';
 
 part 'script_editor_view.dart';
@@ -62,6 +63,10 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   ScriptDraft? _draft;
   bool _loading = true;
   String? _loadError;
+
+  /// The load as the shell shows it: which script is being read / decoded, and the fragment count
+  /// while its file streams in.
+  WaitProgress? _wait;
   bool _busy = false;
   bool _dirty = false;
   bool _refreshFailed = false;
@@ -123,13 +128,17 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     setState(() {
       _loading = true;
       _loadError = null;
+      _wait = WaitProgress('Reading the file table');
     });
     try {
       // The shared whole-table reader keeps the three cases apart: a table that could not be read
       // is a load error (never "the script is gone"), an absent table or an unmatched name means
       // "new script", and a listed file that will not read is a load error - never a blank draft
       // that would overwrite it.
-      final table = await _storage.readFileTableResult();
+      final table = await _storage.readFileTableResult(
+        onProgress: (received, total) =>
+            _waitStep('Reading the file table', received, total),
+      );
       if (!table.ok && !table.absent) {
         throw FormatException(table.detail ?? 'Could not read the file table');
       }
@@ -141,9 +150,16 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       if (!present) {
         draft = ScriptDraft(functionName: widget.name);
       } else {
-        final read = await _storage.readFileWhole(_fileName);
+        final read = await _storage.readFileWhole(
+          _fileName,
+          onProgress: (received, total) =>
+              _waitStep('Reading $_fileName', received, total),
+        );
         if (!read.ok) {
           throw FormatException(read.detail ?? 'Could not read $_fileName');
+        }
+        if (mounted) {
+          setState(() => _wait = WaitProgress('Decoding $_fileName'));
         }
         draft = ScriptDraft.fromFile(ScriptFileData.parse(read.bytes!));
       }
@@ -151,6 +167,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       setState(() {
         _draft = draft;
         _loading = false;
+        _wait = null;
       });
       await _refresh();
     } catch (e) {
@@ -160,8 +177,22 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
       setState(() {
         _loading = false;
         _loadError = '$e';
+        _wait = null;
       });
     }
+  }
+
+  /// Updates the load's own line while its file streams in (fragments received of expected).
+  void _waitStep(String label, int received, int total) {
+    if (!mounted) return;
+    setState(
+      () => _wait = WaitProgress(
+        label,
+        completed: received,
+        total: total,
+        note: 'fragment $received of $total',
+      ),
+    );
   }
 
   Future<void> _refresh() async {
@@ -417,6 +448,9 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
         state: _loadError != null
             ? StateKind.error
             : (_loading || draft == null ? StateKind.loading : null),
+        stateProgress: _loadError != null
+            ? null
+            : (_wait ?? const WaitProgress('Preparing the editor')),
         stateMessage: _loadError == null ? null : 'Could not load $_fileName',
         stateDetails: _loadError,
         stateAction: _loadError == null
