@@ -1490,6 +1490,22 @@ RAM 78,116/327,680 = 23.8 %). DAS is unchanged: RAM 2,048/2,048 (100.0 %), flash
 `firmware/.pio/probe/gap_name_read.py` (advertisement + `0x2A00` from one connection) - both must read
 the same name on a device that has just booted, before any rename.
 
+**Re-measured 2026-11-06 (card t_2e74b177) - on the same pre-fix image the two values now agree,
+because the characteristic holds the rename probe's leftover.** `gap_name_read.py` against the rig
+(software version `26.11.6.4`, `System field 0 = 01000000 d9030000 040066 35`): `advertisement:
+name='Akyirr' addr=E4:B0:63:C8:20:72 rssi=-59` and `0x2A00 (GAP Device Name) = b'Akyirr'  (len 6)`.
+So `nimble` is **not** observable in the device's current state, and that is not a fix: the pre-fix
+image has exactly one `setDeviceName()` and it is in the rename path (`git show 59ab1e8:...AppBLE.h`
+line 1141), which this morning's field-3 restore ran with `Akyirr`; the value then survives every
+advertising restart and disconnect until the radio is re-initialised, i.e. until the next boot.
+`0x2A00` is therefore the *boot* value only on a device that has not been renamed since it booted
+(`NimBLEAdvertising::setName` at 1007 is the advertisement alone). Reading the failure live needs one
+reset and no rename afterwards - a reset this card did not authorise. Recipe in both orders:
+`firmware/.pio/probe/gap_name_read.py` (adv + `0x2A00` from one connection) and
+`firmware/.pio/probe/read_identity.py` (USB: `System` field 0 = type/capability/version, field 6 =
+Name, `BLE Settings` fields 0 and 3) - the version is the only thing on the device that identifies the
+image, and `version.json` iterations are per build, not per commit.
+
 ## Factory image: an app that dies before re-arming `otadata` is out of reach (2026-11-06, card t_79a194d5)
 
 **The gap.** `Devices/Tamu_v2.0A/Main.h` (`app_main`) re-arms `otadata` to the `factory` partition at
