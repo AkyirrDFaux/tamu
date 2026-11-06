@@ -120,10 +120,49 @@ inline void Vysi1Display::RenderGeometryField(DynamicBlockDescriptor *Block, uin
     }
 }
 
-// Combines GeoMask[field] into the current mask with the field's operation.
-inline void Vysi1Display::ApplyGeometryField(DynamicBlockDescriptor *Block, uint16_t Field, uint16_t Slot)
+// Content stamp of one field's dictionary entries: the FNV-1a of every (key, type, size, bytes)
+// the renderer reads from it. The mask cache keys on this, so a write that leaves a field's
+// content alone (the emote script rewriting the lid matrix with the values it already has) costs
+// a walk over a few dozen bytes instead of the field's whole per-LED shape pass.
+inline uint32_t Vysi1Display::FieldStamp(DynamicBlockDescriptor *Block, uint8_t Field)
 {
-    GeometryOperation Op = Block->GetKeyValue<GeometryOperation>(Field, (uint8_t)GeometryKey::Operation, DataType::Enum, GeometryOperation::Replace);
+    uint32_t Hash = 2166136261u;
+    for (uint16_t i = Block->FindEntry(MakeFieldKey(Field, 0)); i < Block->EntryCount; i++)
+    {
+        const DynamicEntry &Entry = Block->Table[i];
+        if (FieldOf(Entry.FieldKey) != Field)
+            break;
+        // The key (2 B) and the entry's type/size (ValueInfo, 4 B), then the value bytes: every
+        // input the shape pass reads, and nothing else.
+        const uint8_t *Key = (const uint8_t *)&Entry.FieldKey;
+        const uint8_t *Info = (const uint8_t *)&Entry.Info;
+        for (uint32_t B = 0; B < 2; B++)
+        {
+            Hash ^= Key[B];
+            Hash *= 16777619u;
+        }
+        for (uint32_t B = 0; B < sizeof(ValueInfo); B++)
+        {
+            Hash ^= Info[B];
+            Hash *= 16777619u;
+        }
+        if (Entry.Info.Size)
+        {
+            const uint8_t *Value = Block->Space(Block->IsPersistent(Entry)) + Entry.MemoryOffset;
+            for (uint32_t B = 0; B < Entry.Info.Size; B++)
+            {
+                Hash ^= Value[B];
+                Hash *= 16777619u;
+            }
+        }
+    }
+    return Hash;
+}
+
+// Combines GeoMask[field] into the current mask with the field's operation.
+inline void Vysi1Display::ApplyGeometryField(uint16_t Slot)
+{
+    const GeometryOperation Op = (GeometryOperation)CachedFieldOp[Slot];
     for (uint16_t Led = 0; Led < LedNum; Led++)
     {
         uint16_t Geo = GeoMask[Slot][Led];
@@ -362,14 +401,20 @@ inline void Vysi1Display::Render()
     if (!Block)
         return;
 
-    // ---- geometry cache (mask): recompute only when the scene actually changed ----
+    // ---- geometry cache (mask): recompute only the parts that actually changed ----
     const Matrix<2, 3> &Off = Per.Offset;
     bool OffsetChanged = false;
     for (int i = 0; i < 6; i++)
         if (Off.Buffer.Data[i].Value != CacheOffset[i]) { OffsetChanged = true; break; }
 
-    if (!CacheValid || Block != CacheBlockPtr || OffsetChanged ||
-        Block->Generation != CacheBlockGen || LayoutGen != CacheLayoutGen)
+    // What a scene change (a layout load, a different render block, an Offset write) does: every
+    // part's mask depends on the shared transform, so all of them are rebuilt. A write to the
+    // block only invalidates the parts whose own dictionary content moved - the stamp below.
+    const bool SceneChanged = !CacheValid || Block != CacheBlockPtr || OffsetChanged ||
+                              LayoutGen != CacheLayoutGen;
+    const bool BlockChanged = Block->Generation != CacheBlockGen;
+
+    if (SceneChanged || BlockChanged)
     {
         for (int i = 0; i < 6; i++)
             CacheOffset[i] = Off.Buffer.Data[i].Value;
@@ -378,13 +423,19 @@ inline void Vysi1Display::Render()
         CacheLayoutGen = LayoutGen;
         CacheValid = true;
 
-        // Collect the block's distinct field indexes (the render "parts") and classify
-        // each once; the per-frame pass below reuses this instead of re-reading the type.
+        // Collect the block's distinct field indexes (the render "parts") and classify each once;
+        // the per-frame pass below reuses this instead of re-reading the type.
         uint8_t Fields[MaxCachedFields];
-        CachedFieldCount = Block->ListFields(Fields, MaxCachedFields);
-        if (CachedFieldCount > MaxCachedFields) CachedFieldCount = MaxCachedFields;
+        uint16_t Count = Block->ListFields(Fields, MaxCachedFields);
+        if (Count > MaxCachedFields) Count = MaxCachedFields;
 
-        for (uint16_t Fi = 0; Fi < CachedFieldCount; Fi++)
+        // A field list whose slots kept their field index lets each part keep its cached mask.
+        // A part added or removed shifts the slots, so every mask is rebuilt for that pass.
+        bool SlotsKept = !SceneChanged && Count == CachedFieldCount;
+        for (uint16_t Fi = 0; SlotsKept && Fi < Count; Fi++)
+            if (CachedFields[Fi] != Fields[Fi]) SlotsKept = false;
+
+        for (uint16_t Fi = 0; Fi < Count; Fi++)
         {
             uint8_t Field = Fields[Fi];
             CachedFields[Fi] = Field;
@@ -392,13 +443,23 @@ inline void Vysi1Display::Render()
             if (TypeId == (uint16_t)DataType::Geometry)
             {
                 CachedFieldKind[Fi] = 1;
-                RenderGeometryField(Block, Field, Fi);
+                const uint32_t Stamp = FieldStamp(Block, Field);
+                if (!SlotsKept || Stamp != CachedFieldStamp[Fi])
+                {
+                    RenderGeometryField(Block, Field, Fi);
+                    CachedFieldStamp[Fi] = Stamp;
+                    CachedFieldOp[Fi] = (uint8_t)Block->GetKeyValue<GeometryOperation>(
+                        Field, (uint8_t)GeometryKey::Operation, DataType::Enum,
+                        GeometryOperation::Replace);
+                }
             }
             else
             {
                 CachedFieldKind[Fi] = (TypeId == (uint16_t)DataType::Texture) ? 2 : 0;
+                CachedFieldStamp[Fi] = 0; // not a cached mask: nothing to compare
             }
         }
+        CachedFieldCount = Count;
     }
 
     // ---- per-frame field pass: build the mask (geometries) and fill it (textures) ----
@@ -406,12 +467,11 @@ inline void Vysi1Display::Render()
     MaskAny = false;
     for (uint16_t Fi = 0; Fi < CachedFieldCount; Fi++)
     {
-        uint8_t Field = CachedFields[Fi];
         if (CachedFieldKind[Fi] == 1)
-            ApplyGeometryField(Block, Field, Fi);
+            ApplyGeometryField(Fi);
         else if (CachedFieldKind[Fi] == 2)
         {
-            RenderTextureField(Block, Field);
+            RenderTextureField(Block, CachedFields[Fi]);
             // The mask persists: geometries accumulate into it and every texture/effect
             // applies within the same active region (docs "mask and fill").
         }

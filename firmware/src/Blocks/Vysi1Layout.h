@@ -177,6 +177,15 @@ public:
     uint8_t CachedFieldKind[MaxCachedFields];
     uint16_t CachedFieldCount = 0;
 
+    // Per-slot stamp of the geometry field's dictionary content at the last rebuild (0 = stale).
+    // The mask of a field is recomputed only when ITS keys changed: a write to one part of the
+    // block (the emote script rewrites the lid matrix every pass) no longer costs the whole
+    // block's shape pass. A field whose stamp is unchanged keeps its GeoMask slot.
+    uint32_t CachedFieldStamp[MaxCachedFields] = {};
+    // The field's mask operation, read at rebuild time (it is part of the stamped content), so
+    // the per-frame apply pass does not re-walk the dictionary once per part per frame.
+    uint8_t CachedFieldOp[MaxCachedFields] = {};
+
     // Set by ApplyGeometryField when any geometry wrote a non-zero alpha this frame.
     // Textures/effects apply only inside the mask, so an empty mask skips them entirely.
     bool MaskAny = false;
@@ -198,7 +207,8 @@ public:
 
     void Render();
     void RenderGeometryField(DynamicBlockDescriptor *Block, uint16_t Field, uint16_t Slot);
-    void ApplyGeometryField(DynamicBlockDescriptor *Block, uint16_t Field, uint16_t Slot);
+    void ApplyGeometryField(uint16_t Slot);
+    uint32_t FieldStamp(DynamicBlockDescriptor *Block, uint8_t Field);
     void RenderTextureField(DynamicBlockDescriptor *Block, uint16_t Field);
     Matrix<3, 3> PromoteAffine(const Matrix<2, 3> &Mat);
     Matrix<3, 3> BaseTransform();

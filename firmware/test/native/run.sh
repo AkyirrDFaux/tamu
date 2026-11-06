@@ -233,6 +233,15 @@ echo "### native Vysi render-kind tests (a created key-0 marker is classified, a
 build_run "vysirender" "vysi_render_kind_test.cpp" -DUSE_DYNAMIC_BLOCKS -Wno-unused-function
 echo
 
+# t_a706d64a: the render mask cache is per PART, not per block. A write to one render part (the
+# emote script rewrites the lid/iris keys while it animates) must not cost the other parts' shape
+# passes, and a write that re-sends a part's own bytes must cost nothing at all - while the frames
+# stay exactly what a full rebuild produces. "Recomputed" is observed with a sentinel written into
+# each GeoMask slot: a slot the renderer rebuilt no longer holds it.
+echo "### native Vysi render-cache tests (only a changed part's mask is recomputed)"
+build_run "vysicache" "vysi_render_cache_test.cpp" -DUSE_DYNAMIC_BLOCKS -Wno-unused-function
+echo
+
 echo "### native BLE Settings tests (Just Works vs passkey policy, and the block table's offsets)"
 build_run "blesettings" "ble_settings_test.cpp"
 echo
