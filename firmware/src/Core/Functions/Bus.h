@@ -47,10 +47,22 @@ static void RS485WaitForSilence(uint8_t Priority, DrainFn Drain, NowUs NowUsCb, 
 // CRC + length validation for a fully-assembled frame (RX side).
 // CRC covers everything from flags through the end of the payload (the payload_len field is
 // the byte count, so the covered length is 11 + PayloadBytes()).
+#ifdef TYPE_CORE
+// Counted on the core only: it is the number that tells "the node's answer never reached this
+// core" from "it reached it corrupted" when an app transaction times out (AppInterface.h's gate
+// ring reports it). A node has no room for a diagnostic it cannot show (DAS RAM is 2048/2048 B).
+uint32_t BusRxCrcRejects = 0;
+#endif
+
 inline int RxValidateFrame(PacketFrame *Data)
 {
     if (Crc8(&Data->Flags, (uint16_t)(11 + PayloadBytes(*Data))) != Data->Crc8)
+    {
+#ifdef TYPE_CORE
+        BusRxCrcRejects = BusRxCrcRejects + 1;
+#endif
         return 0; // corrupted: keep scanning for the next 0xAA
+    }
     return (int)(1 + 12 + PayloadBytes(*Data));
 }
 

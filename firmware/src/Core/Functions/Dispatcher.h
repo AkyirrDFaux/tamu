@@ -153,7 +153,19 @@ void DispatchPacket(const PacketFrame &Frame)
         // request on top of the reply that is still on the wire.
         const bool BusTx = AppFrameSource != AppLinkSource::None && Frame.IdTgt != ADDR_BROADCAST;
         if (BusTx)
-            AppBusForwardStart(Frame.Trid);
+            AppBusForwardStart(Frame.IdTgt, Frame.Trid);
+#ifdef TYPE_CORE
+        else if (AppBusForwardPending())
+        {
+            // Our own frame, and the app's transaction is still owed an answer. One half-duplex
+            // medium: it waits its turn instead of going out on top of that answer
+            // (AppBusDeferredDrain sends it the moment the gate closes). If the deferral ring is
+            // already full this frame goes out anyway, and the gate records the clash.
+            if (AppBusDefer(Frame))
+                return;
+            AppBusGateNoteClash();
+        }
+#endif
         const bool Sent = SendAndVerifyPacket(Frame);
         if (BusTx && !Sent)
             AppBusForwardFinish(); // nothing went out: do not hold the queue for a reply
@@ -162,6 +174,24 @@ void DispatchPacket(const PacketFrame &Frame)
 #endif
     }
 }
+
+#ifdef TYPE_CORE
+// Sends the frames the core held back while an app transaction was owed an answer
+// (AppInterface.h AppBusDefer). Called from the app pump (AppInterfaceService::Pump) every pass,
+// which runs on the core's main task whether or not an app is attached.
+inline void AppBusDeferredDrain()
+{
+    while (AppBusDeferredCount > 0 && !AppBusForwardPending())
+    {
+        PacketFrame Frame = AppBusDeferred[0];
+        for (uint8_t i = 1; i < AppBusDeferredCount; i++)
+            AppBusDeferred[i - 1] = AppBusDeferred[i];
+        AppBusDeferredCount--;
+        // Dispatched with AppFrameSource None, so it forwards without opening a gate of its own.
+        DispatchPacket(Frame);
+    }
+}
+#endif
 
 // Processes the bus input queue, dispatching one received frame per call to the local
 // handlers (the main loop calls this repeatedly to drain the queue).

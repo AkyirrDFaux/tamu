@@ -26,6 +26,7 @@ typedef int portMUX_TYPE;
 #include "freertos/FreeRTOS.h"
 #endif
 #include "Core/Functions/Packet.h"
+#include "Core/Functions/AppConsole.h" // AppConsoleBusy: the gate's ring is re-emitted when idle
 
 // Defined in the device AppUSB.h (included after this header); used by the TX
 // pump to stop draining responses into a USB port the app has stopped reading.
@@ -144,18 +145,255 @@ AppInterfaceService AppInterface;
 // 4/20 over four rounds on every node (1/5 each), the same five reads 10 ms apart answered
 // 20/20, and the same burst addressed at the CORE's own System block answered 20/20. So an
 // app-origin unicast forward holds the rest of the queue until its reply lands.
-#define APP_BUS_REPLY_TIMEOUT_MS 50
+// How long a forwarded app transaction keeps the bus. It must exceed the SLOWEST LEGITIMATE
+// ANSWER, not the average one. Measured on the rig 2026-11-06 (`.pio/probe/gate_latency.py`, USB,
+// one request at a time): an ordinary forwarded read or write is answered in 13-14 ms, a node's
+// Save All in 125-184 ms. Per frame, in one restore (`restore_measure4.gate.log`): of 280
+// forwards 73 (26 %) had their 50 ms window release the queue before the answer was seen, the
+// longest answer that DID make it inside the window was 171 ms (3.4x the window), and 7 of the 73
+// had a core-origin frame go onto the bus while the answer was still owed. 50 ms was E76's
+// number, picked only to bound a lost reply, and it was never the answer time.
+//
+// 600 ms covers the measured worst case (184 ms) with ~3x margin, and it still bounds what a lost
+// reply costs: the app's own request timeout is 2 s, so the queue is released long before it.
+// A reply-less forward is NOT the case here: every app request carries REQACK
+// (`app/lib/core/protocol.dart`, PacketFrame.single - "Requests carry REQACK"), so no forward of a
+// restore is a write that expects no answer, and the other rule (do not gate a no-reply write)
+// would have changed nothing.
+#define APP_BUS_REPLY_TIMEOUT_MS 600
 
-inline void AppBusForwardStart(uint16_t Trid)
+// ---- Forward-gate diagnostics (card t_a76974ef) ---------------------------------------------
+//
+// Every app frame that leaves the core holds the gate for as long as its node takes to answer it,
+// and the window above is the number that decides whether that answer is still waited for. The
+// app link cannot show it: `DeviceLog` is silent whenever the app is TALKING (AppConsole.h,
+// `AppConsoleBusy` - a line written into that stream splits a frame), which is the whole of a
+// restore. So every gated transaction is recorded in a ring and the ring is re-emitted to the
+// console once the link goes idle, where a bench capture (`firmware/.pio/probe/gate_dump.py`)
+// reads it back per frame.
+//
+// Measured on the rig 2026-11-06 (`.pio/probe/gate_latency.py`, USB, one request at a time):
+// an ordinary forwarded read or write is answered in 13-14 ms, a node's Save All in 125-184 ms.
+// The 50 ms window this replaces was shorter than the slowest legitimate answer by an order of
+// magnitude, which is what this ring exists to prove per frame.
+//
+// Core only: a node's RAM has no room for a diagnostic it could never show (DAS_v0_1 links at
+// 2048/2048 B), and every value here is read and written from the app task alone (Pump and the
+// dispatcher), so no lock is needed.
+// One restore records ~300 gated forwards (every read and write that leaves the core for a
+// node: the plan, the writes themselves and the read-back), so the ring holds a whole run's
+// worth and the totals line still counts everything. 512 * 6 B = 3 kB of the core's 320 kB.
+#ifdef TYPE_CORE
+#define APP_BUS_GATE_RING 512
+
+// What the ring costs the console. 0 (the shipped build) re-emits only the transactions that did
+// NOT go cleanly - expired, late, clash, lost - plus the totals line, so a healthy restore costs
+// one line instead of one per forward. 1 re-emits every record, which is what a per-frame bench
+// measurement reads (`-DAPP_BUS_GATE_DUMP_ALL=1`).
+#ifndef APP_BUS_GATE_DUMP_ALL
+#define APP_BUS_GATE_DUMP_ALL 0
+#endif
+
+// What became of one gated transaction.
+enum : uint8_t
+{
+    ABG_REPLY = 0x00,   // released by the matching reply
+    ABG_EXPIRED = 0x01, // no reply inside the window: the timeout released the queue
+    ABG_LATE = 0x02,    // the reply turned up AFTER the window had already released the gate
+    ABG_CLASH = 0x04,   // a core-origin frame went onto the bus while this gate was owed an answer
+    ABG_LOST = 0x08,    // the forward never reached the wire (SendAndVerifyPacket exhausted)
+};
+
+struct AppBusGateEntry
+{
+    uint16_t Tgt;
+    uint16_t Trid;
+    uint8_t Hold;  // ms from send to release, saturated at 255
+    uint8_t Flags; // ABG_* above
+};
+
+AppBusGateEntry AppBusGateRing[APP_BUS_GATE_RING];
+uint32_t AppBusGateWrites = 0; // records written since boot; the ring keeps the newest
+uint32_t AppBusGateDumped = 0; // records already re-emitted to the console
+bool AppBusGateDumpStarted = false;
+// The ring is re-emitted only after the app link has been QUIET for a long time: a restore holds
+// the port for minutes and its own stream is where a mid-run dump would land (the running tool
+// discards text, and those records would be gone). The port's "session" cannot be used for this -
+// closing /dev/ttyACM0 does not un-configure the USB-Serial-JTAG interface, so AppUSBActive()
+// stays true after the host lets go. 10 s is far longer than any gap a run leaves between frames
+// (the app waits for one reply at a time; its longest single wait - a Save All - is 355 ms).
+bool AppBusGateHostHeld = false; // a host has held the port at least once
+uint32_t AppBusGateLastFrame = 0;
+#define APP_BUS_GATE_DUMP_QUIET_MS 10000
+uint32_t AppBusGateForwards = 0, AppBusGateReplies = 0, AppBusGateExpiries = 0,
+         AppBusGateLates = 0, AppBusGateClashes = 0, AppBusGateLosses = 0;
+uint16_t AppBusGateWorst = 0;   // longest hold that WAS answered (ms)
+uint8_t AppBusGateOpen = 0;     // ring slot of the transaction the gate is waiting on
+bool AppBusGateIsOpen = false;
+uint16_t AppBusGateOpenTgt = 0;
+uint32_t AppBusGateOpenAt = 0;
+// The last few windows that closed unanswered, so a reply that arrives after one of them can be
+// named as late. That is what tells "the node answered too slowly for the window" from "the node
+// never answered at all" - and one slot could not: a restore has dozens of expiries in a row, and
+// a single watch only ever sees the newest.
+#define APP_BUS_GATE_LATE_SLOTS 8
+struct AppBusGateLateSlot
+{
+    uint16_t Tgt;
+    uint16_t Trid;
+    uint32_t At; // send time of the window that closed unanswered
+    bool Used;
+};
+AppBusGateLateSlot AppBusGateLate[APP_BUS_GATE_LATE_SLOTS];
+uint8_t AppBusGateLateNext = 0;
+
+// The app link's own loss paths, so a request that never became a transaction can be told apart
+// from one whose answer went missing. Written by the USB/BLE readers (AppUSB.h/AppBLE.h).
+uint32_t AppLinkFrameRejects = 0; // a link frame failed its CRC and was re-synced
+uint32_t AppLinkEnqueueDrops = 0; // the inbound queue was full and the frame was dropped
+uint32_t AppBusSendFails = 0;     // a bus transmit exhausted its retries (core-origin included)
+extern uint32_t BusRxCrcRejects;  // defined in Core/Functions/Bus.h (the RX assembler's owner)
+
+// Frames the core itself wants to put on the bus while an app transaction is still owed an
+// answer. They are held here and dispatched the moment the gate closes: one half-duplex medium
+// means OUR request and the node's answer must not share the wire either, and the E76 gate only
+// ever held APP frames - so the core's own subscription/script/log traffic still went out
+// mid-transaction (measured 7 times in one restore, before this queue existed). Depth 4 with a
+// 600 ms window: a deferral ring that is full drops nothing important - the frame goes out and is
+// recorded as a clash instead (the counter in the totals line is the witness).
+#define APP_BUS_DEFER_DEPTH 4
+PacketFrame AppBusDeferred[APP_BUS_DEFER_DEPTH];
+uint8_t AppBusDeferredCount = 0;
+uint32_t AppBusDeferredTotal = 0, AppBusDeferredDrops = 0;
+
+inline bool AppBusDefer(const PacketFrame &Frame)
+{
+    if (AppBusDeferredCount >= APP_BUS_DEFER_DEPTH)
+    {
+        AppBusDeferredDrops++;
+        return false;
+    }
+    AppBusDeferred[AppBusDeferredCount++] = Frame;
+    AppBusDeferredTotal++;
+    return true;
+}
+
+inline void AppBusDeferredDrain(); // Core/Functions/Dispatcher.h (it owns the dispatch order)
+
+inline void DeviceLog(const char *Tag, const char *Fmt, ...); // Core/Functions/Log.h
+
+// Records one transaction. The open transaction's slot is filled in when it is released, so a
+// CLASH can be marked on it while it is still owed an answer.
+inline void AppBusGateRecord(uint16_t Tgt, uint16_t Trid, uint32_t HoldMs, uint8_t Flags)
+{
+    AppBusGateEntry &Entry = AppBusGateRing[AppBusGateWrites % APP_BUS_GATE_RING];
+    Entry.Tgt = Tgt;
+    Entry.Trid = Trid;
+    Entry.Hold = (uint8_t)(HoldMs > 255 ? 255 : HoldMs);
+    Entry.Flags = Flags;
+    AppBusGateWrites++;
+}
+
+// Re-emits the ring to the console a few records per pass, and only while the app link is idle
+// (a line written into a talking link would split a frame). Ends with the run's totals, which is
+// the line a capture is checked against.
+inline void AppBusGateDrain()
+{
+    if (AppBusGateDumped == AppBusGateWrites)
+        return;
+    if (!AppUSBActive())
+        return; // never write into a port nobody holds
+    if (AppConsoleBusy(AppUSBActive(), AppUsbSilent(), AppInterface.TxHead, AppInterface.TxTail))
+        return;
+    if ((uint32_t)(DeviceStatus.UptimeMs - AppBusGateLastFrame) < APP_BUS_GATE_DUMP_QUIET_MS)
+        return; // a run may still be in progress: keep the records until the link is quiet
+    uint32_t Oldest = AppBusGateWrites > APP_BUS_GATE_RING ? AppBusGateWrites - APP_BUS_GATE_RING : 0;
+    if (AppBusGateDumped < Oldest)
+        AppBusGateDumped = Oldest; // the ring overwrote them while the link was talking
+    if (!AppBusGateDumpStarted)
+    {
+        AppBusGateDumpStarted = true;
+        DeviceLog("BUSGATE", "records %lu..%lu of %lu%s",
+                  (unsigned long)(AppBusGateDumped + 1), (unsigned long)AppBusGateWrites,
+                  (unsigned long)AppBusGateWrites,
+                  APP_BUS_GATE_DUMP_ALL ? "" : " (anomalies only)");
+    }
+    for (int n = 0; n < 4 && AppBusGateDumped < AppBusGateWrites; n++, AppBusGateDumped++)
+    {
+        const AppBusGateEntry &Entry = AppBusGateRing[AppBusGateDumped % APP_BUS_GATE_RING];
+        if (!APP_BUS_GATE_DUMP_ALL && Entry.Flags == ABG_REPLY)
+            continue; // a clean transaction: the totals line already counts it
+        DeviceLog("BUSGATE", "tgt=%u trid=0x%04X hold=%ums%s%s%s",
+                  (unsigned)Entry.Tgt, (unsigned)Entry.Trid, (unsigned)Entry.Hold,
+                  (Entry.Flags & ABG_EXPIRED) ? " EXPIRED" : "",
+                  (Entry.Flags & ABG_LATE) ? " LATE" : "",
+                  (Entry.Flags & ABG_CLASH) ? " CLASH" : "");
+    }
+    if (AppBusGateDumped == AppBusGateWrites)
+    {
+        AppBusGateDumpStarted = false;
+        DeviceLog("BUSGATE",
+                  "total forwards=%lu replies=%lu expired=%lu late=%lu clash=%lu lost=%lu "
+                  "deferred=%lu/%lu worst=%ums window=%ums",
+                  (unsigned long)AppBusGateForwards, (unsigned long)AppBusGateReplies,
+                  (unsigned long)AppBusGateExpiries, (unsigned long)AppBusGateLates,
+                  (unsigned long)AppBusGateClashes, (unsigned long)AppBusGateLosses,
+                  (unsigned long)AppBusDeferredTotal, (unsigned long)AppBusDeferredDrops,
+                  (unsigned)AppBusGateWorst, (unsigned)APP_BUS_REPLY_TIMEOUT_MS);
+        DeviceLog("BUSGATE", "link rejects=%lu drops=%lu | bus sendfails=%lu rxrejects=%lu",
+                  (unsigned long)AppLinkFrameRejects, (unsigned long)AppLinkEnqueueDrops,
+                  (unsigned long)AppBusSendFails, (unsigned long)BusRxCrcRejects);
+    }
+}
+#endif
+
+inline void AppBusForwardStart(uint16_t Tgt, uint16_t Trid)
 {
     AppInterface.BusPendingTrid = Trid;
     AppInterface.BusPendingSince = DeviceStatus.UptimeMs;
     AppInterface.BusPending = true;
+#ifdef TYPE_CORE
+    AppBusGateForwards++;
+    AppBusGateOpenTgt = Tgt;
+    AppBusGateOpenAt = AppInterface.BusPendingSince;
+    AppBusGateOpen = (uint8_t)(AppBusGateWrites % APP_BUS_GATE_RING);
+    AppBusGateIsOpen = true;
+    AppBusGateLastFrame = DeviceStatus.UptimeMs;
+    AppBusGateRecord(Tgt, Trid, 0, ABG_REPLY); // replaced when the transaction is released
+#endif
 }
 
+// Closes the open transaction: fills in how long it was held and what released it.
+#ifdef TYPE_CORE
+inline void AppBusGateClose(uint8_t Flags)
+{
+    if (!AppBusGateIsOpen)
+        return;
+    AppBusGateIsOpen = false;
+    uint32_t Hold = (uint32_t)(DeviceStatus.UptimeMs - AppBusGateOpenAt);
+    AppBusGateEntry &Entry = AppBusGateRing[AppBusGateOpen % APP_BUS_GATE_RING];
+    Entry.Hold = (uint8_t)(Hold > 255 ? 255 : Hold);
+    Entry.Flags = (uint8_t)(Flags | (Entry.Flags & ABG_CLASH)); // keep a clash noted while open
+    if (!(Flags & ABG_EXPIRED))
+    {
+        AppBusGateReplies++;
+        if (Entry.Hold > AppBusGateWorst)
+            AppBusGateWorst = Entry.Hold;
+    }
+    if (Flags & ABG_EXPIRED)
+        AppBusGateExpiries++;
+    if (Flags & ABG_LOST)
+        AppBusGateLosses++;
+}
+#endif
+
+// Ends the transaction without a reply: the frame never reached the wire.
 inline void AppBusForwardFinish()
 {
     AppInterface.BusPending = false;
+#ifdef TYPE_CORE
+    AppBusGateClose(ABG_LOST);
+#endif
 }
 
 // True while a forwarded request still owes the bus a reply. It expires, so a lost reply (or a
@@ -168,6 +406,16 @@ inline bool AppBusForwardPending()
     if ((uint32_t)(DeviceStatus.UptimeMs - AppInterface.BusPendingSince) >= APP_BUS_REPLY_TIMEOUT_MS)
     {
         AppInterface.BusPending = false;
+#ifdef TYPE_CORE
+        AppBusGateClose(ABG_EXPIRED);
+        // Remember the window that closed unanswered: a reply that turns up afterwards is what
+        // separates "the node answered too late for the window" from "the node never answered".
+        AppBusGateLate[AppBusGateLateNext].Tgt = AppBusGateOpenTgt;
+        AppBusGateLate[AppBusGateLateNext].Trid = AppInterface.BusPendingTrid;
+        AppBusGateLate[AppBusGateLateNext].At = AppInterface.BusPendingSince;
+        AppBusGateLate[AppBusGateLateNext].Used = false;
+        AppBusGateLateNext = (uint8_t)((AppBusGateLateNext + 1) % APP_BUS_GATE_LATE_SLOTS);
+#endif
         return false;
     }
     return true;
@@ -177,8 +425,41 @@ inline bool AppBusForwardPending()
 inline void AppBusForwardSawReply(uint16_t Trid)
 {
     if (AppInterface.BusPending && AppInterface.BusPendingTrid == Trid)
+    {
         AppInterface.BusPending = false;
+#ifdef TYPE_CORE
+        AppBusGateClose(ABG_REPLY);
+        AppBusGateLastFrame = DeviceStatus.UptimeMs;
+#endif
+        return;
+    }
+#ifdef TYPE_CORE
+    // A reply for a window that has already closed: record how late it was. That is the number
+    // the window has to cover, and it is invisible from the app (the app saw a timeout).
+    for (uint8_t i = 0; i < APP_BUS_GATE_LATE_SLOTS; i++)
+    {
+        AppBusGateLateSlot &Slot = AppBusGateLate[i];
+        if (!Slot.Used && Slot.Trid == Trid)
+        {
+            Slot.Used = true;
+            AppBusGateRecord(Slot.Tgt, Trid, (uint32_t)(DeviceStatus.UptimeMs - Slot.At), ABG_LATE);
+            break;
+        }
+    }
+#endif
 }
+
+#ifdef TYPE_CORE
+// A frame that is not the app's went onto the bus while the gate was owed an answer: two
+// transmitters on a half-duplex medium, which is the collision the gate exists to prevent.
+inline void AppBusGateNoteClash()
+{
+    if (!AppBusGateIsOpen)
+        return;
+    AppBusGateRing[AppBusGateOpen % APP_BUS_GATE_RING].Flags |= ABG_CLASH;
+    AppBusGateClashes++;
+}
+#endif
 
 // Whether an app frame has to leave this core (a unicast to another address). A broadcast is not
 // held: several devices may answer one, so there is no single reply to wait for.
@@ -433,11 +714,22 @@ void AppInterfaceService::Pump()
         // Publish the link while this frame is handled: a service that must refuse a write from
         // the radio (the BLE Settings block) reads it, and it is None again once the frame is done.
         AppFrameSource = From;
+#ifdef TYPE_CORE
+        AppBusGateLastFrame = DeviceStatus.UptimeMs; // this link is talking: no dump yet
+#endif
         RouteIn(Frame);
         AppFrameSource = AppLinkSource::None;
     }
 
     TxFlush();
+
+#ifdef TYPE_CORE
+    // Re-emit the forward gate's per-frame records once the link is idle (AppBusGateDrain).
+    AppBusGateDrain();
+    // Frames the core held back while an app transaction was owed an answer go out now that the
+    // gate has closed (AppBusDeferredDrain).
+    AppBusDeferredDrain();
+#endif
 
     // The streamed storage read: a few fragments per pass, each one only when the link can take
     // it (Core/Services/Storage.h). Between fragments the pass ends, so the RSBus, the display

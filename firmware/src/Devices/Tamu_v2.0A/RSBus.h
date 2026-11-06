@@ -155,6 +155,11 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
     {
         ESP_LOGE("RS485", "Transmission failed after %d attempts", RS485_RETRIES);
     }
+#ifdef TYPE_CORE
+    // Every transmit that never got through, ours or the app's: the gate ring reports the app's
+    // (AppInterface.h), and a core-origin frame's failure has no other trace at all.
+    AppBusSendFails = AppBusSendFails + 1;
+#endif
     return false;
 }
 
