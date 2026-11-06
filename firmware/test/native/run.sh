@@ -32,6 +32,9 @@
 #                     write-only password (a read answers empty, never the stored text) and the
 #                     configuration-only State rule; plus System field 8 as an interface BIT FIELD
 #                     (Core/Types/Enums.h AppActiveBits)
+#   netid_test.cpp    the core's net-ID rule (Core/Functions/NetId.h): a write moves the live net and
+#                     the core's NetID.1 address together, 0/0x3F are refused, and the value the
+#                     save paths mirror equals the one stored - so a Save All cannot revert it
 #
 # The numeric core is built in three shapes: the core (64-bit) and the DAS (32-bit, no
 # Vector/Matrix) are the real targets; the third - 32-bit *with* Vector/Matrix - is a
@@ -1476,6 +1479,26 @@ echo
 
 echo "### native raw-resistance transform tests (same contract, 64-bit Number shape)"
 build_run "meastransform_core" "meas_transform_test.cpp"
+echo
+
+echo "### native net-ID rule tests (a write moves the live net and NetID.1 together; a save cannot revert it)"
+build_run "netid" "netid_test.cpp"
+echo
+
+# The System f7 trigger itself cannot be linked on the host (it pulls the board's static memory),
+# so its wiring is asserted on the source: the write must go through ApplyNetId - which moves the
+# LIVE net and the core's NetID.1 address - and must still store the value. A write that only stored
+# the space was reverted by the next Save All, so a restore could not move a wiped core onto the
+# setup's net and every subscription install went to a net no node answers (t_ab3e764a).
+echo "### source guard: the System NetID write applies the live net and stores it"
+NETID_SRC="$ROOT/src/Core/Services/RegisterRead.h"
+if [ "$(grep -c 'ApplyNetId(DeviceStatus.NetId, DeviceStatus.ShortAddress, Value)' "$NETID_SRC")" != 1 ] \
+   || [ "$(grep -c 'memcpy(&StaticPer.System.NetId, Data, 1);' "$NETID_SRC")" != 1 ]; then
+    echo "FAIL $NETID_SRC: the NetID trigger must apply the live net (ApplyNetId) AND store it"
+    fail=$((fail + 1))
+else
+    echo "PASS: the NetID trigger applies the live net and stores it"
+fi
 echo
 
 exit $fail

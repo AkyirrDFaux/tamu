@@ -467,6 +467,21 @@ are hardware-only.
   the rig - that needs a real divider on a measuring node, and the fan PWM compared against the
   pre-fix build.
 
+- **E58** **`Docs/Services/System Block and Device Commands.md:22` says the System `NetID` field
+  "applies only after reboot", which the firmware no longer does.** Since `t_ab3e764a` a write of
+  System field 7 applies the net to the live status (`DeviceStatus.NetId` and the core's
+  `NetID.1` address) and stores it, because the save paths mirror the *live* net into `.SV`
+  (`RegisterPersist.h:24`, `BleAutoName.h:69`, `BleSettingsGlue.h:70`) - a value written into the
+  space alone was reverted by the next Save All, so a restored NetID never survived. Measured on
+  this rig: a clean restore wrote the archive's NetID 39 to a wiped core, `.SV[16]` and the live
+  field still read `0x0E` (14, the bit a wiped space gets at boot), and the six restored
+  requester rows kept sending their `CID 0x01 Change` to 14.2/14.3/14.4 - addresses no node
+  answers on (the nodes are 39.2/39.3/39.4) - so the provider tables stayed empty for ever.
+  Proposed wording, for the parent to apply with Akyirr's approval: replace
+  "Core only; applies only after reboot" with "Core only; a write applies the net immediately and
+  is stored (the core's address is `NetID.1`)." The reset still changes the *nodes'* addresses:
+  they adopt the core's net when they next register.
+
 ## BLE Settings block (2026-10-28)
 
 **2026-10-29, owner ruling "simplify the BLE block" - the block is SIX fields, and this note is the

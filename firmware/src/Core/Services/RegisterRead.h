@@ -5,6 +5,7 @@
 // Part of Core/Services/Register.h (included from there).
 
 #include "Core/Services/RegisterDefs.h"
+#include "Core/Functions/NetId.h"
 
 // ===== CID 2: Read helpers =====
 
@@ -97,7 +98,8 @@ inline void* RegisterService::SystemGet(uint16_t Field, uint8_t Key)
 #ifdef TYPE_CORE
     if (Field == SYSTEM_FIELD_NETID)
     {
-        // The live net (the stored value applies on reboot); the write stores it via a trigger.
+        // The live net - and, since a write applies to it as well (Core/Functions/NetId.h), the
+        // stored value too, so the read-back of this field and `.SV` cannot disagree.
         // Read back DeviceStatus.NetId in place - the getter's value is only ever copied out.
         return &DeviceStatus.NetId;
     }
@@ -107,13 +109,16 @@ inline void* RegisterService::SystemGet(uint16_t Field, uint8_t Key)
 }
 
 #ifdef TYPE_CORE
-// Docs: NetID 0 is unassigned and 0x3F is all-nets, so neither is a valid stored value. The
-// write stores it (applied on reboot) without touching the live DeviceStatus.NetId.
+// Docs: NetID 0 is unassigned and 0x3F is all-nets, so neither is a valid value. The write applies
+// the net to the LIVE status and stores it in the static space: every save path mirrors the live
+// net into `.SV` (RegisterPersist.h, BleAutoName.h, BleSettingsGlue.h), so a value written into the
+// space alone was reverted by the next Save All - which is what a restore does right after the
+// System block, so a restored net-ID never survived (Core/Functions/NetId.h has the measurement).
 inline bool RegisterService::OnSystemNetIdWrite(const StaticBlockDescriptor &Block, uint16_t Field, const void *Data, uint16_t Len) {
     (void)Block; (void)Field;
     if (Len < 1) return false;
     const uint8_t Value = *static_cast<const uint8_t *>(Data);
-    if (Value == 0 || Value >= 0x3F) return false;
+    if (!ApplyNetId(DeviceStatus.NetId, DeviceStatus.ShortAddress, Value)) return false;
     memcpy(&StaticPer.System.NetId, Data, 1);
     return true;
 }
