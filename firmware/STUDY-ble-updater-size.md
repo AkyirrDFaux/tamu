@@ -221,8 +221,9 @@ Rig: Tamu v2.0A on `/dev/ttyACM0` (USB Serial/JTAG), flashed by the owner's auth
 
 **What was flashed.** `[env:Tamu_bootloader]` 432,176 B at 0x10000 and `[env:Tamu_v2_0A]`
 699,536 B at 0x90000, each ending with esptool's `Hash of data verified.`; both regions read back
-byte-identical to the built `.bin`. The factory reports 430,304 B of the 512,000 B partition (84 %)
-and 16,052 B of RAM.
+byte-identical to the built `.bin`. The shipped factory measures **431,498 B of the 512,000 B
+partition (84.3 %)** and 16,052 B of RAM (its `.bin` is 432,176 B; the ELF segment total is what the
+size check reports).
 
 **The broken image** (`[env:Tamu_badimage]`, `src/Test/BadImage.cpp`, 133,904 B) is a real ESP image
 - the loader validates it and jumps to it - whose first `.flash.init_array` entry aborts before

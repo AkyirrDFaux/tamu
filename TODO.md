@@ -500,7 +500,7 @@ Open:
   2026-11-06 (kanban t_3d74f8d1; the measurement was t_79a194d5).** The factory image
   (`Bootloader/CoreBootloader.cpp`, `[env:Tamu_bootloader]`) now carries both transports: the USB
   Serial/JTAG frames and a NimBLE GATT write/notify service with no security manager and no bonds.
-  It is **430,304 B of the live 500 KiB `factory` partition** (84 %), built against
+  It is **431,498 B of the live 500 KiB `factory` partition** (84.3 %), built against
   `partitions.csv` - the only partition table; `partitions_updater.csv` and the size probe env are
   gone (the 1 MB proposal was never needed once the applied table gave `factory` 0x7D000).
   Admission is still physical presence + a 300 s window; recovery is the boot budget plus
