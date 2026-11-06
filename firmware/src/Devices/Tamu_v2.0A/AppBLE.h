@@ -86,6 +86,11 @@ static uint8_t BleLinkBondCount = 0;
 // True while the current link may not create a bond: no window is open and the store is not empty,
 // so a pairing on this link is a stranger's and must not leave a bond behind.
 static bool BleLinkBondingClosed = false;
+// Owed to a link that made the device's FIRST bond: the naming rule's write (Blocks/AutoName.h,
+// the trigger) is raised from the security callback - where `BleLinkBondCount == 0` and the peer is
+// now bonded, i.e. exactly the session gate's empty-store case - and performed by the app task on
+// its next pass (Devices/Tamu_v2.0A/BleAutoName.h). Host task writes it, app task consumes it.
+static volatile bool BleAutoNameOwed = false;
 // The automatic window's trigger: an EVENT the owner caused, consumed by the next AppBLETick pass.
 // Never "the bond store reads empty" - a deletion a LINK drove (repeat pairing, E69) empties the
 // store too, and that must not make a locked device offer itself. Blocks/BleWindowPolicy.h has the
@@ -826,6 +831,13 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         BleConnected = true;
         BleMtu = ConnInfo.getMTU();
         BleSecureDeadlineMs = 0;
+        // The naming rule's trigger (Blocks/AutoName.h "WHEN"): this link came up with an EMPTY bond
+        // store and has just made the device's first bond. Raised here and performed by the app
+        // task on its next pass (Devices/Tamu_v2.0A/BleAutoName.h), because the write is a
+        // System/Name write plus its `.SV` mirror, and a flash write does not belong in a
+        // connection callback. A reconnect never raises it: its link began with a bond stored.
+        if (BleLinkBondCount == 0)
+            BleAutoNameOwed = true;
         // Prefer 2M PHY when the central supports it: halves air time per packet
         // (helps multi-notification transfers); stays at 1M otherwise.
         if (BleServer)

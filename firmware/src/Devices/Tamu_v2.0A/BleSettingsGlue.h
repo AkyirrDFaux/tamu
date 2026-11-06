@@ -135,10 +135,15 @@ static void BleBondArrayFormat()
 //   - Enabled / Display name -> the radio (AppBLESettingsApply; the pairing policy is read at
 //     every use by AppBLE.h, so it needs no push);
 //   - Mode and the Bonds array <- the radio; Window <- the pairing deadline.
+//
+// It is also the first-bond naming rule's write site (BleAutoName.h): the security callback can
+// only raise the flag - the write is a System/Name write plus a `.SV` mirror, and this hook is the
+// app task's own place for it. Runs before the apply so the same pass sees the new name.
 void BleSettingsSync()
 {
     BleSettingsVolatile *Vol = &StaticVol.BleSet;
 
+    AppBLEAutoNameService();
     AppBLESettingsApply();
 
     // Mode is derived from the passkey every pass, never stored: the two cannot disagree.

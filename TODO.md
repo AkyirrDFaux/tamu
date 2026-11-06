@@ -496,6 +496,16 @@ Open:
 
 ## Open work
 
+- **Auto-name on the first bond - implemented 2026-11-06, rig pass pending (kanban t_2105ced6).**
+  `Blocks/AutoName.h` (the rule) + `Devices/Tamu_v2.0A/BleAutoName.h` (the write) give a device the
+  name "<Prefix>-<serial tail>" ("Tamu-2070" from serial E4B063C82070) on its first bond, and only
+  while System `Name` is empty or still at the factory value - so an app-written name, or one a setup
+  restore pushes, wins whichever side of the pairing it lands on. Host-tested
+  (`test/native/auto_name_test.cpp` + a source guard in `test/native/run.sh`); both envs build. **The
+  rig pass is not run:** it needs a flash (Akyirr's) and a central to pair, and the unit on the bench
+  already carries the owner's name ("Akyirr"), so its `Name` has to be put back to the factory value
+  first or the pass only proves the precedence. Recipe in the card.
+
 - **Autorefresh on Devices and Device View** - `Docs/App/Devices.md` specifies it on both pages, but it
   exists only in `connection_page.dart` and `widgets.dart` today. The 1b library now provides it
   (`PageActions.autoRefresh`), so adding it is a page adoption for 1c, not new plumbing. Raised during the

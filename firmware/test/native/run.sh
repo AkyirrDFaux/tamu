@@ -262,6 +262,57 @@ echo "### native BLE Settings write-rule tests (the cable, or a secured BLE sess
 build_run "blewrite" "ble_write_test.cpp"
 echo
 
+# The naming rule (Blocks/AutoName.h): a device names itself "<Prefix>-<serial tail>" on its first
+# bond, and only while its System `Name` field is undisturbed - so a name the app or a setup restore
+# wrote wins, whichever side of the pairing it landed on. The rule, the field shape and the decision
+# table are driven here; the device's own write is guarded on the source below.
+echo "### native naming tests (a device names itself after its serial on its first bond)"
+build_run "autoname" "auto_name_test.cpp"
+echo
+
+# The naming rule's device half, structural half. The rule is host-tested above; what the device
+# wires it to cannot be linked on the host (NimBLE, the static memory, the storage partition), so it
+# is asserted on the source:
+#   - the ONLY site that raises the flag is the security callback, and its gate is the bond store
+#     having been EMPTY when the link came up (BleLinkBondCount == 0) - the device's first bond,
+#     never a reconnect and never a later bond (the store's snapshot, AppBLELinkBondSnapshot);
+#   - the flag is consumed before the write, so one first bond names the device once - and the
+#     `AutoNameDue` call repeats the same gate plus "a bond still exists";
+#   - the write runs from the app task's per-loop hook (BleSettingsSync -> AppBLEAutoNameService),
+#     never from the NimBLE host callback, because it mirrors `.SV`;
+#   - the factory name the rule compares against is the initialiser's own constant (KFactorySystem),
+#     not a second copy of the string.
+echo "### source guard: the auto-name is owed to the FIRST bond and written from the app task"
+NAME_APPBLE="src/Devices/Tamu_v2.0A/AppBLE.h"
+NAME_DEVICE="src/Devices/Tamu_v2.0A/BleAutoName.h"
+NAME_GLUE="src/Devices/Tamu_v2.0A/BleSettingsGlue.h"
+NAME_MAIN="src/Devices/Tamu_v2.0A/Main.h"
+name_fail=0
+
+if [ "$(grep -c 'BleAutoNameOwed = true' "$NAME_APPBLE" || true)" != 1 ] ||
+   ! grep -A1 'if (BleLinkBondCount == 0)' "$NAME_APPBLE" | grep -q 'BleAutoNameOwed = true;'; then
+    echo "FAIL $NAME_APPBLE: the auto-name must be raised exactly once, gated on an empty bond store at connect (the first bond)"
+    name_fail=1
+fi
+if ! grep -q 'AutoNameDue(BleLinkBondCount == 0' "$NAME_DEVICE" ||
+   ! grep -q 'BleAutoNameOwed = false; // one attempt per first bond' "$NAME_DEVICE"; then
+    echo "FAIL $NAME_DEVICE: the write must repeat the first-bond gate and consume the one-shot flag before writing"
+    name_fail=1
+fi
+if [ "$(grep -c 'AppBLEAutoNameService();' "$NAME_GLUE" || true)" != 1 ]; then
+    echo "FAIL $NAME_GLUE: the auto-name must have exactly one call site - the per-loop hook"
+    name_fail=1
+fi
+if ! grep -q 'AutoNameUndisturbed(StaticPer.System.Name' "$NAME_DEVICE" ||
+   ! grep -q '\.System = KFactorySystem,' "$NAME_MAIN" ||
+   ! grep -q 'constexpr SystemPersistent KFactorySystem' "$NAME_MAIN"; then
+    echo "FAIL: the factory name must be one constant (KFactorySystem) - shared by the initialiser and the undisturbed check"
+    name_fail=1
+fi
+[ $name_fail = 0 ] && echo "PASS: the name is owed to the first bond, fills only an undisturbed System/Name, and is written from the app task"
+fail=$((fail + name_fail))
+echo
+
 # The GPIO8 reset and the write rule, structural half. The sequencer's decision is host-tested above;
 # what the device wires it to cannot be linked on the host (GPIO, NimBLE, the static memory), so it is
 # asserted on the source:

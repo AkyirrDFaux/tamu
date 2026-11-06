@@ -38,6 +38,10 @@ extern const uint32_t KCapabilities = Capabilities::Core |
                                         Capabilities::SubscriptionProvide;
 
 // Reads the factory MAC from eFuse as the 14-byte serial number (cached).
+//
+// The identity is the low 48 bits of that MAC (KSerialIdentityLen): the serial's first six bytes
+// in printed order, e.g. E4:B0:63:C8:20:70 -> E4B063C82070, which is what the app shows and what
+// the naming rule's tail (Blocks/AutoName.h: "Tamu-2070") is taken from.
 const SerialNumber &GetSerialNumber()
 {
     static SerialNumber Sn;
@@ -89,9 +93,19 @@ struct StaticVolatile {
     WifiSettingsVolatile WifiSet; // BlockType 0x0C: State/IP (read-only) + the always-empty password
 #endif
 };
+// The System Name this build ships with: a fixed 16-char space-padded field with no terminator.
+// It is the initialiser's only source, AND the naming rule's "factory value" (Blocks/AutoName.h):
+// a field still holding it has never been given a name, so the first bond may fill it
+// (Devices/Tamu_v2.0A/BleAutoName.h). The two must stay the same bytes - hence one constant.
+constexpr SystemPersistent KFactorySystem = {
+    {'T','a','m','u',' ','v','2','.','0','A',' ',' ',' ',' ',' ',' '},
+#ifdef TYPE_CORE
+    0, // NetId: unassigned until the boot picks one
+#endif
+};
+
 StaticPersistent StaticPer = {
-    // Name is a fixed 16-char null-padded field.
-    .System = {.Name = {'T','a','m','u',' ','v','2','.','0','A',' ',' ',' ',' ',' ',' '}, .NetId = 0},
+    .System = KFactorySystem,
     .Fan = {},
     .Accgyr = {},
     .Display = {},
@@ -100,6 +114,7 @@ StaticPersistent StaticPer = {
     .WifiSet = {},
 #endif
 };
+
 StaticVolatile StaticVol;
 
 Vysi1Display Display1(StaticVol.Display[0], StaticPer.Display[0]);
@@ -137,6 +152,7 @@ LEDDriver LED(3, 0); // both LED strips: pins 3 (Display1) and 0 (Display2), sen
 
 #include "AppUSB.h"
 #include "AppBLE.h"
+#include "BleAutoName.h"    // the first bond's auto-name: the System/Name write and its `.SV` mirror
 #include "BleSettingsGlue.h" // the BLE Settings block's write triggers and read-only refresh
 #include "BleResetPin.h"     // the GPIO8 BLE reset: its input, its LED and its action (AppBLEStackReset)
 #ifdef USE_WIFI_SETTINGS
