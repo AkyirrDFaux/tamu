@@ -1,15 +1,15 @@
 {
   "DAS_v0_1": {
     "day": 6,
-    "hash": "a60c2f8613ebdad1ee5c627a9b47f06b56a1fe03579de6fbbf1d15db42754063",
-    "iteration": 5,
+    "hash": "edfb2df15168be44d2619e3d1ea264b6600c9a569251eabe20c34e7ca42cc85e",
+    "iteration": 6,
     "month": 11,
     "year": 26
   },
   "Tamu_v2_0A": {
     "day": 6,
-    "hash": "d8846973ba3ff72f06512dfc01e6f0008cf9a565f776d478f96ef1de939d7c95",
-    "iteration": 17,
+    "hash": "bea0e7a59ab8d5b45ad5d911100031d89c75f94073bad1989491244f5329ef96",
+    "iteration": 18,
     "month": 11,
     "year": 26
   },
