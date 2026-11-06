@@ -230,6 +230,16 @@ echo "### native register-read tests (a row with no bytes is unreadable, not a t
 build_run "registerread" "register_read_test.cpp"
 echo
 
+# t_1e301bfb: a DAS Save All is one `.SV` write, and the file table is append-only - so a save
+# that needs a table move needs two CONTIGUOUS 64 B blocks while its own staging file holds one.
+# A store whose free blocks are single-block islands therefore refuses every save, for ever
+# (measured on node 0.4: 0x4E three times in a row). The real StorageBlockFS.h runs here over a
+# fake 512 B NOR flash, in the DAS geometry, and the test builds that exact store: the write must
+# still land (in place) and must keep landing, while an ordinary store keeps the atomic path.
+echo "### native storage backup-write tests (a full table with no 2-block run still saves)"
+build_run "storagebackup" "storage_backup_test.cpp" -DBOARD_DAS_v0_1 -DSTORAGE_FLASH_SIZE=512 -DSTORAGE_BLOCK_SIZE=64 -DMEMORY_BACKUP_CAP=128
+echo
+
 # t_2da784f0, renderer half: the REAL Blocks/Vysi1Render.h is compiled here (unmodified) over a real
 # DynamicBlockDescriptor, with the four device-layer symbols its headers reference but the render path
 # never calls (DeviceStatus/TxFrame/DispatchPacket/DeviceLog) stubbed. It pins the two facts the card

@@ -126,6 +126,22 @@ inline void BackupTempName(const char Name[8], char Out[8])
 }
 
 // Writes `data` to the backup file `name` atomically (NOR-safe copy-and-rename):
+//
+// The staging file costs TWO file-table records (its own, then the rename's) and, once the table
+// is full, a table MOVE - and a move needs STORAGE_TABLE_SIZE of CONTIGUOUS space while the live
+// file and the staging file each hold a block of their own. On the DAS (512 B store, 64 B blocks,
+// five usable blocks) that peak is exactly the whole data area, so a store whose free blocks are
+// single-block islands can never place it: CreateFile/RenameFile fail, and because the failure
+// changes nothing, every later save fails the same way. Measured on node 0.4 (t_1e301bfb): Save
+// All answered FLAG_FAIL three times in a row in that store and 0x2E as soon as the two stray
+// files that fragmented it were removed.
+//
+// So when the atomic path cannot be PLACED, the live file is rewritten in place instead: one
+// erase, one write, no record and no move. That gives up atomicity for the ~ms of the write (a
+// power cut there leaves a torn file), which is the right trade in that state - the alternative
+// is that the save never succeeds and the values stay in RAM until the next power cycle. The
+// in-place path is only taken for a file that already exists at exactly this length, so it never
+// has to grow a file or invent a record.
 inline bool WriteBackupFile(const char Name[8], const uint8_t *Data, uint16_t Len)
 {
     char Tmp[8];
@@ -137,22 +153,21 @@ inline bool WriteBackupFile(const char Name[8], const uint8_t *Data, uint16_t Le
     if (Storage.FileExists(Tmp) != 0xFFFFFFFF)
         Storage.DeleteFile(Tmp);
 
-    // Stage the new generation in its own file (CreateFile provides freshly erased blocks).
-    if (!Storage.CreateFile(Tmp, Len))
-        return false;
-    if (!Storage.WriteToFile(Tmp, 0, Len, (const char *)Data))
-    {
-        Storage.DeleteFile(Tmp); // don't leave an orphan staging file behind
-        return false;
-    }
+    // Stage the new generation in its own file (CreateFile provides freshly erased blocks) and
+    // commit it atomically under its final name.
+    if (Storage.CreateFile(Tmp, Len) &&
+        Storage.WriteToFile(Tmp, 0, Len, (const char *)Data) &&
+        Storage.RenameFile(Tmp, Name))
+        return true;
 
-    // Commit atomically: the staging file becomes the live backup under its final name.
-    if (!Storage.RenameFile(Tmp, Name))
-    {
-        Storage.DeleteFile(Tmp);
+    Storage.DeleteFile(Tmp); // don't leave an orphan staging file behind
+
+    uint32_t Offset, Size;
+    if (!Storage.GetFileInfo(Name, &Offset, &Size) || Size != Len)
         return false;
-    }
-    return true;
+    if (!StorageFlash.Erase(Offset, BlocksForSize(Len) * STORAGE_BLOCK_SIZE))
+        return false;
+    return Storage.WriteToFile(Name, 0, Len, (const char *)Data);
 }
 
 // Reads a backup file into `out`; returns the byte count (0 if absent or too large).
