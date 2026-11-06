@@ -1565,32 +1565,55 @@ card did not authorize. The boot-budget half of the recovery path is host-tested
 (`test/native/updater_boot_test.cpp`, `PASS: 49 checks`). Sizes for a BLE updater in `factory`, and
 why 384 KB is not enough, are in `firmware/STUDY-ble-updater-size.md`.
 
-## The 0x2A00 name fix is still unmeasured on the device (2026-11-06, card t_ec37826c)
+## The 0x2A00 name fix is measured on the device (2026-11-06, card t_ec37826c)
 
-**Measured (pre-fix image 26.11.6.4, this host: BlueZ 5.87, `Paired: yes` / `Bonded: yes`).** The
-rename path tracks on both values and the bonded record follows it with no re-pair: field 3
-`Tamu-Verify` -> advertisement `'Tamu-Verify'` + `0x2A00 = b'Tamu-Verify'` (len 11) + `Name: Tamu-Verify`;
-restore to empty -> advertisement `'Akyirr'` + `0x2A00 = b'Akyirr'` (len 6) + `Name: Akyirr`. The rename
-path is identical in both images, so that half is a real measurement of the fixed path; it does **not**
-exercise the boot-time set the fix adds, which is the half that was broken.
+**Before the fix (image 26.11.6.4), one connection, boot state:** advertisement `name='Akyirr'`,
+GATT `0x2A00 (GAP Device Name) = b'nimble'  (len 6)` - the NimBLE config default.
 
-**Still unmeasured: the boot-time 0x2A00 on a fixed image.** The rig runs 26.11.6.4; `e98ea10` builds as
-26.11.6.8. Proving it needs a flash plus one power cycle, which is Akyirr's action. The probe
-`name_verify_postfix.sh` (in the gitignored `firmware/.pio/probe`) runs the whole pass in one command and
-refuses an image older than iteration 6 (verified: on 26.11.6.4 it exits 2 with "the device still runs a
-PRE-FIX image"; with `--force` its checks B-E run and pass on the pre-fix image, so the instrument itself
-is exercised).
+**After the fix (image `2026.11.06 iteration 10`, `Version=0x3566000A`), measured at a real boot.** The
+core was reset (`esptool flash_id`, read-only, `--after hard_reset`), `System/3` read `uptime=17878 ms
+(17.9 s)`, and no rename had been issued in that boot:
+```
+boot advertisement: name='Akyirr' addr=E4:B0:63:C8:20:72
+boot 0x2A00 (GAP Device Name) = b'Akyirr'  (len 6)
+```
+The uptime read is what makes this a boot state and not a leftover: on the pre-fix image the
+characteristic only reads correctly until the next radio start, and a rename's value survives a reboot
+only through the boot-time set the fix adds.
 
-**Bonded-host answer is measured for BlueZ only.** BlueZ takes a device's name from the advertisement, so
-a bonded Linux host follows a rename automatically - no forget/unpair. Android/Windows keep their own
-store from the pairing (that is why the phone showed `nimble`: it had read the pre-fix `0x2A00`), so those
-need forget-and-re-pair; that is OS behaviour and was **not** measured here - there is no Android device
-(`adb` absent) and no Windows host on this machine. Akyirr's phone is the only witness available.
+**Rename tracks on both paths, in the same pass (18:04):**
+```
+write field 3 = b'Tamu-Verify\x00...': OK [flags=0x0E echo=0003c0020a00100054616d752d5665726966790000000000]
+after-rename advertisement: name='Tamu-Verify' ... 0x2A00 (GAP Device Name) = b'Tamu-Verify'  (len 11)
+   bonded BlueZ record: Name: Tamu-Verify  Alias: Tamu-Verify  Paired: yes  Bonded: yes
+write field 3 = b'\x00'*16: OK
+restored advertisement: name='Akyirr' ... 0x2A00 (GAP Device Name) = b'Akyirr'  (len 6)
+```
+So the advertisement refreshes within ~3 s of the write, and the two values never disagree.
+
+**Fresh host vs already-bonded host (measured, this laptop: BlueZ 5.87).** A never-bonded host reads the
+name from the advertisement only: after `bluetoothctl remove`, a scan returned `name='Akyirr'`,
+`local_name='Akyirr'`. The **pre-existing bond did not survive the reflash**: `bluetoothctl connect`
+reached the link and then
+`Failed to connect: org.bluez.Error.Failed le-connection-abort-by-local` /
+`Connection terminated due to authentication failure`, because the device's bond store was **empty**
+(`BLE Settings` field 4 `Bonds` = three all-zero addresses, field 1 `Passkey` = `000000`, field 2 `Mode`
+= Just Works, field 5 `Window` = 0). `bluetoothctl remove` + `pair` fixed it (`Paired: yes Bonded: yes
+Connected: yes`, and field 4 then read `bond[0] addr=4C:23:38:74:E6:F6` - this host's adapter). **What an
+already-bonded phone must do: forget/unpair the Tamu in the OS Bluetooth settings and pair again.** The
+fix changes what the device reports; it cannot rewrite a name (or a key) the phone already stored, and
+Android/Windows keep their own record from pairing - that part is OS behaviour, not measured here (no
+Android device: `adb` absent; no Windows host).
 
 **The factory bootloader is not a name path.** `sdkconfig.Tamu_bootloader:932` is
 `# CONFIG_BT_ENABLED is not set`; the ELF has 0 `nimble|ble_*` symbols and the bin 0 `nimble` strings, so
 a scan sees nothing while it runs (it hands over in under a second and never advertises). Booting it alone
 needs an erased app slot - a destructive flash the verification card does not authorise.
+
+**Instruments** (gitignored `firmware/.pio/probe`): `nvp_boot.py` (reset -> uptime -> adv + 0x2A00, no
+write), `nvp_single.py` (A-E in one process that holds the USB port once), `ble_fields.py` (Passkey/Mode/
+Bonds/Window), `name_verify_postfix.sh` (the same pass as shell, refuses an image older than iteration 6).
+
 
 ## System `Name` written mid-run never reaches the air (measured 2026-11-06, card t_2105ced6)
 
