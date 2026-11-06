@@ -393,6 +393,33 @@ void main() {
     );
   });
 
+  test('an archive provider address is written with its own net, in decimal', () async {
+    // The archive names an EXACT address on another net (`39.2`, the form a capture of a rig on
+    // net 39 writes). A restore passes an exact address through unchanged, so the bytes the device
+    // receives must carry net 39 - decimal thirty-nine, never 0x39 = 57 (card t_82b4537e: the
+    // pre-fix tool stored 57 on the rig where the archive said 39).
+    device = _FakeTable(const []);
+    installRequestChannel(device);
+
+    final result = await applyRestorePlan(
+      _plan(
+        _archive(count: 1, provider: '39.2'),
+        [_liveRequester(), _liveProvider()],
+      ),
+    );
+
+    final written = device.entries.single;
+    print(
+      'PROVIDER ADDR: archive "39.2" -> the device holds '
+      '0x${written.providerAddr.toRadixString(16)} '
+      '(${idToString(written.providerAddr)})',
+    );
+    expect(written.providerAddr, (39 << 10) | 2);
+    expect(written.providerAddr, isNot((0x39 << 10) | 2));
+    expect(idToString(written.providerAddr), '39.2');
+    expect(result.failed, 0, reason: '${result.failures}');
+  });
+
   test('the Save-all is issued after the cancels', () async {
     device = _FakeTable(_sixEntries());
     installRequestChannel(device);

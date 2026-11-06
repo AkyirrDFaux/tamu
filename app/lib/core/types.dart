@@ -15,16 +15,31 @@ String serialNumberToHex(List<int> sn) =>
 /// Device ID: 16 bit (6 bit net + 10 bit device) per Data Formats.md and Packet.h.
 int idNet(int id) => (id >> 10) & 0x3F;
 int idDevice(int id) => id & 0x3FF;
+
+/// The printed form of an address: `net.device`, BOTH fields DECIMAL - `39.3` is net 39, device 3,
+/// i.e. the id `39 << 10 | 3`, and never `0x39`.
+///
+/// Decimal because this string is the archive's own form: a semantic backup is words and plain
+/// numbers, and every address an archive carries (`address`, `subscriptions.requester[].provider`,
+/// `sndb[].address`) is produced by this function and read back by [idFromString]. ONE radix for
+/// the pair is what makes that round trip exact - printing decimal while parsing hex stored an
+/// archived `"39.3"` on a device as net `0x39` = 57, so a read-back of the core's own requester row
+/// reported `57.3` where the archive said `39.3` (card t_82b4537e). The wire form is not the
+/// question: on the wire an address is the 16-bit integer, never text.
 String idToString(int id) => '${idNet(id)}.${idDevice(id)}';
 
-/// Parses a "net.device" address (both fields hex) into a 16-bit ID, or null.
+/// Parses a "net.device" address printed by [idToString]: BOTH fields DECIMAL, each inside its
+/// field's width (net 0..63, device 0..1023). Anything else - a hex field (`1a.2`), a sign, a field
+/// wider than its bits - is null, rather than an address silently re-read in another radix or
+/// truncated into range.
 int? idFromString(String text) {
   final parts = text.split('.');
   if (parts.length != 2) return null;
-  final net = int.tryParse(parts[0], radix: 16);
-  final dev = int.tryParse(parts[1], radix: 16);
+  final net = int.tryParse(parts[0], radix: 10);
+  final dev = int.tryParse(parts[1], radix: 10);
   if (net == null || dev == null) return null;
-  return ((net & 0x3F) << 10) | (dev & 0x3FF);
+  if (net < 0 || net > 0x3F || dev < 0 || dev > 0x3FF) return null;
+  return (net << 10) | dev;
 }
 
 /// Decodes a fixed-width, space/NUL-padded string field (a block name or the System Name):
