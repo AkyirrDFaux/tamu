@@ -145,6 +145,18 @@ static void BleEffectiveName(char *Out)
 // and the name has to be applied again once the server exists: StartAppAdvertising does that on
 // every (re)build, and the rename path does it for a rename that cannot re-advertise yet. One
 // helper, so the advertisement and the characteristic can never be set from different strings.
+//
+// Length: no truncation is ever applied, because the name cannot get near any limit on this path.
+// Both sources are fixed 16-byte fields - `System.Name` (SYSTEM_NAME_LEN, Core/Services/
+// StaticMemory.h) and the block's Display name (BLE_DISPLAY_NAME_LEN, Blocks/BleSettings.h) - so
+// the effective name is at most 16 characters: inside the 31-byte advertising/scan-response packet
+// (16 + the 2-byte AD length/type header), inside NimBLE's own GAP-name cap
+// (CONFIG_BT_NIMBLE_GAP_DEVICE_NAME_MAX_LEN=31, sdkconfig.Tamu_v2_0A:1142) and far inside the
+// 248-byte the GATT Device Name characteristic allows. `setDeviceName` REFUSES an over-long name
+// rather than shortening it (returns false, logged here), and `Adv->setName` returns false the same
+// way, so if a future wider field ever exceeded a limit the two would fail loudly instead of
+// silently carrying different strings. 0x2A00 therefore always holds the full name the
+// advertisement shows.
 static bool BleSetGapName(const char *Name)
 {
     const bool Ok = NimBLEDevice::setDeviceName(Name);
