@@ -1675,5 +1675,22 @@ Flags (3 B) + a complete 128-bit UUID (18 B) + a complete local name (14 B) is 3
 31-byte legacy limit, so the name rides the **scan response** and the UUID the advertisement. An
 app/phone that filters by name must scan actively (scan requests are part of a normal BLE scan, but
 a passive or UUID-only scan will not show `Tamu updater`). The name is present, it is just not in
-the advertisement proper.
+the advertisement proper. (Found on the rig: the first build put both in the advertisement,
+`ble_gap_adv_set_fields` returned EMSGSIZE, and nothing was advertised at all.)
+
+**F66 The updater advertises but a GATT connection from this laptop is never established.** Measured
+2026-11-06 while the factory image was parked in update mode: `bleak`/BlueZ receive
+`E4:B0:63:C8:20:72 name='Tamu updater' rssi=-58` (so the advertisement and the scan response are
+right), but `BleakClient.connect()` times out and `bluetoothctl connect` answers
+`Failed to connect: org.bluez.Error.Failed le-connection-abort-by-local`; the device's console shows
+no `BLE_GAP_EVENT_CONNECT` (and no `advertising start refused`), i.e. the CONNECT_IND is never
+answered and no link is formed. So **every write measured so far went over USB**; the BLE *write*
+path is unproven end to end and the card's "recoverable with no cable at all" claim rests on the
+advertisement plus the USB-frames write path. Candidates, in the order worth checking: (a) the
+advertisement's connectable PDU/`ble_gap_adv_params` shape (NimBLE's `conn_mode` is
+`BLE_GAP_CONN_MODE_UND` but the interval fields are left 0); (b) the host adapter (MediaTek
+`0489:e0cd`) - `le-connection-abort-by-local` is a controller-side abort, so the same connect from a
+phone would separate the two; (c) the controller's coexistence settings inherited from the app's
+sdkconfig. A phone connect is the cheapest next experiment and needs no code change.
+
 

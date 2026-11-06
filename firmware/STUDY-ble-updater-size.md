@@ -199,10 +199,74 @@ partition table - so the size check is the real one (430,304 B of 512,000 B).
 
 ## 7. Known gaps / follow-ups
 
-- The probe's write/read core is duplicated from `CoreBootloader.cpp` on purpose (to leave the
-  shipped image byte-identical); factor it into a shared header when the updater is really built.
+- ~~The probe's write/read core is duplicated~~ - the probe and the shipped image are one source
+  now (`Bootloader/CoreBootloader.cpp`), so there is nothing left to factor out.
 - The transfer is raw bootloader frames over GATT. A phone-side protocol (chunking, completed-offset
-  echo, image length) is unbuilt and its cost is inside the 1 MB headroom.
-- The rollback mechanism of section 5(b) is designed, not implemented, and the shipped image still
-  has the hole.
-- The device-side recovery demonstration needs a flash.
+  echo, image length) is still unbuilt; the writes themselves are 30-33 KiB/s measured (section 8).
+- ~~The rollback mechanism of section 5(b) is designed, not implemented~~ - implemented and
+  exercised on the rig (section 8).
+- **The GATT link has not been established from a host yet.** The updater's advertisement is on the
+  air and is received (`Tamu updater` at -58 dBm, name from the scan response), but a connect from
+  this laptop is aborted locally (`bluetoothctl`: `le-connection-abort-by-local`) and the device
+  logs no `BLE_GAP_EVENT_CONNECT` at all, so the CONNECT_IND is never answered. A BLE *write* is
+  therefore unproven end to end; every write measured in section 8 went over the USB transport.
+  Issues.md F66 carries the evidence and the candidates.
+
+## 8. On the rig: a bad image is recovered, and the repair is a write pass (2026-11-06)
+
+Rig: Tamu v2.0A on `/dev/ttyACM0` (USB Serial/JTAG), flashed by the owner's authorization of
+2026-11-06. The partition table read back from 0x8000 is byte-identical to the one this tree builds
+(sha256 `e2cef874…`), so `partitions.csv` is what the device has: `factory` 0x10000/0x7D000,
+`ota_0` 0x90000/0x283000, `storage` 0x313000/0xED000.
+
+**What was flashed.** `[env:Tamu_bootloader]` 432,176 B at 0x10000 and `[env:Tamu_v2_0A]`
+699,536 B at 0x90000, each ending with esptool's `Hash of data verified.`; both regions read back
+byte-identical to the built `.bin`. The factory reports 430,304 B of the 512,000 B partition (84 %)
+and 16,052 B of RAM.
+
+**The broken image** (`[env:Tamu_badimage]`, `src/Test/BadImage.cpp`, 133,904 B) is a real ESP image
+- the loader validates it and jumps to it - whose first `.flash.init_array` entry aborts before
+`app_main`, i.e. before the app can erase otadata to confirm itself:
+
+```
+.flash.text  4200002e <_GLOBAL__sub_I_app_main>:
+4200002e: 1141                addi  sp,sp,-16
+42000032: fe384097            auipc ra,0xfe384
+42000036: e6e080e7            jalr  -402(ra)      # 40383ea0 <abort>
+```
+
+**The recovery, as measured.** The image was written into `ota_0` *through the updater's own USB
+frames* (4,185 chunks, 133,904 B, 30.7 KiB/s, last written 0x20b00) - an offset-0 pass, which
+clears the boot budget and otadata - and the board was reset with the button released:
+
+- boot 1: `UPDATER: decide: button=0 image=1 rolled_back=0 attempts=0` -> the factory selected the
+  slot with state NEW and restarted into it;
+- the second-stage bootloader marked it PENDING_VERIFY, the image aborted before its first
+  statement, so the reset that followed marked it ABORTED and fell back to `factory`
+  (`boot: Defaulting to factory image`);
+- boot 2: `UPDATER: decide: button=0 image=1 rolled_back=1 attempts=1` -> **the factory refused the
+  image and stayed in update mode**, logged `update mode: LED on, updater on USB and (window 300 s)
+  BLE`, and NimBLE logged `GAP procedure initiated: advertise`;
+- read back afterwards: `otadata sector 0: ota_seq=0x00000001 state=ABORTED`.
+
+No button, no cable beyond the reset that any power cycle gives: the device parked with the updater
+on the air, which is the whole point of the BLE transport.
+
+**The repair, and the trap.** A *raw* esptool write into `ota_0` does not clear that state
+(Issues.md F64): after one, the factory logged `rolled_back=1` and refused the freshly written
+image. Writing the same app through the updater instead - an offset-0 pass - gave
+`decide: rolled_back=0 attempts=0`, `Loaded app from partition at offset 0x90000`, the app's own
+`APPBLE: radio up: name='Akyirr'`, and `ota_0` read back byte-identical to the built `.bin`
+(sha256 `c6e50e8d…`). 699,536 B took 21,861 chunks at 33.2 KiB/s.
+
+**The budget half, on its own.** Three resets inside a few seconds (the app never gets its 3 s of
+health, so nothing is refunded) park the device the same way - `update mode: LED on …`. That is the
+path a device with a *valid but dying* image takes, and it is also how the updater was brought up
+for the BLE scan without touching the image.
+
+**On the air.** An independent scan (`bleak`, this laptop's adapter) saw
+`E4:B0:63:C8:20:72 name='Tamu updater' rssi=-58`. The name is there because it rides the **scan
+response**: flags + the complete 128-bit service UUID already fill 21 of the 31 advertisement bytes,
+and adding the name made 35, which NimBLE refused - the first build advertised nothing at all
+(Issues.md F65). The GATT link itself is the open gap of section 7.
+
