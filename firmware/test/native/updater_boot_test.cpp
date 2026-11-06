@@ -5,8 +5,9 @@
 //
 // Both are pure functions, so the property that matters most for a BLE updater - "a bad image
 // is recoverable without a cable" - is exercised here as a sequence of resets, instead of only
-// being read off the source. The simulation below is the device: three inputs (button, image
-// magic, stored attempt count), the decision, and the stored value the decision implies.
+// being read off the source. The simulation below is the device: four inputs (button, image
+// magic, the bootloader's rollback state, stored attempt count), the decision, and the stored
+// value the decision implies.
 //
 // What a run through this file proves:
 //   * a device with no image never tries to boot one;
@@ -52,13 +53,16 @@ namespace
     {
         bool ImagePresent;
         uint8_t FailedBoots;
+        // The second-stage bootloader rolled the slot back (otadata says ABORTED). Cleared by the
+        // bootloader selecting it again, which only happens after a new write pass.
+        bool ImageRolledBack = false;
     };
 
     // One reset: decide, then store what the decision spends. Returns the action taken.
     UpdaterBoot::Action Reset(Device &Dev, bool ButtonHeld)
     {
-        const UpdaterBoot::Action Taken = UpdaterBoot::Decide(
-            UpdaterBoot::Inputs{ButtonHeld, Dev.ImagePresent, Dev.FailedBoots});
+        const UpdaterBoot::Action Taken = UpdaterBoot::Decide(UpdaterBoot::Inputs{
+            ButtonHeld, Dev.ImagePresent, Dev.ImageRolledBack, Dev.FailedBoots});
         Dev.FailedBoots = UpdaterBoot::NextFailedBoots(Taken, Dev.FailedBoots);
         return Taken;
     }
@@ -67,7 +71,13 @@ namespace
     void AppBecomesHealthy(Device &Dev) { Dev.FailedBoots = UpdaterBoot::HealthyBoots(); }
 
     // A write pass starting at offset 0 - what the updater does before programming a new image.
-    void UpdateStarts(Device &Dev) { Dev.FailedBoots = UpdaterBoot::HealthyBoots(); }
+    // It forgets the previous image's budget AND its rollback state (CoreBootloader.cpp erases
+    // otadata on the same pass), so the image about to be written is bootable again.
+    void UpdateStarts(Device &Dev)
+    {
+        Dev.FailedBoots = UpdaterBoot::HealthyBoots();
+        Dev.ImageRolledBack = false;
+    }
 
     constexpr bool kBoot = true;
     constexpr bool kUpdate = false;
@@ -126,6 +136,40 @@ int main()
         CHECK_EQ(Reset(Dev, false), (int)UpdaterBoot::Action::BootApp);
         CHECK_EQ(Dev.FailedBoots, 1);
     }
+
+    // ---- an image that crashed before it could spend an attempt through us -------
+    // This is the case the budget cannot see: the app died before its first statement, so it never
+    // reached this image to spend an attempt. The second-stage bootloader rolled the slot back and
+    // otadata says ABORTED; booting it again would be the same crash, so update mode it is.
+    {
+        Device Dev{true, 0, true};
+        for (int i = 0; i < 3; i++)
+            CHECK_EQ(Reset(Dev, false), (int)UpdaterBoot::Action::UpdateMode);
+        // The budget is untouched - the decision does not spend an attempt for a slot it refuses.
+        CHECK_EQ(Dev.FailedBoots, 0);
+        // ... and the button still works (it is checked before anything else).
+        CHECK_EQ(Reset(Dev, true), (int)UpdaterBoot::Action::UpdateMode);
+    }
+
+    // The rollback does not latch: a new write pass clears the state along with the budget, so the
+    // image that replaced the bad one is booted with a full budget.
+    {
+        Device Dev{true, 0, true};
+        CHECK_EQ(Reset(Dev, false), (int)UpdaterBoot::Action::UpdateMode);
+        UpdateStarts(Dev);
+        CHECK(!Dev.ImageRolledBack);
+        CHECK_EQ(Reset(Dev, false), (int)UpdaterBoot::Action::BootApp);
+        CHECK_EQ(Dev.FailedBoots, 1);
+    }
+
+    // A rolled-back slot that also has a spent budget keeps refusing on the *budget* path too:
+    // neither input may resurrect the image.
+    {
+        Device Dev{true, UpdaterBoot::MAX_APP_BOOTS, true};
+        CHECK_EQ(Reset(Dev, false), (int)UpdaterBoot::Action::UpdateMode);
+        CHECK_EQ(Dev.FailedBoots, UpdaterBoot::MAX_APP_BOOTS);
+    }
+
 
     // ---- the button: an override that costs nothing ------------------------------
     {

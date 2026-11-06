@@ -35,6 +35,7 @@ namespace UpdaterBoot
     {
         bool ButtonHeld;     // B1 (GPIO2, active low) is held at reset
         bool ImagePresent;   // ota_0's first byte is the ESP image magic 0xE9
+        bool ImageRolledBack; // the bootloader rolled that slot back (otadata says ABORTED/INVALID)
         uint8_t FailedBoots; // attempts recorded since the app last proved healthy
     };
 
@@ -47,6 +48,12 @@ namespace UpdaterBoot
         // Nothing bootable in ota_0 (a factory-fresh device, or an update that never landed
         // an image at all): booting it would only reboot through here.
         if (!In.ImagePresent)
+            return Action::UpdateMode;
+        // The second-stage bootloader rolled the slot back because the image never confirmed
+        // itself (it crashed before its otadata erase). Booting it again would repeat exactly
+        // that - the case the attempt budget cannot see, because the app never gets far enough
+        // to spend an attempt through this decision. A new write pass clears the state.
+        if (In.ImageRolledBack)
             return Action::UpdateMode;
         if (In.FailedBoots >= MAX_APP_BOOTS)
             return Action::UpdateMode;

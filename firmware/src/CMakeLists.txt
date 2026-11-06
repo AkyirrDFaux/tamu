@@ -1,25 +1,28 @@
 # This file was automatically generated for projects
 # without default 'CMakeLists.txt' file.
 
-# The core factory bootloader is a separate app built from its own single source
-# (Tamu_bootloader env passes -DTAMU_BOOTLOADER=ON).
+# The core (ESP32-C3) factory image (Tamu_bootloader env passes -DTAMU_BOOTLOADER=ON): one
+# source, both transports - the USB frames of the original image plus the pairing-free BLE
+# updater - so it needs NimBLE and NVS.
 if(TAMU_BOOTLOADER)
-    idf_component_register(SRCS "Bootloader/CoreBootloader.cpp")
+    idf_component_register(SRCS "Bootloader/CoreBootloader.cpp"
+                           REQUIRES bt nvs_flash)
     return()
 endif()
 
-# Size probe for the pairing-free BLE updater (kanban t_79a194d5): the same factory app plus
-# the NimBLE host+controller and one GATT service. Its own image, built only by the
-# Tamu_updater_probe env, so neither the shipped bootloader nor the main app sees it.
-if(TAMU_UPDATER_PROBE)
-    idf_component_register(SRCS "Bootloader/CoreBootloaderBle.cpp"
-                           REQUIRES bt nvs_flash)
+# The deliberately broken main-app image used to exercise the recovery path on the rig
+# (Tamu_badimage env): it crashes in a static initialiser, i.e. before the main app can erase
+# otadata to confirm itself - exactly the case the bootloader's rollback covers.
+if(TAMU_BADIMAGE)
+    idf_component_register(SRCS "Test/BadImage.cpp")
     return()
 endif()
 
 FILE(GLOB_RECURSE app_sources ${CMAKE_SOURCE_DIR}/src/*.*)
 # The factory bootloader has its own app_main and is a separate image.
 list(FILTER app_sources EXCLUDE REGEX .*src/Bootloader/.*)
+# Rig fixtures (src/Test/) are separate images too: they define their own app_main.
+list(FILTER app_sources EXCLUDE REGEX .*src/Test/.*)
 # Exclude the CH32V003 DAS sources from every ESP-IDF target. The DAS belongs to the ch32v
 # `noneos-sdk` platform, not IDF. Key on the IDF target arch (xtensa *and* riscv) - the old
 # `CMAKE_SYSTEM_PROCESSOR MATCHES "xtensa"` was dead on the RISC-V ESP32-C3.

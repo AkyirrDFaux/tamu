@@ -496,16 +496,23 @@ Open:
 
 ## Open work
 
-- **Pairing-free BLE updater in the `factory` image - measured 2026-11-06, not implemented (kanban
-  t_79a194d5).** A stripped factory image with the NimBLE host+controller and one GATT service
-  measures **430,544 B**: **+257,760 B over the shipped 172,784 B**, i.e. **36.5 KB past the 384 KB
-  `factory` partition**, so it needs the partition table moved (owner pre-approved: `ota_0` pays).
-  Proposal in `firmware/partitions_updater.csv` with tool-derived offsets: `factory` 1 MB at
-  0x10000, `ota_0` 2 MB at 0x110000, `storage` unchanged. Admission is physical presence (button
-  window), not a passphrase. Recovery needs the boot budget **and** the pending-verify rollback that
-  closes the "app dies before it re-arms `otadata`" hole (Issues.md, 2026-11-06). Numbers, design and
-  the re-run recipe: `firmware/STUDY-ble-updater-size.md`. The device-side demonstration (bad image
-  recovers without a cable) needs a flash and is not run.
+- **Pairing-free BLE updater in the `factory` image - implemented and demonstrated on the rig
+  2026-11-06 (kanban t_3d74f8d1; the measurement was t_79a194d5).** The factory image
+  (`Bootloader/CoreBootloader.cpp`, `[env:Tamu_bootloader]`) now carries both transports: the USB
+  Serial/JTAG frames and a NimBLE GATT write/notify service with no security manager and no bonds.
+  It is **430,304 B of the live 500 KiB `factory` partition** (84 %), built against
+  `partitions.csv` - the only partition table; `partitions_updater.csv` and the size probe env are
+  gone (the 1 MB proposal was never needed once the applied table gave `factory` 0x7D000).
+  Admission is still physical presence + a 300 s window; recovery is the boot budget plus
+  `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` in both sdkconfigs, and the app refunds the budget after
+  3 s of its main loop. **Rig pass:** a broken image in `ota_0` (aborts in a static initialiser)
+  is rolled back, the slot reads ABORTED, the factory refuses it and parks in update mode with the
+  BLE updater advertising; a 699,536 B app was then written back over the updater at 33.2 KiB/s and
+  read back byte-identical. Numbers, the mechanism and the recipe: `firmware/STUDY-ble-updater-size.md`
+  section 8. Open follow-ups: the transfer is still raw `0xCA ... 0xBC` frames over GATT (a
+  length-prefixed protocol is unbuilt), and a *raw* esptool write into `ota_0` does not clear the
+  budget or a rollback state - the repair path is the updater's offset-0 pass (Issues.md,
+  2026-11-06).
 
 - **The GAP Device Name (`0x2A00`) follows the advertised name - implemented 2026-11-06, device pass
   pending (kanban t_2983d5c5).** A bonded peer showed `nimble` (the NimBLE config default) because the

@@ -7,6 +7,10 @@
 #include "esp_partition.h"
 #include "esp_efuse.h"
 #include "esp_efuse_table.h"
+// The factory image's boot budget: the numbers and the decision live there, the storage in
+// BootBudget.h. This app refunds the budget once it has proved it is alive (see the main loop).
+#include "Bootloader/BootBudget.h"
+#include "Bootloader/BootDecision.h"
 
 #include "Core/Functions/AppInterface.h"
 #include "Storage.h"
@@ -302,9 +306,24 @@ LED.Setup();
     ReportLog(MakeLog(false, (uint16_t)ServiceType::Device, 0, 0), PRIORITY_LOG);
 
     static bool IdentifyPrev = false;
+    // Uptime of the first loop pass, so "healthy" is measured from the app actually running.
+    const int64_t LoopBootUs = esp_timer_get_time();
     while (1)
     {
         int64_t LoopStart = esp_timer_get_time();
+        // Boot budget (Bootloader/BootDecision.h): the factory image gives this app a bounded
+        // number of starts before it parks in update mode, and only a run that proves itself
+        // refunds them. Three seconds is measured against the bring-up above, which finishes at
+        // 0.5 s on the rig (BLE radio up, USB, storage recalled), so an image that starts and
+        // dies - or reboot-loops - keeps spending its budget instead of refunding it on every
+        // crash, while ordinary tooling that resets the board a few times still gets its refund.
+        // Once per boot.
+        static bool BootBudgetRefunded = false;
+        if (!BootBudgetRefunded && LoopStart - LoopBootUs >= 3000000)
+        {
+            UpdaterBoot::StoreFailedBoots(UpdaterBoot::HealthyBoots());
+            BootBudgetRefunded = true;
+        }
         // Net-ID collision (Core-discover): blink the error LED slowly (~1 Hz) until
         // the net is changed. Takes priority over identify and the LED-button state.
         if (CoreCollisionFlag())

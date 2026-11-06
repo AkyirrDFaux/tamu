@@ -7,6 +7,30 @@ This file answers it with a **measured image**, not an estimate from object size
 what has to move, who may write, and how a bad image is recovered. Everything below was produced by
 the two commands in "Re-run" at the end.
 
+## 0. Update (2026-11-06, card t_3d74f8d1): this study's proposal was superseded, and the updater
+   is now the shipped factory image
+
+The number and the mechanisms below still hold; the layout they were measured against does not.
+Commit `17e5259` applied a **different** repartition than the one proposed here, and the owner
+authorised the promotion:
+
+| | this study (proposed) | `partitions.csv` (applied, **authoritative**) |
+| --- | --- | --- |
+| `factory` | 0x10000 / 1 MB | 0x10000 / **0x7D000 (500 KiB)** |
+| `ota_0` | 0x110000 / 2 MB | **0x90000** / 0x283000 (2.57 MB) |
+| `storage` | 0x310000 / 948 KB | **0x313000** / 0xED000 |
+| end | 0x3FD000 | 0x400000 |
+
+`partitions.csv` is the only partition table: **`partitions_updater.csv` has been deleted** (its
+1 MB `factory` is not what the device has, and two tables that disagree is how the app once landed
+at 0x8D000). The measured 430,544 B probe fits the applied 500 KiB `factory` at 84 %, so the 1 MB
+proposal was never needed - the probe and the shipped image were merged into
+`Bootloader/CoreBootloader.cpp` (one source, no duplicated write/read core; `Tamu_updater_probe`
+and its sdkconfig are gone), and `Tamu_bootloader` now builds the BLE updater. Section 5(b)'s
+pending-verify/rollback is implemented (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` in
+`sdkconfig.Tamu_bootloader` and `sdkconfig.Tamu_v2.0A`), and the on-device demonstration is in
+section 8.
+
 ## 1. The number
 
 | Image | Size | Partition it lives in | Share |
@@ -44,7 +68,7 @@ offset) fits in the 600 KB of headroom the 1 MB partition leaves.
 
 ## 3. Where the space has to come from
 
-`partitions_updater.csv` (already in the tree, used by the probe env, **not** yet the active table):
+The table proposed at the time (`partitions_updater.csv`, since deleted - see section 0):
 
 | Name | Offset | Size | vs today |
 | --- | --- | --- | --- |
@@ -119,48 +143,59 @@ factory image stops booting the app and stays in update mode. Staying in update 
 so the device stays parked there across further resets instead of re-arming the broken image. A new
 write pass (offset 0) clears the counter, so a repaired image gets the full budget again.
 
-**(b) The hole this study found - and it is not closed yet.** `Main.h` re-arms `otadata` to
-`factory` at the top of `app_main`, and the factory image points `otadata` at `ota_0` before it
+**(b) The hole this study found - closed 2026-11-06 (card t_3d74f8d1).** `Main.h` re-arms `otadata`
+to `factory` at the top of `app_main`, and the factory image points `otadata` at `ota_0` before it
 restarts. So while `ota_0` is the boot partition, the **second-stage bootloader boots the app
 directly and the factory image never runs**: an image that dies before the re-arm line is a reboot
 loop with no button catch and no updater - reachable only over USB (download mode). The boot budget
 cannot help, because the code holding it is not being started.
 
-The fix is ESP-IDF's own pending-verify/rollback (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`): the
-factory image marks `ota_0` as pending before restarting it, the app confirms once healthy, and an
-image that dies before confirming is rolled back to `factory` by the second-stage bootloader - which
-is exactly the "no cable" recovery this card is about. It belongs with the implementation, not with
-this measurement, because it changes the app's boot sequence (and the app's "healthy" point has to
-be defined).
+The fix is ESP-IDF's own pending-verify/rollback (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`), now
+enabled in `sdkconfig.Tamu_bootloader` and `sdkconfig.Tamu_v2.0A` (both, because PlatformIO flashes
+the app env's `bootloader.bin` on every `-t upload`, so a disagreement would silently downgrade the
+bootloader). With it:
 
-**What is proven here** - `test/native/updater_boot_test.cpp`, run by `test/native/run.sh`
-(`PASS: 49 checks, 0 failures`): the decision table on a simulated device across resets -
+- the factory image selects `ota_0` with state NEW; the second-stage bootloader marks it
+  PENDING_VERIFY when it boots it;
+- the app's existing otadata erase (the re-arm) is the confirmation - an image that reaches its own
+  first statement has proved it can run;
+- an image that dies before that erase stays unconfirmed, so the next reset marks the slot ABORTED
+  and the bootloader falls back to `factory`;
+- the factory image reads the slot's state (`BootDecision.h`'s `ImageRolledBack`) and refuses to
+  boot an ABORTED image, so it parks in update mode instead of re-arming the crash;
+- a new write pass (offset 0) clears the state along with the boot budget, so a repaired image is
+  bootable again.
+
+The budget of (a) still matters for the other half: an image that *does* confirm and then dies later
+is caught by the attempts. The app refunds the budget only after 10 s of its main loop
+(`Main.h`), which is what makes "healthy" a measurement rather than the first line of `app_main`.
+
+**What is proven** - `test/native/updater_boot_test.cpp`, run by `test/native/run.sh`
+(`PASS: 60 checks, 0 failures`): the decision table on a simulated device across resets -
 no image never boots; a healthy app refunds its budget; an image that looks valid but never gets
-healthy is booted 3 times and then parked in update mode *and stays parked*; the button is a free
-override; a new write pass restarts the budget; the counter cannot wrap into "bootable"; the window
-opens, expires and survives the 49.7-day uptime wrap; a write needs both an open window and a link.
+healthy is booted 3 times and then parked in update mode *and stays parked*; a rolled-back slot is
+never booted and does not spend an attempt; a new write pass clears the rollback; the button is a
+free override; the counter cannot wrap into "bootable"; the window opens, expires and survives the
+49.7-day uptime wrap; a write needs both an open window and a link.
 
-**What is not proven:** the on-device half - flash a deliberately broken image (valid magic, crashes
-early), watch the LED come back and the updater advertise - needs a flash and a device reset, and
-this card carried no authorization for either. The recipe is the `[env:Tamu_updater_probe]` image,
-then an `ota_0` written with a corrupt body whose first byte is still `0xE9`, then a reset with the
-button released.
+**On-device half:** section 8.
+
 
 ## 6. Re-run
 
 ```
 cd firmware
 export PLATFORMIO_CORE_DIR=/home/akyirr/.platformio
-pio run -e Tamu_updater_probe          # .pio/build/Tamu_updater_probe/firmware.bin = 430,544 B
-pio run -e Tamu_bootloader             # .pio/build/Tamu_bootloader/firmware.bin  = 172,784 B
-./test/native/run.sh                   # includes updaterboot: 49 checks
-python3 /home/akyirr/.platformio/packages/framework-espidf/components/partition_table/gen_esp32part.py \
-        --flash-size 4MB partitions_updater.csv .pio/probe/partitions.bin
+pio run -e Tamu_bootloader             # .pio/build/Tamu_bootloader/firmware.bin  = the BLE updater (430,976 B)
+pio run -e Tamu_v2_0A                  # the main app for ota_0
+pio run -e Tamu_badimage               # the rig fixture that crashes before app_main
+./test/native/run.sh                   # includes updaterboot: 60 checks
 ```
 
-`firmware/sdkconfig.Tamu_updater_probe` is `sdkconfig.Tamu_bootloader` with the Bluetooth options
-flipped (that file is otherwise byte-for-byte the shipped one, so the compiler and partition settings
-are identical and the size comparison is like for like).
+The probe env, its sdkconfig and `partitions_updater.csv` are gone (section 0): the factory image
+that carries the updater is `[env:Tamu_bootloader]`, built against `partitions.csv` - the only
+partition table - so the size check is the real one (430,304 B of 512,000 B).
+
 
 ## 7. Known gaps / follow-ups
 

@@ -1647,3 +1647,33 @@ fixes, for a card to choose between: re-read `StaticPer.System.Name` in `BleEffe
 refresh `BleFallbackName` from the register-write hook of `System` field 6. The `BLE Settings`
 `Display name` path is unaffected either way - that one is pushed by its own trigger and was measured
 live (`e71` pass, and the 2026-11-06 rename measurement above).
+
+## Open (2026-11-06): the BLE updater shipped - three things around it
+
+**F63 `upload.sh`'s raw-bin offsets are stale, and the default one lands inside `factory`.** The
+script (`upload.sh`, the owner's file) still carries `TAMU_APP_OFFSET=0x70000` and prints
+`bootloader.bin 0x10000` in its help, both from before the 2026-11-06 repartition
+(`17e5259`): `ota_0` is at **0x90000** and `factory` is the app partition at 0x10000
+(0x10000..0x8D000). So `./upload.sh bin tamu` with no offset writes the main app **into the factory
+image**, and the factory then no longer validates. Measured working commands are
+`./upload.sh bin tamu <file> 0x90000` (the offset has to be given) and `pio run -e Tamu_v2_0A
+-t upload` (its `post:scripts/core_app_offset.py` hook repoints correctly, and the write landed at
+0x00090000 in the 2026-11-06 demo). Fixing the constant and the help text is the owner's edit.
+
+**F64 A raw esptool write into `ota_0` clears neither the boot budget nor a rollback state.** The
+factory image keeps the attempt counter in NVS (`updater/attempts`) and the rollback lives in
+`otadata` (state ABORTED); both are cleared by an **offset-0 write pass through the updater**
+(`CoreBootloader.cpp`'s `HandleWrite` erases otadata and refunds the budget), not by
+`esptool write_flash 0x90000`. A device restored with a raw write after a rollback or a spent budget
+therefore stays in update mode. Measured on the rig: after a raw restore the factory logged
+`decide: image=1 rolled_back=1 attempts=3` and stayed put; the same app written through the updater
+logged `rolled_back=0 attempts=0` and booted. A raw-restore recipe has to add
+`esptool erase_region 0xD000 0x2000`, or - better - the restore path should be the updater.
+
+**F65 The updater's legacy advertisement cannot hold the name and the 128-bit service together.**
+Flags (3 B) + a complete 128-bit UUID (18 B) + a complete local name (14 B) is 35 B against the
+31-byte legacy limit, so the name rides the **scan response** and the UUID the advertisement. An
+app/phone that filters by name must scan actively (scan requests are part of a normal BLE scan, but
+a passive or UUID-only scan will not show `Tamu updater`). The name is present, it is just not in
+the advertisement proper.
+
