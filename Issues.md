@@ -1506,6 +1506,37 @@ reset and no rename afterwards - a reset this card did not authorise. Recipe in 
 Name, `BLE Settings` fields 0 and 3) - the version is the only thing on the device that identifies the
 image, and `version.json` iterations are per build, not per commit.
 
+**The factory/bootloader image audited (2026-11-06, card t_679966fc) - it has no radio, so no change
+was made there.** `Tamu_bootloader` compiles one source, `src/Bootloader/CoreBootloader.cpp`
+(`src/CMakeLists.txt:6`, env at `platformio.ini:227-245`), and `sdkconfig.Tamu_bootloader:932` is
+`# CONFIG_BT_ENABLED is not set`; the *generated* `.pio/build/Tamu_bootloader/config/sdkconfig.h`
+has no `CONFIG_BT_ENABLED` and no `CONFIG_BT_NIMBLE_ENABLED` at all. Rebuilt from HEAD
+(`pio run -e Tamu_bootloader -t clean` then the env): `firmware.bin` 172,784 B, sha256
+`303be006076908640479c16b869169b01ad312444d36fc15359f1fbfe2066ff1`, RAM 10,636/327,680 = 3.2 %,
+flash 172,126/393,216 = 43.8 %, and the ELF has 0 symbols matching `nimble|ble_gap|ble_hs|ble_svc|ble_gatts`
+while the bin has 0 occurrences of `nimble`. No revision of `sdkconfig.Tamu_bootloader` in
+git ever set `CONFIG_BT_ENABLED=y` (one tracked revision, `c71ade2`). The image either hands over to
+`ota_0` immediately (`CoreBootloader.cpp:180-181`) or serves USB-only update mode
+(`:154`, `:200`), so a peer scanning while the app is not running sees no advertisement at all - it
+cannot be the image that showed `nimble`.
+
+The only factory-path image that has a radio is the unshipped size probe `Tamu_updater_probe`
+(`src/Bootloader/CoreBootloaderBle.cpp`, env at `platformio.ini:257`): it advertises the literal
+`Tamu updater` (`:267`) and never calls `ble_svc_gap_init()`/`ble_svc_gatt_init()`, so `0x1800`/`0x2A00`
+are absent from the image (0 `ble_svc_gap*` symbols in its ELF; no exact `nimble` string in its bin).
+A peer therefore sees `Tamu updater` and finds no GAP Device Name attribute - still not `nimble`. If
+that updater is ever promoted into `factory`, it must initialise the GAP service and then set the name
+(the app's `BleSetGapName` ordering), because `CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME` in
+`sdkconfig.Tamu_updater_probe:1110` is the same `"nimble"`. Not changed here: the probe is a size
+measurement (430,544 B against a 384 KB partition), so adding a service would invalidate what it
+measures, and the shipped factory image is unaffected.
+
+**The name is not persisted in NVS (audit item 4).** The shipped bootloader has no `nvs_` call at all;
+the app's keys are `ble/passkey`, `ble/bondpass`, `ble/bondnames` (peer labels), `wifi/password`, and
+the probe's `updater/attempts` - none is a device name. The name comes from System field 6 / BLE
+Settings field 3 in the app's `.SV` storage. Not read from the device's own `nvs`/`factory` regions
+here: that needs a download-mode read and a reset, which this card does not authorise.
+
 ## Factory image: an app that dies before re-arming `otadata` is out of reach (2026-11-06, card t_79a194d5)
 
 **The gap.** `Devices/Tamu_v2.0A/Main.h` (`app_main`) re-arms `otadata` to the `factory` partition at
