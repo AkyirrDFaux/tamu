@@ -114,11 +114,14 @@ inline void* RegisterService::SystemGet(uint16_t Field, uint8_t Key)
 // net into `.SV` (RegisterPersist.h, BleAutoName.h, BleSettingsGlue.h), so a value written into the
 // space alone was reverted by the next Save All - which is what a restore does right after the
 // System block, so a restored net-ID never survived (Core/Functions/NetId.h has the measurement).
+// The live move is ARMED here and lands after this write's own reply has gone out
+// (RegisterWrite.h HandleStaticBlockWrite): the reply is built from - and routed by - the address
+// the requester used, so applying the new one first loses the acknowledgement (t_cac38f19).
 inline bool RegisterService::OnSystemNetIdWrite(const StaticBlockDescriptor &Block, uint16_t Field, const void *Data, uint16_t Len) {
     (void)Block; (void)Field;
     if (Len < 1) return false;
     const uint8_t Value = *static_cast<const uint8_t *>(Data);
-    if (!ApplyNetId(DeviceStatus.NetId, DeviceStatus.ShortAddress, Value)) return false;
+    if (!ArmNetId(Value)) return false;
     memcpy(&StaticPer.System.NetId, Data, 1);
     return true;
 }

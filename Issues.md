@@ -480,7 +480,11 @@ are hardware-only.
   Proposed wording, for the parent to apply with Akyirr's approval: replace
   "Core only; applies only after reboot" with "Core only; a write applies the net immediately and
   is stored (the core's address is `NetID.1`)." The reset still changes the *nodes'* addresses:
-  they adopt the core's net when they next register.
+  they adopt the core's net when they next register. **The write's own acknowledgement still
+  leaves from the address the requester used** - the move lands immediately after that reply has
+  been dispatched (`RegisterWrite.h` `HandleStaticBlockWrite`, `Core/Functions/NetId.h`), so a
+  client that matched on the old address still sees its `FLAG_SUCCESS`/echo. Do not word the doc
+  as "the reply comes from the new address": it cannot, and a client would drop it.
 
 ## BLE Settings block (2026-10-28)
 

@@ -23,6 +23,18 @@
 //     `DeviceStatus.NetId = ...`). The core had no equivalent, so the change could never be made
 //     without a reset - which is exactly the state a wiped-core restore leaves behind.
 //
+// Why the move lands *after* the write's own reply (t_cac38f19):
+//   The acknowledgement of a write is built from the live identity - `ShortAddress` stamps its
+//   src (Packet.h, `IdSrc`) and `NetId` is what resolves the request's net-0 target back to us
+//   (Dispatcher.h, `NetQualifyLocal`) - so a write that moves the identity first cannot answer
+//   itself. Both halves have to move together (`NetId` alone would already change how the reply's
+//   target is resolved), and only once the reply has been dispatched. Measured on the rig
+//   (`firmware/.pio/probe/netid_set.py 39`): before the fix the write applied (live net 51 -> 39)
+//   but its reply came back from 39.1 while the request had been addressed at 51.1, the
+//   dispatcher treated it as a foreign frame instead of an app reply, and the client reported
+//   `no matched reply` - the app logged the same write as "the write did not land" while it had.
+//   Every client keys on the address it used, so the fix belongs here and not in a client.
+//
 // 0 (unassigned) and 0x3F (all nets) are not valid nets: a write of either is refused, and the
 // boot's "restored, or a random one" rule (Main.h) fills in a usable value.
 
@@ -32,11 +44,28 @@
 
 inline bool NetIdStorable(uint8_t NetId) { return NetId != 0 && NetId < 0x3F; }
 
-// Applies a written NetID to the live status: the net, and the address every packet's id_src is
-// taken from. Returns false - and changes nothing - for a value that is not a net.
-inline bool ApplyNetId(uint8_t &LiveNetId, uint16_t &ShortAddress, uint8_t Stored) {
+// The net a write has accepted but not yet taken live; 0xFF (not a net) = nothing armed.
+// A function-local so the header stays a plain inline definition in every translation unit.
+inline uint8_t &ArmedNetIdSlot() {
+    static uint8_t Armed = 0xFF;
+    return Armed;
+}
+
+// Validates a written net and arms the move. Returns false - and changes nothing - for a value
+// that is not a net. The write's own reply still goes out on the old identity.
+inline bool ArmNetId(uint8_t Stored) {
     if (!NetIdStorable(Stored)) return false;
+    ArmedNetIdSlot() = Stored;
+    return true;
+}
+
+// Takes an armed net live: the net, and the address every packet's id_src is taken from. The
+// write path calls this immediately after that write's reply has been dispatched, so the two
+// halves move together and never in the middle of the transaction that caused the change.
+inline void ApplyArmedNetId(uint8_t &LiveNetId, uint16_t &ShortAddress) {
+    const uint8_t Stored = ArmedNetIdSlot();
+    if (!NetIdStorable(Stored)) { ArmedNetIdSlot() = 0xFF; return; } // nothing armed (0xFF)
+    ArmedNetIdSlot() = 0xFF;
     LiveNetId = Stored;
     ShortAddress = MakeId(Stored, 1); // a core is always NetID.1
-    return true;
 }

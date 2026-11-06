@@ -5,6 +5,7 @@
 // Part of Core/Services/Register.h (included from there).
 
 #include "Core/Services/RegisterDefs.h"
+#include "Core/Functions/NetId.h"
 
 // ===== CID 3: Write helpers =====
 
@@ -45,4 +46,13 @@ inline void RegisterService::HandleStaticBlockWrite(const PacketFrame &Frame, ui
     if(!Blk) { RespondStatus(Frame,false); return; }
     if(!Blk->Set(Field, Key, Val, Vlen, *Desc)) { RespondStatus(Frame,false); return; }
     SendResponse(Frame, Frame.Payload, PayloadBytes(Frame));
+#ifdef TYPE_CORE
+    // A write can move our own bus identity (System field 7, the net: the trigger arms it,
+    // RegisterRead.h OnSystemNetIdWrite). It lands HERE, after the reply above has been built and
+    // dispatched: the reply's src and the dispatcher's route back to the app both come from the
+    // address the requester addressed, so moving the identity first made the acknowledgement
+    // leave from an address the client never used - a write that landed, reported as a timeout
+    // (Core/Functions/NetId.h, t_cac38f19).
+    ApplyArmedNetId(DeviceStatus.NetId, DeviceStatus.ShortAddress);
+#endif
 }

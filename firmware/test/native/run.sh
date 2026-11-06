@@ -32,9 +32,12 @@
 #                     write-only password (a read answers empty, never the stored text) and the
 #                     configuration-only State rule; plus System field 8 as an interface BIT FIELD
 #                     (Core/Types/Enums.h AppActiveBits)
-#   netid_test.cpp    the core's net-ID rule (Core/Functions/NetId.h): a write moves the live net and
-#                     the core's NetID.1 address together, 0/0x3F are refused, and the value the
-#                     save paths mirror equals the one stored - so a Save All cannot revert it
+#   netid_test.cpp    the core's net-ID rule (Core/Functions/NetId.h): a write ARMS the move and
+#                     keeps the old identity until its reply is out (a reply from the new address
+#                     cannot be matched by the client that addressed the old one), then moves the
+#                     live net and the core's NetID.1 address together, 0/0x3F are refused, and the
+#                     value the save paths mirror equals the one stored - so a Save All cannot
+#                     revert it
 #
 # The numeric core is built in three shapes: the core (64-bit) and the DAS (32-bit, no
 # Vector/Matrix) are the real targets; the third - 32-bit *with* Vector/Matrix - is a
@@ -1481,23 +1484,35 @@ echo "### native raw-resistance transform tests (same contract, 64-bit Number sh
 build_run "meastransform_core" "meas_transform_test.cpp"
 echo
 
-echo "### native net-ID rule tests (a write moves the live net and NetID.1 together; a save cannot revert it)"
+echo "### native net-ID rule tests (a write arms the move; the live identity moves with its reply already sent)"
 build_run "netid" "netid_test.cpp"
 echo
 
 # The System f7 trigger itself cannot be linked on the host (it pulls the board's static memory),
-# so its wiring is asserted on the source: the write must go through ApplyNetId - which moves the
-# LIVE net and the core's NetID.1 address - and must still store the value. A write that only stored
-# the space was reverted by the next Save All, so a restore could not move a wiped core onto the
-# setup's net and every subscription install went to a net no node answers (t_ab3e764a).
-echo "### source guard: the System NetID write applies the live net and stores it"
-NETID_SRC="$ROOT/src/Core/Services/RegisterRead.h"
-if [ "$(grep -c 'ApplyNetId(DeviceStatus.NetId, DeviceStatus.ShortAddress, Value)' "$NETID_SRC")" != 1 ] \
-   || [ "$(grep -c 'memcpy(&StaticPer.System.NetId, Data, 1);' "$NETID_SRC")" != 1 ]; then
-    echo "FAIL $NETID_SRC: the NetID trigger must apply the live net (ApplyNetId) AND store it"
+# so its wiring is asserted on the source. Three things have to hold together:
+#   - the trigger ARMS the move (ArmNetId) and still stores the value - a write that only stored
+#     the space was reverted by the next Save All, so a restore could not move a wiped core onto
+#     the setup's net and every subscription install went to a net no node answers (t_ab3e764a);
+#   - the trigger does NOT move the live identity itself: the reply to that very write is built
+#     from, and routed by, the address the requester used, so applying the new one first made the
+#     acknowledgement leave from an address the client never used - the write landed and the
+#     client reported a timeout (t_cac38f19, rig: netid_set.py 39 -> "no matched reply");
+#   - the write handler applies the armed move only AFTER sending the reply for that write.
+echo "### source guard: the NetID write arms the move, and it lands after that write's reply"
+NETID_TRIGGER="$ROOT/src/Core/Services/RegisterRead.h"
+NETID_WRITE="$ROOT/src/Core/Services/RegisterWrite.h"
+STATIC_WRITE_ORDER="$(awk '/^inline void RegisterService::HandleStaticBlockWrite/{f=1} f{print} f&&/^}/{exit}' "$NETID_WRITE" \
+    | grep -n 'SendResponse(Frame, Frame.Payload, PayloadBytes(Frame));\|ApplyArmedNetId(DeviceStatus.NetId, DeviceStatus.ShortAddress);' \
+    | sed 's/^[0-9]*:[[:space:]]*//' | tr '\n' '|')"
+if [ "$(grep -c 'if (!ArmNetId(Value)) return false;' "$NETID_TRIGGER")" != 1 ] \
+   || [ "$(grep -c 'memcpy(&StaticPer.System.NetId, Data, 1);' "$NETID_TRIGGER")" != 1 ] \
+   || [ "$(grep -c 'ApplyArmedNetId\|ApplyNetId' "$NETID_TRIGGER")" != 0 ] \
+   || [ "$STATIC_WRITE_ORDER" != "SendResponse(Frame, Frame.Payload, PayloadBytes(Frame));|ApplyArmedNetId(DeviceStatus.NetId, DeviceStatus.ShortAddress);|" ]; then
+    echo "FAIL: the NetID trigger must arm the move + store it (never move the live identity itself),"
+    echo "      and HandleStaticBlockWrite must apply the armed move after its reply (got '$STATIC_WRITE_ORDER')"
     fail=$((fail + 1))
 else
-    echo "PASS: the NetID trigger applies the live net and stores it"
+    echo "PASS: the NetID write arms the live move, stores it, and applies it after its own reply"
 fi
 echo
 
