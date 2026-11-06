@@ -1489,3 +1489,31 @@ RAM 78,116/327,680 = 23.8 %). DAS is unchanged: RAM 2,048/2,048 (100.0 %), flash
 (93.7 %) - the same figures E76 records. Recipe: flash, then
 `firmware/.pio/probe/gap_name_read.py` (advertisement + `0x2A00` from one connection) - both must read
 the same name on a device that has just booted, before any rename.
+
+## Factory image: an app that dies before re-arming `otadata` is out of reach (2026-11-06, card t_79a194d5)
+
+**The gap.** `Devices/Tamu_v2.0A/Main.h` (`app_main`) re-arms `otadata` to the `factory` partition at
+the top of the app. `Bootloader/CoreBootloader.cpp` does the opposite before it restarts:
+`esp_ota_set_boot_partition(MainApp)` points `otadata` at `ota_0`. Between those two statements the
+`ota_0` image owns the boot selection, so **the second-stage bootloader boots it directly and the
+factory image is not started at all**. An image that dies before the re-arm line (bad image with a
+valid `0xE9` magic, a watchdog reset in early init, a wipe of `.bss`) therefore reboot-loops with no
+button catch and no updater: `modern B1` cannot run, because the code that reads B1 is not being
+started. Recovery is USB download mode only.
+
+This is the exact hole a BLE updater exists to remove, so it has to be closed before the updater is
+worth having.
+
+**Proposed fix (unimplemented).** ESP-IDF's pending-verify/rollback: `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`
+in the app's sdkconfig, the factory image marks `ota_0` pending before restarting into it, and the app
+calls `esp_ota_mark_app_valid_cancel_rollback()` once it is demonstrably alive (the same "healthy"
+point the boot budget needs - `Bootloader/BootDecision.h`). An image that never confirms is rolled
+back to `factory` by the second-stage bootloader, which is exactly the cable-free recovery path. The
+cost is one otadata state per boot and the app's confirmation call.
+
+**Evidence, and what is not verified.** Both statements are in the source (`Main.h:418-431`,
+`CoreBootloader.cpp:164-183`); the rollback behaviour itself is ESP-IDF's and has **not** been
+exercised on the device - that needs a flash of a deliberately broken image and a reset, which the
+card did not authorize. The boot-budget half of the recovery path is host-tested
+(`test/native/updater_boot_test.cpp`, `PASS: 49 checks`). Sizes for a BLE updater in `factory`, and
+why 384 KB is not enough, are in `firmware/STUDY-ble-updater-size.md`.

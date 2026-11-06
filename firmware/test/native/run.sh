@@ -201,6 +201,13 @@ echo "### native bootloader packet tests (codec layout + even parity)"
 build_run "bootloader" "bootloader_test.cpp"
 echo
 
+# t_79a194d5: the pairing-free BLE updater's recovery path. The factory image's boot decision
+# and the update window are pure functions, so "a bad image stays recoverable" is run here as a
+# sequence of resets rather than only being read off the source.
+echo "### native updater tests (boot budget / recovery decision + the update window)"
+build_run "updaterboot" "updater_boot_test.cpp"
+echo
+
 echo "### native TRID tests (System/Log counter range + increment/wrap)"
 build_run "trid" "trid_test.cpp"
 echo

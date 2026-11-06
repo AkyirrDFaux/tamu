@@ -8,6 +8,15 @@ if(TAMU_BOOTLOADER)
     return()
 endif()
 
+# Size probe for the pairing-free BLE updater (kanban t_79a194d5): the same factory app plus
+# the NimBLE host+controller and one GATT service. Its own image, built only by the
+# Tamu_updater_probe env, so neither the shipped bootloader nor the main app sees it.
+if(TAMU_UPDATER_PROBE)
+    idf_component_register(SRCS "Bootloader/CoreBootloaderBle.cpp"
+                           REQUIRES bt nvs_flash)
+    return()
+endif()
+
 FILE(GLOB_RECURSE app_sources ${CMAKE_SOURCE_DIR}/src/*.*)
 # The factory bootloader has its own app_main and is a separate image.
 list(FILTER app_sources EXCLUDE REGEX .*src/Bootloader/.*)

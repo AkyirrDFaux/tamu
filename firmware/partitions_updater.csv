@@ -1,0 +1,12 @@
+# Name,    Type, SubType, Offset,  Size, Flags
+# Partition table of the proposed BLE-updater layout: `factory` grows to 1 MB so the updater
+# has room for the NimBLE host+controller, and `ota_0` pays for it (2 MB, ~3x the 699,232 B
+# app). `storage` keeps its size and only moves. NOT the table the shipped image uses yet:
+# partitions.csv stays the active one until the one-way repartition is done over USB, because
+# flashing a new table erases the device.
+nvs,       data, nvs,     ,        0x4000,
+otadata,   data, ota,     ,        0x2000,
+phy_init,  data, phy,     ,        0x1000,
+factory,   app,  factory, ,        0x100000,
+ota_0,     app,  ota_0,   ,        0x200000,
+storage,   data, spiffs,  ,        0xED000,

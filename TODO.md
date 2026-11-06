@@ -496,6 +496,17 @@ Open:
 
 ## Open work
 
+- **Pairing-free BLE updater in the `factory` image - measured 2026-11-06, not implemented (kanban
+  t_79a194d5).** A stripped factory image with the NimBLE host+controller and one GATT service
+  measures **430,544 B**: **+257,760 B over the shipped 172,784 B**, i.e. **36.5 KB past the 384 KB
+  `factory` partition**, so it needs the partition table moved (owner pre-approved: `ota_0` pays).
+  Proposal in `firmware/partitions_updater.csv` with tool-derived offsets: `factory` 1 MB at
+  0x10000, `ota_0` 2 MB at 0x110000, `storage` unchanged. Admission is physical presence (button
+  window), not a passphrase. Recovery needs the boot budget **and** the pending-verify rollback that
+  closes the "app dies before it re-arms `otadata`" hole (Issues.md, 2026-11-06). Numbers, design and
+  the re-run recipe: `firmware/STUDY-ble-updater-size.md`. The device-side demonstration (bad image
+  recovers without a cable) needs a flash and is not run.
+
 - **The GAP Device Name (`0x2A00`) follows the advertised name - implemented 2026-11-06, device pass
   pending (kanban t_2983d5c5).** A bonded peer showed `nimble` (the NimBLE config default) because the
   server's first start re-initialises the GAP service from `CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME`,
