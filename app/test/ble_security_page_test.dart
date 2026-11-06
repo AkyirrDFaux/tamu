@@ -710,7 +710,7 @@ void main() {
 
       expect(device.writes, isEmpty);
       expect(
-        find.textContaining('this block can only be written over USB'),
+        find.textContaining('The device refused the change'),
         findsOneWidget,
       );
     });
@@ -725,7 +725,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.textContaining('this block can only be written over USB'),
+        find.textContaining('The device refused the change'),
         findsOneWidget,
       );
     });

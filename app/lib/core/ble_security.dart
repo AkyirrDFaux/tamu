@@ -244,10 +244,16 @@ const String bleBondCannotAdd =
 /// the panel read the array makes the write stale rather than wrong.
 String bleBondsRefusal({
   required bool overUsb,
+  bool bleLinkSecured = true,
   required List<int> sent,
   required List<BleBond> held,
 }) {
-  if (!overUsb) return bleWriteRefusal(overUsb: false);
+  if (!bleLinkWritesSettings(
+    overUsb: overUsb,
+    bleLinkSecured: bleLinkSecured,
+  )) {
+    return bleWriteRefusal(overUsb: overUsb, bleLinkSecured: bleLinkSecured);
+  }
   final sentBonds = decodeBleBonds(sent);
   final invented = [
     for (var slot = 0; slot < sentBonds.length && slot < held.length; slot++)
@@ -512,6 +518,34 @@ bool blePasskeyIsValid(String text) {
   return text.codeUnits.every((c) => c >= 0x30 && c <= 0x39);
 }
 
+/// Whether the CURRENT LINK may write the `BLE Settings` block, mirroring the firmware's
+/// `BleWriteAllowed(OverUsb, OverBle, BleLinkSecured)` (`firmware/src/Blocks/BleWritePolicy.h`,
+/// asked by `Devices/Tamu_v2.0A/BleSettingsGlue.h` as
+/// `BleWriteAllowed(AppFrameCameOverUsb(), AppFrameCameOverBle(), AppBLELinkSecured())`): a frame
+/// that arrived over USB always, a frame that arrived over BLE only while that link is a SECURED
+/// session.
+///
+/// [bleLinkSecured] defaults to true because that is every link this app holds, and the reason is
+/// the device's, not the app's: the characteristics demand an encrypted link (authenticated too
+/// once a passkey is set), so an unsecured peer is refused before any application code runs, and
+/// the session the app sends on is established only after the link reported encrypted + bonded and
+/// the device's admission gate let it in (`Devices/Tamu_v2.0A/AppBLE.h`: `AppBLELinkSecured()` is
+/// `BleSecured && BleConnected`; `Blocks/BleAdmissionPolicy.h` is the gate). There is no per-link
+/// "secured" flag in the protocol for the app to read - a link it can send a request on IS that
+/// flag (see [bleLinkGuidance] on the missing bond flag) - so the app's own BLE links are secured
+/// by construction. The parameter stays because the rule is the firmware's: a caller that ever
+/// holds a BLE link which is not a secured session must say so instead of letting a plan call the
+/// rows writable.
+///
+/// The spec states the same rule (`Docs/Services/App Interface.md`, "BLE Settings": a write is
+/// accepted from USB, or from a BLE frame on the secured session the radio admitted - encrypted
+/// and bonded, and authenticated too while a passkey is set). The firmware header is still the
+/// source of truth: that is where the write gate is defined, and the doc follows it.
+bool bleLinkWritesSettings({
+  required bool overUsb,
+  bool bleLinkSecured = true,
+}) => overUsb || bleLinkSecured;
+
 /// Why a control on the panel cannot work over this link, in one sentence — or null when it can.
 ///
 /// The device refuses every write to this block that did not arrive over USB
@@ -524,13 +558,23 @@ String? bleWriteRestriction({required bool overUsb}) => overUsb
 
 /// Why a write the panel sent was refused, as a sentence the user can act on.
 ///
-/// A refusal is the normal `FLAG_FAIL` reply: the device answered, it just said no. The two cases
-/// are told apart because the fix differs — a link that cannot write at all, and a value the
-/// device would not accept.
-String bleWriteRefusal({required bool overUsb, String? valueHint}) {
-  if (!overUsb) {
-    return 'The device refused the change: this block can only be written over USB, and this '
-        'app is connected over Bluetooth.';
+/// A refusal is the normal `FLAG_FAIL` reply: the device answered, it just said no. The cases are
+/// told apart because the fix differs - a link that cannot write the block at all, and a value the
+/// device would not accept. "Cannot write" is the firmware's rule ([bleLinkWritesSettings]), not
+/// "not USB": a bonded, secured Bluetooth link writes the block like the cable does, so the
+/// link-shaped sentence is kept for the one case the device still refuses outright, a BLE link
+/// that is not a secured session.
+String bleWriteRefusal({
+  required bool overUsb,
+  bool bleLinkSecured = true,
+  String? valueHint,
+}) {
+  if (!bleLinkWritesSettings(
+    overUsb: overUsb,
+    bleLinkSecured: bleLinkSecured,
+  )) {
+    return 'The device refused the change: this Bluetooth link is not a secured session, and the '
+        'device accepts these settings only over USB or from a bonded, secured Bluetooth link.';
   }
   return valueHint == null
       ? 'The device refused the change.'
@@ -540,14 +584,25 @@ String bleWriteRefusal({required bool overUsb, String? valueHint}) {
 /// The block types the CURRENT LINK cannot write, each with the sentence to show for a row that
 /// targets one.
 ///
-/// `BLE Settings` refuses every write that did not arrive over USB
-/// (`Docs/Services/App Interface.md`, `BleBlockWritable`), so a restore planned over Bluetooth
-/// would send writes the firmware answers FAIL to and could only report "the device refused the
-/// write" - the same two rows that restore cleanly over USB. The rule lives beside
+/// The rule is the firmware's `BleWriteAllowed` (`firmware/src/Blocks/BleWritePolicy.h`, asked by
+/// `Devices/Tamu_v2.0A/BleSettingsGlue.h`): USB always, a BLE frame only on a secured session. Every
+/// link this app holds is such a session ([bleLinkWritesSettings]), so a restore planned over
+/// Bluetooth restores the block like any other row - the plan used to refuse those rows over BLE,
+/// which was the old USB-only rule and made a correct restore lie about the device. Only a link
+/// that cannot write the block is refused, and then the plan says so per row (unplaceable, never
+/// sent) instead of sending writes the firmware answers FAIL to. The rule lives beside
 /// [bleWriteRefusal] so the panel, the plan and the report cannot drift apart.
-Map<int, String> linkWriteRefusals({required bool overUsb}) => overUsb
+Map<int, String> linkWriteRefusals({
+  required bool overUsb,
+  bool bleLinkSecured = true,
+}) => bleLinkWritesSettings(overUsb: overUsb, bleLinkSecured: bleLinkSecured)
     ? const <int, String>{}
-    : <int, String>{bleSettingsBlockTypeValue: bleWriteRefusal(overUsb: false)};
+    : <int, String>{
+        bleSettingsBlockTypeValue: bleWriteRefusal(
+          overUsb: overUsb,
+          bleLinkSecured: false,
+        ),
+      };
 
 /// How long the firmware lets a new link stay unsecured before it drops it, from
 /// `firmware/src/Blocks/BleSecurityPolicy.h` (`BleSecureBudgetJustWorksMs` /

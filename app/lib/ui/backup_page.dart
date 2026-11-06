@@ -186,8 +186,9 @@ class _BackupPageState extends State<BackupPage> {
             ? buildRestorePlan(
                 devices,
                 onProgress: progress,
-                // A restore over Bluetooth cannot write the blocks the firmware only accepts
-                // over USB; the plan says so per row instead of sending two doomed writes.
+                // The block's write rule is the firmware's `BleWriteAllowed`: USB, or a secured
+                // Bluetooth session - which is every link this app holds - so the plan only
+                // refuses rows for a link that cannot write them at all.
                 linkRefusedBlocks: linkWriteRefusals(
                   overUsb:
                       (widget.overUsb ??

@@ -378,14 +378,32 @@ void main() {
       bondsValue(const [('4C:23:38:74:E6:F6', 'Desk phone')]),
     );
 
-    test('names the link when the app is not on USB', () {
+    test('a link that cannot write the block is named', () {
+      // The firmware's rule (Blocks/BleWritePolicy.h, BleWriteAllowed): USB, or a BLE link that is
+      // a secured session. Only the second case is a link refusal.
       final sentence = bleBondsRefusal(
         overUsb: false,
+        bleLinkSecured: false,
         sent: bleBondsRenamed(held, 0, 'Bench'),
         held: held,
       );
-      expect(sentence, contains('only be written over USB'));
+      expect(sentence, contains('not a secured session'));
     });
+
+    test(
+      'a secured Bluetooth link gets the bond explanation, not a link refusal',
+      () {
+        // Every link this app holds is a secured session, so a refusal there is about the bonds -
+        // the device decided the frame, not the link.
+        final sentence = bleBondsRefusal(
+          overUsb: false,
+          sent: bleBondsRenamed(held, 0, 'Bench'),
+          held: held,
+        );
+        expect(sentence, contains('not the one this panel read'));
+        expect(sentence, isNot(contains('not a secured session')));
+      },
+    );
 
     test('a fabricated address says a bond is made by pairing', () {
       // The device refuses the whole frame for an address its store does not hold: a register
@@ -603,23 +621,20 @@ void main() {
       expect(restriction, contains('change'));
     });
 
-    test(
-      'a refusal names the link, or the value the device would not take',
-      () {
-        expect(
-          bleWriteRefusal(overUsb: false),
-          contains('only be written over USB'),
-        );
-        expect(
-          bleWriteRefusal(overUsb: true, valueHint: 'six digits'),
-          contains('six digits'),
-        );
-        expect(
-          bleWriteRefusal(overUsb: true),
-          'The device refused the change.',
-        );
-      },
-    );
+    test('a refusal names the link, or the value the device would not take', () {
+      // The link-shaped sentence is the one case the firmware still refuses outright: a BLE
+      // link that is not a secured session. A secured link is a normal write path.
+      expect(
+        bleWriteRefusal(overUsb: false, bleLinkSecured: false),
+        contains('not a secured session'),
+      );
+      expect(bleWriteRefusal(overUsb: false), 'The device refused the change.');
+      expect(
+        bleWriteRefusal(overUsb: true, valueHint: 'six digits'),
+        contains('six digits'),
+      );
+      expect(bleWriteRefusal(overUsb: true), 'The device refused the change.');
+    });
   });
 
   group('guidance after a failed Bluetooth attempt', () {

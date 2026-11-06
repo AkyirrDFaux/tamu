@@ -742,11 +742,12 @@ class RestorePlan {
   /// Block types the CURRENT LINK cannot write, each with the sentence a row that targets one
   /// reports - see `linkWriteRefusals` in `ble_security.dart`.
   ///
-  /// The firmware refuses every write to `BLE Settings` that did not arrive over USB, so a restore
-  /// planned over Bluetooth cannot restore those rows however often it is applied. They are
-  /// unplaceable on that link (not selected, never sent, with the reason) instead of being sent
-  /// and reported as a bare FAIL: the same rows restore cleanly over USB, which is exactly what
-  /// made the Bluetooth run look broken rather than link-limited.
+  /// The firmware's rule is `BleWriteAllowed` (`firmware/src/Blocks/BleWritePolicy.h`): a USB
+  /// frame, or a BLE frame on a secured session. Every link this app holds is secured, so this map
+  /// is normally empty and a restore over Bluetooth writes the block like any other row. A link
+  /// that genuinely cannot write it (a BLE link that is not a secured session) makes those rows
+  /// unplaceable (not selected, never sent, with the reason) instead of sending writes the
+  /// firmware answers FAIL to.
   final Map<int, String> linkRefusedBlocks;
 
   /// The selection each removal had before the last [classify], by [RestoreRemoval.identity], so
