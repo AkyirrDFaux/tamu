@@ -1591,3 +1591,36 @@ need forget-and-re-pair; that is OS behaviour and was **not** measured here - th
 `# CONFIG_BT_ENABLED is not set`; the ELF has 0 `nimble|ble_*` symbols and the bin 0 `nimble` strings, so
 a scan sees nothing while it runs (it hands over in under a second and never advertises). Booting it alone
 needs an erased app slot - a destructive flash the verification card does not authorise.
+
+## System `Name` written mid-run never reaches the air (measured 2026-11-06, card t_2105ced6)
+
+`BleEffectiveName` (`AppBLE.h:123`) falls back to `BleFallbackName` - a copy of the System name taken
+**once**, in `AppBLEInit` (`AppBLE.h:1300`), when the boot recalls `.SV`. A later write of
+`System/Name` (the first-bond auto-name, a setup restore, or an app write through the register path)
+changes the field and `.SV`, but `BleEffectiveName` keeps returning the boot-time string, so
+`AppBLESettingsApply`'s `strcmp(Name, BleAppliedName)` never sees a difference and neither
+`BleSetGapName` nor `StartAppAdvertising` runs.
+
+**Measured on the rig** (image 26.11.6.8, serial e4b063c82070, this host): `System/Name` written to
+`Bench` over USB (`+ Save All`), read back `'Bench           '`, and then, with the radio advertising
+the whole time and no restart in between:
+
+```
+adv.local_name  'Tamu-2070'   <- the air (raw adv report)
+bluez dev.name  'Tamu-2070'
+RESULT: GATT 0x2A00 = bytearray(b'Tamu-2070') (len 9)
+```
+
+The same read was `adv.local_name 'Tamu-2070'` right after the auto-name had written it *and* after a
+chip reset, so the auto-name's own name does reach the air - but only through the restart. **The
+“applies at the next radio start” wording in `BleSystem`/`BleAutoName` is therefore accurate only
+because a radio start needs a reboot here**: a device named at pairing time keeps advertising (and
+answering `0x2A00` with) the name it booted with until it restarts.
+
+**Not a defect of the naming rule**, and not what card t_2105ced6 asked for - but it is the
+difference between "the chip is named" and "the owner's phone shows the new name". Two candidate
+fixes, for a card to choose between: re-read `StaticPer.System.Name` in `BleEffectiveName` (the
+`strcmp` in `AppBLESettingsApply` then re-advertises and re-sets `0x2A00` in the same pass), or
+refresh `BleFallbackName` from the register-write hook of `System` field 6. The `BLE Settings`
+`Display name` path is unaffected either way - that one is pushed by its own trigger and was measured
+live (`e71` pass, and the 2026-11-06 rename measurement above).
