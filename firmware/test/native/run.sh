@@ -234,9 +234,12 @@ echo
 # that needs a table move needs two CONTIGUOUS 64 B blocks while its own staging file holds one.
 # A store whose free blocks are single-block islands therefore refuses every save, for ever
 # (measured on node 0.4: 0x4E three times in a row). The real StorageBlockFS.h runs here over a
-# fake 512 B NOR flash, in the DAS geometry, and the test builds that exact store: the write must
-# still land (in place) and must keep landing, while an ordinary store keeps the atomic path.
-echo "### native storage backup-write tests (a full table with no 2-block run still saves)"
+# fake 512 B NOR flash, in the DAS geometry, and the test builds those stores: an ordinary store
+# keeps the atomic path; a node-shaped store (`.SV` + two 1-block files, full table) must RECLAIM
+# - compacted table, a plain CreateFile working again - and then take a 20-save run; the island
+# store, where no move is placeable at all, must save 20 times in place and is asserted to stay
+# stuck for other writers (the stated residual of that last resort).
+echo "### native storage backup-write tests (a stuck store reclaims or still saves)"
 build_run "storagebackup" "storage_backup_test.cpp" -DBOARD_DAS_v0_1 -DSTORAGE_FLASH_SIZE=512 -DSTORAGE_BLOCK_SIZE=64 -DMEMORY_BACKUP_CAP=128
 echo
 

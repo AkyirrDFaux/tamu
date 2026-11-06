@@ -1,24 +1,29 @@
-// Host-side test for the backup-file write's last-resort path (t_1e301bfb).
+// Host-side test for the backup-file write's recovery paths (t_1e301bfb).
 //
 // The DAS's whole persistent set is one 40 B `.SV`, written by `WriteBackupFile` as
 // copy-to-`.SV~`, then rename - two file-table records per save. The table is append-only, so
-// after a few saves it is full and `MoveFiletable()` has to run, which needs
-// STORAGE_TABLE_SIZE (128 B = two CONTIGUOUS 64 B blocks). On the DAS the data area is five
-// blocks and a save already holds two of them (the live `.SV` and its staging file), so a store
-// whose free blocks are single-block islands cannot place that move: `FindSpace` returns 0,
-// `CreateFile`/`RenameFile` fail, and Save All answers FLAG_FAIL - for ever, because the failed
-// save changes nothing. Measured on node 0.4 (card t_1e301bfb): 0x4E three times in a row in
-// exactly that store, then 0x2E once the two dummy files were removed.
+// after a few saves it is full and the append needs `MoveFiletable()`, which needs
+// STORAGE_TABLE_SIZE (128 B = two CONTIGUOUS 64 B blocks). On the DAS the data area is seven
+// blocks and a save already holds three of them (the 2-block table, the live `.SV` and its
+// staging file), so a store whose free blocks are single-block islands cannot place that move:
+// `FindSpace` returns 0, `CreateFile`/`RenameFile` fail, and Save All answers FLAG_FAIL - for
+// ever, because the failed save changes nothing. Measured on node 0.4 (card t_1e301bfb): 0x4E
+// three times in a row in exactly that store, then 0x2E once the two dummy files were removed.
 //
 // The real StorageBlockFS.h runs here over a fake 512 B NOR flash, so the store the test builds
 // is the store the rig had: 64 B blocks, a 2-page table, create/delete pairs filling the record
-// slots and two live 1-block files fragmenting the free space. The assertions:
+// slots. Four stores are checked, in the order the writer prefers them:
 //   1. an ordinary store keeps the atomic path - a rewrite leaves one live `.SV` block and the
 //      superseded generation invalidated (nothing regresses for the core or a healthy node);
-//   2. the deadlock store is really built (no free record slot, longest free run < 2 blocks) -
-//      otherwise a pass would only mean the state was never reached;
-//   3. `WriteBackupFile` still returns true there and the stored bytes are the new ones (the
-//      last-resort in-place write), and it keeps working on the next save.
+//   2. a NODE-SHAPED store (`.SV` + two 1-block files, table full, one free block once the
+//      staging file exists) - the save must RECLAIM: the table is compacted and the store ends up
+//      with room again, so the save lands and every other writer works afterwards;
+//   3. the deadlock (island) store - no free record slot and a longest free run of one block even
+//      after the staging file is released. There the in-place rewrite is the last resort: a
+//      >= 20-save run must succeed byte-identically, and the store is asserted to STAY stuck -
+//      that residual is the stated cost of the last resort, not something this test pretends
+//      away;
+//   4. the same deadlock store keeps the RUNNING state after many saves (no block growth).
 
 #include <cstdint>
 #include <cstdio>
@@ -94,29 +99,40 @@ static const char *SvName() { return SvNameBytes; }
 
 static bool SvBytes(uint8_t Out[40]) { return ReadBackupFile(SvName(), Out, 40) == 40; }
 
-static void MarkFile(uint8_t Taken[], const char *Name)
-{
-    uint32_t Off, Size;
-    if (!Storage.GetFileInfo(Name, &Off, &Size)) return;
-    uint32_t Last = Off + BlocksForSize(Size) * STORAGE_BLOCK_SIZE;
-    for (uint32_t B = Off / STORAGE_BLOCK_SIZE; B < Last / STORAGE_BLOCK_SIZE; B++)
-        Taken[B] = 1;
-}
+// One bit per flash block: the pointer page, the file table and every live file (walked from the
+// store itself, so the map never depends on the test knowing the file names).
+static uint8_t Taken[STORAGE_FLASH_SIZE / STORAGE_BLOCK_SIZE];
 
-// The pointer page (block 0) is never allocatable. Everything else in the flash region is a data
-// block; the table and the live files are marked, and the free blocks are returned as run lengths
-// (a table move needs a run of two).
-static uint32_t LongestFreeRun()
+static void BuildTaken()
 {
-    uint8_t Taken[STORAGE_FLASH_SIZE / STORAGE_BLOCK_SIZE];
     memset(Taken, 0, sizeof(Taken));
+    Taken[0] = 1; // the first-page table pointer is never allocatable
     for (uint32_t B = Storage.FileTableOffset / STORAGE_BLOCK_SIZE;
          B < (Storage.FileTableOffset + Storage.FileTableSize) / STORAGE_BLOCK_SIZE; B++)
         Taken[B] = 1;
-    MarkFile(Taken, "F1");
-    MarkFile(Taken, "F2");
-    MarkFile(Taken, SvName());
+    Storage.ForEachFile([](const char *Name) {
+        uint32_t Off = 0, Size = 0;
+        if (!Storage.GetFileInfo(Name, &Off, &Size)) return;
+        uint32_t First = Off / STORAGE_BLOCK_SIZE;
+        uint32_t Last = (Off + BlocksForSize(Size) * STORAGE_BLOCK_SIZE) / STORAGE_BLOCK_SIZE;
+        for (uint32_t B = First; B < Last && B < sizeof(Taken); B++) Taken[B] = 1;
+    });
+}
 
+// Number of free data blocks (block 0 is the pointer page, never allocatable).
+static uint32_t FreeBlocks()
+{
+    BuildTaken();
+    uint32_t Free = 0;
+    for (uint32_t B = 1; B < STORAGE_FLASH_SIZE / STORAGE_BLOCK_SIZE; B++)
+        if (!Taken[B]) Free++;
+    return Free;
+}
+
+// The longest contiguous free run, in blocks - a table move needs two.
+static uint32_t LongestFreeRun()
+{
+    BuildTaken();
     uint32_t Best = 0, Run = 0;
     for (uint32_t B = 1; B < STORAGE_FLASH_SIZE / STORAGE_BLOCK_SIZE; B++)
     {
@@ -124,6 +140,26 @@ static uint32_t LongestFreeRun()
         Run++;
     }
     return Run > Best ? Run : Best;
+}
+
+static bool TableFull()
+{
+    uint32_t Slot = 0;
+    return Storage.GetEndOfFiletable(&Slot) && Slot >= Storage.TableCapacity();
+}
+
+// Fills the record slots with create/delete pairs, so the table ends up with no free slot and
+// only invalidated holes - the state every save after the fourth one runs into.
+static void FillRecordSlots()
+{
+    for (char C = '0'; C <= '9'; C++)
+    {
+        char Name[3] = {'X', C, 0};
+        uint32_t Slot = 0;
+        if (!Storage.GetEndOfFiletable(&Slot) || Slot >= Storage.TableCapacity()) break;
+        if (!Storage.CreateFile(Name, 64)) break;
+        Storage.DeleteFile(Name);
+    }
 }
 
 int main()
@@ -145,34 +181,70 @@ int main()
     // block is still in use (40 B = one 64 B block).
     CHECK(Storage.UsedFlashBytes() == STORAGE_BLOCK_SIZE);
 
-    // ---- 2. The deadlock store: full table, no two contiguous free blocks. ----
+    // ---- 2. A node-shaped store: full table, one free block once the staging file exists. ----
+    // `.SV` plus two 1-block files, so the free space is narrower than the move needs at the
+    // moment the append happens - but wide enough again once the staging file is released. This
+    // is the store the reclaim step exists for: it must come out HEALTHY, not merely saved.
+    Storage.Format();
+    CHECK(WriteBackupFile(SvName(), First, 40));
+    CHECK(Storage.CreateFile("F1", 64));
+    CHECK(Storage.CreateFile("F2", 64));
+    FillRecordSlots();
+    CHECK(TableFull());
+    CHECK(FreeBlocks() == 2);            // the staging file takes one, leaving one for a move
+
+    CHECK(WriteBackupFile(SvName(), Second, 40));
+    CHECK(SvBytes(Got));
+    CHECK(memcmp(Got, Second, 40) == 0);
+    // Reclaimed, not just rewritten: the table was compacted, so it has room again and the store
+    // left the state in which every later append would have needed an unplaceable move.
+    CHECK(!TableFull());
+    CHECK(Storage.CreateFile("T4", 64)); // a plain CreateFile works again (the reviewer's residual)
+
+    // A 20-save run in that same store: every save must land and the file must always read back
+    // what was written last - the reclaim never loses a generation, and when the free space is
+    // narrow again the last resort keeps the run going.
+    for (int i = 0; i < 20; i++)
+    {
+        const uint8_t *Want = (i & 1) ? First : Second;
+        CHECK(WriteBackupFile(SvName(), Want, 40));
+        CHECK(SvBytes(Got));
+        CHECK(memcmp(Got, Want, 40) == 0);
+    }
+    // No space leak over the whole run: the 40 B file holds one block and so does each dummy
+    // file, so nothing the reclaim or the last resort did left a block unaccounted for.
+    CHECK(Storage.UsedFlashBytes() == 4 * STORAGE_BLOCK_SIZE);
+
+    // ---- 3. The deadlock (island) store: no free slot AND no two contiguous free blocks. ----
     Storage.Format();
     CHECK(WriteBackupFile(SvName(), First, 40)); // the live `.SV` the fallback rewrites in place
     CHECK(Storage.CreateFile("F1", 64));
     CHECK(Storage.CreateFile("T1", 64));
     CHECK(Storage.DeleteFile("T1"));             // a hole between the two live files
     CHECK(Storage.CreateFile("F2", 64));
-    for (char C = '0'; C <= '9'; C++)            // fill the record slots with create/delete holes
+    FillRecordSlots();
+
+    CHECK(TableFull());                      // no free record slot: the next record needs a move
+    CHECK(LongestFreeRun() < 2);             // and the move cannot be placed, even after reclaim
+    uint32_t UsedBefore = Storage.UsedFlashBytes();
+
+    // 20 consecutive saves - the long run, not two: every one must land and read back exactly.
+    for (int i = 0; i < 20; i++)
     {
-        char Name[3] = {'X', C, 0};
-        uint32_t Slot = 0;
-        if (!Storage.GetEndOfFiletable(&Slot) || Slot >= Storage.TableCapacity()) break;
-        if (!Storage.CreateFile(Name, 64)) break;
-        Storage.DeleteFile(Name);
+        const uint8_t *Want = (i & 1) ? First : Second;
+        CHECK(WriteBackupFile(SvName(), Want, 40));
+        CHECK(SvBytes(Got));
+        CHECK(memcmp(Got, Want, 40) == 0);
     }
-
-    uint32_t Slot = 0;
-    CHECK(Storage.GetEndOfFiletable(&Slot));
-    CHECK(Slot >= Storage.TableCapacity()); // no free record slot: the next record needs a move
-    CHECK(LongestFreeRun() < 2);            // and no two contiguous free blocks for that move
-
-    // ---- 3. The write the copy-and-rename cannot place still lands, in place, and repeats. ----
-    CHECK(WriteBackupFile(SvName(), Second, 40));
-    CHECK(SvBytes(Got));
-    CHECK(memcmp(Got, Second, 40) == 0);
-    CHECK(WriteBackupFile(SvName(), First, 40));
-    CHECK(SvBytes(Got));
-    CHECK(memcmp(Got, First, 40) == 0);
+    // The stated residual of the last resort: the save keeps working, but the store itself is
+    // unchanged - table still full, free blocks still islands, so another writer still cannot
+    // create a file here. Nothing hides that; recovery needs a block to be freed.
+    CHECK(TableFull());
+    CHECK(LongestFreeRun() < 2);
+    CHECK(!Storage.CreateFile("T4", 64));
+    // ...and no space leak: the 40 B file still occupies one block, the two dummy files theirs.
+    CHECK(Storage.UsedFlashBytes() == UsedBefore);
+    CHECK(UsedBefore == 3 * STORAGE_BLOCK_SIZE);
 
     std::printf("%s: %d checks, %d failure(s)\n", failures ? "FAIL" : "PASS", checks, failures);
     return failures ? 1 : 0;

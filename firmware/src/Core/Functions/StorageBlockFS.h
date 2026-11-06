@@ -320,6 +320,16 @@ public:
         return true;
     }
 
+    // Compacts the table into fresh space (MoveFiletable): the superseded records a
+    // copy-and-rename writer leaves behind every save are dropped, so a table full of holes
+    // gets its capacity back and the old table's pages are freed.
+    //
+    // Exposed for a writer that can give up a block of its own first (the backup staging file):
+    // a store whose table is full and whose free blocks are single-block islands cannot place a
+    // move at all, so without this it stays stuck for every writer for ever - a failed append
+    // changes nothing.
+    bool CompactFiletable() { return MoveFiletable(); }
+
     // Finds contiguous free space of `size` bytes, excluding existing files and the pointer
     // page. Both shapes start at the rotating wear cursor so allocation spreads wear.
     //

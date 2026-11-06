@@ -136,12 +136,46 @@ inline void BackupTempName(const char Name[8], char Out[8])
 // All answered FLAG_FAIL three times in a row in that store and 0x2E as soon as the two stray
 // files that fragmented it were removed.
 //
-// So when the atomic path cannot be PLACED, the live file is rewritten in place instead: one
-// erase, one write, no record and no move. That gives up atomicity for the ~ms of the write (a
-// power cut there leaves a torn file), which is the right trade in that state - the alternative
-// is that the save never succeeds and the values stay in RAM until the next power cycle. The
-// in-place path is only taken for a file that already exists at exactly this length, so it never
-// has to grow a file or invent a record.
+// Two steps keep a store out of that state (in this order):
+//
+//  1. RECLAIM. The append that failed needed a table move, so the table is full of the records
+//     earlier saves left behind (every save appends two and never reuses a slot). The failed
+//     attempt has already released its staging block, which is exactly the space a move was
+//     missing: compacting the table (MoveFiletable copies the valid records densely, so the
+//     superseded generations disappear, and the old table's pages are freed) puts the store back
+//     in a healthy state and the save is retried once. This is what stops a node's store from
+//     staying stuck for every other writer, not just for this one.
+//  2. LAST RESORT. When even that cannot be placed (the data area itself has no two contiguous
+//     free blocks, e.g. a store holding several 1-block files), the live file is rewritten in
+//     place: one erase, one write, no record and no move. That gives up atomicity for the ~ms of
+//     the write (a power cut there leaves a torn file), which is the right trade in that state -
+//     the alternative is that the save never succeeds and the values stay in RAM until the next
+//     power cycle. It is only taken for a file that already exists at exactly this length, so it
+//     never has to grow a file or invent a record.
+//
+// The residual of step 2 is stated rather than hidden: a store that reaches it keeps saving
+// (every save succeeds, byte-identical reads) but its table stays full and its free blocks stay
+// islands, so a plain CreateFile keeps failing there until something frees blocks. Step 1 is what
+// a node's own stores hit, because they hold one `.SV` (plus at most a file or two).
+
+// Stages `len` bytes under the staging name `tmp` and commits them under `name`: one create, one
+// write, one record append (the rename). Removes the staging file when any step fails.
+inline bool StageBackupFile(const char Name[8], const char Tmp[8], const uint8_t *Data, uint16_t Len)
+{
+    // Remove a staging file left over from an interrupted update: CreateFile refuses a duplicate
+    // name, so a leftover would block this save too.
+    if (Storage.FileExists(Tmp) != 0xFFFFFFFF)
+        Storage.DeleteFile(Tmp);
+
+    if (Storage.CreateFile(Tmp, Len) &&
+        Storage.WriteToFile(Tmp, 0, Len, (const char *)Data) &&
+        Storage.RenameFile(Tmp, Name))
+        return true;
+
+    Storage.DeleteFile(Tmp); // don't leave an orphan staging file behind
+    return false;
+}
+
 inline bool WriteBackupFile(const char Name[8], const uint8_t *Data, uint16_t Len)
 {
     char Tmp[8];
@@ -149,19 +183,21 @@ inline bool WriteBackupFile(const char Name[8], const uint8_t *Data, uint16_t Le
     if (memcmp(Name, Tmp, 8) == 0)
         return false; // naming convention violation guard
 
-    // Remove a staging file left over from an interrupted update.
-    if (Storage.FileExists(Tmp) != 0xFFFFFFFF)
-        Storage.DeleteFile(Tmp);
-
     // Stage the new generation in its own file (CreateFile provides freshly erased blocks) and
     // commit it atomically under its final name.
-    if (Storage.CreateFile(Tmp, Len) &&
-        Storage.WriteToFile(Tmp, 0, Len, (const char *)Data) &&
-        Storage.RenameFile(Tmp, Name))
+    if (StageBackupFile(Name, Tmp, Data, Len))
         return true;
 
-    Storage.DeleteFile(Tmp); // don't leave an orphan staging file behind
+    // Reclaim: only a FULL table needs a move, so only then can compacting it be the thing that
+    // makes the write placeable. The staging block is already gone (StageBackupFile released it),
+    // so a move that had no room before now has the block it was short of.
+    uint32_t End = 0;
+    if (Storage.GetEndOfFiletable(&End) && End >= Storage.TableCapacity() &&
+        Storage.CompactFiletable() && StageBackupFile(Name, Tmp, Data, Len))
+        return true;
 
+    // Last resort: rewrite the live file in place, keeping the save working in a store whose data
+    // area has no two contiguous free blocks left (see the residual above).
     uint32_t Offset, Size;
     if (!Storage.GetFileInfo(Name, &Offset, &Size) || Size != Len)
         return false;
