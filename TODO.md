@@ -496,6 +496,16 @@ Open:
 
 ## Open work
 
+- **The GAP Device Name (`0x2A00`) follows the advertised name - implemented 2026-11-06, device pass
+  pending (kanban t_2983d5c5).** A bonded peer showed `nimble` (the NimBLE config default) because the
+  server's first start re-initialises the GAP service from `CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME`,
+  discarding the name `NimBLEDevice::init()` was given. The fix sets the characteristic from the same
+  string as the advertisement, after `Adv->start()`, and on rename (one helper, `BleSetGapName` in
+  `Devices/Tamu_v2.0A/AppBLE.h`). Host-tested (source guard in `test/native/run.sh`, RED-checked);
+  both envs build. **The rig pass is not run:** it needs a flash (Akyirr's), and an already-bonded peer
+  keeps its cached name until it is forgotten and re-paired. Measurements, mechanism and the recipe
+  are in Issues.md ("a bonded peer shows `nimble`").
+
 - **Auto-name on the first bond - implemented 2026-11-06, rig pass pending (kanban t_2105ced6).**
   `Blocks/AutoName.h` (the rule) + `Devices/Tamu_v2.0A/BleAutoName.h` (the write) give a device the
   name "<Prefix>-<serial tail>" ("Tamu-2070" from serial E4B063C82070) on its first bond, and only

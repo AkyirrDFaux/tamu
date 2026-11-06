@@ -1422,3 +1422,70 @@ on 2026-11-06 at 08:30 the rig was not connected to this host (no `/dev/ttyACM*`
 no Espressif device in `lsusb`). **Both physical passes are owed** - 5 s hold -> restart with the bonds
 kept and a 300 s window; 10 s hold -> bonds cleared, five blinks, LED back to the notification driver -
 and each needs a hand shorting GPIO8 to ground; there is no actuator for that pad on the rig.
+
+## BLE: a bonded peer shows `nimble` - the GAP Device Name characteristic was never set (2026-11-06, card t_2983d5c5)
+
+The owner's report ("the laptop/phone sometimes shows the paired tamu as 'nimble'") is one of our own
+strings never being set, not an OS quirk. A BLE device carries the name **twice**: the *advertised*
+name (advertising data / scan response, `NimBLEAdvertising::setName`) and the **GAP Device Name
+characteristic** `0x2A00` (`ble_svc_gap_name`), which is what a peer's OS reads over GATT after
+connecting and keeps against the bond. We set the first and never the second.
+
+**Measured on the rig, image `26.11.6.4` (the pre-fix image), core on USB.**
+- Host scan (bleak, `firmware/.pio/probe/gap_name_read.py`): `advertisement: name='Akyirr'
+  addr=E4:B0:63:C8:20:72`. BlueZ's own bonded record agrees: `bluetoothctl info` -> `Name: Akyirr`,
+  `Paired: yes`, `Bonded: yes`.
+- GATT read of the same connection: `0x2A00 (GAP Device Name) = b'nimble'  (len 6)`. That is the
+  NimBLE config default (`CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME="nimble"`, sdkconfig.Tamu_v2_0A:1140).
+- USB read of the block the name comes from (`firmware/.pio/probe/ble_display_name.py read`):
+  `BLE Settings` field 3 (Display name, `0a001006`) = 16 NUL bytes, i.e. "not set", so the effective
+  name falls back to System field 6 (`Name` = `Akyirr`); field 0 `Enabled` = `true`.
+  So: the advertisement is right, the characteristic says `nimble`, and a peer that shows `nimble` is
+  using the GATT value (BlueZ here used the advertisement, which is why this host looked correct).
+
+**Mechanism - the server's first start throws the name away.** `NimBLEDevice::init(Name)` does set it
+(`ble_svc_gap_device_name_set`), but with `CONFIG_BT_NIMBLE_STATIC_TO_DYNAMIC=y` the GAP service is
+(re)initialised from the config default by `ble_svc_gap_init()` -> `ble_svc_gap_init_name()`.
+`objdump -d firmware.elf` has exactly **one** caller of `ble_svc_gap_init` in the image -
+`NimBLEServer::resetGATT()` - whose only caller is `NimBLEServer::start()`, whose only caller is
+`NimBLEAdvertising::start()`. `AppBLERadioStart()` names the device before it creates the server and
+never again: its `BleAppliedName` is seeded with the same value, so the rename compare in
+`AppBLESettingsApply()` never fires and `setDeviceName()` is never reached at boot.
+**Proven on the same image, not inferred:** a rename through the block (field 3 = `Tamu-GapTest`)
+makes the firmware call `setDeviceName()` *after* the server exists, and both values then agree -
+`0x2A00 = b'Tamu-GapTest'` with advertisement `'Tamu-GapTest'`; restoring field 3 to empty/NUL gave
+`0x2A00 = b'Akyirr'` with advertisement `'Akyirr'`. So a set that comes after the server's start
+sticks, and the boot-time set is the lost one. (Field 3 is back to empty; on the pre-fix image the
+characteristic only reads correctly until the next radio start/reboot.)
+
+**Fix (one place, both values).** `Devices/Tamu_v2.0A/AppBLE.h` gains `BleSetGapName()`, the only
+`NimBLEDevice::setDeviceName()` call site. `StartAppAdvertising()` sets the characteristic from the
+same effective-name string as the advertisement, **after** `Adv->start()` (the start is what resets
+it); the rename path in `AppBLESettingsApply()` uses the same helper, because a live session defers
+the re-advertisement but does not stop a peer reading `0x2A00` - so the two values cannot drift.
+System field 6 still reaches the air at the next radio start (documented behaviour), which now
+includes `0x2A00`; the writable Display-name field applies both immediately.
+Host-side guard: `test/native/run.sh` asserts the four properties (same string, after the start,
+one raw call site, the rename path). **RED-checked** against HEAD's `AppBLE.h`
+(`.pio/probe/gapname_guard_red.sh`): three of the four checks fail there, the fourth (one call site)
+is an invariant that already held.
+
+**The user-visible half - what an already-bonded phone must do.** Android and Windows keep a bonded
+peer's name in the bond record (read from `0x2A00` at pairing), so the fix does **not** reach existing
+pairings by itself: the phone must forget/unpair the device and pair again (Android: Unpair/Forget;
+Windows: "Remove device"; BlueZ: `bluetoothctl remove E4:B0:63:C8:20:72`). A reconnect may refresh the
+name on some stacks, but the device cannot push a rename into a peer's bonded record - forgetting is
+the reliable route, and it costs one action, not a re-pairing of everything else.
+
+**Which image the peer was talking to.** The app image, not the bootloader: `Tamu_bootloader`'s
+sdkconfig has no `CONFIG_BT_ENABLED` and no `CONFIG_BT_NIMBLE_ENABLED`, and its only source
+(`src/Bootloader/CoreBootloader.cpp`) has no BLE reference at all - that image has no radio, so it can
+never advertise a name. There is no second image that could have shown `nimble`.
+
+**Not verified - the post-fix scan needs a flash, and this card authorised none.** Builds as
+`26.11.6.6` (`firmware.bin` 699,232 B, sha256
+`108cf05b98da95e7f01a93c7c79beba2ca6444def0eb7150e0c954d7caa75ea`; flash 698,550/2,752,512 = 25.4 %,
+RAM 78,116/327,680 = 23.8 %). DAS is unchanged: RAM 2,048/2,048 (100.0 %), flash 13,436/14,336
+(93.7 %) - the same figures E76 records. Recipe: flash, then
+`firmware/.pio/probe/gap_name_read.py` (advertisement + `0x2A00` from one connection) - both must read
+the same name on a device that has just booted, before any rename.

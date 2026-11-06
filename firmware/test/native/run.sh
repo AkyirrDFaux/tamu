@@ -313,6 +313,42 @@ fi
 fail=$((fail + name_fail))
 echo
 
+# The GAP Device Name characteristic (0x2A00), structural half. This is the string a bonded peer's
+# OS reads and caches, and it is a DIFFERENT value from the advertised name NimBLEAdvertising sets.
+# NimBLE initialises it from CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME ("nimble"), and the server's first
+# start re-initialises the GAP service from that same config value
+# (`NimBLEServer::start()` -> `resetGATT()` -> `ble_svc_gap_init()`), so a name set before the first
+# advertisement is thrown away - measured on the rig as advertisement "Akyirr" / 0x2A00 "nimble"
+# (card t_2983d5c5). What has to hold, asserted on the source because NimBLE cannot be linked here:
+#   - the advertisement and the characteristic are set from the SAME effective-name string, in
+#     StartAppAdvertising, and the characteristic AFTER Adv->start();
+#   - every set goes through BleSetGapName - one place, so the two values cannot be set from
+#     different strings - and the rename path uses it too, for a rename that cannot re-advertise yet.
+echo "### source guard: the GAP Device Name (0x2A00) follows the advertised name, set after the server starts"
+GAPNAME_SRC="src/Devices/Tamu_v2.0A/AppBLE.h"
+gapname_fail=0
+gapname_adv=$(sed -n '/^static void StartAppAdvertising()/,/^}/p' "$GAPNAME_SRC")
+if ! printf '%s\n' "$gapname_adv" | grep -q 'BleSetGapName(AdvName);'; then
+    echo "FAIL $GAPNAME_SRC: StartAppAdvertising must set the GAP device name from the advertised name"
+    gapname_fail=1
+fi
+if ! printf '%s\n' "$gapname_adv" | grep -A4 'Adv->start()' | grep -q 'BleSetGapName(AdvName);'; then
+    echo "FAIL $GAPNAME_SRC: the GAP device name must be set AFTER Adv->start() - the server's start resets it to \"nimble\""
+    gapname_fail=1
+fi
+if [ "$(grep -c 'NimBLEDevice::setDeviceName(' "$GAPNAME_SRC")" != 1 ]; then
+    echo "FAIL $GAPNAME_SRC: NimBLEDevice::setDeviceName must have exactly one call site (BleSetGapName)"
+    gapname_fail=1
+fi
+gapname_apply=$(sed -n '/^void AppBLESettingsApply()/,/^}/p' "$GAPNAME_SRC")
+if ! printf '%s\n' "$gapname_apply" | grep -q 'BleSetGapName(Name);'; then
+    echo "FAIL $GAPNAME_SRC: a rename must set the GAP device name too (a live session blocks the re-advertisement)"
+    gapname_fail=1
+fi
+[ $gapname_fail = 0 ] && echo "PASS: 0x2A00 is set from the advertised name's string, after the server's start, and on rename"
+fail=$((fail + gapname_fail))
+echo
+
 # The GPIO8 reset and the write rule, structural half. The sequencer's decision is host-tested above;
 # what the device wires it to cannot be linked on the host (GPIO, NimBLE, the static memory), so it is
 # asserted on the source:

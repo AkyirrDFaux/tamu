@@ -135,6 +135,24 @@ static void BleEffectiveName(char *Out)
     memcpy(Out, BleFallbackName, SYSTEM_NAME_LEN + 1);
 }
 
+// The GAP Device Name characteristic (0x2A00): the string a peer's OS reads once it is connected,
+// and the name an already-bonded laptop or phone keeps showing while the advertisement's name is
+// only what a scan sees. NimBLE initialises it from CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME, which is
+// "nimble" - and the part that is not obvious: the server's FIRST start throws away whatever name
+// `NimBLEDevice::init()` was given, because `NimBLEServer::start()` calls `resetGATT()`, which calls
+// `ble_svc_gap_init()` and re-initialises the GAP service name from that same config value (it is
+// the only `ble_svc_gap_init()` call in the image). So a set before the first advertisement is lost,
+// and the name has to be applied again once the server exists: StartAppAdvertising does that on
+// every (re)build, and the rename path does it for a rename that cannot re-advertise yet. One
+// helper, so the advertisement and the characteristic can never be set from different strings.
+static bool BleSetGapName(const char *Name)
+{
+    const bool Ok = NimBLEDevice::setDeviceName(Name);
+    if (!Ok)
+        DeviceLog("APPBLE", "GAP device name (0x2A00) refused, it stays as it was: '%s'", Name);
+    return Ok;
+}
+
 
 
 // Fed and reset only from the NimBLE host task (BleTxCallbacks::onWrite and the
@@ -1006,8 +1024,11 @@ static void StartAppAdvertising()
     BleEffectiveName(AdvName); // the block's Display name, or System.Name
     bool NameOk = Adv->setName(AdvName);
     bool Started = Adv->start();
-    DeviceLog("APPBLE", "adv restart: uuid=%d name=%d started=%d filter=none",
-              UuidOk, NameOk, Started);
+    // AFTER the start: the server's first start re-initialises the GAP service name from the
+    // config default ("nimble") - see BleSetGapName. Same string as the advertisement above.
+    const bool GapNameOk = BleSetGapName(AdvName);
+    DeviceLog("APPBLE", "adv restart: uuid=%d name=%d started=%d gapname=%d filter=none",
+              UuidOk, NameOk, Started, GapNameOk);
 }
 
 // Starts the radio: the NimBLE host, the pairing policy and the GATT table (built from that
@@ -1138,7 +1159,10 @@ void AppBLESettingsApply()
     // The advertised (and device) name follows the block.
     if (strcmp(Name, BleAppliedName) != 0)
     {
-        NimBLEDevice::setDeviceName(Name);
+        // The characteristic first: a live session blocks the advertisement (the restart below is
+        // deferred to the next tick after the link drops) but NOT a peer reading 0x2A00, so the two
+        // values must not drift while the restart waits.
+        BleSetGapName(Name);
         memcpy(BleAppliedName, Name, SYSTEM_NAME_LEN + 1);
         DeviceLog("APPBLE", "advertised name -> '%s'", BleAppliedName);
         // Re-advertise NOW, in this same pass: the field and the air are the same thing, and on a
