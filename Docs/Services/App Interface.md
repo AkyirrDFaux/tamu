@@ -28,6 +28,8 @@ For Wi-Fi only devices (planned; not implemented). The device connects as a clie
 ### BLE Settings
 Block type `0x0B`, core only: the link's configuration and state. A write is accepted only from the owner's link: a frame that arrived over **USB**, or a BLE frame whose link is the **secured** session the radio admitted (`BleWriteAllowed(AppFrameCameOverUsb(), AppFrameCameOverBle(), AppBLELinkSecured())`). An unsecured BLE link, a bus frame, or a locally generated write is refused.
 
+A BLE link is *secured* when it is encrypted and bonded, and — while a passkey is set — also authenticated: a pairing that encrypted without the passkey (Just Works) is refused, so the requirement covers every write to this block. With the passkey disabled (`000000`) a Just Works bond is a full session and may itself set a passkey.
+
 | Field | Key | Type | Flags | Note |
 | --- | --- | --- | --- | --- |
 | Enabled | 0 | `Bool` | P, W | false = the radio is off: no advertising, no connections |
