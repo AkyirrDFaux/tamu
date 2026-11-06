@@ -26,12 +26,12 @@ For Wi-Fi only devices (planned; not implemented). The device connects as a clie
 | ------------------ | ------- |
 | uint16             | Limited maximum size, to prevent fragmentation |
 ### BLE Settings
-Block type `0x0B`, core only: the link's configuration and state. **Every write to this block must arrive over USB** — a frame from the BLE interface is refused whether or not that link is bonded and authenticated, because a paired phone must not be able to change the key, wipe the bonds, rename the device or switch its radio off.
+Block type `0x0B`, core only: the link's configuration and state. A write is accepted only from the owner's link: a frame that arrived over **USB**, or a BLE frame whose link is the **secured** session the radio admitted (`BleWriteAllowed(AppFrameCameOverUsb(), AppFrameCameOverBle(), AppBLELinkSecured())`). An unsecured BLE link, a bus frame, or a locally generated write is refused.
 
 | Field | Key | Type | Flags | Note |
 | --- | --- | --- | --- | --- |
 | Enabled | 0 | `Bool` | P, W | false = the radio is off: no advertising, no connections |
-| Passkey | 0 | `Text` (6 digits) | W | read and write; `000000` disables it and pairing falls back to Just Works. Stored in NVS outside the register file; USB only |
+| Passkey | 0 | `Text` (6 digits) | W | read and write; `000000` disables it and pairing falls back to Just Works. Stored in NVS outside the register file; writes follow the block's rule (USB, or a secured BLE link) |
 | Mode | 0 | `Enum` | RO | Just Works or Passkey, derived from the passkey so the two cannot disagree |
 | Display name | 0 | `Text` (16) | P, W | the name advertised over BLE; a write re-advertises at once; empty means the System `Name` |
 | Bonds | 0 | `Undefined` (3 × 22 B) | TR, W | the bond store as three 22-byte entries (6-byte address + 16-byte name), oldest first; an all-zero address is empty. Zeroing an address forgets that bond and a name may be edited; a non-zero address in an empty slot is refused — pairing remains the only way to add a peer. USB only |
