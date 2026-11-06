@@ -12,6 +12,12 @@
 /// is refused rather than written over. A write is bracketed by read-backs, so what the device
 /// held before and after is both reported.
 ///
+/// The read-back NAMES every difference - device, table, key, expected value, actual value - and
+/// classifies it (see [ReadBackClass]): a row the restore wrote and the device does not hold is a
+/// failure, an unreadable table is a failure, and the PROVIDER half of a subscription is reported
+/// and explained once without failing the run, because no restore writes it (it is RAM-only on the
+/// node and installed by the requester itself).
+///
 /// Exit codes: 0 ok; 2 bad usage or bad archive; 3 no rig / refused to write; 4 a write or the
 /// read-back after it failed.
 ///
@@ -175,12 +181,15 @@ Future<int> runUpload(List<String> args, {RigOpener? openRig}) async {
   if (!options.yes || options.dryRun) {
     // A dry run is complete: with a rig it also reads the devices back, so what the rig holds
     // now can be compared with what the archive asks for. Differences here are informational -
-    // a dry run is exactly the state where they are expected.
+    // a dry run is exactly the state where they are expected - but they are still NAMED, one
+    // line each, because a count alone cannot be acted on.
     if (plan.deviceTargets.isNotEmpty) {
       final differences = await _readBack(plan, 'READ-BACK (current state)');
       for (final difference in differences) {
-        stdout.writeln('  difference: $difference');
+        stdout.writeln('  difference: ${difference.line}');
       }
+      final note = runtimeDifferenceNote(differences);
+      if (note != null) stdout.writeln('  $note');
     }
     await channel?.close();
     stdout.writeln(
@@ -215,7 +224,7 @@ Future<int> runUpload(List<String> args, {RigOpener? openRig}) async {
   // --- The write, between a read-back before it and one after. ------------------------------
   final before = await _readBack(plan, 'READ-BACK (before the write)');
   for (final difference in before) {
-    stdout.writeln('  difference before: $difference');
+    stdout.writeln('  difference before: ${difference.line}');
   }
   final result = await applyRestorePlan(plan);
   stdout.writeln(
@@ -260,14 +269,38 @@ Future<int> runUpload(List<String> args, {RigOpener? openRig}) async {
   }
   final mismatches = await _readBack(plan, 'READ-BACK (after the write)');
   await channel.close();
-  if (result.failed > 0 || mismatches.isNotEmpty) {
+  // Every difference gets its own line - device, table, key, expected, actual, class. The count
+  // alone was the defect: `6 read-back mismatch(es)` named none of them (t_d02e2f2d).
+  for (final mismatch in mismatches) {
+    stdout.writeln('  MISMATCH ${mismatch.line}');
+  }
+  final note = runtimeDifferenceNote(mismatches);
+  if (note != null) stdout.writeln('  $note');
+  // Only a difference the restore should have settled fails the run. The provider half of a
+  // subscription is not one of those: no archive carries it and no restore writes it.
+  final failedReadBack = mismatches.where((m) => m.kind.fails).toList();
+  if (result.failed > 0 || failedReadBack.isNotEmpty) {
     stderr.writeln(
       '\nERROR: ${result.failed} failed write(s), '
-      '${mismatches.length} read-back mismatch(es).',
+      '${failedReadBack.length} read-back mismatch(es)'
+      '${failedReadBack.length == mismatches.length ? '' : ' '
+                '(${mismatches.length - failedReadBack.length} runtime provider '
+                'difference(s) are named above and did not fail the run)'}.',
     );
+    for (final mismatch in failedReadBack) {
+      stderr.writeln('  MISMATCH ${mismatch.line}');
+    }
     return _exitFailed;
   }
-  stdout.writeln('\nOK: the setup is on the rig and the read-back agrees.');
+  if (mismatches.isEmpty) {
+    stdout.writeln('\nOK: the setup is on the rig and the read-back agrees.');
+  } else {
+    stdout.writeln(
+      '\nOK: the setup is on the rig; every row this restore writes read back. '
+      'The ${mismatches.length} remaining difference(s) are runtime provider state '
+      '(see the NOTE above).',
+    );
+  }
   return 0;
 }
 
@@ -460,22 +493,103 @@ String _describe(RestoreItem item) => switch (item.kind) {
   RestoreKind.file => 'file ${item.file?.name}',
 };
 
-/// Reads each target device back and reports what it holds, returning the mismatches.
+/// What a read-back difference IS, and therefore whether the run failed.
+///
+/// A read-back used to be a count - `6 read-back mismatch(es)` with no line naming them (card
+/// t_d02e2f2d, 2026-11-06) - which the owner could not act on. Each difference now carries its
+/// device, table, key, the value the archive asks for and the value the device holds; the class
+/// is what decides the exit code.
+enum ReadBackClass {
+  /// The device does not hold what this restore wrote (or was to write): a real failure.
+  notApplied('not applied'),
+
+  /// The read did not complete, so nothing can be said about the value. Also a failure: a
+  /// read-back that could not look must never read as agreement.
+  unreadable('unreadable'),
+
+  /// A difference no restore writes: the PROVIDER half of a subscription is RAM-only on the node
+  /// ("active until cancelled; the information is not persistent on this side",
+  /// `Docs/Services/Subscriptions.md` "Provider"). It is installed by the REQUESTER from its own
+  /// requester rows, with a 120 s lease the node drops by itself (`Issues.md` E46/E47), so no
+  /// restore writes it and a read-back taken right after one cannot see the installs that come
+  /// later - reported, explained once, never a failed write.
+  runtime('runtime state, not written by a restore');
+
+  final String label;
+  const ReadBackClass(this.label);
+
+  /// True when the line means this restore did not land.
+  bool get fails => this != ReadBackClass.runtime;
+}
+
+/// One line of a read-back: device, table, key, expected, actual, and the class above.
+class ReadBackMismatch {
+  /// The live device the line is about, e.g. `0.1 "Akyirr"`.
+  final String device;
+
+  /// The table or block state was read from, e.g. `subscriptions/provider`.
+  final String where;
+
+  /// The row's identity inside that table: a TRID, or the registers the row names.
+  final String key;
+
+  /// What the archive asks for, in the device's own words.
+  final String expected;
+
+  /// What the device holds instead.
+  final String actual;
+
+  final ReadBackClass kind;
+
+  const ReadBackMismatch({
+    required this.device,
+    required this.where,
+    required this.key,
+    required this.expected,
+    required this.actual,
+    required this.kind,
+  });
+
+  /// The one line the owner asked for: device, table, key, expected, actual, class.
+  String get line =>
+      '$device $where $key: expected $expected, actual $actual [${kind.label}]';
+
+  /// True when this difference means the restore did not land (see [ReadBackClass.fails]).
+  bool get fails => kind.fails;
+}
+
+/// What one live device answered to a read-back: the tables a restore's rows live in. A null
+/// table is a read that did not answer, which is NOT an empty table.
+class ReadBackSnapshot {
+  final int deviceId;
+  final List<DynBlock>? blocks;
+  final List<RequesterSubscription>? requesters;
+  final List<ProviderSubscription>? providers;
+  final List<({int slot, int state, bool error})> scriptStates;
+
+  const ReadBackSnapshot({
+    required this.deviceId,
+    required this.blocks,
+    required this.requesters,
+    required this.providers,
+    this.scriptStates = const [],
+  });
+}
+
+/// Reads each target device back, prints what it holds, and returns its differences.
 ///
 /// The device owns its persistence files, so this is a read of the live device (not of the
 /// archive): the dynamic blocks the setup names, the subscription tables, the script states and
-/// the file table. A requester entry whose provider half is missing would never send, so the two
-/// halves are checked against each other.
-Future<List<String>> _readBack(RestorePlan plan, String label) async {
-  final mismatches = <String>[];
+/// the file table.
+Future<List<ReadBackMismatch>> _readBack(RestorePlan plan, String label) async {
   final targets = <int, LiveDevice>{
     for (final target in plan.deviceTargets.values) target.id: target,
   };
-  final requesterProviderNode = <int, int>{};
-  final providerTrids = <int, Set<int>>{};
+  final snapshots = <ReadBackSnapshot>[];
 
   stdout.writeln('\n$label');
   for (final target in targets.values) {
+    final device = _deviceLabel(target);
     final reg = RegisterClient(deviceId: target.id);
     final storage = StorageClient(deviceId: target.id);
     final scripts = ScriptClient(deviceId: target.id);
@@ -483,53 +597,60 @@ Future<List<String>> _readBack(RestorePlan plan, String label) async {
 
     final files = await storage.readFileTable();
     final blocks = await reg.readDynamicBlocks();
-    final requester = await subs.getRequesterSubscriptions();
-    final provider = await subs.getProviderSubscriptions();
-    final states = <String>[];
+    // A table read that did not answer is not an empty table: the plain getters fold the two
+    // together, and a read-back taken that way reported six mismatches against a table the run
+    // never saw. Three sends, as the app's own read policy does (`StorageClient._readWhole`).
+    // A device that cannot hold the table answers FAIL by design, so it is not read at all and
+    // reports the capability instead of a failed read.
+    final canRequest =
+        target.capabilities & Capability.subscriptionRequest != 0;
+    final canProvide =
+        target.capabilities & Capability.subscriptionProvide != 0;
+    final requester = canRequest
+        ? await _tableRead(subs.readRequesterSubscriptions)
+        : const <RequesterSubscription>[];
+    final provider = canProvide
+        ? await _tableRead(subs.readProviderSubscriptions)
+        : const <ProviderSubscription>[];
+
+    final states = <({int slot, int state, bool error})>[];
     for (var slot = 0; slot < 12; slot++) {
       final state = await scripts.readState(slot);
       if (state == null) continue;
-      states.add('$slot:state=${state.state}${state.hasError ? ' ERR' : ''}');
-      if (state.hasError) {
-        mismatches.add('${target.name}: script slot $slot is in error');
-      }
+      states.add((slot: slot, state: state.state, error: state.hasError));
     }
-    providerTrids[idDevice(target.id)] = {for (final p in provider) p.trid};
-    for (final r in requester) {
-      requesterProviderNode[r.trid] = idDevice(r.providerAddr);
-    }
+    snapshots.add(
+      ReadBackSnapshot(
+        deviceId: target.id,
+        blocks: blocks,
+        requesters: requester,
+        providers: provider,
+        scriptStates: states,
+      ),
+    );
 
     stdout.writeln(
-      '  ${idToString(target.id)} "${target.name}" '
+      '  $device '
       'files=${files?.map((f) => '${f.name}(${f.size})').join(',') ?? 'no answer'}',
     );
     stdout.writeln(
       '    dynamic=${blocks?.map((b) => '${b.index}:${b.name}(f${b.fieldCount})').join(',') ?? 'no answer'}',
     );
     stdout.writeln(
-      '    requester=${requester.map((r) => 'idx${r.index}/0x${r.trid.toRadixString(16)} '
+      '    requester=${!canRequest ? '(no requester table: the device cannot request)' : requester == null ? 'no answer' : requester.map((r) => 'idx${r.index}/0x${r.trid.toRadixString(16)} '
           'provider=${idToString(r.providerAddr)}').join(', ')}',
     );
     stdout.writeln(
-      '    provider=${provider.map((p) => '0x${p.trid.toRadixString(16)}').join(', ')}',
+      '    provider=${!canProvide ? '(no provider table: the device cannot provide)' : provider == null ? 'no answer' : provider.map((p) => '0x${p.trid.toRadixString(16)}').join(', ')}',
     );
-    stdout.writeln('    scripts=[${states.join(', ')}]');
+    stdout.writeln(
+      '    scripts=[${states.map((s) => '${s.slot}:state=${s.state}${s.error ? ' ERR' : ''}').join(', ')}]',
+    );
 
-    // The archive's own dynamic blocks must exist on the target, or the setup's scenario has
-    // nothing to run in.
-    final liveNames = {for (final b in blocks ?? const <DynBlock>[]) b.name};
+    // Files are reported, not gated: the device's own table decides names and layout.
+    final names = {for (final f in files ?? const <FileRecord>[]) f.name};
     for (final source in plan.devices) {
       if (plan.deviceTargets[source.id]?.id != target.id) continue;
-      for (final block in source.blocks.where(
-        (b) => isDynamicType(b.typeIndex),
-      )) {
-        if (liveNames.contains(block.name)) continue;
-        mismatches.add(
-          '${target.name}: dynamic block "${block.name}" is missing',
-        );
-      }
-      // Files are reported, not gated: the device's own table decides names and layout.
-      final names = {for (final f in files ?? const <FileRecord>[]) f.name};
       final missing = [
         for (final f in source.files)
           if (!f.name.startsWith('.') && !names.contains(f.name)) f.name,
@@ -542,18 +663,282 @@ Future<List<String>> _readBack(RestorePlan plan, String label) async {
     }
   }
 
-  // Both halves of every subscription: a requester entry must have a provider entry with the
-  // same TRID on the node its provider address names, or it points at a source that never sends.
-  for (final entry in requesterProviderNode.entries) {
-    final trids = providerTrids[entry.value] ?? const <int>{};
-    if (trids.contains(entry.key)) continue;
-    mismatches.add(
-      'requester trid 0x${entry.key.toRadixString(16)} has no provider entry '
-      'on node ${entry.value}',
-    );
+  return readBackMismatches(plan, snapshots);
+}
+
+/// The differences between what [plan] wrote and what [snapshots] say the devices hold.
+///
+/// Split from the reads so the classification can be driven without a rig (`planFromSnapshot`
+/// builds the plan half): the tool's own output is only as good as these lines.
+List<ReadBackMismatch> readBackMismatches(
+  RestorePlan plan,
+  List<ReadBackSnapshot> snapshots,
+) {
+  final mismatches = <ReadBackMismatch>[];
+  for (final snapshot in snapshots) {
+    final target =
+        plan.deviceTargets[snapshot.deviceId] ??
+        plan.liveDevices.where((d) => d.id == snapshot.deviceId).firstOrNull;
+    if (target == null) continue;
+    final device = _deviceLabel(target);
+
+    // A script the restore loaded and the device reports as faulted did not land.
+    for (final state in snapshot.scriptStates) {
+      if (!state.error) continue;
+      mismatches.add(
+        ReadBackMismatch(
+          device: device,
+          where: 'scripts/slot ${state.slot}',
+          key: 'state',
+          expected: 'a script that runs without an error',
+          actual: 'the slot is in error (state ${state.state})',
+          kind: ReadBackClass.notApplied,
+        ),
+      );
+    }
+
+    // The archive's own dynamic blocks must exist on the target, or the setup's scenario has
+    // nothing to run in.
+    final liveNames = {for (final b in snapshot.blocks ?? const <DynBlock>[]) b.name};
+    for (final source in plan.devices) {
+      if (plan.deviceTargets[source.id]?.id != target.id) continue;
+      for (final block in source.blocks.where(
+        (b) => isDynamicType(b.typeIndex),
+      )) {
+        if (liveNames.contains(block.name)) continue;
+        mismatches.add(
+          ReadBackMismatch(
+            device: device,
+            where: 'dynamic/${block.name}',
+            key: 'block',
+            expected: 'the archive\'s block "${block.name}"',
+            actual: 'the device\'s dynamic block list does not name it',
+            kind: ReadBackClass.notApplied,
+          ),
+        );
+      }
+    }
+
+    // The requester rows this restore writes, checked row for row. A TRID is allocated by the
+    // restore and the archive names none, so a row is matched on its identity - the provider's
+    // NODE, the source register and the target register ([requesterKey]) - and not on its
+    // address: the core re-qualifies a stored provider address to its current net at every use
+    // (`SubscriptionsRequester.h`, RequesterProviderAddr), so a row set under another net is the
+    // same row.
+    for (final item in plan.items.where(
+      (i) => i.kind == RestoreKind.subscription && i.targetDevice?.id == target.id,
+    )) {
+      final archived = item.subscription!;
+      final identity = plan.archiveRequesterIdentity(item);
+      if (identity == null) continue; // an unresolved ref: the plan already says why
+      final wanted =
+          '${_timingLabel(TriggerType.fromWord(archived.trigger) ?? TriggerType.none, archived.minTimeMs, archived.periodMs, archived.deadzone)} '
+          '${_refLabel(archived.source)} -> '
+          '${_refLabel(archived.target)} on ${_nodeLabel(plan, archived.provider)}';
+      final key =
+          'entry ${_refLabel(archived.source)} -> ${_refLabel(archived.target)}';
+      final requesters = snapshot.requesters;
+      if (requesters == null) {
+        mismatches.add(
+          ReadBackMismatch(
+            device: device,
+            where: 'subscriptions/requester',
+            key: key,
+            expected: wanted,
+            actual: 'the requester table did not answer (3 sends)',
+            kind: ReadBackClass.unreadable,
+          ),
+        );
+        continue;
+      }
+      final live = requesters
+          .where(
+            (r) =>
+                requesterKey(r.providerAddr, r.sourceReg, r.targetReg) == identity,
+          )
+          .firstOrNull;
+      if (live == null) {
+        mismatches.add(
+          ReadBackMismatch(
+            device: device,
+            where: 'subscriptions/requester',
+            key: key,
+            expected: wanted,
+            actual:
+                'the table holds no entry with this source and target '
+                '(${_count(requesters.length, 'row')}: '
+                '${requesters.map((r) => '0x${r.trid.toRadixString(16)}').join(', ')})',
+            kind: ReadBackClass.notApplied,
+          ),
+        );
+        continue;
+      }
+      if (sameSubscription(archived, live)) continue;
+      mismatches.add(
+        ReadBackMismatch(
+          device: device,
+          where: 'subscriptions/requester',
+          key: key,
+          expected: wanted,
+          actual:
+              '${_timingLabel(live.trigger, live.minTimeMs, live.periodMs, live.deadzone)} '
+              '(trid 0x${live.trid.toRadixString(16)})',
+          kind: ReadBackClass.notApplied,
+        ),
+      );
+    }
+  }
+
+  // The OTHER half of every requester row: a provider entry with the same TRID on the node its
+  // provider address names. This is runtime state, not a restore item (see [ReadBackClass.runtime]),
+  // so it is named and explained - never counted as a failed write.
+  final tables = {for (final s in snapshots) s.deviceId: s};
+  for (final snapshot in snapshots) {
+    final requesters = snapshot.requesters;
+    if (requesters == null) continue; // already reported as unreadable per entry
+    final target = plan.deviceTargets[snapshot.deviceId];
+    final device = target == null ? idToString(snapshot.deviceId) : _deviceLabel(target);
+    for (final row in requesters) {
+      final providerNode = idDevice(row.providerAddr);
+      final providerName = _nodeLabel(plan, idToString(row.providerAddr));
+      final trid = '0x${row.trid.toRadixString(16)}';
+      final providerTable = tables[providerNode]?.providers;
+      if (!tables.containsKey(providerNode)) {
+        // The provider is not a target of this run (a `--device` selection): its table was never
+        // read, which is a fact about the selection, not about the restore.
+        mismatches.add(
+          ReadBackMismatch(
+            device: device,
+            where: 'subscriptions/provider',
+            key: 'entry $trid',
+            expected: 'a provider entry for $trid on $providerName',
+            actual: 'not read: $providerName is not a target of this run',
+            kind: ReadBackClass.runtime,
+          ),
+        );
+        continue;
+      }
+      if (providerTable == null) {
+        mismatches.add(
+          ReadBackMismatch(
+            device: device,
+            where: 'subscriptions/provider',
+            key: 'entry $trid',
+            expected: 'a provider entry for $trid on $providerName',
+            actual: 'the provider table did not answer (3 sends)',
+            kind: ReadBackClass.unreadable,
+          ),
+        );
+        continue;
+      }
+      if (providerTable.any((p) => p.trid == row.trid)) continue;
+      mismatches.add(
+        ReadBackMismatch(
+          device: device,
+          where: 'subscriptions/provider',
+          key: 'entry $trid',
+          expected:
+              'a provider entry for $trid '
+              '(${_registerLabel(row.sourceReg)}, ${row.trigger.label}) on '
+              '$providerName, installed by the requester',
+          actual:
+              '$providerName holds '
+              '${providerTable.isEmpty ? 'no entry' : '${_count(providerTable.length, 'entry')} '
+                        '(${providerTable.map((p) => '0x${p.trid.toRadixString(16)}').join(', ')})'}, '
+              'none for $trid',
+          kind: ReadBackClass.runtime,
+        ),
+      );
+    }
   }
   return mismatches;
 }
+
+/// Says once, in the tool's own output, why the remaining differences are not failed writes.
+///
+/// The provider half of a subscription is RAM-only on the node, so no archive carries it and no
+/// restore writes it: the requester installs it from its own requester rows on its own tick, with
+/// a 120 s lease the node drops by itself. A read-back taken right after a restore therefore sees
+/// an empty provider table, and without this note the count `6 read-back mismatch(es)` reads as six
+/// failed writes (card t_d02e2f2d, 2026-11-06). Saying it once is what keeps the next restore from
+/// re-opening it.
+///
+/// What the note must NOT say is that the subscription is live: a read-back cannot see the installs
+/// the requester makes after it returns, so the line is about responsibility (this is not a write
+/// the restore failed to make), not about the subscription working.
+///
+/// Returns null when there is nothing to say: no differences, or a difference that is not this
+/// class - those are named on their own lines and must not be excused by a note.
+String? runtimeDifferenceNote(List<ReadBackMismatch> mismatches) {
+  if (mismatches.isEmpty) return null;
+  if (mismatches.any((m) => m.kind != ReadBackClass.runtime)) return null;
+  return 'NOTE: all ${mismatches.length} difference(s) are the PROVIDER half of a '
+      'subscription. That table is RAM-only on the node ("active until cancelled; the '
+      'information is not persistent on this side", Docs/Services/Subscriptions.md "Provider"): '
+      'no archive carries it and no restore writes it - the requester (the core) installs it from '
+      'its own requester rows on its own tick (CID 0x01 Change, 120 s lease the node drops by '
+      'itself - Issues.md E46/E47). So this is not a failed write, and it is not a claim that the '
+      'subscription is already delivering either: a read-back cannot see the installs the '
+      'requester makes after it. The requester table - the half a restore DOES write - read back '
+      'row for row.';
+}
+
+/// Reads a subscription table, re-sending a read that did not answer.
+///
+/// One table read is one forwarded request and this rig loses a few percent of those (E76), so a
+/// single send would turn a lost reply into "the device holds no entry" - a lie about the restore.
+/// Three sends, 200 ms then 600 ms apart, is the app's own read policy
+/// (`StorageClient._readWhole`).
+Future<List<T>?> _tableRead<T>(Future<List<T>?> Function() read) async {
+  for (var attempt = 0; attempt < 3; attempt++) {
+    final table = await read();
+    if (table != null) return table;
+    if (attempt == 2) break;
+    await Future<void>.delayed(
+      Duration(milliseconds: attempt == 0 ? 200 : 600),
+    );
+  }
+  return null;
+}
+
+/// A live device as one line names it: `0.1 "Akyirr"`.
+String _deviceLabel(LiveDevice device) =>
+    '${idToString(device.id)} "${device.name}"';
+
+/// The live device an archive address names, as `0.3 "Sensors B"`, or the bare address when the
+/// rig has no such node. Matched by NODE: an archive's address carries the net it was captured
+/// under, and the firmware re-qualifies the net at every use.
+String _nodeLabel(RestorePlan plan, String address) {
+  final id = idFromString(address);
+  if (id == null) return address;
+  final node = plan.liveDevices
+      .where((d) => idDevice(d.id) == idDevice(id))
+      .firstOrNull;
+  return node == null ? address : _deviceLabel(node);
+}
+
+/// A subscription's register reference, as the archive names it: `Resistive measurement[0]/Measured Value[0]`.
+String _refLabel(BackupBlockRef ref) =>
+    '${ref.block}[${ref.instance}]/${ref.field}[${ref.keyIndex}]';
+
+/// A subscription's trigger and timing, as one line names it:
+/// `Periodic (1000 ms period, 100 ms min, deadzone 0.0)`.
+String _timingLabel(
+  TriggerType trigger,
+  int minTimeMs,
+  int periodMs,
+  double deadzone,
+) =>
+    '${trigger.label} ($periodMs ms period, $minTimeMs ms min, '
+    'deadzone $deadzone)';
+
+/// A BlockInfo as one line names it: `Resistive measurement[1]/field 6[0]`.
+String _registerLabel(int reg) =>
+    '${blockTypeDisplayName((reg >> 22) & 0x3FF)}[${(reg >> 16) & 0x3F}]/'
+    'field ${(reg >> 8) & 0xFF}[${reg & 0xFF}]';
+
+String _count(int n, String noun) => '$n $noun${n == 1 ? '' : 's'}';
+
 
 /// The problems that make [bytes] not a setup archive (empty = it is one).
 ///

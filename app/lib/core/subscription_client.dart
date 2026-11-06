@@ -161,12 +161,21 @@ class SubscriptionClient {
 
   /// CID 0x20: Get provider subscriptions (device as provider). Empty when the read fails.
   Future<List<ProviderSubscription>> getProviderSubscriptions() async =>
-      await _readSubscriptionList(
+      await readProviderSubscriptions() ?? const [];
+
+  /// CID 0x20 as a read that can say "no answer": the target's provider table, or null when the
+  /// device did not return it (no link, timeout, or a FAIL answer). `[]` is a real, empty table -
+  /// the firmware streams one empty fragment for a count of zero.
+  ///
+  /// The distinction is what a reader of the PROVIDER half needs as much as a reader of the
+  /// requester half: the table is RAM-only and churns with the requesters' own installs, so "the
+  /// node holds no entry" and "the node did not answer" are different facts about a restore.
+  Future<List<ProviderSubscription>?> readProviderSubscriptions() =>
+      _readSubscriptionList(
         _cidGetProvider,
         32,
         ProviderSubscription.fromBytes,
-      ) ??
-      const [];
+      );
 
   /// CID 0x21: change a provider subscription on a node, telling it to send [entry]'s source
   /// register to the requester that asked. The entry is keyed by its TRID, and a table whose
