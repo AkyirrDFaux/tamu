@@ -29,11 +29,10 @@ bool OnLEDStateChange(const StaticBlockDescriptor& Block, uint16_t Index, const 
     return true;
 }
 
-// The GPIO8 BLE reset's sequencer (Blocks/BleResetHold.h) owns this pin while it runs: it needs the
-// level to time the hold and, on the clear path, drives it for the five blinks. Declared here because
+// The GPIO8 BLE reset's sequencer (Blocks/BleResetHold.h) owns this pin while it runs: it drives the
+// LED from the 2 s mark of a hold and through the five blinks after a clear. Declared here because
 // this header comes first in Main.h's include order; defined in BleResetPin.h.
 bool BleResetOwnsPin();
-bool BleResetButtonPressed();
 
 // Samples the notification pin and reports the button state while the LED is off.
 // Polarity per the hardware: pulling the pin LOW lights the LED and reads as the
@@ -41,10 +40,11 @@ bool BleResetButtonPressed();
 // The button only reports its state (field 0) - it does not drive the LED. While the
 // LED is on the shared line is driven, so the button cannot be read (ButtonState = false).
 //
-// The same line is the GPIO8-reset sequencer's input, so the report is QUALIFIED by it
-// (Blocks/BleResetHold.h, BleResetButtonPressed): a contact that reaches the sequencer's 2 s window
-// is a reset hold and is never reported (the owner's emote reset must not fire behind a reset), while
-// a shorter contact is a tap and is reported for a short window after its lift.
+// The GPIO2 line is also driven by the GPIO8 reset sequencer while it owns it (a recognised hold, or
+// the blinks after a clear), and a line driven low reads as a pressed button - so the report is
+// SUPPRESSED for exactly that long. The pin read itself is untouched: a press of the real button sets
+// field 0 whenever the sequencer is idle, and a contact on the GPIO8 reset pad is not a button press
+// (that is a different pad, and this read is GPIO2).
 void ButtonUpdate()
 {
     if (StaticVol.LedButton.LEDState != false || BleResetOwnsPin())
@@ -53,5 +53,5 @@ void ButtonUpdate()
         return;
     }
 
-    StaticVol.LedButton.ButtonState = BleResetButtonPressed();
+    StaticVol.LedButton.ButtonState = !PinRead(LED_NOTIFICATION_PIN);
 }

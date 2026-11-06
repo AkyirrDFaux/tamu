@@ -259,8 +259,11 @@ echo
 #   - GPIO8 is the reset input and is not claimed by anything else;
 #   - the input is an input with the pull-up, and the notification pin is only ever driven LOW or back
 #     to an input - never HIGH, which a closed contact would short to ground;
-#   - the button read asks the sequencer (BleResetOwnsPin/BleResetButtonPressed), so a hold is not
-#     reported as a press;
+#   - the button read is the GPIO2 line (!PinRead(LED_NOTIFICATION_PIN)), suppressed only while the
+#     sequencer owns that pin (BleResetOwnsPin) - never routed through the GPIO8 sequencer, because a
+#     contact on the reset pad is not a press of the button;
+#   - the reset input is sampled on every pass with no gate on the LED driver: GPIO8 is its own pad,
+#     so the notification LED cannot blind the reset;
 #   - the pin is handed back to the notification driver (OnLEDStateChange) when the sequence ends;
 #   - the boot brings the input up and the main loop services it once per pass;
 #   - the `BLE Settings` write rule is BleWriteAllowed over the frame's own link plus the session flag,
@@ -318,14 +321,21 @@ if [ "$(grep -c 'AppBLEStackReset(Clear)' "$RSTPIN_SRC")" != 1 ]; then
     rst_guard_fail=1
 fi
 
-# The button read is qualified by the sequencer, and the raw pin is no longer read directly.
+# The button is read from GPIO2 and only SUPPRESSED while the sequencer drives that pin: the report
+# must still come from the physical line, and nothing may route it through the GPIO8 sequencer.
 if [ "$(grep -c '|| BleResetOwnsPin()' "$RSTBTN_SRC")" != 1 ] ||
-   [ "$(grep -c '= BleResetButtonPressed();' "$RSTBTN_SRC")" != 1 ]; then
-    echo "FAIL $RSTBTN_SRC: ButtonUpdate must suppress while the sequencer owns the pin and report through it"
+   [ "$(grep -c '= !PinRead(LED_NOTIFICATION_PIN);' "$RSTBTN_SRC")" != 1 ]; then
+    echo "FAIL $RSTBTN_SRC: ButtonUpdate must suppress while the sequencer owns the pin and otherwise read GPIO2 (!PinRead(LED_NOTIFICATION_PIN))"
     rst_guard_fail=1
 fi
-if [ "$(grep -c '!PinRead(LED_NOTIFICATION_PIN)' "$RSTBTN_SRC")" != 0 ]; then
-    echo "FAIL $RSTBTN_SRC: the button must not read the raw pin any more - the reset sequencer owns it"
+if [ "$(grep -rc 'BleResetButtonPressed' src --include=*.h | grep -vc ':0$')" != 0 ]; then
+    echo "FAIL: a GPIO8 contact is not a button press - nothing may report the button through the reset sequencer"
+    rst_guard_fail=1
+fi
+# GPIO8 is a pad of its own: the reset input is sampled on every pass, never gated on the LED driver.
+if [ "$(grep -c 'BleResetStep(BleResetState, PinRead(BLE_RESET_PIN), NowMs)' "$RSTPIN_SRC")" != 1 ] ||
+   [ "$(grep -c 'Readable' "$RSTPIN_SRC")" != 0 ]; then
+    echo "FAIL $RSTPIN_SRC: the reset input must be sampled unconditionally (GPIO8 is not the LED pin)"
     rst_guard_fail=1
 fi
 

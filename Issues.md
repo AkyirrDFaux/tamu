@@ -1394,27 +1394,31 @@ behaviour was implemented and the wording was left alone. If the serial belongs 
 string in that call plus the message expectation in `app/test/device_discovery_notice_test.dart`;
 the event name (`Device discovered`, `Docs/App/Settings.md:10`) does not change.
 
-## GPIO8 BLE reset: two limits that come from the shared pin (2026-11-05)
+## GPIO8 BLE reset: the shared pin, and the rig passes still owed (2026-11-05, corrected 2026-11-06)
 
 The USB-less reset (card `t_1ff14f60`, `Blocks/BleResetHold.h`) reads GPIO8 and shows its progress on
-the notification LED, which is GPIO2 - the same pin the button input uses, active low on both. Two
-consequences the owner should know about, neither of which is a defect:
+the notification LED, GPIO2 - the pin the button input also uses, active low on both. GPIO8 and GPIO2
+are **separate pads**, so:
 
-- **The reset input is not sampled while the notification LED is switched on.** With `LEDState = true`
-  the notification driver holds GPIO2 low, which is exactly the level a closed contact gives, so the
-  sequencer is told the line is unreadable and holds its state instead of inventing a contact. A GPIO8
-  hold started (or kept) while the LED is on is not timed; the sequence simply does not begin.
-- **A button tap is reported at its lift, not at its press.** The button's own action (the emote reset
-  to Normal) must not fire for a hold that is really a reset, and the two are the same contact until
-  the 2 s ignore window has passed. A contact that ends inside the window is a tap and is reported for
-  `BLE_RESET_TAP_REPORT_MS` (250 ms) after its lift; a contact that reaches the window is a reset hold
-  and is never reported. Tap latency is therefore up to 2 s, and only for taps.
+- **The LED is lit by the firmware, not by the contact.** From the 2 s mark of a hold the sequencer
+  drives GPIO2 low (and through the five blinks after a clear). GPIO8 stays readable throughout -
+  nothing on GPIO2 can change what GPIO8 reads - so a hold is timed whatever the notification LED is
+  doing; there is no "turn the LED off first" rule.
+- **A reset hold is never reported as a button press.** The button is `!PinRead(GPIO2)`
+  (`Devices/Tamu_v2.0A/Button.h`) and its report is suppressed while the sequencer owns that pin (the
+  Solid and Blink phases). A press of the real button is reported again the moment the pin is handed
+  back, and a contact on the GPIO8 reset pad is not a button press at all.
+- **The five blink gaps are visible while the GPIO8 contact is still down**, because the dark halves
+  are GPIO2 as an input and the contact is on GPIO8; the sequence runs regardless of the contact,
+  which is what the owner asked for.
 
-Rig state on 2026-11-05 (`firmware.bin` sha256 `5330c322b4df218ee05c4de41c6413437a249654779194206a65db34ac634afc`,
-697,440 B; written at `0x70000`, read back 697,440 B, `cmp` identical; the device then reports
-`26.11.05 iteration 4`). Measured: a write to `BLE Settings` from the BONDED BLE link is accepted
-(`flags 0x0E`, payload echoes the request; it was `FLAG_FAIL` before this build), the block still reads
-`Enabled 1`, `Window 0`, 2 bonds, and no reset fired while the rig sat idle. **The two physical passes
-(5 s hold -> restart with bonds kept and a 300 s window; 10 s hold -> bonds cleared, five blinks, LED
-back to the notification driver) were NOT run: they need a hand shorting GPIO8 to ground for 5 s and
-10 s, and there is no actuator for that pin on the rig.**
+Rig state. The last image flashed and left on the rig is `26.11.5.4` (`firmware.bin` sha256
+`5330c322b4df218ee05c4de41c6413437a249654779194206a65db34ac634afc`, 697,440 B at `0x70000`); on it a
+write to `BLE Settings` from the BONDED BLE link is accepted (`flags 0x0E`, payload echoed; it was
+`FLAG_FAIL` before that build). The reviewed corrections (button back on the GPIO2 read, the reset input
+sampled unconditionally) build as `26.11.6.1` (`firmware.bin` sha256
+`009dd7bd00cc12e6f98f78899820cf0467e35202c818648e0c0e909ae397b05b`, 697,200 B) but were **not** flashed:
+on 2026-11-06 at 08:30 the rig was not connected to this host (no `/dev/ttyACM*`, no `/dev/ttyUSB*`,
+no Espressif device in `lsusb`). **Both physical passes are owed** - 5 s hold -> restart with the bonds
+kept and a 300 s window; 10 s hold -> bonds cleared, five blinks, LED back to the notification driver -
+and each needs a hand shorting GPIO8 to ground; there is no actuator for that pad on the rig.

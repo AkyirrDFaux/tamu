@@ -1,14 +1,14 @@
-// Host-side test for the GPIO8 BLE reset's timing table, its LED sequence and the button it shares a
-// pin with (Blocks/BleResetHold.h).
+// Host-side test for the GPIO8 BLE reset's timing table, its LED sequence and the button whose pin it
+// shares (Blocks/BleResetHold.h).
 //
 // The owner's specification (2026-11-05): the first 2 s of a contact are ignored; a contact held 2 s
 // to 10 s and released restarts the BLE stack with the bonds kept and opens the 5-minute pairing
 // window; a contact held 10 s or longer is a full clear. The notification LED (GPIO2, active low,
-// shared with the button input) is solid red from the recognition of the hold until the contact is
-// lifted, and after a clear it blinks five times (500 ms period, 2500 ms total) regardless of the
-// contact, then goes dark and the pin returns to the notification driver. The button's own report is
-// suppressed for the whole hold - a 10 s hold IS a 10 s button press on that line - and works again
-// afterwards.
+// shared with the button input) is lit by the sequencer from the recognition of the hold until the
+// contact is lifted, and after a clear it blinks five times (500 ms period, 2500 ms total) regardless
+// of the contact, then goes dark and the pin returns to the notification driver. The button's own
+// report is suppressed for as long as the sequencer owns that pin - a line it drives low reads as a
+// press - and works again afterwards.
 //
 // What is measured here, in order:
 //   1. the timing table: 1.9 s -> nothing, 2 / 5 / 9.9 s -> one restart, 10 s -> one clear;
@@ -16,8 +16,9 @@
 //      blink schedule after a clear (five lit runs of 250 ms, 2500 ms in total);
 //   3. a boot-time LOW is not a hold (the strapping-pin rule), and a sequence that ends with the
 //      contact still down re-arms only on a real release;
-//   4. the button: never reported during a hold or during the blinks, reported for a tap, and working
-//      again once the pin is back with the notification driver.
+//   4. the button (ButtonState, the LED/Button block's field 0): never reported while the sequencer
+//      owns GPIO2, a press of the real button reported again once the pin is handed back, and a
+//      contact on the GPIO8 reset pad never a button press at all.
 
 #include <cstdio>
 
@@ -38,24 +39,36 @@ static int checks = 0, failures = 0;
 // sleep, several services per pass).
 static const uint32_t TickMs = 10;
 
+// The LED/Button block's field 0, exactly as Devices/Tamu_v2.0A/Button.h composes it: the button is
+// the GPIO2 line (active low, so a low line is a press), and the report is forced false while the
+// notification driver holds the line (LED on) or the reset sequencer owns it. The run.sh source guard
+// pins Button.h to those three terms, so this model and the device code cannot drift apart silently.
+//   Gpio2High  = PinRead(LED_NOTIFICATION_PIN)   (true = released)
+//   LedOn      = StaticVol.LedButton.LEDState
+//   ResetOwns  = BleResetOwnsPin()
+static bool ButtonStateFrom(bool Gpio2High, bool LedOn, bool ResetOwns)
+{
+    if (LedOn || ResetOwns)
+        return false;
+    return !Gpio2High;
+}
+
 struct Rig
 {
     BleResetHold S;
     uint32_t Now = 0;
     int Restarts = 0, Clears = 0, HandBacks = 0;
     uint32_t RestartAt = 0, ClearAt = 0;
-    bool PinOwnedEver = false, LedLitEver = false, ButtonEverPressed = false;
-    bool LastButton = false;
-    uint32_t ButtonTrueMs = 0;   // total time the button report was true
+    bool PinOwnedEver = false, LedLitEver = false;
     int BlinkLitRuns = 0;        // distinct lit phases (one per blink)
     uint32_t BlinkLitMs = 0;     // total lit time, one blink = 250 ms
     bool PrevLit = false;
     bool PrevBlink = false;
 
-    void Tick(bool High, bool Readable = true)
+    void Tick(bool High)
     {
         Now += TickMs;
-        const BleResetOutput Out = BleResetStep(S, High, Now, Readable);
+        const BleResetOutput Out = BleResetStep(S, High, Now);
         if (Out.Action == BleResetAction::RestartStack)
         {
             Restarts++;
@@ -73,8 +86,7 @@ struct Rig
         LedLitEver = LedLitEver || Out.LedLit;
         if (S.Phase == BleResetPhase::Blink)
         {
-            // The blinks are the only time the sequencer drives the pin; count the lit phases there
-            // (during a hold the contact lights the LED itself, which is not the sequence's doing).
+            // The blinks are the only time the sequencer drives the pin; count the lit phases there.
             // The sequence's first half is ON, so entering the phase starts a run.
             if (Out.LedLit && (!PrevLit || !PrevBlink))
                 BlinkLitRuns++;
@@ -83,30 +95,25 @@ struct Rig
         }
         PrevBlink = S.Phase == BleResetPhase::Blink;
         PrevLit = Out.LedLit;
-
-        LastButton = BleResetButtonPressed(S, Now);
-        ButtonEverPressed = ButtonEverPressed || LastButton;
-        if (LastButton)
-            ButtonTrueMs += TickMs;
     }
 
     // Runs from the current time to `UntilMs` with the pin HIGH (released) or LOW (contact closed).
-    void RunUntil(uint32_t UntilMs, bool High, bool Readable = true)
+    void RunUntil(uint32_t UntilMs, bool High)
     {
         while (Now + TickMs <= UntilMs)
-            Tick(High, Readable);
+            Tick(High);
     }
 };
 
 // A press at `PressMs` held `HoldMs`: the contact closes at PressMs and lifts at PressMs + HoldMs.
 // Everything before PressMs and after the lift is released. Returns the rig for inspection.
-static Rig RunContact(uint32_t PressMs, uint32_t HoldMs, uint32_t AfterMs = 500, bool Readable = true)
+static Rig RunContact(uint32_t PressMs, uint32_t HoldMs, uint32_t AfterMs = 500)
 {
     Rig R;
     R.Tick(true); // the boot level: released
-    R.RunUntil(PressMs - TickMs, true, Readable);
-    R.RunUntil(PressMs + HoldMs, false, Readable); // the first LOW pass is at PressMs
-    R.RunUntil(PressMs + HoldMs + AfterMs, true, Readable);
+    R.RunUntil(PressMs - TickMs, true);
+    R.RunUntil(PressMs + HoldMs, false); // the first LOW pass is at PressMs
+    R.RunUntil(PressMs + HoldMs + AfterMs, true);
     return R;
 }
 
@@ -166,14 +173,14 @@ static void TestTimingTable()
 
 static void TestLedSequence()
 {
-    // The LED is owned (and lit, by the contact itself) from the 2 s mark until the release, and the
+    // The LED is owned (and driven lit by the sequencer) from the 2 s mark until the release, and the
     // pin is handed back exactly at the release that fires the restart.
     {
         Rig R;
         R.Tick(true);
         R.RunUntil(1000 - TickMs, true);
         R.RunUntil(1000 + BLE_RESET_IGNORE_MS - TickMs, false);
-        CHECK(!R.PinOwnedEver); // 1.99 s: still a tap
+        CHECK(!R.PinOwnedEver); // 1.99 s: still nothing
         R.RunUntil(1000 + BLE_RESET_IGNORE_MS, false);
         CHECK(R.PinOwnedEver);  // 2.00 s: the sequencer owns the pin
         CHECK(R.LedLitEver);
@@ -281,60 +288,77 @@ static void TestSequenceRearmsOnlyOnRelease()
 
 static void TestButtonSuppression()
 {
-    // A 10 s hold IS a 10 s button press on the shared line, and it must not be reported: the owner's
-    // emote reset would fire behind the reset. This is the whole reason the report is qualified by
-    // the same 2 s window.
-    {
-        Rig R = RunContact(1000, 10100, 5000);
-        CHECK(R.Clears == 1);
-        CHECK(!R.ButtonEverPressed);
-        CHECK(!R.LastButton);
-        printf("  10.1 s hold -> button reported: %s (must be no)\n",
-               R.ButtonEverPressed ? "yes" : "no");
-    }
+    // 1. The normal path: the sequencer is idle, so field 0 follows the GPIO2 line - a press (line
+    //    low) is a press, a released line is not.
+    CHECK(ButtonStateFrom(/*Gpio2High=*/false, /*LedOn=*/false, /*ResetOwns=*/false));
+    CHECK(!ButtonStateFrom(/*Gpio2High=*/true, false, false));
 
-    // A tap (shorter than the window) is a button press and is still reported - after its lift, for
-    // BLE_RESET_TAP_REPORT_MS, so a reader that polls slower than the contact sees it.
-    {
-        Rig R = RunContact(1000, 300, 500);
-        CHECK(R.Restarts == 0);
-        CHECK(R.Clears == 0);
-        CHECK(R.ButtonEverPressed);
-        CHECK(R.ButtonTrueMs >= BLE_RESET_TAP_REPORT_MS - TickMs);
-        CHECK(R.ButtonTrueMs <= BLE_RESET_TAP_REPORT_MS + TickMs);
-        CHECK(!R.LastButton); // and it ends again
-        printf("  0.3 s tap   -> button reported for %u ms\n", (unsigned)R.ButtonTrueMs);
-    }
-
-    // During the blinks the button is still suppressed; once the pin is back with the notification
-    // driver both work again: a new tap is reported and the sequencer is idle.
-    {
-        Rig R = RunContact(1000, 10000, 8000);
-        CHECK(R.Clears == 1);
-        CHECK(!R.ButtonEverPressed);
-        CHECK(!BleResetPinOwned(R.S.Phase));
-
-        // ... a fresh tap after the sequence.
-        const uint32_t Before = R.ButtonTrueMs;
-        R.RunUntil(R.Now + 200, true);
-        R.RunUntil(R.Now + 300, false);
-        R.RunUntil(R.Now + 600, true);
-        CHECK(R.ButtonTrueMs > Before);
-        CHECK(R.Restarts == 0); // a tap is not a reset either
-    }
-
-    // A blocked read (the notification driver holding the line low with its LED on) is not a contact:
-    // the sequencer holds still instead of counting the driver's own level.
+    // 2. A 10 s hold on the reset pad IS 10 s of the sequencer driving the shared line low, so the
+    //    button's own action (the emote reset to Normal) must never be reported. Every pass from the
+    //    2 s mark to the clear must leave the sequencer owning the pin, and the report false.
     {
         Rig R;
         R.Tick(true);
         R.RunUntil(1000, true);
-        // Unreadable for a whole minute: nothing is timed.
-        for (int i = 0; i < 6000; i++)
-            R.Tick(false, /*Readable=*/false);
+        bool OwnedEveryPassAfterIgnore = true;
+        bool PressReportedDuringHold = false;
+        uint32_t FirstOwnedMs = 0;
+        uint32_t FirstUnOwnedMs = 0;
+        for (uint32_t t = 1000 + TickMs; t <= 1000 + 10100; t += TickMs)
+        {
+            R.RunUntil(t, false);
+            const bool Owned = BleResetPinOwned(R.S.Phase);
+            const bool Lit = R.S.LedLit;
+            if (Owned)
+            {
+                if (FirstOwnedMs == 0)
+                    FirstOwnedMs = t;
+            }
+            else if (FirstOwnedMs != 0 && FirstUnOwnedMs == 0)
+            {
+                FirstUnOwnedMs = t; // the first pass after the 2 s mark that is NOT owned
+                OwnedEveryPassAfterIgnore = false;
+            }
+            // The pin the button would read: driven LOW by this sequencer while it is lit.
+            const bool Gpio2High = !(Owned && Lit);
+            if (ButtonStateFrom(Gpio2High, /*LedOn=*/false, Owned))
+                PressReportedDuringHold = true;
+        }
+        CHECK(R.Clears == 1);              // the 10 s hold really is the full clear
+        CHECK(OwnedEveryPassAfterIgnore);
+        CHECK(FirstOwnedMs >= 1000);
+        CHECK(FirstOwnedMs <= 1000 + BLE_RESET_IGNORE_MS + TickMs);
+        CHECK(FirstUnOwnedMs == 0);
+        CHECK(!PressReportedDuringHold);
+        printf("  10.1 s hold -> owned from %u ms to the clear (%u ms), button reported: %s (must be no)\n",
+               (unsigned)FirstOwnedMs, (unsigned)FirstUnOwnedMs,
+               PressReportedDuringHold ? "yes" : "no");
+    }
+
+    // 3. After the sequence the pin is back with the notification driver and the button works again:
+    //    the sequencer owns nothing, and a press of the real button is reported.
+    {
+        Rig R = RunContact(1000, 10000, 6000);
+        CHECK(R.Clears == 1);
+        CHECK(R.HandBacks == 1);
+        CHECK(!BleResetPinOwned(R.S.Phase));
+        CHECK(ButtonStateFrom(/*Gpio2High=*/false, /*LedOn=*/false, BleResetPinOwned(R.S.Phase)));
+        CHECK(!ButtonStateFrom(/*Gpio2High=*/true, false, BleResetPinOwned(R.S.Phase)));
+        CHECK(R.Restarts == 0); // ... and the press is not a reset
+        printf("  after clear -> sequencer idle: %s, a press reported again: %s\n",
+               BleResetPinOwned(R.S.Phase) ? "no" : "yes",
+               ButtonStateFrom(false, false, BleResetPinOwned(R.S.Phase)) ? "yes" : "no");
+    }
+
+    // 4. A contact on the GPIO8 reset pad is not a button press: the button is GPIO2, which this
+    //    contact does not touch - the line stays high, and field 0 stays false. This holds for a
+    //    contact shorter than the ignore window too (nothing is owned, nothing is driven).
+    {
+        Rig R = RunContact(1000, 300, 500); // a 0.3 s tap on the reset pad
         CHECK(R.Restarts == 0);
         CHECK(R.Clears == 0);
         CHECK(!R.PinOwnedEver);
+        CHECK(!ButtonStateFrom(/*Gpio2High=*/true, /*LedOn=*/false, BleResetPinOwned(R.S.Phase)));
     }
 }
 

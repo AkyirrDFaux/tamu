@@ -7,10 +7,9 @@
 // first 2s. upon reseting and opening window light up red led until lifting the contact, after
 // clearing blink it 5 times no matter if held, then keep dark and return the led."
 //
-// The pin is an input with the internal pull-up: released = HIGH, contact closed = LOW.
+// The reset input is GPIO8, an input with the internal pull-up: released = HIGH, contact closed = LOW.
 //
-//   held  < 2 s, released        -> nothing at all (the reset ignores the first 2 s; the contact is
-//                                   just a button press, see the LED/button note below)
+//   held  < 2 s, released        -> nothing at all (the reset ignores the first 2 s)
 //   held 2 s .. 10 s, released   -> restart the BLE stack, bonds KEPT, and open the pairing window
 //                                   for BLE_AUTO_WINDOW_MS (300 s)
 //   held >= 10 s                 -> full clear: the bonds are cleared and the stack restarted
@@ -19,7 +18,7 @@
 // release: there is nothing to wait for. The restart path can only fire ON the release - until the
 // contact is lifted the firmware cannot know it is going to be lifted before 10 s.
 //
-// Three facts this header exists to get right, none of which is obvious:
+// Two facts this header exists to get right, neither of which is obvious:
 //
 //   - **A boot-time LOW is not a hold.** GPIO8 is an ESP32-C3 strapping pin and has to be high at
 //     reset, so a pin that reads low when the firmware starts is either a contact held across the
@@ -29,34 +28,34 @@
 //   - **Bounce must not move a threshold.** A level is accepted only after it has been steady for
 //     BLE_RESET_DEBOUNCE_MS; the hold itself is timed from the moment the RAW level changed, so a
 //     10 s hold is exactly 10 s and not 10 s + debounce.
-//   - **The notification LED shares the pin.** GPIO2 is the notification LED *and* the button input,
-//     active low on both (Docs/Devices.md, "LED-Button ... button active low, LED active low"). A
-//     held contact therefore pulls the line low and LIGHTS the LED by itself - which is exactly the
-//     "solid red until lifting the contact" the owner asked for, and the reason this sequencer
-//     never drives the pin during the hold: it could no longer read the contact. It only drives the
-//     pin for the five blinks after a clear, and only ever to LOW (lit) or back to INPUT with the
-//     pull-up (dark). It never drives it HIGH: with the contact still closed that is the pin
-//     shorting 3V3 to ground.
 //
-// Because the line is shared, a 10 s hold IS a 10 s button press, and the button's own action (the
-// emote reset to Normal) must not fire for it. The button report is therefore QUALIFIED by the same
-// 2 s ignore window (BleResetButtonPressed): a contact that ends before it is a tap and is reported
-// - for BLE_RESET_TAP_REPORT_MS after the lift, so a slow reader still sees it - while a contact
-// that reaches the window is a reset hold and is NEVER reported. A tap's press is therefore
-// delivered at its lift (at most 2 s late); a reset hold is invisible to the button's reader, which
-// is what makes the two actions exclusive.
+// The notification LED is GPIO2 - a pad of its own, shared with the button input, active low on both
+// (Docs/Devices.md, "LED-Button ... button active low, LED active low"). GPIO8 and GPIO2 are separate
+// pads: a contact on GPIO8 neither lights nor holds GPIO2, and the LED driver on GPIO2 cannot change
+// what GPIO8 reads. So this sequencer DRIVES GPIO2 (output LOW = lit, INPUT with the pull-up = dark)
+// while it owns the pin - from the 2 s mark of a hold, which is what lights the owner's "solid red
+// until lifting the contact", and through the five blinks after a clear. It never drives GPIO2 HIGH:
+// with the button held that is the pin shorting 3V3 to ground. The blinks' dark halves are INPUT
+// with the pull-up, so the five gaps ARE visible while the GPIO8 contact is still down, and the
+// sequence runs regardless of the contact, which is what the owner asked for.
+//
+// Because GPIO2 is shared, a line the sequencer drives low reads as a pressed button. The LED/Button
+// block's report is therefore SUPPRESSED for exactly as long as the sequencer owns the pin
+// (BleResetPinOwned: the Solid and Blink phases) and reads the pin normally again as soon as it is
+// handed back - see ButtonUpdate in Devices/Tamu_v2.0A/Button.h. A contact on the GPIO8 reset pad is
+// not a button press at all: the button is read from GPIO2 and from nowhere else.
 //
 // Host-clean on purpose (no GPIO, no ESP-IDF, no clock): test/native/ble_reset_test.cpp drives the
-// whole timing table, the boot-level rule, the button qualification and the blink schedule. The
-// device glue (Devices/Tamu_v2.0A/BleResetPin.h) feeds it the pin level and the time, and performs
-// the returned action through AppBLEStackReset().
+// whole timing table, the boot-level rule, the pin's ownership (which is what suppresses the button)
+// and the blink schedule. The device glue (Devices/Tamu_v2.0A/BleResetPin.h) feeds it the pin level
+// and the time, and performs the returned action through AppBLEStackReset().
 
 #include <cstdint>
 
 // A level must be steady this long before it is accepted as the pin's state: long enough for a
 // mechanical contact's bounce, far too short to be noticed inside a 2 s window.
 #define BLE_RESET_DEBOUNCE_MS 30u
-// The first 2 s of any contact are ignored: a shorter contact is a button press, not a reset.
+// The first 2 s of any contact are ignored: a shorter contact does nothing at all.
 #define BLE_RESET_IGNORE_MS 2000u
 // Held this long: full clear (bonds cleared, then the stack restarted).
 #define BLE_RESET_CLEAR_MS 10000u
@@ -66,9 +65,6 @@
 #define BLE_RESET_BLINK_HALF_MS 250u
 #define BLE_RESET_BLINK_COUNT 5u
 #define BLE_RESET_BLINK_TOTAL_MS (2u * BLE_RESET_BLINK_COUNT * BLE_RESET_BLINK_HALF_MS)
-// How long a tap's press is reported to the LED/Button block after its lift. The contact itself is
-// gone by then, so this is the only chance a reader has to see it.
-#define BLE_RESET_TAP_REPORT_MS 250u
 
 static_assert(BLE_RESET_DEBOUNCE_MS < BLE_RESET_IGNORE_MS,
               "the debounce must be far shorter than the ignore window, or a contact could not be timed");
@@ -104,8 +100,8 @@ inline const char *BleResetActionName(BleResetAction Action)
 }
 
 // Who holds GPIO2 right now. Idle = the notification driver (OnLEDStateChange/ButtonUpdate); Solid =
-// the reset hold is recognised and the sequencer owns the pin (the contact lights it, the button
-// read is suppressed); Blink = the five blinks after a clear (the sequencer drives the pin).
+// the reset hold is recognised and the sequencer owns the pin (it drives the LED, the button read is
+// suppressed); Blink = the five blinks after a clear (the sequencer drives the pin).
 enum class BleResetPhase : uint8_t
 {
     Idle = 0,
@@ -129,13 +125,12 @@ struct BleResetHold
     uint32_t CandidateSinceMs = 0; // TimeFromBoot() when the raw level last changed
     bool Holding = false;          // a contact is being timed
     uint32_t HoldStartMs = 0;      // when the RAW level went low for this contact
-    bool Announced = false;        // the contact passed BLE_RESET_IGNORE_MS: it is a reset hold, not a tap
+    bool Announced = false;        // the contact passed BLE_RESET_IGNORE_MS: it is a reset hold
     bool ClearFired = false;       // the 10 s action of this contact has been returned
     BleResetPhase Phase = BleResetPhase::Idle; // who owns GPIO2
     uint32_t PhaseSinceMs = 0;     // when the current blink half started
     uint8_t BlinkHalvesLeft = 0;   // blink halves still to run (10 = 5 blinks)
     bool LedLit = false;           // the level the sequencer wants on the pin (only meaningful while owned)
-    uint32_t TapReportUntilMs = 0; // a tap's press is reported until here (0 = nothing to report)
 };
 
 // What one pass of the pin produced.
@@ -145,22 +140,13 @@ struct BleResetOutput
     bool PinOwned = false;                        // the sequencer owns GPIO2 after this pass
     bool LedLit = false;                          // ... and it wants the LED lit (drive the pin low)
     bool HandBackPin = false;                     // ... and it just stopped owning it: restore the driver
-    uint32_t ButtonReportUntilMs = 0;             // the tap report's deadline (0 = none)
 };
 
-// The tap report's deadline, for the button read that runs in the same loop pass.
-inline bool BleResetTapPending(const BleResetHold &S, uint32_t NowMs)
-{
-    return S.TapReportUntilMs != 0 && (int32_t)(S.TapReportUntilMs - NowMs) > 0;
-}
-
-// Feeds one sample of the pin (true = HIGH/released) at `NowMs`, with `Readable` false when the line
-// cannot be read at all (the notification driver is driving it low with the LED on - the same level
-// a closed contact gives, so the firmware must not guess). Returns what crossed, if anything.
+// Feeds one sample of the reset input (true = HIGH/released) at `NowMs`, and returns what crossed.
 //
 // The thresholds are compared against timestamps, so a slow loop pass delays an action instead of
 // losing it. Call it from one task only (the main loop).
-inline BleResetOutput BleResetStep(BleResetHold &S, bool RawHigh, uint32_t NowMs, bool Readable = true)
+inline BleResetOutput BleResetStep(BleResetHold &S, bool RawHigh, uint32_t NowMs)
 {
     BleResetOutput Out;
 
@@ -191,7 +177,6 @@ inline BleResetOutput BleResetStep(BleResetHold &S, bool RawHigh, uint32_t NowMs
         }
         Out.PinOwned = BleResetPinOwned(S.Phase);
         Out.LedLit = S.LedLit;
-        Out.ButtonReportUntilMs = BleResetTapPending(S, NowMs) ? S.TapReportUntilMs : 0;
         return Out;
     }
 
@@ -204,18 +189,6 @@ inline BleResetOutput BleResetStep(BleResetHold &S, bool RawHigh, uint32_t NowMs
         S.AcceptedHigh = RawHigh;
         S.CandidateSinceMs = NowMs;
         S.ReleasedSeen = RawHigh;
-        Out.ButtonReportUntilMs = BleResetTapPending(S, NowMs) ? S.TapReportUntilMs : 0;
-        return Out;
-    }
-
-    // The line is being driven by the notification LED, so its level says nothing about the contact:
-    // the state machine holds still (a hold in progress is neither confirmed nor ended) instead of
-    // reading the driver's own low as a closed contact.
-    if (!Readable)
-    {
-        Out.PinOwned = BleResetPinOwned(S.Phase);
-        Out.LedLit = S.LedLit;
-        Out.ButtonReportUntilMs = BleResetTapPending(S, NowMs) ? S.TapReportUntilMs : 0;
         return Out;
     }
 
@@ -231,24 +204,22 @@ inline BleResetOutput BleResetStep(BleResetHold &S, bool RawHigh, uint32_t NowMs
         S.AcceptedHigh = S.CandidateHigh;
 
     // 2. Released: the contact is over. What it was depends on how long it lasted, and only now can
-    //    the sub-10 s path be decided - a contact released before the ignore window is a tap.
+    //    the sub-10 s path be decided - a contact released before the ignore window did nothing.
     if (S.AcceptedHigh)
     {
         if (S.Holding)
         {
             if (S.Announced && !S.ClearFired)
             {
-                // 2 s .. <10 s: the restart. The LED has been lit by the contact since the window
-                // was passed, so handing the pin back is the end of "solid until lifting". A contact
-                // that already fired the clear is not restarted a second time on its release.
+                // 2 s .. <10 s: the restart. The sequencer has been driving the LED since the
+                // window was passed, so handing the pin back is the end of "solid until lifting".
+                // A contact that already fired the clear is not restarted a second time on its
+                // release.
                 Out.Action = BleResetAction::RestartStack;
                 Out.HandBackPin = true;
             }
-            else
-            {
-                // A tap: nothing for the reset, and the button report is delivered now.
-                S.TapReportUntilMs = NowMs + BLE_RESET_TAP_REPORT_MS;
-            }
+            // else: a contact released inside the ignore window. It did nothing for the reset, and
+            // it is not a button press either - the button is read from GPIO2, this is GPIO8.
             S.Holding = false;
             S.HoldStartMs = 0;
             S.Announced = false;
@@ -259,17 +230,13 @@ inline BleResetOutput BleResetStep(BleResetHold &S, bool RawHigh, uint32_t NowMs
         S.ReleasedSeen = true;
         Out.PinOwned = false;
         Out.LedLit = false;
-        Out.ButtonReportUntilMs = BleResetTapPending(S, NowMs) ? S.TapReportUntilMs : 0;
         return Out;
     }
 
     // 3. A low level the firmware saw at boot (or right after a sequence that ended with the contact
     //    still down) is not a hold: nothing is timed until the pin has been released once.
     if (!S.ReleasedSeen)
-    {
-        Out.ButtonReportUntilMs = BleResetTapPending(S, NowMs) ? S.TapReportUntilMs : 0;
         return Out;
-    }
 
     // 4. The hold. It is timed from the RAW edge (the debounce only delays the confirmation), so the
     //    thresholds are measured from the contact, not from 30 ms after it.
@@ -281,7 +248,7 @@ inline BleResetOutput BleResetStep(BleResetHold &S, bool RawHigh, uint32_t NowMs
     const uint32_t HeldMs = (uint32_t)(NowMs - S.HoldStartMs);
 
     // Both thresholds are judged on the RAW level: the 30 ms debounce tail after a lift still reads
-    // "accepted low", and a contact of 1.99 s (or 9.99 s) has to stay a tap (or a restart), not be
+    // "accepted low", and a contact of 1.99 s (or 9.99 s) has to stay nothing (or a restart), not be
     // promoted to the next action by the time the release confirmation takes.
     if (RawHigh)
     {
@@ -290,8 +257,9 @@ inline BleResetOutput BleResetStep(BleResetHold &S, bool RawHigh, uint32_t NowMs
         return Out;
     }
 
-    // 4a. The ignore window has passed: this is a reset hold. The sequencer takes the pin - and the
-    //     button report is suppressed from this moment on, by BleResetButtonPressed below.
+    // 4a. The ignore window has passed: this is a reset hold. The sequencer takes the pin and drives
+    //     the LED from here - which is also what makes the LED/Button block's report be suppressed
+    //     (ButtonUpdate asks BleResetPinOwned).
     if (!S.Announced && HeldMs >= BLE_RESET_IGNORE_MS)
     {
         S.Announced = true;
@@ -309,7 +277,6 @@ inline BleResetOutput BleResetStep(BleResetHold &S, bool RawHigh, uint32_t NowMs
 
     Out.PinOwned = BleResetPinOwned(S.Phase);
     Out.LedLit = S.LedLit;
-    Out.ButtonReportUntilMs = 0;
     return Out;
 }
 
@@ -323,21 +290,4 @@ inline void BleResetClearComplete(BleResetHold &S, uint32_t NowMs)
     S.PhaseSinceMs = NowMs;
     S.BlinkHalvesLeft = (uint8_t)(2u * BLE_RESET_BLINK_COUNT);
     S.LedLit = true; // the first half is the LED ON
-}
-
-// What the LED/Button block reports for this pass, i.e. whether the button's own action may fire.
-//
-//   - while the sequencer owns the pin (a recognised hold, or the blinks) the answer is false: the
-//     hold is a reset, not a press, and the emote must not be reset behind the owner's back;
-//   - a contact that ends inside the ignore window is a tap: it is reported for
-//     BLE_RESET_TAP_REPORT_MS after its lift, so a reader that polls slower than the contact still
-//     sees it;
-//   - anything else (no contact, no pending tap, a boot-time low) is not a press.
-inline bool BleResetButtonPressed(const BleResetHold &S, uint32_t NowMs)
-{
-    if (BleResetPinOwned(S.Phase))
-        return false;
-    if (S.Holding)
-        return false; // a possibly-long contact: nothing is reported until it proves to be a tap
-    return BleResetTapPending(S, NowMs);
 }
