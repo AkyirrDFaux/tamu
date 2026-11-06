@@ -1564,3 +1564,30 @@ exercised on the device - that needs a flash of a deliberately broken image and 
 card did not authorize. The boot-budget half of the recovery path is host-tested
 (`test/native/updater_boot_test.cpp`, `PASS: 49 checks`). Sizes for a BLE updater in `factory`, and
 why 384 KB is not enough, are in `firmware/STUDY-ble-updater-size.md`.
+
+## The 0x2A00 name fix is still unmeasured on the device (2026-11-06, card t_ec37826c)
+
+**Measured (pre-fix image 26.11.6.4, this host: BlueZ 5.87, `Paired: yes` / `Bonded: yes`).** The
+rename path tracks on both values and the bonded record follows it with no re-pair: field 3
+`Tamu-Verify` -> advertisement `'Tamu-Verify'` + `0x2A00 = b'Tamu-Verify'` (len 11) + `Name: Tamu-Verify`;
+restore to empty -> advertisement `'Akyirr'` + `0x2A00 = b'Akyirr'` (len 6) + `Name: Akyirr`. The rename
+path is identical in both images, so that half is a real measurement of the fixed path; it does **not**
+exercise the boot-time set the fix adds, which is the half that was broken.
+
+**Still unmeasured: the boot-time 0x2A00 on a fixed image.** The rig runs 26.11.6.4; `e98ea10` builds as
+26.11.6.8. Proving it needs a flash plus one power cycle, which is Akyirr's action. The probe
+`name_verify_postfix.sh` (in the gitignored `firmware/.pio/probe`) runs the whole pass in one command and
+refuses an image older than iteration 6 (verified: on 26.11.6.4 it exits 2 with "the device still runs a
+PRE-FIX image"; with `--force` its checks B-E run and pass on the pre-fix image, so the instrument itself
+is exercised).
+
+**Bonded-host answer is measured for BlueZ only.** BlueZ takes a device's name from the advertisement, so
+a bonded Linux host follows a rename automatically - no forget/unpair. Android/Windows keep their own
+store from the pairing (that is why the phone showed `nimble`: it had read the pre-fix `0x2A00`), so those
+need forget-and-re-pair; that is OS behaviour and was **not** measured here - there is no Android device
+(`adb` absent) and no Windows host on this machine. Akyirr's phone is the only witness available.
+
+**The factory bootloader is not a name path.** `sdkconfig.Tamu_bootloader:932` is
+`# CONFIG_BT_ENABLED is not set`; the ELF has 0 `nimble|ble_*` symbols and the bin 0 `nimble` strings, so
+a scan sees nothing while it runs (it hands over in under a second and never advertises). Booting it alone
+needs an erased app slot - a destructive flash the verification card does not authorise.
