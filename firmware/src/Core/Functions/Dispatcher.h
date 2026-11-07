@@ -56,10 +56,13 @@ void DispatchPacket(const PacketFrame &Frame)
         DeviceLog("DISP", "local interest IdTgt=%d IdSrc=%d Cmd=0x%04X Trid=0x%04X -> service=%d cid=%d",
                   Frame.IdTgt, Frame.IdSrc, Frame.Cmd, Frame.Trid, TargetSrv, Cid);
 #ifdef USE_APP_INTERFACE
-        // A response from another device is the answer a forwarded app request was waiting for:
-        // it ends that bus transaction (AppInterface.h AppBusForwardPending), which is what lets
-        // the next queued app frame go out.
-        if ((Frame.Flags & FLAG_TYPE) && Frame.IdSrc != DeviceStatus.ShortAddress)
+        // A response from another device is the answer the open transaction was waiting for (a
+        // reply, or the confirmation a confirm-required value update asked for): it ends the
+        // transaction slot (AppInterface.h AppBusForwardPending), which is what lets the next
+        // queued frame go out. The TRID match inside the call decides, so this is asked for every
+        // frame from another device - not only a FLAG_TYPE one, or a value update's confirmation
+        // would leave the slot open until its window expired.
+        if (Frame.IdSrc != DeviceStatus.ShortAddress)
             AppBusForwardSawReply(Frame.Trid);
 #endif
         // Only the gated routing blocks below read this, so declare it under the same guard;
@@ -146,39 +149,26 @@ void DispatchPacket(const PacketFrame &Frame)
     if (NetQualifyLocal(Frame.IdTgt, DeviceStatus.NetId) != DeviceStatus.ShortAddress &&
         Frame.IdSrc == DeviceStatus.ShortAddress)
     {
-#ifdef USE_APP_INTERFACE
-        // An app-origin unicast opens a bus transaction: the next queued app frame is held back
-        // until this one's answer arrives (AppInterface.h AppBusForwardPending), because
-        // SendAndVerifyPacket only verifies our own echo and would otherwise start the next
-        // request on top of the reply that is still on the wire.
-        const bool BusTx = AppFrameSource != AppLinkSource::None && Frame.IdTgt != ADDR_BROADCAST;
-        if (BusTx)
-            AppBusForwardStart(Frame.IdTgt, Frame.Trid);
-#ifdef TYPE_CORE
-        else if (AppBusForwardPending())
-        {
-            // Our own frame, and the app's transaction is still owed an answer. One half-duplex
-            // medium: it waits its turn instead of going out on top of that answer
-            // (AppBusDeferredDrain sends it the moment the gate closes). If the deferral ring is
-            // already full this frame goes out anyway, and the gate records the clash.
-            if (AppBusDefer(Frame))
-                return;
-            AppBusGateNoteClash();
-        }
-#endif
-        const bool Sent = SendAndVerifyPacket(Frame);
-        if (BusTx && !Sent)
-            AppBusForwardFinish(); // nothing went out: do not hold the queue for a reply
-#else
+        // One bus transaction at a time, whoever started it: SendAndVerifyPacket asks the gate
+        // before it puts the frame on the wire (AppInterface.h AppBusGateOffer), so an app forward
+        // and the core's own request enter the medium through the same door. A frame that would
+        // collide with an answer still owed is held there and sent by AppBusDeferredDrain when
+        // that answer lands - the gate's scope is the wire, not the frame's origin, so nothing
+        // has to know here whether this frame came from the app.
         SendAndVerifyPacket(Frame);
-#endif
     }
 }
 
 #ifdef TYPE_CORE
-// Sends the frames the core held back while an app transaction was owed an answer
-// (AppInterface.h AppBusDefer). Called from the app pump (AppInterfaceService::Pump) every pass,
-// which runs on the core's main task whether or not an app is attached.
+// Sends the frames the core held back while the medium was owed an answer (AppInterface.h
+// AppBusDefer). Called from the app pump (AppInterfaceService::Pump) every pass, which runs on the
+// core's main task whether or not an app is attached.
+//
+// One answered frame at a time: a frame that opens the transaction slot (BusGateNeedsAnswer)
+// closes the loop, because the condition is re-tested before the next frame goes out. So the run
+// a closed window releases is never a burst of answered unicasts - exactly the shape the gate
+// exists to stop - and only frames that expect NO answer (a value update, a log record) can leave
+// back to back, which collide with nothing.
 inline void AppBusDeferredDrain()
 {
     while (AppBusDeferredCount > 0 && !AppBusForwardPending())
@@ -187,7 +177,9 @@ inline void AppBusDeferredDrain()
         for (uint8_t i = 1; i < AppBusDeferredCount; i++)
             AppBusDeferred[i - 1] = AppBusDeferred[i];
         AppBusDeferredCount--;
-        // Dispatched with AppFrameSource None, so it forwards without opening a gate of its own.
+        // Dispatched with AppFrameSource None (a core-origin frame): it forwards through the same
+        // gate as anything else, so if it expects an answer it opens the transaction slot here and
+        // the loop above stops until that answer lands.
         DispatchPacket(Frame);
     }
 }

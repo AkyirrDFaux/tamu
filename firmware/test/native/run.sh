@@ -1587,4 +1587,107 @@ fi
 fail=$((fail + rxbus_fail))
 echo
 
+# t_e5f46574. The bus transaction gate's decisions (Core/Functions/BusGate.h) run here: which
+# frames are transactions at all, the window per request kind, the wrap-safe expiry, and which
+# queued frame the pump may dispatch. The device half - the slot, the deferral ring, the
+# diagnostics ring - cannot be linked on the host (FreeRTOS, the app link, the storage layer), so
+# the two things it must not lose are asserted on the source below.
+#
+# What the test pins, in the card's terms: the gate's scope is the wire and not the frame's origin
+# (a core-origin request carrying REQACK takes the same slot as an app frame - two of them used to
+# leave 3-10 ms apart with the first answer still owed); the window is per request kind (Save All
+# keeps its own, so the reclaim path is not cut off by a read's figure); and the head-of-line block
+# is gone (a core-local frame behind a blocked forward is dispatched while it waits).
+echo "### native bus-gate tests (one answered unicast at a time, per-kind windows, no head-of-line block)"
+build_run "busgate" "bus_gate_test.cpp"
+echo
+
+# The device half, structurally. Each of these was a real defect on this card:
+#   - the gate must be asked at the ONE door a frame leaves by (RSBus.h SendAndVerifyPacket), not
+#     in the dispatcher, which only saw the app's frames and never the core's own sends;
+#   - the dispatcher must no longer decide by AppFrameSource - that is the app-only scope - and
+#     must no longer leave its RX loop on a blocked head;
+#   - the pump must pick with BusGateQueuePick (in order, except past a blocked head to a frame
+#     that needs no bus) and the slot must expire through BusGateHeld;
+#   - the BLE reader must count what its queue refuses, like the USB reader, and the totals line
+#     must print both transports' counters.
+echo "### source guard: the gate is asked at the transmit door, and the RX queue has no head-of-line block"
+BG_RSBUS="$ROOT/src/Devices/Tamu_v2.0A/RSBus.h"
+BG_IFACE="$ROOT/src/Core/Functions/AppInterface.h"
+BG_DISPATCH="$ROOT/src/Core/Functions/Dispatcher.h"
+BG_BLE="$ROOT/src/Devices/Tamu_v2.0A/AppBLE.h"
+bg_fail=0
+
+# One gated transmit function, and the transmit body behind it.
+if [ "$(grep -c '^bool SendAndVerifyPacket(const PacketFrame &Data)$' "$BG_RSBUS")" != 1 ] ||
+   [ "$(grep -c '^static bool RS485TransmitVerified(const PacketFrame &Data)$' "$BG_RSBUS")" != 1 ]; then
+    echo "FAIL $BG_RSBUS: expected exactly one gated SendAndVerifyPacket over one RS485TransmitVerified body"
+    bg_fail=1
+fi
+if ! sed -n '/^bool SendAndVerifyPacket(const PacketFrame &Data)$/,/^}$/p' "$BG_RSBUS" |
+        grep -q 'if (!AppBusGateOffer(Data))'; then
+    echo "FAIL $BG_RSBUS: SendAndVerifyPacket must offer the frame to the gate before transmitting it"
+    bg_fail=1
+fi
+if ! sed -n '/^bool SendAndVerifyPacket(const PacketFrame &Data)$/,/^}$/p' "$BG_RSBUS" |
+        grep -q 'AppBusForwardFinish();'; then
+    echo "FAIL $BG_RSBUS: a transmit that never reached the wire must release the slot it opened"
+    bg_fail=1
+fi
+if ! sed -n '/^bool SendAndVerifyPacket(const PacketFrame &Data)$/,/^}$/p' "$BG_RSBUS" |
+        grep -q 'AppBusForwardSent();'; then
+    echo "FAIL $BG_RSBUS: the window must start when the frame is out (AppBusForwardSent), not before the CSMA wait"
+    bg_fail=1
+fi
+
+# The dispatcher no longer gates by origin, and no longer blocks the queue on its head.
+if [ "$(grep -c 'AppFrameSource != AppLinkSource::None' "$BG_DISPATCH")" != 0 ]; then
+    echo "FAIL $BG_DISPATCH: the gate's scope is back to app-origin frames only (AppFrameSource)"
+    bg_fail=1
+fi
+if [ "$(grep -c 'AppLinkFrameNeedsBus(Frame)) break' "$BG_DISPATCH")" != 0 ]; then
+    echo "FAIL $BG_DISPATCH: the RX loop leaves on a blocked head again (the head-of-line block)"
+    bg_fail=1
+fi
+if [ "$(grep -c 'AppBusForwardSawReply(Frame.Trid);' "$BG_DISPATCH")" != 1 ] ||
+   grep -q 'if ((Frame.Flags & FLAG_TYPE) && Frame.IdSrc != DeviceStatus.ShortAddress)' "$BG_DISPATCH"; then
+    echo "FAIL $BG_DISPATCH: any frame from another device matching the open TRID releases the slot (a value update's confirmation is not FLAG_TYPE)"
+    bg_fail=1
+fi
+
+# The device half of the gate: the offer, the pick and the expiry all go through BusGate.h.
+if ! grep -q 'switch (BusGateVerdictFor(AppBusForwardPending(), AppBusDeferredCount < APP_BUS_DEFER_DEPTH))' "$BG_IFACE" ||
+   ! grep -q 'if (AppBusDefer(Frame))' "$BG_IFACE" ||
+   ! grep -q 'BusGateNeedsAnswer(Frame.IdTgt, Frame.Flags)' "$BG_IFACE" ||
+   ! grep -q 'BusGateWindowMs(Frame.Cmd, AppFrameSource == AppLinkSource::None)' "$BG_IFACE"; then
+    echo "FAIL $BG_IFACE: AppBusGateOffer must decide with the host-tested helpers (BusGateVerdictFor/NeedsAnswer/WindowMs)"
+    bg_fail=1
+fi
+if ! grep -q 'Pick = BusGateQueuePick(NeedsBus, RxCount, GateOpen);' "$BG_IFACE"; then
+    echo "FAIL $BG_IFACE: Pump must pick its frame with BusGateQueuePick"
+    bg_fail=1
+fi
+if ! grep -q 'if (!BusGateHeld(DeviceStatus.UptimeMs, AppInterface.BusPendingSince,' "$BG_IFACE"; then
+    echo "FAIL $BG_IFACE: the slot must expire through BusGateHeld (wrap-safe, per-kind window)"
+    bg_fail=1
+fi
+
+# Both link loss paths, counted and reported.
+if [ "$(grep -c 'if (!AppInterface.Enqueue(BleParser.Frame, AppLinkSource::BLE))' "$BG_BLE")" != 1 ] ||
+   [ "$(grep -c 'AppLinkEnqueueDropsBle = AppLinkEnqueueDropsBle + 1;' "$BG_BLE")" != 1 ]; then
+    echo "FAIL $BG_BLE: a BLE frame the inbound queue refuses must be counted, not dropped silently"
+    bg_fail=1
+fi
+if [ "$(grep -c 'AppInterface.Enqueue(BleParser.Frame, AppLinkSource::BLE);' "$BG_BLE")" != 0 ]; then
+    echo "FAIL $BG_BLE: the BLE reader still ignores the result of AppInterface.Enqueue"
+    bg_fail=1
+fi
+if ! grep -q '"link usb rejects=%lu drops=%lu | ble rejects=%lu drops=%lu"' "$BG_IFACE"; then
+    echo "FAIL $BG_IFACE: the BUSGATE totals line must report both transports' rejects and drops"
+    bg_fail=1
+fi
+[ $bg_fail = 0 ] && echo "PASS: one gated door onto the bus, no origin-based scope, no head-of-line block, both drop counters reported"
+fail=$((fail + bg_fail))
+echo
+
 exit $fail

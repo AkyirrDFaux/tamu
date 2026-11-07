@@ -1,0 +1,394 @@
+// Host-side test for the bus transaction gate's DECISIONS (Core/Functions/BusGate.h).
+//
+// Card t_e5f46574. The gate used to cover only the app's forwarded frames, was asked in the
+// dispatcher (so a core-origin request - a subscription poll, a script's register access - went
+// onto the wire ungated: two of them could sit 3-10 ms apart with the first answer still owed),
+// and it held the WHOLE inbound app queue behind them. The decisions that fix that are pure, and
+// they run here against the same header the device uses:
+//
+//   BusGateNeedsAnswer   which frames are transactions at all (item 1)
+//   BusGateWindowMs      the window per request kind (item 4)
+//   BusGateHeld          the slot's expiry, wrap-safe
+//   BusGateVerdictFor    send / hold / send-and-count-a-clash
+//   BusGateQueuePick     which queued frame the pump may dispatch (item 2, head-of-line)
+//
+// The scenario blocks below compose those real helpers the way the device does (the model of
+// AppInterface::AppBusGateOffer is six lines and is repeated at the top of GateSim), so the two
+// behaviours the card asks for are asserted as sequences: no two answered unicasts inside one
+// window - core-origin or app - and a burst that answers 20/20 per node instead of the measured
+// 4/20 of the ungated case.
+
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+
+// Packet.h refers to the device status the device TUs own (NetId.h says the same). The gate does
+// not read it, so a bare instance is enough to make the header self-contained on the host.
+#include "Blocks/DeviceInfo.h"
+#include "Core/Functions/Packet.h"
+DeviceStatusStruct DeviceStatus;
+
+#include "Core/Functions/BusGate.h"
+
+static int checks = 0, failures = 0;
+
+#define CHECK(cond)                                                                  \
+    do {                                                                             \
+        checks++;                                                                    \
+        if (!(cond)) {                                                               \
+            failures++;                                                              \
+            printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                   \
+        }                                                                            \
+    } while (0)
+
+#define CHECK_EQ(a, b)                                                               \
+    do {                                                                             \
+        checks++;                                                                    \
+        const long long A = (long long)(a), B = (long long)(b);                      \
+        if (A != B) {                                                                \
+            failures++;                                                              \
+            printf("FAIL %s:%d: %s == %s (got %lld, want %lld)\n", __FILE__,        \
+                   __LINE__, #a, #b, A, B);                                          \
+        }                                                                            \
+    } while (0)
+
+// The measured answers these windows are fitted to (rig 2026-11-06, .pio/probe/gate_latency.py and
+// restore_measure4.gate.log): an ordinary forwarded read/write 13-14 ms, the longest answered
+// forward of a whole restore 171 ms, a healthy node's Save All 125-184 ms.
+static const uint16_t MeasuredReadMs = 14;
+static const uint16_t MeasuredWorstForwardMs = 171;
+static const uint16_t MeasuredSaveAllMs = 184;
+
+// Frame shapes, as the real senders build them.
+static const uint8_t AppRequest = FLAG_REQACK | FLAG_START | FLAG_STOP;             // app request
+static const uint8_t CoreRequest = FLAG_REQACK | FLAG_START | FLAG_STOP;            // same flags
+static const uint8_t Reply = FLAG_TYPE | FLAG_START | FLAG_STOP;                    // a node's answer
+static const uint8_t StatusReply = FLAG_TYPE | FLAG_REQACK | FLAG_START | FLAG_STOP | FLAG_SUCCESS;
+static const uint8_t ConfirmUpdate = FLAG_TYPE | FLAG_REQACK | FLAG_START | FLAG_STOP;
+static const uint8_t AckNoReply = FLAG_START | FLAG_STOP;                           // one-way ack
+
+static const uint16_t Node02 = MakeId(1, 2);
+static const uint16_t Node04 = MakeId(1, 4);
+static const uint16_t ReadCmd = MakeService(ServiceType::Register, 1);   // Register CID 1 read
+static const uint16_t SaveAllCmd = MakeService(ServiceType::Register, BUS_GATE_SAVE_ALL_CID);
+static const uint16_t RecallAllCmd = MakeService(ServiceType::Register, 4);
+static const uint16_t StorageCmd = MakeService(ServiceType::Storage, BUS_GATE_SAVE_ALL_CID);
+
+// ---- A model of the device half, built ONLY from the real decisions -------------------------
+//
+// AppInterface::AppBusGateOffer is: BusGateVerdictFor(pending, ring has room) -> hold, or note a
+// clash and go on; then BusGateNeedsAnswer -> AppBusForwardStart(BusGateWindowMs(...)).
+// AppInterface::AppBusForwardPending is BusGateHeld. AppInterface::Pump picks with
+// BusGateQueuePick. Nothing here re-derives a window, an expiry or an ordering rule.
+struct GateSim
+{
+    bool Open = false;
+    uint32_t OpenedAt = 0;
+    uint16_t Window = 0;
+    uint16_t Trid = 0;
+    uint32_t Now = 0;
+    uint16_t WireTrid[256] = {};
+    int Wire = 0, Deferred = 0, Clashes = 0, Expires = 0, Released = 0;
+    int InFlight = 0, MaxInFlight = 0; // transactions on the wire at once: must never exceed 1
+
+    bool Pending()
+    {
+        if (!Open) return false;
+        if (!BusGateHeld(Now, OpenedAt, Window))
+        {
+            Open = false;
+            Expires++;
+            InFlight = 0; // the expiry released the slot: whatever was owed is lost, not on the wire
+        }
+        return Open;
+    }
+
+    // One frame offered to the bus. Returns true when it went out now, false when it was held.
+    bool Offer(uint16_t Tgt, uint8_t Flags, uint16_t Cmd, uint16_t Trid_, bool CoreOrigin, bool DeferRoom)
+    {
+        const bool GateOpen = Pending();
+        const BusGateVerdict V = BusGateVerdictFor(GateOpen, DeferRoom);
+        if (V == BusGateVerdict::Defer)
+        {
+            Deferred++;
+            return false;
+        }
+        if (V == BusGateVerdict::SendAndClash)
+            Clashes++;
+        // A needed answer opens the slot (SendAndVerifyPacket asks this before transmitting).
+        if (BusGateNeedsAnswer(Tgt, Flags))
+        {
+            Open = true;
+            OpenedAt = Now;
+            Window = BusGateWindowMs(Cmd, CoreOrigin);
+            Trid = Trid_;
+            InFlight++;
+            if (InFlight > MaxInFlight) MaxInFlight = InFlight;
+        }
+        if (Wire < 256) WireTrid[Wire] = Trid_;
+        Wire++;
+        return true;
+    }
+
+    // The answer to the open transaction landed (Dispatcher -> AppBusForwardSawReply).
+    void Answer(uint16_t Trid_)
+    {
+        if (Open && Trid == Trid_)
+        {
+            Open = false;
+            Released++;
+            InFlight = 0;
+        }
+    }
+};
+
+int main()
+{
+    // ---------------------------------------------------------------------------------------
+    // Item 1: which frames are transactions. The gate's scope is the wire, not the origin: a
+    // core-origin request that carries REQACK takes the same slot as an app frame.
+    // ---------------------------------------------------------------------------------------
+    CHECK(BusGateNeedsAnswer(Node02, AppRequest));          // an app forward
+    CHECK(BusGateNeedsAnswer(Node02, CoreRequest));         // a subscription poll / script access
+    CHECK(BusGateNeedsAnswer(Node02, ConfirmUpdate));       // value update awaiting a confirmation
+    CHECK(!BusGateNeedsAnswer(ADDR_BROADCAST, AppRequest)); // several answers: nothing to wait for
+    CHECK(!BusGateNeedsAnswer(Node02, StatusReply));        // a status reply is an answer itself
+    CHECK(!BusGateNeedsAnswer(Node02, Reply));              // a plain answer is nobody's request
+    CHECK(!BusGateNeedsAnswer(Node02, AckNoReply));         // a one-way ack expects nothing
+
+    // The old rule, kept here as the defect: gating keyed on the APP TRID range, which is exactly
+    // what "AppFrameSource != None" did at the dispatcher. A core request (subscription TRIDs are
+    // 0x1000-0x1FFF) was never gated.
+    const uint16_t CorePollTrid = TRID_SUB_BASE + 5;
+    const uint16_t AppTrid = TRID_APP_BASE + 1;
+    CHECK_EQ(BusGateNeedsAnswer(Node02, CoreRequest) && CorePollTrid < TRID_APP_BASE, 1); // new: gated
+    CHECK_EQ(CorePollTrid < TRID_APP_BASE, 1);                                            // old: not gated
+    CHECK_EQ(AppTrid >= TRID_APP_BASE, 1);                                                // old: gated
+
+    // ---------------------------------------------------------------------------------------
+    // Item 4: the window per request kind, fitted to that kind's slowest legitimate answer.
+    // ---------------------------------------------------------------------------------------
+    CHECK_EQ(BusGateWindowMs(ReadCmd, false), BUS_GATE_WINDOW_MS);
+    CHECK_EQ(BusGateWindowMs(ReadCmd, true), BUS_GATE_WINDOW_CORE_MS);
+    CHECK_EQ(BusGateWindowMs(SaveAllCmd, false), BUS_GATE_WINDOW_STORE_MS);
+    CHECK_EQ(BusGateWindowMs(SaveAllCmd, true), BUS_GATE_WINDOW_STORE_MS); // the kind wins
+    CHECK_EQ(BusGateWindowMs(RecallAllCmd, false), BUS_GATE_WINDOW_MS);    // only Save All is long
+    CHECK_EQ(BusGateWindowMs(StorageCmd, false), BUS_GATE_WINDOW_MS);      // another service's CID 5
+    // The fits the header states, as numbers.
+    CHECK(BUS_GATE_WINDOW_MS >= MeasuredWorstForwardMs * 3);
+    CHECK(BUS_GATE_WINDOW_CORE_MS >= MeasuredReadMs * 10);
+    CHECK(BUS_GATE_WINDOW_STORE_MS >= MeasuredSaveAllMs * 8);
+    CHECK(BUS_GATE_WINDOW_STORE_MS < 25000); // the app's own Save All budget (backup_restore.dart)
+
+    // ---------------------------------------------------------------------------------------
+    // The slot's expiry: a subtraction, and the exceptional path (an answer releases it first).
+    // ---------------------------------------------------------------------------------------
+    CHECK(BusGateHeld(100, 0, 600));
+    CHECK(BusGateHeld(599, 0, 600));
+    CHECK(!BusGateHeld(600, 0, 600));
+    CHECK(!BusGateHeld(601, 0, 600));
+    // Free-running uptime: the window must survive the counter wrapping.
+    CHECK(BusGateHeld(0x40u, 0xFFFFFF00u, 600));  // 320 ms elapsed across the wrap
+    CHECK(!BusGateHeld(0x200u, 0xFFFFFF00u, 600)); // 768 ms elapsed
+    CHECK(BusGateHeld(0x200u, 0xFFFFFF00u, 3000)); // a Save All still inside its own window
+
+    // ---------------------------------------------------------------------------------------
+    // The admission verdict.
+    // ---------------------------------------------------------------------------------------
+    CHECK(BusGateVerdictFor(false, true) == BusGateVerdict::SendNow);
+    CHECK(BusGateVerdictFor(false, false) == BusGateVerdict::SendNow);
+    CHECK(BusGateVerdictFor(true, true) == BusGateVerdict::Defer);
+    CHECK(BusGateVerdictFor(true, false) == BusGateVerdict::SendAndClash);
+
+    // ---------------------------------------------------------------------------------------
+    // Item 2: the head-of-line block is gone - a frame that needs no bus is dispatched while a
+    // forward waits, and the bus frames keep their order among themselves.
+    // ---------------------------------------------------------------------------------------
+    const bool AllBus[3] = {true, true, true};
+    const bool BusLocalBus[3] = {true, false, true};
+    const bool LocalFirst[2] = {false, true};
+    CHECK_EQ(BusGateQueuePick(AllBus, 3, false), 0);        // nothing owed: in order
+    CHECK_EQ(BusGateQueuePick(AllBus, 3, true), -1);        // all wait for the wire
+    CHECK_EQ(BusGateQueuePick(BusLocalBus, 3, true), 1);    // the core-local frame goes now
+    CHECK_EQ(BusGateQueuePick(BusLocalBus, 3, false), 0);   // in order when the wire is free
+    CHECK_EQ(BusGateQueuePick(LocalFirst, 2, true), 0);     // the head needs no bus anyway
+    CHECK_EQ(BusGateQueuePick(AllBus, 0, true), -1);        // nothing queued
+    CHECK_EQ(BusGateQueuePick(AllBus, 1, true), -1);        // a single blocked frame waits
+
+    // Taking the local frame out past the head leaves the queue's order untouched (the pump shifts
+    // the frames before it up one slot): [bus A, local, bus B] -> [bus A, bus B].
+    {
+        const char Queue[] = {'A', 'L', 'B'};
+        char After[3] = {'\0', '\0', '\0'};
+        bool NeedsBus[3];
+        for (int i = 0; i < 3; i++) NeedsBus[i] = Queue[i] != 'L';
+        const int Pick = BusGateQueuePick(NeedsBus, 3, true);
+        CHECK_EQ(Pick, 1);
+        int Out = 0;
+        for (int i = 0; i < 3; i++)
+            if (i != Pick) After[Out++] = Queue[i];
+        CHECK_EQ(After[0], 'A');
+        CHECK_EQ(After[1], 'B');
+        CHECK(NeedsBus[0]); // still the head, still a bus frame
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Item 1, as a sequence: two core-origin answered requests 3 ms apart. Under the OLD rule -
+    // the dispatcher opened the slot only for an app-origin frame (`AppFrameSource != None`), which
+    // in practice meant only the app's TRID range - both go out 3 ms apart with the first answer
+    // still owed. Under the new one the second is held.
+    // ---------------------------------------------------------------------------------------
+    {
+        // The old rule, modelled exactly: a frame opened the slot only if it came from the app.
+        const auto OldRuleNeedsAnswer = [](uint8_t Flags, uint16_t Trid) {
+            return BusGateNeedsAnswer(Node02, Flags) && Trid >= TRID_APP_BASE;
+        };
+        int OldSent = 0;
+        bool OldOpen = false;
+        for (int i = 0; i < 2; i++)
+        {
+            if (!OldOpen)
+            {
+                OldSent++;
+                if (OldRuleNeedsAnswer(CoreRequest, CorePollTrid)) OldOpen = true;
+            }
+            // else: the dispatcher held it in the RX queue (no gate for a core frame at all)
+        }
+        CHECK_EQ(OldSent, 2); // the defect: two requests on the wire, one answer owed for both
+
+        GateSim Sim;
+        Sim.Now = 1000;
+        CHECK(Sim.Offer(Node02, CoreRequest, ReadCmd, CorePollTrid, true, true));
+        CHECK(Sim.Pending()); // the slot is now owed an answer
+        Sim.Now += 3;         // the second request is built 3 ms later
+        const bool Second = Sim.Offer(Node04, CoreRequest, ReadCmd, CorePollTrid + 1, true, true);
+        CHECK(!Second);          // held, not sent
+        CHECK_EQ(Sim.Wire, 1);   // only one request on the wire
+        CHECK_EQ(Sim.Deferred, 1);
+        CHECK_EQ(Sim.MaxInFlight, 1);
+        // The answer lands, the held frame goes out.
+        Sim.Now += 12;
+        Sim.Answer(CorePollTrid);
+        CHECK_EQ(Sim.Released, 1);
+        Sim.Now += 1;
+        CHECK(Sim.Offer(Node04, CoreRequest, ReadCmd, CorePollTrid + 1, true, true));
+        CHECK_EQ(Sim.Wire, 2);
+        CHECK_EQ(Sim.Clashes, 0);
+        CHECK_EQ(Sim.MaxInFlight, 1); // never two requests on the wire at once
+    }
+
+    // An app forward and a core request share the one slot, in either order.
+    {
+        GateSim Sim;
+        Sim.Now = 500;
+        CHECK(Sim.Offer(Node02, AppRequest, ReadCmd, AppTrid, false, true));
+        CHECK(!Sim.Offer(Node04, CoreRequest, ReadCmd, CorePollTrid, true, true));
+        CHECK_EQ(Sim.Deferred, 1);
+        Sim.Now += 14;
+        Sim.Answer(AppTrid);
+        Sim.Now += 1;
+        CHECK(Sim.Offer(Node04, CoreRequest, ReadCmd, CorePollTrid, true, true));
+        Sim.Now += 3; // the node answers the core's poll immediately after
+        Sim.Answer(CorePollTrid);
+        CHECK_EQ(Sim.Released, 2);
+        CHECK_EQ(Sim.Expires, 0);
+    }
+
+    // A frame that expects no answer is still held while an answer is owed (one medium), and the
+    // deferral ring's fullness is what turns that into a counted clash rather than a silent loss.
+    {
+        GateSim Sim;
+        Sim.Now = 700;
+        CHECK(Sim.Offer(Node02, AppRequest, ReadCmd, AppTrid, false, true));
+        CHECK(!Sim.Offer(Node04, Reply, ReadCmd, 0x0101, true, true)); // nothing gated it; held
+        CHECK_EQ(Sim.Deferred, 1);
+        CHECK(Sim.Offer(Node04, Reply, ReadCmd, 0x0101, true, false)); // ring full: it leaves
+        CHECK_EQ(Sim.Clashes, 1);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Item 4, as a sequence: a Save All legitimately runs long, and the frames behind it wait for
+    // ITS window - not for a read's.
+    // ---------------------------------------------------------------------------------------
+    {
+        GateSim Sim;
+        Sim.Now = 10;
+        CHECK(Sim.Offer(Node04, AppRequest, SaveAllCmd, AppTrid, false, true));
+        Sim.Now += MeasuredSaveAllMs; // a healthy save
+        CHECK(Sim.Pending());         // still within its own window (a read's 600 would pass)
+        Sim.Now = 10 + 1000;          // the reclaim path: slower than any read ever measured
+        CHECK(Sim.Pending());
+        Sim.Now = 10 + BUS_GATE_WINDOW_STORE_MS - 1;
+        CHECK(Sim.Pending());
+        Sim.Now = 10 + BUS_GATE_WINDOW_STORE_MS;
+        CHECK(!Sim.Pending()); // expiry is the exceptional path: release it first
+        CHECK_EQ(Sim.Expires, 1);
+
+        // Released on the answer, and the read behind it then keeps ITS shorter window.
+        GateSim Sim2;
+        Sim2.Now = 10;
+        CHECK(Sim2.Offer(Node04, AppRequest, SaveAllCmd, AppTrid, false, true));
+        Sim2.Now += 1200;
+        Sim2.Answer(AppTrid);
+        CHECK_EQ(Sim2.Released, 1);
+        CHECK_EQ(Sim2.Expires, 0);
+        Sim2.Now += 1;
+        CHECK(Sim2.Offer(Node02, AppRequest, ReadCmd, AppTrid + 1, false, true));
+        Sim2.Now += 13;
+        CHECK(Sim2.Pending());
+        Sim2.Now += (BUS_GATE_WINDOW_MS - 13);
+        CHECK(!Sim2.Pending()); // a read's window, not the save's
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The loaded burst (item 5), modelled on the host: 20 identity reads per node, four nodes, the
+    // answers arriving 13-14 ms later as they did on the rig. The ungated shape answered 4/20
+    // (measurement in AppInterface.h); the gated one must answer every read.
+    // ---------------------------------------------------------------------------------------
+    {
+        GateSim Sim;
+        Sim.Now = 2000;
+        const uint16_t Nodes[4] = {MakeId(1, 2), MakeId(1, 3), MakeId(1, 4), MakeId(1, 5)};
+        int Answered = 0;
+        uint16_t Trid = TRID_APP_BASE;
+        // Every node has 20 reads queued; the app fires them as fast as the gate lets it, and each
+        // node answers 13 ms after ITS request reached the wire.
+        int Remaining[4] = {20, 20, 20, 20};
+        uint32_t AnswerAt = 0;
+        uint16_t InFlightTrid = 0;
+        bool Busy = false;
+        while (Remaining[0] + Remaining[1] + Remaining[2] + Remaining[3] > 0 || Busy)
+        {
+            Sim.Now++;
+            if (Busy && Sim.Now >= AnswerAt)
+            {
+                Sim.Answer(InFlightTrid);
+                Answered++;
+                Busy = false;
+            }
+            if (Busy || Sim.Pending()) continue; // the medium is owed an answer: nothing goes out
+            for (int n = 0; n < 4 && !Busy; n++)
+            {
+                if (Remaining[n] == 0) continue;
+                Trid++;
+                if (!Sim.Offer(Nodes[n], AppRequest, ReadCmd, Trid, false, true))
+                {
+                    // Held for the frame ahead of it: it is offered again on a later pass.
+                    continue;
+                }
+                Remaining[n]--;
+                Busy = true;
+                InFlightTrid = Trid;
+                AnswerAt = Sim.Now + 13; // measured: an ordinary read answers in 13-14 ms
+            }
+        }
+        CHECK_EQ(Answered, 80);      // 20 per node, 4 nodes
+        CHECK_EQ(Sim.Wire, 80);      // and no request went out twice
+        CHECK_EQ(Sim.MaxInFlight, 1); // exactly one transaction on the wire at any moment
+        CHECK_EQ(Sim.Expires, 0);    // nothing was cut off by a window
+        CHECK_EQ(Sim.Clashes, 0);
+    }
+
+    printf("bus_gate: %d checks, %d failure(s)\n", checks, failures);
+    return failures ? 1 : 0;
+}

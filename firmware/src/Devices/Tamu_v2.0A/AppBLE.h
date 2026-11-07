@@ -962,12 +962,17 @@ class BleTxCallbacks : public NimBLECharacteristicCallbacks
             // complete frames are queued for the pump (no intermediate buffer).
             if (BleParser.Feed(Byte))
             {
-                AppInterface.Enqueue(BleParser.Frame, AppLinkSource::BLE);
+                // A full inbound queue drops the frame, exactly as the USB reader's does: count it
+                // (AppBusGateDrain's totals line), or the app's timeout looks like a node that
+                // never answered when the request never became a transaction at all.
+                if (!AppInterface.Enqueue(BleParser.Frame, AppLinkSource::BLE))
+                    AppLinkEnqueueDropsBle = AppLinkEnqueueDropsBle + 1;
                 BleParser.Reset();
             }
             else if (BleParser.Full)
             {
                 DeviceLog("APPBLE", "Rejected malformed app frame (CRC)");
+                AppLinkFrameRejectsBle = AppLinkFrameRejectsBle + 1; // resync, and say so
                 BleParser.Reset(); // CRC failure: resync
             }
         }

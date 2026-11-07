@@ -186,12 +186,12 @@ static void AppRxStream(const uint8_t *Data, uint16_t Len)
             // A full inbound queue drops the frame silently: count it, so a request the app sent
             // and the core never answered can be told from one that never arrived (AppBusGateDrain).
             if (!AppInterface.Enqueue(WireParser.Frame, AppLinkSource::USB))
-                AppLinkEnqueueDrops = AppLinkEnqueueDrops + 1;
+                AppLinkEnqueueDropsUsb = AppLinkEnqueueDropsUsb + 1;
             WireParser.Reset();
         }
         else if (WireParser.Full || WireParser.Got > sizeof(PacketFrame))
         {
-            AppLinkFrameRejects = AppLinkFrameRejects + 1; // CRC failure / overflow: resync
+            AppLinkFrameRejectsUsb = AppLinkFrameRejectsUsb + 1; // CRC failure / overflow: resync
             WireParser.Reset();
         }
     }
@@ -224,7 +224,7 @@ static void AppLinkTask(void *)
                 AppRxStream(Payload, (uint16_t)FeedResult);
             else if (FeedResult < 0)
             {
-                AppLinkFrameRejects = AppLinkFrameRejects + 1; // link frame CRC: resync the stream
+                AppLinkFrameRejectsUsb = AppLinkFrameRejectsUsb + 1; // link frame CRC: resync the stream
                 WireParser.Reset();
             }
         }

@@ -177,7 +177,9 @@ static void RS485SleepTicking(uint32_t Ms)
 // is compared as it returns, so a collision aborts mid-frame (only the queued remainder,
 // <= one chunk, still leaves the wire) instead of after the whole frame. RS485_RETRIES attempts
 // with random backoff, the whole stint bounded by RS485_TX_STINT_MS.
-bool SendAndVerifyPacket(const PacketFrame &Data)
+//
+// The bus's ONE transmit primitive - SendAndVerifyPacket below wraps it with the transaction gate.
+static bool RS485TransmitVerified(const PacketFrame &Data)
 {
     // 1. A working copy, deliberately LOCAL: it frees the caller's frame as soon as we return,
     // and it lets the CRC be finalised here (the input is const). It must not reuse the shared
@@ -285,6 +287,40 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
     // Every transmit that never got through, ours or the app's: the gate ring reports the app's
     // (AppInterface.h), and a core-origin frame's failure has no other trace at all.
     AppBusSendFails = AppBusSendFails + 1;
+#endif
+    return false;
+}
+
+// Puts one frame on the bus, under the transaction gate.
+//
+// The gate is asked HERE because this is the single door every outbound frame goes through: an
+// app forward (AppInterface.Pump -> DispatchPacket -> here), a core-origin request (a subscription
+// install/renewal, a script's foreign register access, a confirm-required value update - these
+// used to call the transmit primitive directly, so nothing gated them), a reply the core owes a
+// node, and the deferred frames themselves. With the gate at the door, an answered unicast takes
+// the medium's one transaction slot (AppInterface.h AppBusGateOffer / BusGate.h) and everything
+// else waits for that answer instead of colliding with it.
+//
+// A HELD frame reports true: it was accepted, not lost - AppBusDeferredDrain puts it on the wire
+// as soon as the answer it was waiting behind lands.
+bool SendAndVerifyPacket(const PacketFrame &Data)
+{
+#ifdef USE_APP_INTERFACE
+    if (!AppBusGateOffer(Data))
+        return true;
+#endif
+    if (RS485TransmitVerified(Data))
+    {
+#ifdef USE_APP_INTERFACE
+        // The answer is owed from the moment the frame is out, not from before the CSMA wait.
+        AppBusForwardSent();
+#endif
+        return true;
+    }
+#ifdef USE_APP_INTERFACE
+    // Nothing went out, so the slot this frame opened is not owed an answer: release it now rather
+    // than making the queue wait out the window for a frame that never left.
+    AppBusForwardFinish();
 #endif
     return false;
 }
