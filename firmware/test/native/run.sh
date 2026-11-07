@@ -91,6 +91,13 @@ for SPEED in "-DOPTIMIZE_SPEED" ""; do
     build_run "crc_${SPEED:+speed}" "crc_test.cpp" $SPEED
     echo
 
+    # t_4c9c5fa8: bytes taken off the UART while a transmit waits for the line are kept for the
+    # assembler (BusRxKeepRing), not drained away. Built in both Crc8 shapes because the assembler
+    # validates with it.
+    echo "### native RX-keep tests (a reply kept across a transmit), $label"
+    build_run "rxkeep_${SPEED:+speed}" "bus_rx_keep_test.cpp" $SPEED
+    echo
+
     echo "### native geometry tests (LED display mask shapes), $label"
     build_run "geometry_${SPEED:+speed}" "geometry_test.cpp" $SPEED
     echo

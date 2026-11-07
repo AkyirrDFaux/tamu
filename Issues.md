@@ -486,6 +486,18 @@ are hardware-only.
   client that matched on the old address still sees its `FLAG_SUCCESS`/echo. Do not word the doc
   as "the reply comes from the new address": it cannot, and a client would drop it.
 
+- **E59** **The DAS still drains its RX ring while it waits for the bus** (the core half is
+  `t_4c9c5fa8`). `Devices/DAS_v0.1/RSBus.h` `RS485WaitForSilence` passes a callback that reads
+  `UARTReadByte()` until the ring is empty and throws the bytes away, so a request that is still
+  arriving when the node decides to answer something else is destroyed before the assembler can
+  see it - the same defect the core had. It is not fixed with the core's keep ring because this
+  target has no room for one: RAM is 2048/2048 by construction (statics + stack, `stack_size`
+  follows `.bss`), and a 160-byte ring would have to come out of the stack. The echo check also
+  reads the same ring (`SendAndVerifyPacket`), so leaving the bytes in place - the cheap version
+  of the fix - makes the node compare a pending request against its own echo. Reaching zero loss
+  here needs the RX path split (an ISR-fed ring the echo check does not consume, or a separate
+  echo buffer), which is a redesign of this file, not a patch.
+
 ## BLE Settings block (2026-10-28)
 
 **2026-10-29, owner ruling "simplify the BLE block" - the block is SIX fields, and this note is the

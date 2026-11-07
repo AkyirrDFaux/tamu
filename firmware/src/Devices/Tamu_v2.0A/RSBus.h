@@ -7,6 +7,27 @@
 #define RXD_PIN (GPIO_NUM_20) // RS-485 transceiver RX (from RO)
 #define RS485_EN_PIN (GPIO_NUM_9)
 
+// ---------------------------------------------------------------------------------------------
+// Transmit stint (card t_4c9c5fa8)
+//
+// One send is 1..RS485_RETRIES attempts, and it runs on the main task - the one that also runs
+// AppInterface.Pump, the display, the scripts, the subscriptions and AppBLETick. Its worst case
+// used to be ~700 ms (per attempt: 100 ms silence cap + 20 ms sync echo + 20 ms first-chunk echo
+// + 100 ms tx-done + up to 16 ms backoff, times three). Two things bound it now:
+//
+//   * the echo and tx-done windows are sized from the LINE instead of picked by feel: a 16-byte
+//     chunk at 460800 is 0.35 ms and the whole longest frame is 2.8 ms, so 10 ms and 20 ms are
+//     28x and 7x the line time - a missing echo is still detected, just not after 20 ms;
+//   * every attempt draws its silence window from ONE deadline (RS485_TX_STINT_MS), so the send
+//     as a whole cannot outlive it, and every wait inside the send serves the app link
+//     (RS485AppLinkTick) instead of stopping it.
+//
+// Worst case: RS485_TX_STINT_MS + one attempt's non-wait work (10 + 10 + 20 + 16 = 56 ms) = 356 ms.
+// The measured maximum is on the device as RS485TxStintWorstMs (BUSGATE totals line, txstint=).
+#define RS485_TX_STINT_MS 300
+#define RS485_ECHO_TIMEOUT_MS 10
+#define RS485_TX_DONE_TIMEOUT_MS 20
+
 // Configures UART1 as the RS-485 transceiver (TX/RX pins, baud rate, driver install, enable pin).
 void SetupRS485()
 {
@@ -42,38 +63,120 @@ void SetupRS485()
     gpio_set_level(RS485_EN_PIN, 0);
 }
 
-// Shared CSMA/CD silence wait (Core/Functions/Bus.h): drain the UART buffer, count
-// silence in esp_timer microseconds, sleep 1 ms between polls (the Tamu has a scheduler).
-static void RS485WaitForSilence(uint8_t Priority)
+// ---------------------------------------------------------------------------------------------
+// Received bytes that arrive while a transmit is waiting for the line (card t_4c9c5fa8)
+//
+// The silence wait has to read the UART - that is how it knows whether bytes are still coming -
+// and the old version threw every byte it read into a 32-byte scratch array. That is how a node's
+// reply died: the core decided to send while the answer was still on the wire, drained the answer
+// while waiting for silence, and then reported the node as silent. Nothing counted it.
+//
+// Now the bytes go into a keep ring that ReceivePacket()'s byte source drains FIRST (its bytes are
+// older than anything the driver still holds, so frame order is preserved). A whole longest frame
+// is 129 bytes with its sync byte; 160 holds that plus the head of the next.
+#define RS485_RX_KEEP_BYTES 160
+// A whole longest frame (12 header + 116 payload + the 0xAA sync byte = 129) must fit, or the ring
+// could refuse the very reply it exists to keep.
+static_assert(RS485_RX_KEEP_BYTES >= 1 + 12 + MAX_PAYLOAD_SIZE,
+              "the keep ring must hold one whole frame");
+static BusRxKeepRing<RS485_RX_KEEP_BYTES> RxKeep;
+
+// Longest single bus send since boot, ms (BUSGATE totals line prints it as txstint=).
+uint32_t RS485TxStintWorstMs = 0;
+
+// Keeps the app link alive while a send blocks the main task: the silence wait, the echo windows,
+// the tx-done wait and the retry backoff can together hold it for hundreds of ms, and the app is
+// mid-transaction. This is the link-only half of AppInterface.Pump() - it moves queued reply bytes
+// and ticks the radios, and deliberately dispatches NOTHING: a dispatch can start another bus
+// transmit, and the send that is running owns the wire.
+//
+// Rate-limited to ~5 ms, which is about one main-loop pass, so a stall costs the link no more
+// passes than normal running does (100 ticks in a 100 ms silence window would be 10x that).
+static void RS485AppLinkTick()
+{
+#ifdef USE_APP_INTERFACE
+    static int64_t LastUs = 0;
+    const int64_t Now = esp_timer_get_time();
+    if (LastUs != 0 && (Now - LastUs) < 5000)
+        return;
+    LastUs = Now;
+    AppInterface.PumpLink();
+#endif
+}
+
+// Takes every byte the driver holds right now, keeps it for the assembler, and returns true when
+// the line had activity (which restarts the silence window). A byte the keep ring cannot hold is
+// read anyway - leaving it would corrupt the echo check below - and is counted in BusRxDestroyed.
+static bool RS485KeepBufferedRx()
+{
+    uint8_t Buf[32];
+    bool Active = false;
+    for (;;)
+    {
+        const int Got = uart_read_bytes(UART_NUM_1, Buf, sizeof(Buf), 0);
+        if (Got <= 0)
+            return Active;
+        Active = true;
+        for (int i = 0; i < Got; i++)
+        {
+            if (!RxKeep.Push(Buf[i]))
+            {
+#ifdef TYPE_CORE
+                BusRxDestroyed = BusRxDestroyed + 1; // the only way this path loses a byte
+#endif
+            }
+        }
+    }
+}
+
+// Shared CSMA/CD silence wait (Core/Functions/Bus.h): it OBSERVES the line through
+// RS485KeepBufferedRx, counts silence in esp_timer microseconds and sleeps 1 ms between polls (the
+// Tamu has a scheduler, and that sleep ticks the app link). Because a busy line restarts the
+// window, a reply that is still arriving makes the transmit WAIT for it - the reply ends, the line
+// goes quiet, and only then does the frame go out, with the reply kept for the dispatcher.
+static void RS485WaitForSilence(uint8_t Priority, uint32_t CapMs)
 {
     RS485WaitForSilence(Priority,
-        [](void) -> bool {
-            size_t Len = 0;
-            uart_get_buffered_data_len(UART_NUM_1, &Len);
-            if (Len == 0) return false;
-            // Bus activity: drain and restart the silence window
-            uint8_t Drain[32];
-            while (Len > 0)
-            {
-                size_t Chunk = Len > sizeof(Drain) ? sizeof(Drain) : Len;
-                uart_read_bytes(UART_NUM_1, Drain, Chunk, 0);
-                Len -= Chunk;
-                size_t Avail = 0;
-                uart_get_buffered_data_len(UART_NUM_1, &Avail);
-                if (Avail == 0) break;
-                Len = Avail;
-            }
-            return true;
-        },
+        RS485KeepBufferedRx,
         [](void) -> uint32_t { return (uint32_t)esp_timer_get_time(); },
-        [](void) { vTaskDelay(pdMS_TO_TICKS(1)); });
+        [](void) { RS485AppLinkTick(); vTaskDelay(pdMS_TO_TICKS(1)); },
+        CapMs);
+}
+
+// uart_wait_tx_done() blocks for its whole timeout; poll it in 2 ms slices so the app link keeps
+// moving while the last bytes leave the wire.
+static bool RS485WaitTxDone(uint32_t TimeoutMs)
+{
+    const int64_t Start = esp_timer_get_time();
+    for (;;)
+    {
+        if (uart_wait_tx_done(UART_NUM_1, pdMS_TO_TICKS(2)) == ESP_OK)
+            return true;
+        RS485AppLinkTick();
+        if ((esp_timer_get_time() - Start) >= (int64_t)TimeoutMs * 1000)
+            return false;
+    }
+}
+
+// The retry backoff, in 5 ms slices so the app link does not stop for it either.
+static void RS485SleepTicking(uint32_t Ms)
+{
+    const int64_t Start = esp_timer_get_time();
+    for (;;)
+    {
+        RS485AppLinkTick();
+        const int64_t LeftUs = (int64_t)Ms * 1000 - (esp_timer_get_time() - Start);
+        if (LeftUs <= 0)
+            return;
+        vTaskDelay(pdMS_TO_TICKS(LeftUs > 5000 ? 5 : (LeftUs + 999) / 1000));
+    }
 }
 
 // Sends `Data` over the RS-485 bus with CSMA/CD collision avoidance. Per Docs/RSBus and Packets.md the
 // sent data is verified WHILE sending: frames go out in small chunks and each chunk's echo
 // is compared as it returns, so a collision aborts mid-frame (only the queued remainder,
-// <= one chunk, still leaves the wire) instead of after the whole frame. Unbounded retry
-// count RS485_RETRIES with random backoff.
+// <= one chunk, still leaves the wire) instead of after the whole frame. RS485_RETRIES attempts
+// with random backoff, the whole stint bounded by RS485_TX_STINT_MS.
 bool SendAndVerifyPacket(const PacketFrame &Data)
 {
     // 1. A working copy, deliberately LOCAL: it frees the caller's frame as soon as we return,
@@ -95,13 +198,30 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
     const size_t CHUNK = 16;               // ~1.4 ms of line time per chunk
     uint8_t RxChunk[CHUNK];
 
+    const int64_t StintStart = esp_timer_get_time();
     for (int Attempt = 0; Attempt < RS485_RETRIES; Attempt++) {
-        // CSMA/CD: only transmit once the line has been silent
-        RS485WaitForSilence(Data.Priority);
+        // One deadline for the whole send: a stuck or continuously busy bus costs this task the
+        // stint, not three full attempts on top of it.
+        const int64_t SpentMs = (esp_timer_get_time() - StintStart) / 1000;
+        if (SpentMs >= RS485_TX_STINT_MS)
+            break;
+        const uint32_t LeftMs = (uint32_t)(RS485_TX_STINT_MS - SpentMs);
+
+        // CSMA/CD: only transmit once the line has been silent. The wait KEEPS what it reads
+        // (RxKeep), so a reply still arriving is waited out and handed to the assembler instead
+        // of being drained into the bin.
+        RS485WaitForSilence(Data.Priority,
+                           LeftMs < RS485_SILENCE_TIMEOUT_MS ? LeftMs : RS485_SILENCE_TIMEOUT_MS);
+
+        // Anything still in the driver ring arrived in the last moments of the window. It is MOVED
+        // into the keep ring, never flushed: flushing here is what removed the tail of a reply
+        // whose head the wait had already drained, and it was the second half of the bug. Moving
+        // it also gives the echo check below an empty driver ring, which is the only thing the
+        // flush was ever needed for.
+        (void)RS485KeepBufferedRx();
 
         // Prepare bus for transmission
         gpio_set_level(RS485_EN_PIN, 1);
-        uart_flush_input(UART_NUM_1);
 
         bool Collided = false;
         size_t Verified = 0;
@@ -109,7 +229,7 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
         // Sync byte first; its echo is verified too.
         uart_write_bytes(UART_NUM_1, "\xAA", 1);
         {
-            int Got = uart_read_bytes(UART_NUM_1, RxChunk, 1, pdMS_TO_TICKS(20));
+            int Got = uart_read_bytes(UART_NUM_1, RxChunk, 1, pdMS_TO_TICKS(RS485_ECHO_TIMEOUT_MS));
             if (Got != 1 || RxChunk[0] != 0xAA)
                 Collided = true;
         }
@@ -120,7 +240,7 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
             uart_write_bytes(UART_NUM_1, (const char *)(TxBuffer + Off), ChunkLen);
 
             // The echo of this chunk must come back intact while we keep sending.
-            int Got = uart_read_bytes(UART_NUM_1, RxChunk, ChunkLen, pdMS_TO_TICKS(20));
+            int Got = uart_read_bytes(UART_NUM_1, RxChunk, ChunkLen, pdMS_TO_TICKS(RS485_ECHO_TIMEOUT_MS));
             if (Got != (int)ChunkLen || memcmp(TxBuffer + Off, RxChunk, ChunkLen) != 0)
             {
                 Collided = true;
@@ -129,7 +249,7 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
             Verified += ChunkLen;
         }
 
-        uart_wait_tx_done(UART_NUM_1, pdMS_TO_TICKS(100));
+        (void)RS485WaitTxDone(RS485_TX_DONE_TIMEOUT_MS);
 
         // Switch back to RX mode
         gpio_set_level(RS485_EN_PIN, 0);
@@ -138,6 +258,9 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
         {
             // NOTE: no ESP_LOG here - the log goes to the USB console, and in USB APP
             // mode that byte stream belongs to the attached app (text would corrupt it).
+            const uint32_t StintMs = (uint32_t)((esp_timer_get_time() - StintStart) / 1000);
+            if (StintMs > RS485TxStintWorstMs)
+                RS485TxStintWorstMs = StintMs;
             return true;
         }
 
@@ -148,9 +271,12 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
             ESP_LOGW("RS485", "Attempt %d failed (%s), backoff %lums", Attempt + 1,
                      Collided ? "collision" : "echo incomplete", (unsigned long)BackoffMs);
         }
-        vTaskDelay(pdMS_TO_TICKS(BackoffMs));
+        RS485SleepTicking(BackoffMs);
     }
 
+    const uint32_t StintMs = (uint32_t)((esp_timer_get_time() - StintStart) / 1000);
+    if (StintMs > RS485TxStintWorstMs)
+        RS485TxStintWorstMs = StintMs;
     if (!AppInterface.Connected)
     {
         ESP_LOGE("RS485", "Transmission failed after %d attempts", RS485_RETRIES);
@@ -165,23 +291,24 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
 
 // Raw bootloader send (Docs/Services/Bootloader.md): the frame is NOT a PacketFrame and
 // carries no 0xAA sync, so normal nodes (which wait for 0xAA) ignore it while a bootloader
-// waiting for 0xCA receives it. Same CSMA/echo discipline as SendAndVerifyPacket.
+// waiting for 0xCA receives it. Same CSMA/echo discipline as SendAndVerifyPacket - and the same
+// rule about received bytes: they are kept, never flushed.
 bool RS485SendRaw(const uint8_t *Data, size_t Len)
 {
     const size_t CHUNK = 16; // ~1.4 ms of line time per chunk
     uint8_t RxChunk[CHUNK];
 
     for (int Attempt = 0; Attempt < RS485_RETRIES; Attempt++) {
-        RS485WaitForSilence(0); // bootloader traffic is the highest priority
+        RS485WaitForSilence(0, RS485_SILENCE_TIMEOUT_MS); // bootloader traffic is the highest priority
+        (void)RS485KeepBufferedRx();
         gpio_set_level(RS485_EN_PIN, 1);
-        uart_flush_input(UART_NUM_1);
 
         bool Collided = false;
         size_t Verified = 0;
         for (size_t Off = 0; !Collided && Off < Len; Off += CHUNK) {
             size_t ChunkLen = (Len - Off < CHUNK) ? (Len - Off) : CHUNK;
             uart_write_bytes(UART_NUM_1, (const char *)(Data + Off), ChunkLen);
-            int Got = uart_read_bytes(UART_NUM_1, RxChunk, ChunkLen, pdMS_TO_TICKS(20));
+            int Got = uart_read_bytes(UART_NUM_1, RxChunk, ChunkLen, pdMS_TO_TICKS(RS485_ECHO_TIMEOUT_MS));
             if (Got != (int)ChunkLen || memcmp(Data + Off, RxChunk, ChunkLen) != 0) {
                 Collided = true;
                 break;
@@ -197,7 +324,7 @@ bool RS485SendRaw(const uint8_t *Data, size_t Len)
 
         if (!Collided && Verified == Len)
             return true;
-        vTaskDelay(pdMS_TO_TICKS((RawRand() % 16) + 1));
+        RS485SleepTicking((RawRand() % 16) + 1);
     }
     return false;
 }
@@ -211,11 +338,15 @@ bool (*BootloaderRxSink)(uint8_t Byte) = nullptr;
 
 // Receives and validates a full PacketFrame using the shared bus assembler
 // (Core/Functions/Bus.h); the byte source pulls from the ESP32 UART driver.
+//
+// Bytes the transmit path took off the UART while it was waiting for the line come FIRST
+// (RxKeep): they were received before anything the driver still holds, and they are a whole or
+// partial frame that used to be discarded (card t_4c9c5fa8).
 int ReceivePacket(PacketFrame *Data)
 {
     return ReceivePacketFrame(Data, [](uint8_t &Byte) -> bool {
         for (;;) {
-            if (uart_read_bytes(UART_NUM_1, &Byte, 1, 0) != 1)
+            if (!RxKeep.Pop(Byte) && uart_read_bytes(UART_NUM_1, &Byte, 1, 0) != 1)
                 return false;
             if (BootloaderRxSink && BootloaderRxSink(Byte))
                 continue; // consumed by the bootloader passthrough

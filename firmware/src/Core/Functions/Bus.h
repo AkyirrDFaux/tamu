@@ -18,15 +18,22 @@
 #define RS485_SILENCE_BYTES    8
 #define RS485_SILENCE_TIMEOUT_MS 100
 
-// Waits for the line to be silent for 8 bytes + Priority/8 + random 0-3 bytes, bounded by
-// RS485_SILENCE_TIMEOUT_MS so a continuously-busy or shorted bus cannot wedge the caller.
-// Shared by both devices - they only differ in how a byte is drained, how time is read and
+// Waits for the line to be silent for 8 bytes + Priority/8 + random 0-3 bytes, bounded by `CapMs`
+// (RS485_SILENCE_TIMEOUT_MS unless the caller is inside a stint that has already spent part of its
+// budget) so a continuously-busy or shorted bus cannot wedge the caller.
+// Shared by both devices - they only differ in how the line is observed, how time is read and
 // how the loop yields (DAS busy-waits, Tamu sleeps 1 ms):
-//   drain()  - drains any pending bus bytes; returns true when the bus was active.
+//   active() - takes whatever the UART holds and returns true when the bus was active. A caller
+//              that can keep the bytes (the Tamu's keep ring) MUST: a reply that is still arriving
+//              has to survive the wait and reach the assembler. The old contract here was
+//              "drain", and draining is what ate the node's answer and made a restore report a
+//              silent node (card t_4c9c5fa8). The DAS still drains: its 2048 B of RAM has no room
+//              for a keep ring and its echo check reads the same ring, so that half is not done.
 //   now_us() - a microsecond clock (may wrap; only short spans are compared).
 //   yield()  - a short cooperative pause for the tight retry loop.
-template <typename DrainFn, typename NowUs, typename YieldFn>
-static void RS485WaitForSilence(uint8_t Priority, DrainFn Drain, NowUs NowUsCb, YieldFn YieldCb)
+template <typename ActiveFn, typename NowUs, typename YieldFn>
+static void RS485WaitForSilence(uint8_t Priority, ActiveFn Active, NowUs NowUsCb, YieldFn YieldCb,
+                               uint32_t CapMs = RS485_SILENCE_TIMEOUT_MS)
 {
     uint32_t SilenceUs = (RS485_SILENCE_BYTES + (Priority / 8) + (RawRand() % 4)) * RS485_BYTE_TIME_US;
     uint32_t IdleSince = NowUsCb();
@@ -34,15 +41,58 @@ static void RS485WaitForSilence(uint8_t Priority, DrainFn Drain, NowUs NowUsCb, 
 
     for (;;)
     {
-        if (Drain())
+        if (Active())
             IdleSince = NowUsCb(); // bus activity: restart the silence window
         if ((NowUsCb() - IdleSince) >= SilenceUs)
             return;
-        if ((NowUsCb() - WaitStart) >= (uint32_t)RS485_SILENCE_TIMEOUT_MS * 1000u)
+        if ((NowUsCb() - WaitStart) >= CapMs * 1000u)
             return; // Give up: transmit into the best window we had
         YieldCb();
     }
 }
+
+// Bytes taken off the UART while a transmitter is waiting for the line, kept for the assembler.
+//
+// A silence wait has to READ the UART: its job is to know whether bytes are still arriving, and
+// the driver's ring (1024 B = 22 ms of line at 460800) is far too small to leave a whole reply in
+// while the caller also waits out a silence window - a maximally long frame is 129 bytes, and a
+// waiting sender that keeps reading is exactly what a busy bus produces. So the bytes are put here
+// and ReceivePacket()'s byte source reads this ring FIRST: its bytes are older than anything the
+// driver still holds, so frame order is preserved across the two sources.
+//
+// Host-clean (no UART, no RTOS) so the native tests drive the real type: order across the wrap,
+// full detection, and - the point of the whole card - that a byte it cannot hold is REFUSED to
+// its caller (which counts it) rather than silently dropped on the floor.
+template <uint16_t Size>
+struct BusRxKeepRing
+{
+    static_assert(Size > 0 && Size <= 4000, "a keep ring is a small byte FIFO");
+    uint8_t Buf[Size];
+    uint16_t Head = 0; // free-running; wrapped on access, so 16-bit subtraction detects full/empty
+    uint16_t Tail = 0;
+
+    uint16_t Count() const { return (uint16_t)(Head - Tail); }
+
+    // Returns false when the ring is full: the caller must count that byte as destroyed. The
+    // contents already kept are untouched (the older bytes are the older frame).
+    bool Push(uint8_t Byte)
+    {
+        if (Count() >= Size)
+            return false;
+        Buf[Head % Size] = Byte;
+        Head = (uint16_t)(Head + 1);
+        return true;
+    }
+
+    bool Pop(uint8_t &Byte)
+    {
+        if (Head == Tail)
+            return false;
+        Byte = Buf[Tail % Size];
+        Tail = (uint16_t)(Tail + 1);
+        return true;
+    }
+};
 
 // CRC + length validation for a fully-assembled frame (RX side).
 // CRC covers everything from flags through the end of the payload (the payload_len field is
@@ -52,6 +102,11 @@ static void RS485WaitForSilence(uint8_t Priority, DrainFn Drain, NowUs NowUsCb, 
 // core" from "it reached it corrupted" when an app transaction times out (AppInterface.h's gate
 // ring reports it). A node has no room for a diagnostic it cannot show (DAS RAM is 2048/2048 B).
 uint32_t BusRxCrcRejects = 0;
+// Every byte the RX path had to DROP since boot (card t_4c9c5fa8). Zero here means no received
+// byte was ever thrown away, so "the node never answered" cannot be this core eating its answer:
+// before this counter existed the silence wait drained replies into a 32-byte scratch array and
+// nothing anywhere recorded it. It is reported in the BUSGATE totals line beside rxrejects.
+uint32_t BusRxDestroyed = 0;
 #endif
 
 inline int RxValidateFrame(PacketFrame *Data)

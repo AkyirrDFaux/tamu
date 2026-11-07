@@ -98,6 +98,11 @@ public:
     bool Enqueue(const PacketFrame &Frame, AppLinkSource From);
     void RouteIn(PacketFrame &Frame);
     void Pump();
+    // The link-only half of Pump(): moves queued reply bytes and ticks the radios, and dispatches
+    // nothing. The bus transmit calls it while a send blocks the main task (Devices/Tamu_v2.0A/
+    // RSBus.h RS485AppLinkTick) - a dispatch there could start a second transmit on the wire the
+    // running one owns.
+    void PumpLink();
     uint16_t TxPeek(uint8_t *Dst, uint16_t Max);
     void TxCommit(uint16_t Count);
     uint16_t TxPop(uint8_t *Dst, uint16_t Max);
@@ -253,6 +258,8 @@ uint32_t AppLinkFrameRejects = 0; // a link frame failed its CRC and was re-sync
 uint32_t AppLinkEnqueueDrops = 0; // the inbound queue was full and the frame was dropped
 uint32_t AppBusSendFails = 0;     // a bus transmit exhausted its retries (core-origin included)
 extern uint32_t BusRxCrcRejects;  // defined in Core/Functions/Bus.h (the RX assembler's owner)
+extern uint32_t BusRxDestroyed;   // defined in Core/Functions/Bus.h (bytes the RX path had to drop)
+extern uint32_t RS485TxStintWorstMs; // defined in Devices/Tamu_v2.0A/RSBus.h (longest send, ms)
 
 // Frames the core itself wants to put on the bus while an app transaction is still owed an
 // answer. They are held here and dispatched the moment the gate closes: one half-duplex medium
@@ -340,9 +347,11 @@ inline void AppBusGateDrain()
                   (unsigned long)AppBusGateClashes, (unsigned long)AppBusGateLosses,
                   (unsigned long)AppBusDeferredTotal, (unsigned long)AppBusDeferredDrops,
                   (unsigned)AppBusGateWorst, (unsigned)APP_BUS_REPLY_TIMEOUT_MS);
-        DeviceLog("BUSGATE", "link rejects=%lu drops=%lu | bus sendfails=%lu rxrejects=%lu",
+        DeviceLog("BUSGATE", "link rejects=%lu drops=%lu | bus sendfails=%lu rxrejects=%lu "
+                  "rxdestroyed=%lu txstint=%lums",
                   (unsigned long)AppLinkFrameRejects, (unsigned long)AppLinkEnqueueDrops,
-                  (unsigned long)AppBusSendFails, (unsigned long)BusRxCrcRejects);
+                  (unsigned long)AppBusSendFails, (unsigned long)BusRxCrcRejects,
+                  (unsigned long)BusRxDestroyed, (unsigned long)RS485TxStintWorstMs);
     }
 }
 #endif
@@ -736,6 +745,21 @@ void AppInterfaceService::Pump()
     // and the scripts run at their own rate while a whole-file reply is in flight.
     StorageStreamTick();
 
+    AppBLETick();
+}
+
+// The link-only half of Pump(), for the one caller that must not dispatch: the bus transmit
+// (RS485AppLinkTick). While a send blocks the main task - a silence window, an echo window, a
+// retry backoff - the app is mid-transaction and its reply bytes still have to leave, so this does
+// the link work and none of the dispatch work. Dispatch is deliberately absent: RouteIn() can
+// start a bus transmit of its own, and the send that is running holds TX-enable and the wire.
+//
+// No AppBusGateDrain/AppBusDeferredDrain either: both exist to put more frames on that wire.
+void AppInterfaceService::PumpLink()
+{
+    Connected = AppUSBActive() || AppBLEActive();
+    AppUSBTick();
+    TxFlush();
     AppBLETick();
 }
 
