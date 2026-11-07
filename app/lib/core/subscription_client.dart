@@ -6,6 +6,7 @@ import 'dart:async';
 import 'diagnostics.dart';
 import 'protocol.dart';
 import 'request_channel.dart';
+import 'request_gate.dart';
 import 'types.dart';
 
 class SubscriptionClient {
@@ -105,6 +106,25 @@ class SubscriptionClient {
         );
       }
       return response;
+    } on RequestQueueTimeout catch (error) {
+      // The link held every slot for the whole queue bound: this request was never sent, so the
+      // device was never asked (see [RequestQueueTimeout]). Reporting it as an unanswered node is
+      // a device verdict the app never measured.
+      AppDiagnostics.log(
+        'subscriptions',
+        'dev ${idToString(toDevice ?? deviceId)} $service/$cid not sent - '
+            'the link is busy: $error',
+      );
+      _trace.record(
+        RequestFault(
+          kind: RequestFaultKind.busy,
+          deviceId: toDevice ?? deviceId,
+          service: service,
+          cid: cid,
+          detail: '$error',
+        ),
+      );
+      return null;
     } catch (error) {
       AppDiagnostics.log('subscriptions', 'request failed: $error');
       _trace.record(

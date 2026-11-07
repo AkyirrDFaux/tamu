@@ -238,6 +238,23 @@ class StorageClient {
         );
       }
       return response.success;
+    } on RequestQueueTimeout catch (error) {
+      // The link held every slot for the whole queue bound, so this command was never sent. That
+      // is not a device verdict: the device was never asked (see [RequestQueueTimeout]).
+      AppDiagnostics.log(
+        'storage',
+        'request $cid not sent - the link is busy: $error',
+      );
+      trace.record(
+        RequestFault(
+          kind: RequestFaultKind.busy,
+          deviceId: deviceId,
+          service: ServiceType.storage,
+          cid: cid,
+          detail: '$error',
+        ),
+      );
+      return false;
     } catch (error) {
       AppDiagnostics.log('storage', 'request failed: $error');
       trace.record(
@@ -471,6 +488,7 @@ class StorageClient {
       PlacedFile? placed,
       String? fault,
       FileReadFault? kind,
+      bool busy,
     })
   >
   _readWhole(
@@ -491,6 +509,7 @@ class StorageClient {
         placed: null,
         fault: 'there is no link to the device',
         kind: FileReadFault.failed,
+        busy: false,
       );
     }
     PacketResponse? reply;
@@ -505,6 +524,7 @@ class StorageClient {
           placed: null,
           fault: 'the read was cancelled',
           kind: FileReadFault.failed,
+          busy: false,
         );
       }
       lastReadAttempts = attempt;
@@ -530,6 +550,7 @@ class StorageClient {
               '${error.limit} slots taken, nothing came free in '
               '${error.waited.inMilliseconds} ms), so this read was never sent',
           kind: FileReadFault.failed,
+          busy: true,
         );
       } catch (error) {
         fault = 'the device did not answer ($error)';
@@ -564,6 +585,7 @@ class StorageClient {
             placed: null,
             fault: null,
             kind: FileReadFault.absent,
+            busy: false,
           );
         } else {
           placed = placeFragments(reply);
@@ -586,7 +608,13 @@ class StorageClient {
           'read "$name": complete on attempt $attempt/$readAttempts - '
               '${_fragmentSummary(reply!)}',
         );
-        return (reply: reply, placed: placed, fault: null, kind: null);
+        return (
+          reply: reply,
+          placed: placed,
+          fault: null,
+          kind: null,
+          busy: false,
+        );
       }
       if (kind == FileReadFault.partial) {
         // A reply that ARRIVED with a hole is reported, not asked for again. Storage CID 5 asks a
@@ -601,7 +629,13 @@ class StorageClient {
           'read "$name": attempt $attempt failed (${kind!.label}) - $fault; '
               'not re-requested (an incomplete reply is reported, never re-burst)',
         );
-        return (reply: reply, placed: null, fault: fault, kind: kind);
+        return (
+          reply: reply,
+          placed: null,
+          fault: fault,
+          kind: kind,
+          busy: false,
+        );
       }
       final more = attempt < readAttempts;
       final wait = more ? readRetryBackoff[attempt - 1] : Duration.zero;
@@ -614,7 +648,7 @@ class StorageClient {
       );
       if (more) await Future<void>.delayed(wait);
     }
-    return (reply: reply, placed: null, fault: fault, kind: kind);
+    return (reply: reply, placed: null, fault: fault, kind: kind, busy: false);
   }
 
   /// Why a reply that came back short was not asked for again: the read has no offset form, so a
@@ -636,12 +670,18 @@ class StorageClient {
   }
 
   /// Records why a read ended without data, on the client's [trace] (the restore report's reason).
+  ///
+  /// A read that never got a slot on the link ([RequestQueueTimeout]) is [RequestFaultKind.busy],
+  /// not [RequestFaultKind.noReply]: not one frame went out, so the device was never asked. The
+  /// read's own sentence already says so (`_readWhole`); this keeps the recorded KIND agreeing
+  /// with it, which is what `restoreCodeText` renders.
   void _recordReadFault(
     ({
       PacketResponse? reply,
       PlacedFile? placed,
       String? fault,
       FileReadFault? kind,
+      bool busy,
     })
     read, {
     required int cid,
@@ -650,7 +690,7 @@ class StorageClient {
     if (read.reply == null) {
       trace.record(
         RequestFault(
-          kind: RequestFaultKind.noReply,
+          kind: read.busy ? RequestFaultKind.busy : RequestFaultKind.noReply,
           deviceId: deviceId,
           service: ServiceType.storage,
           cid: cid,
