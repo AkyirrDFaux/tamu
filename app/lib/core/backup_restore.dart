@@ -2444,6 +2444,37 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
   return created;
 }
 
+/// How the restore's final **Save All** is bounded, and when it may be re-sent.
+///
+/// Save All is one forwarded transaction that writes every block to flash; the core's 64-slot
+/// orphan cleanup and page erases can hold it for far longer than any other request, so its
+/// window is its own. After a window expires the save may still be RUNNING on the node, and a
+/// second save launched on top of it competes for the one link - so the timeout alone is not
+/// evidence that the save was lost (see [_saveOneDevice]).
+class RestoreSavePolicy {
+  const RestoreSavePolicy({
+    this.window = const Duration(seconds: 25),
+    this.settle = const Duration(seconds: 2),
+    this.probeWindow = const Duration(seconds: 2),
+    this.resendWindow = const Duration(seconds: 5),
+  });
+
+  /// How long the first Save All waits for its reply (a real save may need all of it).
+  final Duration window;
+
+  /// How long to let a save that did not answer settle before asking the node anything.
+  final Duration settle;
+
+  /// The window of the one light read that asks whether the node is answering at all.
+  final Duration probeWindow;
+
+  /// The window of the re-send, which only happens once the node has answered that read.
+  final Duration resendWindow;
+}
+
+/// The policy in force. A test installs a fast one; nothing in the app changes it.
+RestoreSavePolicy restoreSavePolicy = const RestoreSavePolicy();
+
 /// Saves every device a restore has written to, and reports the ones that never confirmed it.
 ///
 /// A write sits in RAM until the device is told to save. Without this the whole run works until
@@ -2452,56 +2483,119 @@ Future<int> prepareDynamicBlocks(RestorePlan plan) async {
 /// device that carried no subscription entries at all loses every value it was just given. So
 /// every device the run touched is saved, not only the ones that carried subscription tables.
 ///
-/// **A save that does not answer is re-sent, and then REPORTED.** Save All is one forwarded
-/// transaction, and this rig loses a few percent of those: measured 2026-11-05 over BLE, three
-/// device saves in one restore ran out the 25 s timeout with no reply at all, while the same
-/// three answered in 124-336 ms on the next run and over USB - and the run still said the restore
-/// had been applied. The result used to be dropped at the call site, so a restore that never
-/// reached flash read as a success. The retry is the read policy's shape (a lost reply, not a
-/// refusal, is what a timeout means here) with a shorter window on the second attempt: the first
-/// one keeps the 25 s a real save may need, and a device that answers at all answers in
-/// milliseconds.
+/// **A save that does not answer is not automatically re-sent.** The old policy was "25 s, then
+/// 250 ms later 5 s more": a second Save All launched while the first was very likely still
+/// running on the node, both of them through one link. A timeout says the REPLY was lost, not
+/// that the save was - so the policy is now: wait for the node to go quiet, ASK it with one
+/// light read, and re-send only if it answers. A node that answers is not busy, so its save is
+/// not still running; a node that does not answer is either still saving or gone, and in both
+/// cases a second save is the wrong thing to send. Either way the run is TOLD (a progress step
+/// names the wait, and the failure names which of the two it was), because a single Save All can
+/// hold one of the link's eight request slots for the whole window.
+///
+/// The saves of several devices run at once for the same reason: one after another, four devices
+/// are four windows of a run that has already written everything, while at once it costs the
+/// slowest of them.
 Future<List<RestoreFailure>> _persistWrites(
   RestorePlan plan,
-  Set<int> deviceIds,
+  Set<int> deviceIds, {
+  RestoreProgressCallback? onProgress,
+}) async {
+  if (deviceIds.isEmpty) return const <RestoreFailure>[];
+  final ids = deviceIds.toList()..sort();
+  final policy = restoreSavePolicy;
+  onProgress?.call(
+    RestoreProgress(
+      phase: 'save',
+      label:
+          'Saving ${ids.length} device(s) - Save All writes every block to flash, '
+          'so each may hold the link for up to ${policy.window.inSeconds} s',
+      completed: 0,
+      total: ids.length,
+    ),
+  );
+  var done = 0;
+  final results = await Future.wait([
+    for (final id in ids)
+      _saveOneDevice(plan, id, policy).then((failure) {
+        done++;
+        onProgress?.call(
+          RestoreProgress(
+            phase: 'save',
+            label: 'Saved $done/${ids.length} device(s)',
+            completed: done,
+            total: ids.length,
+          ),
+        );
+        return failure;
+      }),
+  ]);
+  return [for (final failure in results) ?failure];
+}
+
+/// Saves one device, and says which way it failed when it did.
+///
+/// Returns null when the save was confirmed, and a [RestoreFailure] naming what the node did
+/// otherwise: answered nothing at all (so the save may still be running and was not re-sent), or
+/// answered a light read and then did not answer the re-send either.
+Future<RestoreFailure?> _saveOneDevice(
+  RestorePlan plan,
+  int id,
+  RestoreSavePolicy policy,
 ) async {
-  const attempts = 2;
-  const retryDelay = Duration(milliseconds: 250);
-  final failures = <RestoreFailure>[];
-  for (final id in deviceIds) {
-    final client = RegisterClient(deviceId: id);
-    var saved = false;
-    for (var attempt = 1; attempt <= attempts && !saved; attempt++) {
-      client.trace.clear();
-      saved = await client.saveAll(
-        timeout: attempt == 1
-            ? const Duration(seconds: 25)
-            : const Duration(seconds: 5),
-      );
-      if (!saved && attempt < attempts) {
-        await Future<void>.delayed(retryDelay);
-      }
+  final client = RegisterClient(deviceId: id);
+  client.trace.clear();
+  var saved = await client.saveAll(timeout: policy.window);
+  var outcome =
+      'it answered a light read afterwards, so it was re-sent, and did not '
+      'answer the re-send either';
+  if (!saved) {
+    // Give a save that is still programming flash the chance to finish before asking anything:
+    // a node in the middle of a save does not answer, and reading it too early would itself be
+    // the evidence that "the node is gone".
+    await Future<void>.delayed(policy.settle);
+    final answers = await _answersAStatusRead(client, policy.probeWindow);
+    if (answers) {
+      // The node is answering, so the save it never acknowledged is not still running: either it
+      // finished and its reply was lost, or it never started. One re-send is the right ask.
+      saved = await client.saveAll(timeout: policy.resendWindow);
+    } else {
+      outcome =
+          'it did not answer a light read afterwards, so the save may still be running '
+          'and it was not re-sent';
     }
-    if (saved) continue;
-    final target = plan.liveDevices
-        .where((device) => device.id == id)
-        .firstOrNull;
-    failures.add(
-      RestoreFailure.device(
-        target ?? LiveDevice(id: id, name: idToString(id), blocks: const []),
-        kindWord: 'save all',
-        subject: 'Save All (Register CID 5)',
-        meaning:
-            'the device never confirmed Save All, so everything this run wrote to it is '
-            'in its RAM only and will be lost at the next power cycle',
-        fault: client.trace.fault,
-        clientReason: client.trace.fault == null
-            ? 'no reply to Save All after $attempts attempts'
-            : null,
-      ),
-    );
   }
-  return failures;
+  if (saved) return null;
+  final target = plan.liveDevices
+      .where((device) => device.id == id)
+      .firstOrNull;
+  return RestoreFailure.device(
+    target ?? LiveDevice(id: id, name: idToString(id), blocks: const []),
+    kindWord: 'save all',
+    subject: 'Save All (Register CID 5)',
+    meaning:
+        'the device never confirmed Save All, so everything this run wrote to it is '
+        'in its RAM only and will be lost at the next power cycle; $outcome',
+    fault: client.trace.fault,
+    clientReason: client.trace.fault == null
+        ? 'Save All did not answer within ${policy.window.inSeconds} s; $outcome'
+        : null,
+  );
+}
+
+/// Whether the node answers one light register read: the yes/no that tells "slow" from "lost"
+/// after a Save All timed out.
+///
+/// One send, deliberately: this is a liveness question, not a read whose value matters, so a
+/// reply that never comes must cost one window rather than a retry policy's worth of them.
+Future<bool> _answersAStatusRead(RegisterClient client, Duration window) async {
+  final reply = await client.request(
+    RegisterCid.read,
+    // System block, field 0 (the device name): present on every target the app talks to.
+    payload: blockInfoBytes(systemBlockTypeValue, 0, 0, 0),
+    timeout: window,
+  );
+  return reply != null;
 }
 
 /// Whether a restored script is a function library.
@@ -4623,7 +4717,9 @@ Future<RestoreReport> applyRestorePlan(
   // deciding that on a half-written device is not what "stop" means. What was written is saved -
   // those bytes sit in RAM, so leaving them unsaved would lose the work the user did allow.
   if (cancelled) {
-    reasons.addAll(await _persistWrites(plan, writtenDevices));
+    reasons.addAll(
+      await _persistWrites(plan, writtenDevices, onProgress: onProgress),
+    );
     final stopped = RestoreReport(
       at: DateTime.now(),
       written: written,
@@ -4646,7 +4742,9 @@ Future<RestoreReport> applyRestorePlan(
   // Every device this run wrote to is saved - the writes sit in RAM until then - and the scripts
   // are loaded last, so they read the values the restore has just written. A device whose save
   // never answered is reported, because a restore that stays in RAM is not a restore.
-  reasons.addAll(await _persistWrites(plan, writtenDevices));
+  reasons.addAll(
+    await _persistWrites(plan, writtenDevices, onProgress: onProgress),
+  );
   // Then the reload rule: a script this run CHANGED is unloaded and loaded again, because the
   // device runs the image it loaded rather than the file on flash - a restore that only rewrote the
   // file would leave the rig on stale code. It runs BEFORE the bring-up so a slot the bring-up is

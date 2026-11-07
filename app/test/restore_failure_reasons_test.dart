@@ -225,6 +225,22 @@ class _RefusingBus implements RequestChannel {
   }
 }
 
+/// A Save All policy with test-sized windows.
+///
+/// The production policy waits 25 s for a real save and 2 s for a node to settle (flash page
+/// erases outlast any ordinary request); a unit test cannot spend that, so it installs this and
+/// the policy is restored when the test ends.
+void installFastSavePolicy() {
+  final previous = restoreSavePolicy;
+  restoreSavePolicy = const RestoreSavePolicy(
+    window: Duration(milliseconds: 20),
+    settle: Duration(milliseconds: 5),
+    probeWindow: Duration(milliseconds: 20),
+    resendWindow: Duration(milliseconds: 20),
+  );
+  addTearDown(() => restoreSavePolicy = previous);
+}
+
 BackupBlockRef _ref(String block, int type, int field, String fieldName) =>
     BackupBlockRef(
       block: block,
@@ -562,27 +578,72 @@ void main() {
     },
   );
 
-  test('a Save All the device never answers is re-sent, then reported', () async {
-    // Save All is what puts the run's writes in flash: a save the device never confirms used to
-    // be dropped at the call site, so a restore that stayed in RAM read as applied (measured on
-    // the rig over BLE: three device saves in one run ran out their timeout and the report still
-    // said every item landed).
-    final bus = _RefusingBus()..silent.add('register/5');
+  test(
+    'a Save All the device never answers is re-sent once the node answers again',
+    () async {
+      // Save All is what puts the run's writes in flash: a save the device never confirms used to
+      // be dropped at the call site, so a restore that stayed in RAM read as applied (measured on
+      // the rig over BLE: three device saves in one run ran out their timeout and the report still
+      // said every item landed).
+      //
+      // A timeout is not proof the save was lost, so the re-send waits for the node to answer a
+      // light read first: this bus answers everything except Save All, so the re-send is allowed.
+      final bus = _RefusingBus()..silent.add('register/5');
+      installRequestChannel(bus);
+      addTearDown(() => installRequestChannel(null));
+      installFastSavePolicy();
+
+      final report = await applyRestorePlan(_plan());
+
+      expect(
+        report.written,
+        greaterThan(0),
+        reason: 'the items themselves landed',
+      );
+      final save = report.reasons.singleWhere((r) => r.kindWord == 'save all');
+      expect(save.subject, contains('Save All'));
+      expect(save.target, 'Tamu (1.1)');
+      expect(save.code, contains('no reply'));
+      expect(save.meaning, contains('RAM only'));
+      expect(
+        save.meaning,
+        contains('re-sent'),
+        reason: 'the node answered a status read, so the save was asked again',
+      );
+      expect(
+        bus.sent
+            .where(
+              (r) =>
+                  r.service == ServiceType.register &&
+                  r.cid == RegisterCid.saveAll,
+            )
+            .length,
+        2,
+        reason: 'one re-send, and only after the node proved it was answering',
+      );
+    },
+  );
+
+  test('a Save All against a silent node is NOT re-sent blindly', () async {
+    // The old policy was "25 s, then 250 ms later 5 s more": a second Save All launched on top of
+    // a run that was very likely still going - two saves through one link, and 250 ms is far too
+    // soon to know anything. Now the timeout buys ONE light read: a node that answers it is not
+    // busy (so its save is not still running, and a re-send is safe); a node that does not answer
+    // is either still saving or gone, and in both cases a second save is the wrong thing to send.
+    final bus = _RefusingBus()..silent.addAll({'register/5', 'register/2'});
     installRequestChannel(bus);
     addTearDown(() => installRequestChannel(null));
+    installFastSavePolicy();
 
     final report = await applyRestorePlan(_plan());
 
-    expect(
-      report.written,
-      greaterThan(0),
-      reason: 'the items themselves landed',
-    );
     final save = report.reasons.singleWhere((r) => r.kindWord == 'save all');
-    expect(save.subject, contains('Save All'));
-    expect(save.target, 'Tamu (1.1)');
-    expect(save.code, contains('no reply'));
     expect(save.meaning, contains('RAM only'));
+    expect(
+      save.meaning,
+      contains('not re-sent'),
+      reason: 'the report says the save may still be running on the node',
+    );
     expect(
       bus.sent
           .where(
@@ -591,8 +652,16 @@ void main() {
                 r.cid == RegisterCid.saveAll,
           )
           .length,
-      2,
-      reason: 'a lost save is re-sent once before it is called lost',
+      1,
+      reason:
+          'one Save All, and no second burst at the node that never answered',
+    );
+    expect(
+      bus.sent.where(
+        (r) => r.service == ServiceType.register && r.cid == RegisterCid.read,
+      ),
+      hasLength(1),
+      reason: 'the status read is one send, not a retry policy worth of them',
     );
   });
 
@@ -602,6 +671,7 @@ void main() {
       final bus = _RefusingBus()..silentOnce.add('register/5');
       installRequestChannel(bus);
       addTearDown(() => installRequestChannel(null));
+      installFastSavePolicy();
 
       final report = await applyRestorePlan(_plan());
 
