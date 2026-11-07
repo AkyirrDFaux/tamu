@@ -301,7 +301,8 @@ void main() {
         // one the read policy reports rather than re-sends. The head belongs to the deadline, so
         // this request must end in a TIMEOUT error (a failed attempt, retried by the reader).
         final transport = _StallingTransport()
-          ..sendDelay = ConnectionManager.fragmentStallTimeout +
+          ..sendDelay =
+              ConnectionManager.fragmentStallTimeout +
               const Duration(milliseconds: 500);
         final manager = await _connected(transport);
 
@@ -328,45 +329,50 @@ void main() {
         expect(
           elapsed,
           greaterThanOrEqualTo(transport.sendDelay),
-          reason: 'nothing was concluded about the device before its frame was written',
+          reason:
+              'nothing was concluded about the device before its frame was written',
         );
         await manager.disconnect();
       },
     );
 
-    test('a device that answers nothing ends on the deadline, not in the stall window', () async {
-      final transport = _StallingTransport();
-      final manager = await _connected(transport);
+    test(
+      'a device that answers nothing ends on the deadline, not in the stall window',
+      () async {
+        final transport = _StallingTransport();
+        final manager = await _connected(transport);
 
-      // The deadline is longer than the stream window on purpose: before this fix the watchdog
-      // closed the read at 2 s as a "successful" zero-fragment partial, which is the shape the read
-      // policy reports instead of re-sending. Nothing of the reply has arrived, so there is no
-      // stream to watch: the deadline is the only clock that owns this wait.
-      final started = DateTime.now();
-      final error = await _failure(
-        manager.requestTolerant(
-          1,
-          ServiceType.storage,
-          5,
-          payload: StorageClient.padName('.TABLE  '),
-          timeout: const Duration(milliseconds: 2500),
-        ),
-      );
-      final elapsed = DateTime.now().difference(started);
+        // The deadline is longer than the stream window on purpose: before this fix the watchdog
+        // closed the read at 2 s as a "successful" zero-fragment partial, which is the shape the read
+        // policy reports instead of re-sending. Nothing of the reply has arrived, so there is no
+        // stream to watch: the deadline is the only clock that owns this wait.
+        final started = DateTime.now();
+        final error = await _failure(
+          manager.requestTolerant(
+            1,
+            ServiceType.storage,
+            5,
+            payload: StorageClient.padName('.TABLE  '),
+            timeout: const Duration(milliseconds: 2500),
+          ),
+        );
+        final elapsed = DateTime.now().difference(started);
 
-      expect(
-        error,
-        isA<TransportException>(),
-        reason: 'a head that never started is the deadline\'s, not a zero-fragment reply',
-      );
-      expect('$error', contains('timed out'));
-      expect(
-        elapsed,
-        greaterThanOrEqualTo(const Duration(milliseconds: 2500)),
-        reason: 'the whole deadline is given to the head',
-      );
-      await manager.disconnect();
-    });
+        expect(
+          error,
+          isA<TransportException>(),
+          reason:
+              'a head that never started is the deadline\'s, not a zero-fragment reply',
+        );
+        expect('$error', contains('timed out'));
+        expect(
+          elapsed,
+          greaterThanOrEqualTo(const Duration(milliseconds: 2500)),
+          reason: 'the whole deadline is given to the head',
+        );
+        await manager.disconnect();
+      },
+    );
   });
 
   group('a reply that stops mid-stream', () {
@@ -399,7 +405,8 @@ void main() {
         expect(
           elapsed,
           lessThan(ConnectionManager.fragmentStallTimeout * 2),
-          reason: 'closed by the stream watchdog, not by the 10 s read deadline',
+          reason:
+              'closed by the stream watchdog, not by the 10 s read deadline',
         );
         await manager.disconnect();
       },

@@ -191,9 +191,7 @@ LiveDevice _live(String address, String name) => LiveDevice(
 RestorePlan _planFor(List<(String, String)> devices) {
   final nodes = [for (final (address, name) in devices) _live(address, name)];
   return planFromSnapshot(
-    devices: [
-      for (final (address, name) in devices) _archive(address, name),
-    ],
+    devices: [for (final (address, name) in devices) _archive(address, name)],
     live: nodes,
     inventories: {
       for (final node in nodes)
@@ -254,11 +252,10 @@ void main() {
         reason: 'four saves were outstanding at once before this fix',
       );
       expect(device.saveOrder, hasLength(4), reason: 'one save per device');
-      expect(
-        device.saveOrder,
-        [for (final address in ['1.1', '2.1', '3.1', '4.1']) idFromString(address)],
-        reason: 'saved in address order, one after the other',
-      );
+      expect(device.saveOrder, [
+        for (final address in ['1.1', '2.1', '3.1', '4.1'])
+          idFromString(address),
+      ], reason: 'saved in address order, one after the other');
       expect(
         report.failures.where((line) => line.contains('RAM only')),
         isEmpty,
