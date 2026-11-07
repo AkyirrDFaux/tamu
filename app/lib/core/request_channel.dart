@@ -50,6 +50,12 @@ class ReplyGap {
           '($count of $total missing, $received received)'
           '${stoppedShort ? '; the stream stopped without its STOP frame' : ''}';
     }
+    // Nothing arrived at all: the device declared no total, so there is no hole to name - the
+    // whole reply is the hole. (The stall watchdog closes a tolerant request this way when the
+    // first fragment is the one that was lost, and the link armed it from the send.)
+    if (received == 0 && total == 0) {
+      return 'the device sent no part of the reply before the stream went quiet';
+    }
     return 'the stream stopped after fragment $received of $total, '
         'without its STOP frame';
   }

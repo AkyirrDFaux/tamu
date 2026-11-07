@@ -455,10 +455,27 @@ class ConnectionManager extends ChangeNotifier
   /// drops the tail the app used to sit on the request for 10 s with the data already in hand.
   final Map<int, Timer> _fragStall = {};
 
-  /// How long a fragmented reply may be silent before it counts as truncated. Measured on the
-  /// rig: fragments of a 16 kB file read arrive 2-11 ms apart, so half a second is far past any
-  /// normal gap and still an order of magnitude under the 10 s read timeout.
-  static const Duration fragmentStallTimeout = Duration(milliseconds: 500);
+  /// How long a fragmented reply may be silent before it counts as truncated.
+  ///
+  /// Measured on the rig (2026-11-05, 16 kB `.TABLE` read over BLE, 256 fragments): the fragments
+  /// arrive 2-11 ms apart and the whole read takes 450-848 ms, so a legitimate stream never
+  /// pauses for anything like this long. It was 500 ms, which cut streams the device was still
+  /// draining - and every cut cost the whole file again (the read's re-request goes back to
+  /// offset 0, there is no resume form). Two seconds is 2.4x the slowest whole read ever measured
+  /// here and still a fifth of the read's own 10 s timeout, so a stream that really stopped is
+  /// reported quickly instead of being re-burst.
+  ///
+  /// No rig was attached when this was widened (2026-11-07, `/dev/ttyACM0` absent), so the
+  /// inter-fragment gap itself could not be re-measured: the window is derived from the measured
+  /// whole-read duration, not from a new per-gap capture.
+  static const Duration fragmentStallTimeout = Duration(seconds: 2);
+
+  /// How long a request may queue behind [maxInFlightRequests] slots before it fails with its own
+  /// error ([RequestQueueTimeout]) instead of waiting for a slot that may never come free.
+  ///
+  /// The longest ordinary request is the 2 s default, so a slot frees within two rounds for a
+  /// live link; five seconds means the queue is not "busy", it is wedged, and the caller hears so.
+  static const Duration requestQueueTimeout = Duration(seconds: 5);
 
   /// The most requests this link keeps in flight at once.
   ///
@@ -922,6 +939,12 @@ class ConnectionManager extends ChangeNotifier
       }
     }
     _pending.clear();
+    // A slot is only given back by the request that took it - and the requests parked in a
+    // platform write that never returned never get that far. Take every slot back here, or the
+    // wedge outlives the link it was taken from (eight stalled writes used to make every later
+    // request queue behind a gate that could never open again).
+    _requestGate.releaseAll(const TransportException('Disconnected'));
+
     for (final timer in _fragStall.values) {
       timer.cancel();
     }
@@ -982,7 +1005,7 @@ class ConnectionManager extends ChangeNotifier
       switch (_reassembler.feed(txId, frame)) {
         case FragmentPending():
           _pending[txId] = completer;
-          _armFragmentStall(txId);
+          _armReplyStall(txId);
           _reportStreamProgress(txId);
         case FragmentComplete(
           :final payload,
@@ -1019,14 +1042,15 @@ class ConnectionManager extends ChangeNotifier
 
   /// (Re)arms the "this reply stopped arriving" watchdog for [txId].
   ///
-  /// Only a reply that is actually streaming gets one, so a request the device never answers
-  /// is still a plain timeout. On expiry the reply is closed with what arrived: a tolerant
-  /// request gets the partial reply (the file readers can use most of a lost tail), anything
-  /// else fails with the fragment it stopped at - which is what the reassembler used to say,
-  /// 10 s later.
-  void _armFragmentStall(int txId) {
+  /// Armed when the request is SENT (a tolerant read) and re-armed by every fragment that
+  /// arrives. It used to be armed only by a fragment, which left the worst hole unwatched: a
+  /// reply whose FIRST fragment was lost armed nothing, so the read sat out its whole 10 s
+  /// timeout - three times, once per attempt - before saying anything.
+  ///
+  /// On expiry the reply is closed with what arrived: a tolerant request gets the partial reply
+  /// (the readers can say WHERE the hole is), anything else fails with the fragment it stopped at.
+  void _armReplyStall(int txId) {
     _fragStall[txId]?.cancel();
-    if (!_reassembler.inProgress(txId)) return;
     _fragStall[txId] = Timer(fragmentStallTimeout, () {
       _fragStall.remove(txId);
       final completer = _pending[txId];
@@ -1037,7 +1061,8 @@ class ConnectionManager extends ChangeNotifier
         _tolerant.remove(txId);
         AppDiagnostics.log(
           'link',
-          'reply truncated: ${truncated?.chunks.length ?? 0}/'
+          'reply truncated after ${fragmentStallTimeout.inMilliseconds} ms of silence: '
+              '${truncated?.chunks.length ?? 0}/'
               '${(truncated?.chunks.length ?? 0) + (truncated?.missing.length ?? 0)} '
               'fragments, ${truncated?.payload.length ?? 0} bytes kept',
         );
@@ -1057,8 +1082,10 @@ class ConnectionManager extends ChangeNotifier
       } else if (!completer.isCompleted) {
         completer.completeError(
           TransportException(
-            'Fragment stream stopped after '
-            '${truncated?.chunks.length ?? 0} fragment(s)',
+            truncated == null
+                ? 'the device sent no fragment of the reply'
+                : 'Fragment stream stopped after '
+                      '${truncated.chunks.length} fragment(s)',
           ),
         );
       }
@@ -1124,8 +1151,16 @@ class ConnectionManager extends ChangeNotifier
 
     // One request at a time per slot: a burst wider than the core's inbound queue is dropped
     // there (see [maxInFlightRequests]). The slot is held for the whole round trip, so it is
-    // taken before the send and given back in the `finally` on every path.
-    await _requestGate.acquire();
+    // taken before the send and given back in the `finally` on every path - and it is taken with
+    // a queue bound, because a slot that never comes free used to mean a request that never
+    // returned and never said why.
+    final RequestSlot slot;
+    try {
+      slot = await _requestGate.acquire(wait: requestQueueTimeout);
+    } on RequestQueueTimeout catch (error) {
+      AppDiagnostics.log('link', 'request never got a slot: $error');
+      throw TransportException('the link is busy: $error');
+    }
     try {
       // A caller-supplied transaction ID lets several requests share one TRID (used by
       // the Subscriptions client to register both the requester and provider side of a
@@ -1158,18 +1193,44 @@ class ConnectionManager extends ChangeNotifier
       } else {
         _tolerant.remove(txId);
       }
+
+      /// The whole round trip, SEND INCLUDED. The timeout used to be armed after `send`
+      /// returned, so a platform write that never returned parked the request - and its gate
+      /// slot - before any deadline existed.
+      ///
+      /// Both halves are listened to from the start: if the link is torn down while the platform
+      /// write is still parked, the reply's error must reach this request at once (and must not
+      /// become an unhandled async error in the zone, which is what a completer nobody awaits
+      /// produces).
+      Future<PacketResponse> roundTrip() async {
+        // A tolerant read's stall watchdog starts with the send: a reply whose FIRST fragment is
+        // lost must not wait out the request's own timeout to be reported.
+        if (tolerant) _armReplyStall(txId);
+        final first = await Future.any<Object?>([
+          transport.send(frame.toBytes()).then<Object?>((_) => null),
+          completer.future,
+        ]);
+        if (first is PacketResponse) return first;
+        // The send is done: the reply's own window starts now.
+        if (tolerant) _armReplyStall(txId);
+        return completer.future;
+      }
+
       try {
-        await transport.send(frame.toBytes());
-        return await completer.future.timeout(
+        return await roundTrip().timeout(
           timeout,
           onTimeout: () {
             _pending.remove(txId);
             _tolerant.remove(txId);
             _cancelFragmentStall(txId);
             _reassembler.discard(txId);
-            throw TransportException(
+            final timedOut = TransportException(
               '${service.name} CID $functionCid request timed out',
             );
+            // The round trip itself is abandoned, not awaited: a send that never returns cannot
+            // be completed from here, and completing the reply with an error would be an error
+            // nobody is listening to (the send has not even finished).
+            throw timedOut;
           },
         );
       } catch (error) {
@@ -1182,7 +1243,7 @@ class ConnectionManager extends ChangeNotifier
         _inFlight.remove(txId);
       }
     } finally {
-      _requestGate.release();
+      slot.release();
     }
   }
 

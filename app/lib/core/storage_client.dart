@@ -334,8 +334,9 @@ class StorageClient {
       _recordReadFault(read, cid: 5, detail: read.fault!);
       lastReadError =
           'The device could not send its file table: ${read.fault}. '
-          'It was asked $lastReadAttempts time(s); try refreshing, or '
-          'move closer if the link is Bluetooth.';
+          'It was asked $lastReadAttempts time(s).'
+          '${_notResentNote(read.kind)} '
+          'Try again, or move closer if the link is Bluetooth.';
       AppDiagnostics.log(
         'storage',
         'file table: FAILED (${read.kind?.label ?? FileReadFault.failed.label}) '
@@ -422,17 +423,18 @@ class StorageClient {
     }
   }
 
-  /// How many times one whole-file read is sent: the first attempt plus two re-requests.
+  /// How many times one whole-file read is SENT when its replies never arrive at all: the first
+  /// attempt plus two re-sends.
   ///
   /// Storage CID 5 asks a file BY NAME and has no offset form, so a re-request is the whole file
-  /// again - there is nothing cheaper to retry. Three sends is the owner's "re-request if
-  /// something fails" made bounded: a truncated 16 kB reply is cut by the link's 500 ms stall
-  /// watchdog ([ConnectionManager.fragmentStallTimeout]), so the whole policy costs ~2 s over BLE
-  /// before the error is shown instead of a hang.
+  /// again - there is nothing cheaper to retry. This bound is for the case that deserves a
+  /// retry: no reply, no bytes, a thrown request (the frame itself was lost, the link dropped and
+  /// came back). A reply that ARRIVED with a hole in it is NOT re-sent - see [_readWhole] - so
+  /// three whole re-requests is no longer the cost of one lost fragment.
   static const int readAttempts = 3;
 
-  /// The pause before each re-request; [readAttempts] - 1 entries. Short, because the failure it
-  /// recovers from is a busy transmit ring on the device, not a device that has gone away.
+  /// The pause before each re-send; [readAttempts] - 1 entries. Short, because the failure it
+  /// recovers from is a lost frame on a link that is otherwise up.
   static const List<Duration> readRetryBackoff = [
     Duration(milliseconds: 200),
     Duration(milliseconds: 600),
@@ -548,6 +550,21 @@ class StorageClient {
         );
         return (reply: reply, placed: placed, fault: null, kind: null);
       }
+      if (kind == FileReadFault.partial) {
+        // A reply that ARRIVED with a hole is reported, not asked for again. Storage CID 5 asks a
+        // file BY NAME: there is no offset form to resume from, so a re-request is the WHOLE file
+        // again - and it lands in the same 24 KiB transmit ring that just dropped fragments,
+        // before that ring has drained. Three whole re-requests never recovered anything a quiet
+        // second would not, and a page that lists N files paid it per file. The retry is the
+        // page's Try again (or the next refresh), at the moment the user chooses, on a link that
+        // has had time to settle.
+        AppDiagnostics.log(
+          'storage',
+          'read "$name": attempt $attempt failed (${kind!.label}) - $fault; '
+              'not re-requested (an incomplete reply is reported, never re-burst)',
+        );
+        return (reply: reply, placed: null, fault: fault, kind: kind);
+      }
       final more = attempt < readAttempts;
       final wait = more ? readRetryBackoff[attempt - 1] : Duration.zero;
       AppDiagnostics.log(
@@ -561,6 +578,14 @@ class StorageClient {
     }
     return (reply: reply, placed: null, fault: fault, kind: kind);
   }
+
+  /// Why an incomplete reply was not asked for again: the read has no offset form, so a
+  /// re-request is the whole file - into the same buffer that just dropped it.
+  static String _notResentNote(FileReadFault? kind) =>
+      kind == FileReadFault.partial
+      ? ' It was not asked again: this read has no offset form, so a re-request is the '
+            'whole file again, landing in the buffer that just dropped it.'
+      : '';
 
   /// `256 of 256 fragments, STOP received, 16384 byte(s)` - the shape a rig log quotes, so a
   /// run's fragment counts can be read against the reply they belong to.

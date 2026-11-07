@@ -303,7 +303,7 @@ void main() {
       expect(channel.tableAsks, 1, reason: 'a whole reply is not re-requested');
     });
 
-    testWidgets('recovers a truncated reply with one re-request', (
+    testWidgets('a truncated reply is one send, and Try again recovers it', (
       tester,
     ) async {
       tester.view.physicalSize = const Size(1000, 1800);
@@ -321,7 +321,22 @@ void main() {
       );
       await _settleRetries(tester);
 
-      expect(channel.tableAsks, 2, reason: 'the BLE hole triggered a re-read');
+      // The BLE hole is reported, not re-burst: a second read of a 16 kB table would land in the
+      // ring that just dropped the fragments.
+      expect(
+        channel.tableAsks,
+        1,
+        reason:
+            'one send - the retry is the page\'s, not three inside the failure',
+      );
+      expect(find.text('The file table could not be read'), findsOneWidget);
+
+      // The user's retry runs on a link that has had time to settle, and it works.
+      await tester.tap(find.text('Try again'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(channel.tableAsks, 2);
       expect(find.textContaining('LAY_1'), findsWidgets);
     });
 
@@ -343,7 +358,11 @@ void main() {
       );
       await _settleRetries(tester);
 
-      expect(channel.tableAsks, StorageClient.readAttempts);
+      expect(
+        channel.tableAsks,
+        1,
+        reason: 'bounded attempts: a hole is reported once, never re-burst',
+      );
       expect(find.text('The file table could not be read'), findsOneWidget);
       // The hole is named, and there is an action - never an empty directory.
       expect(

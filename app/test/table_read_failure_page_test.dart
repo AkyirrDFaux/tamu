@@ -427,23 +427,26 @@ void main() {
     expect(client.lastReadError, isNull);
   });
 
-  test(
-    'a partial table is re-requested whole and never returned as data',
-    () async {
-      final device = _TableDevice(_Mode.hole, scriptTable);
-      installRequestChannel(device);
-      addTearDown(() => installRequestChannel(null));
+  test('a partial table is sent once and never returned as data', () async {
+    final device = _TableDevice(_Mode.hole, scriptTable);
+    installRequestChannel(device);
+    addTearDown(() => installRequestChannel(null));
 
-      final client = StorageClient(deviceId: 1);
-      final read = await client.readFileTableResult();
+    final client = StorageClient(deviceId: 1);
+    final read = await client.readFileTableResult();
 
-      expect(read.partial, isTrue);
-      expect(read.ok, isFalse);
-      expect(device.tableSends, StorageClient.readAttempts);
-      expect(read.detail, contains('fragment 1 of 2 never arrived'));
-      expect(read.detail, contains('asked 3 time(s)'));
-    },
-  );
+    expect(read.partial, isTrue);
+    expect(read.ok, isFalse);
+    expect(
+      device.tableSends,
+      1,
+      reason:
+          'a hole is reported, not re-burst: the re-request would be the whole file '
+          'into the ring that just dropped it',
+    );
+    expect(read.detail, contains('fragment 1 of 2 never arrived'));
+    expect(read.detail, contains('asked 1 time(s)'));
+  });
 
   test('a whole table decodes to the records, one send', () async {
     final device = _TableDevice(_Mode.whole, scriptTable);

@@ -16,10 +16,18 @@
 ///
 /// The app's answer is the owner's ruling - "process it correctly no matter what (re-request if
 /// something fails, detect it)": a reply with a hole or without its STOP is a FAILED read that
-/// names the hole's index and is re-requested whole (`StorageClient.readAttempts` sends,
-/// `readRetryBackoff` apart); a `.TABLE` parsed from a fragment set without its STOP is never
-/// rendered as the file list, because a truncated table showing 32 of N files is worse than an
-/// error.
+/// names the hole's index and is never parsed (`StorageClient`'s read policy); a `.TABLE` parsed
+/// from a fragment set without its STOP is never rendered as the file list, because a truncated
+/// table showing 32 of N files is worse than an error.
+///
+/// **It is sent once, not three times.** Storage CID 5 asks a file BY NAME - there is no offset
+/// form to resume from - so every re-request is the WHOLE file again, and it arrives at the same
+/// 24 KiB transmit ring that just dropped fragments, before that ring has drained. Three whole
+/// re-requests could not recover anything a quiet second would not, and a page that lists N files
+/// paid it per file. The retry is the page's Try again, on a link that has had time to settle;
+/// the re-send policy ([StorageClient.readAttempts]) is kept for a reply that never came at all.
+/// The failure names the hole and the attempt count: `fragment 202 of 256 never arrived (33 of
+/// 256 missing, 223 received) ... It was asked 1 time(s).`
 library;
 
 import 'dart:io';
@@ -71,6 +79,29 @@ PacketResponse _replay(List<int> stream, {bool tolerant = true}) {
     total: done.total,
   );
 }
+
+/// Replays already-parsed frames the way the app's link does, closing the stream without a STOP
+/// frame - the shape of a reply the device stopped sending.
+PacketResponse _replayFrames(List<PacketFrame> frames) {
+  final reassembler = FragmentReassembler()..begin(_txId, tolerant: true);
+  for (final frame in frames) {
+    reassembler.feed(_txId, frame);
+  }
+  final done = reassembler.finish(_txId)!;
+  return PacketResponse(
+    payload: done.payload,
+    success: true,
+    fail: false,
+    chunks: done.chunks,
+    missing: done.missing,
+    stopped: false,
+    total: done.total,
+  );
+}
+
+/// The device's own reply, cut after [count] fragments: the link lost the rest AND the STOP frame.
+List<PacketFrame> _firstFragments(List<int> stream, int count) =>
+    PacketStreamParser().feed(stream).take(count).toList();
 
 /// A channel that answers a storage read from a list of replies, repeating the last one; a null
 /// entry is "the device did not answer".
@@ -198,7 +229,7 @@ void main() {
       );
     });
 
-    test('a whole-file read re-requests it and then fails visibly', () async {
+    test('one send: the hole is reported, not re-burst', () async {
       final channel = _ReplyChannel([_replay(truncated)]);
       installRequestChannel(channel);
       addTearDown(() => installRequestChannel(null));
@@ -209,33 +240,84 @@ void main() {
       expect(table, isNull, reason: 'a partial table is never data');
       expect(
         channel.asked,
-        hasLength(StorageClient.readAttempts),
-        reason: 'the read is re-requested, and bounded',
+        hasLength(1),
+        reason:
+            'a reply that ARRIVED incomplete is not asked for again: the re-request '
+            'would be the whole file, into the ring that just dropped it',
       );
       expect(channel.asked, everyElement('.TABLE'));
-      expect(client.lastReadAttempts, StorageClient.readAttempts);
+      expect(client.lastReadAttempts, 1);
       expect(
         client.lastReadError,
         contains('fragment 202 of 256 never arrived'),
       );
-      expect(client.lastReadError, contains('asked 3 time(s)'));
+      expect(client.lastReadError, contains('asked 1 time(s)'));
+      expect(
+        client.lastReadError,
+        contains('It was not asked again'),
+        reason: 'the sentence says why the read was not retried',
+      );
+    });
+
+    test('a stream cut at 200 of 256 is one send, naming the hole', () async {
+      // The card's fixture shape: the device's own 256-fragment table, with everything from
+      // fragment 200 on lost. Before this policy the read re-requested the WHOLE file three
+      // times (three 16 kB bursts at the ring that had just dropped 56 fragments); now it is
+      // one send, and the failure names the hole and the attempt count.
+      final cut = _replayFrames(_firstFragments(whole, 200));
+      expect(cut.total, 256);
+      expect(cut.chunks, hasLength(200));
+      expect(cut.missing, hasLength(56));
+      expect(cut.stopped, isFalse);
+
+      final channel = _ReplyChannel([cut]);
+      installRequestChannel(channel);
+      addTearDown(() => installRequestChannel(null));
+
+      final client = StorageClient(deviceId: 1);
+      final read = await client.readFileTableResult();
+
+      expect(read.ok, isFalse);
+      expect(read.partial, isTrue);
+      expect(
+        channel.asked,
+        hasLength(1),
+        reason: 'bounded attempts: exactly one',
+      );
+      expect(read.attempts, 1);
+      expect(
+        read.detail,
+        contains(
+          'fragment 200 of 256 never arrived (56 of 256 missing, 200 received)',
+        ),
+      );
+      expect(read.detail, contains('asked 1 time(s)'));
     });
   });
 
   group('recovery', () {
-    test('a truncated first answer is recovered by the re-request', () async {
+    test('the retry is the page\'s, on a quiet link - and it works', () async {
+      // The re-request is now the user's Try again (or the page's next refresh), not three
+      // bursts fired inside the failure. The read policy itself is unchanged in what it accepts.
       final channel = _ReplyChannel([_replay(truncated), _replay(whole)]);
       installRequestChannel(channel);
       addTearDown(() => installRequestChannel(null));
 
       final client = StorageClient(deviceId: 1);
-      final table = await client.readFileTable();
+      final first = await client.readFileTable();
+      expect(first, isNull);
+      expect(channel.asked, hasLength(1), reason: 'one send, then the failure');
 
-      expect(table, isNotNull, reason: 'the second read arrived whole');
-      expect(channel.asked, hasLength(2), reason: 'one re-request, not three');
-      expect(client.lastReadAttempts, 2);
+      final second = await client.readFileTable();
+      expect(
+        second,
+        isNotNull,
+        reason: 'the deliberate second read arrived whole',
+      );
+      expect(channel.asked, hasLength(2), reason: 'one send per read');
+      expect(client.lastReadAttempts, 1);
       expect(client.lastReadError, isNull);
-      expect(table, hasLength(32));
+      expect(second, hasLength(32));
     });
 
     test('the whole reply is the device\'s 32 files, LAY_1 included', () async {
@@ -287,7 +369,7 @@ void main() {
       );
     }
 
-    test('a body that lost its tail is re-requested, never returned', () async {
+    test('a body that lost its tail is reported, never returned', () async {
       final channel = _ReplyChannel([
         layoutReply(loseTheLast: true),
         layoutReply(),
@@ -297,34 +379,35 @@ void main() {
 
       final client = StorageClient(deviceId: 1);
       final bytes = await client.readFile('LAY_1', size: 223);
-      expect(bytes, isNotNull);
-      expect(bytes, hasLength(223));
-      expect(client.lastReadAttempts, 2);
-    });
-
-    test('a body that never arrives whole is null with the reason', () async {
-      final channel = _ReplyChannel([layoutReply(loseTheLast: true)]);
-      installRequestChannel(channel);
-      addTearDown(() => installRequestChannel(null));
-
-      final client = StorageClient(deviceId: 1);
-      final bytes = await client.readFile('LAY_1', size: 223);
-      expect(bytes, isNull);
-      expect(channel.asked, hasLength(StorageClient.readAttempts));
+      expect(bytes, isNull, reason: 'a hole is never decoded as a layout');
+      expect(
+        channel.asked,
+        hasLength(1),
+        reason: 'one send: the tail is gone and a re-request is the whole file',
+      );
+      expect(client.lastReadAttempts, 1);
       expect(client.lastReadError, contains('fragment 3 of 4 never arrived'));
+
+      // The user's own retry is what recovers it, on a link that has settled.
+      final retried = await client.readFile('LAY_1', size: 223);
+      expect(retried, hasLength(223));
     });
   });
 
-  test('the retry policy is bounded and stated', () {
-    expect(
-      StorageClient.readAttempts,
-      3,
-      reason: 'one attempt + two re-requests',
-    );
-    expect(StorageClient.readRetryBackoff, hasLength(2));
-    expect(
-      StorageClient.readRetryBackoff.map((d) => d.inMilliseconds).toList(),
-      [200, 600],
-    );
-  });
+  test(
+    'the retry policy is bounded, stated, and only for a reply that never came',
+    () {
+      expect(
+        StorageClient.readAttempts,
+        3,
+        reason:
+            'one attempt + two re-sends, for a request that produced no reply at all',
+      );
+      expect(StorageClient.readRetryBackoff, hasLength(2));
+      expect(
+        StorageClient.readRetryBackoff.map((d) => d.inMilliseconds).toList(),
+        [200, 600],
+      );
+    },
+  );
 }
