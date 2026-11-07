@@ -1785,8 +1785,15 @@ ls_fail=0
 # pairing deadline armed on the refusal paths too, and the tick supervising the latch.
 if ! grep -q 'BleLatchTake(StaticBleLatch, ConnInfo.getConnHandle())' "$BLE_SRC" ||
    ! grep -q 'BleLatchSupervise();' "$BLE_SRC" ||
-   ! grep -q 'BleLatchTick(StaticBleLatch, BleLinkListed(StaticBleLatch.Drop),' "$BLE_SRC"; then
+   ! grep -q 'BleLatchTick(StaticBleLatch, BleHandleInList(Peers, StaticBleLatch.Drop),' "$BLE_SRC"; then
     echo "FAIL $BLE_SRC: the connect gate and the tick must use the host-tested latch (BleLinkLatch.h)"
+    ls_fail=1
+fi
+# The self-heal is checked against the STACK's list, not against our own flags, and a link that never
+# held the session must not clear the session's state when it ends.
+if ! grep -q 'BleLatchHeld(StaticBleLatch) && !BleLinkListed(StaticBleLatch.Session)' "$BLE_SRC" ||
+   ! grep -q 'const bool WasSession = (StaticBleLatch.Session == Handle);' "$BLE_SRC"; then
+    echo "FAIL $BLE_SRC: a stale latch must be detected from the stack's live-handle list, and a refused peer's disconnect must not clear the session"
     ls_fail=1
 fi
 if [ "$(grep -c 'BleConnHandle' "$BLE_SRC")" != 0 ]; then
