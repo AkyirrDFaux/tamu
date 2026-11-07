@@ -86,6 +86,17 @@ enum class BusGateVerdict : uint8_t
     SendAndClash = 2 // no room to hold it: it goes out, and the open gate records the collision
 };
 
+// ---------------------------------------------------------------- one rule, whatever the frame is
+//
+// While an answer is owed, EVERY frame is held - a request, a value update, a log record, a
+// broadcast. The gate cannot tell when the node's answer starts, so there is no idle moment in the
+// window to transmit into: the frame that "expects no answer" would be transmitted on top of one.
+// Being answer-less is therefore not a reason to go now; it only decides whether the frame OPENS a
+// slot of its own (BusGateNeedsAnswer) and whether the drain may emit several of them in a row.
+//
+// The cost is a delay: an answer-less frame can wait a Save All's 3000 ms window. That delay is
+// counted where it is paid (AppBusDeferredNoAnswer, `noreply=` in the BUSGATE totals line) so it is
+// visible rather than silent - see Dispatcher.h AppBusDeferredDrain for the other half of the rule.
 inline BusGateVerdict BusGateVerdictFor(bool GateOpen, bool DeferRoom)
 {
     if (!GateOpen) return BusGateVerdict::SendNow;

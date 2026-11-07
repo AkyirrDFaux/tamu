@@ -12,7 +12,10 @@
 //     admitted, which is the "no reset needed" property;
 //  4. a drop the stack refuses is retried, and if it never happens the latch is cleared anyway
 //     (advertising must mean connectable) with the event counted;
-//  5. a drop of a link that never held the session does not touch the session.
+//  5. a drop of a link that never held the session does not touch the session;
+//  6. a drop the stack DOES confirm - the link is gone but onDisconnect never came - is a session
+//     end when that link held the session (Heal, counted), not a quiet latch clear: the caller only
+//     releases the session state for a Heal.
 //
 // No device dependency: built like align/stride (see run.sh).
 
@@ -138,23 +141,47 @@ static void TestRefusedTeardownIsRetriedThenForced()
     CHECK(BleLatchTake(L, 6));
 }
 
-// The good case of a refused drop: the stack does let it go, and the latch is simply released - no
-// forced heal, no repeated requests.
-static void TestRefusedThenGone()
+// The good case of a refused drop - which is a SESSION END when the dropped link held the session:
+// the stack does let it go but onDisconnect never came. Clearing the latch alone (what this used to
+// do, returning None) leaves `BleConnected`/`BleSecured` set on a link that no longer exists, because
+// the caller tears the session down only for a Heal: advertising never restarts (`BleAdvWanted() &&
+// !BleConnected`) and the pump keeps filling a ring nobody drains. The tick must therefore report the
+// same session-end the lost-link heal reports, and count it.
+static void TestConfirmedDropEndsSession()
 {
     BleLinkLatch L;
     BleLatchTake(L, 5);
     BleLatchDrop(L, 5, 1000);
     CHECK(L.Drop == 5);
 
-    // Still up at the first check, then gone.
+    // Still up at the first check, then gone (both are the stack's answers).
     CHECK(BleLatchTick(L, true, true, 1000).Step == BleLatchStep::None);
     const BleLatchAction A = BleLatchTick(L, false, false, 1000 + BLE_DROP_WAIT_MS);
-    CHECK(A.Step == BleLatchStep::None);
+    CHECK(A.Step == BleLatchStep::Heal); // before the fix: None - the session state was never released
+    CHECK(A.Handle == 5);
     CHECK(!BleLatchHeld(L));
     CHECK(L.Drop == 0xFFFF);
     CHECK(L.Forced == 0);
+    CHECK(L.Heals == 1);
+    CHECK(BleLatchTake(L, 6)); // the freed latch admits the next peer
+}
+
+// ... and a confirmed drop of a link that never held the session reports the same step, so the caller
+// clears that link's own record too (its pairing deadline) - without touching the session, which is a
+// different link, and without counting a heal.
+static void TestConfirmedDropOfRefusedPeerLeavesSession()
+{
+    BleLinkLatch L;
+    BleLatchTake(L, 5);
+    BleLatchDrop(L, 6, 1000); // a refused second peer, gone without onDisconnect
+    const BleLatchAction A = BleLatchTick(L, false, true, 1000 + BLE_DROP_WAIT_MS);
+    CHECK(A.Step == BleLatchStep::Heal);
+    CHECK(A.Handle == 6);
+    CHECK(BleLatchHeld(L));
+    CHECK(L.Session == 5);
+    CHECK(L.Drop == 0xFFFF);
     CHECK(L.Heals == 0);
+    CHECK(L.Forced == 0);
 }
 
 // onDisconnect for the dropped link also clears the supervisor's record (the two paths must agree).
@@ -215,7 +242,8 @@ int main()
     TestLostDisconnectHealsAndNextConnectWorks();
     TestLiveSessionIsNotHealed();
     TestRefusedTeardownIsRetriedThenForced();
-    TestRefusedThenGone();
+    TestConfirmedDropEndsSession();
+    TestConfirmedDropOfRefusedPeerLeavesSession();
     TestReleaseClearsDrop();
     TestSecondPeerDropLeavesSession();
     TestClearAll();

@@ -180,20 +180,33 @@ void DispatchPacket(const PacketFrame &Frame)
 // One answered frame at a time: a frame that opens the transaction slot (BusGateNeedsAnswer)
 // closes the loop, because the condition is re-tested before the next frame goes out. So the run
 // a closed window releases is never a burst of answered unicasts - exactly the shape the gate
-// exists to stop - and only frames that expect NO answer (a value update, a log record) can leave
-// back to back, which collide with nothing.
+// exists to stop. What the drain CAN emit back to back is a run of frames that expect no answer (a
+// value update, a log record): they open no slot, so nothing stops the next one. That is a property
+// of this loop, not of the gate - the gate holds EVERY frame while an answer is owed, answer-less
+// ones included, because a half-duplex wire in the middle of an answer has no idle moment to slip
+// one into. Those holds are counted separately (AppBusDeferredNoAnswer, `noreply=` in the BUSGATE
+// totals line) so a value update delayed by a Save All's window is visible rather than silent.
 inline void AppBusDeferredDrain()
 {
     while (AppBusDeferredCount > 0 && !AppBusForwardPending())
     {
         PacketFrame Frame = AppBusDeferred[0];
+        // The link it ARRIVED on travels with it: the gate classifies the transaction by
+        // AppFrameSource (BusGateWindowMs - 600 ms for an app forward, 250 ms for a core-origin
+        // request), and the lost-request counter below is core-origin only. Dispatching with None
+        // would give the same app request a different deadline depending on whether it had to
+        // queue, and would count a lost app forward as a lost core request.
+        const AppLinkSource From = AppBusDeferredFrom[0];
         for (uint8_t i = 1; i < AppBusDeferredCount; i++)
-            AppBusDeferred[i - 1] = AppBusDeferred[i];
+        {
+            AppBusDeferred[i - 1]     = AppBusDeferred[i];
+            AppBusDeferredFrom[i - 1] = AppBusDeferredFrom[i];
+        }
         AppBusDeferredCount--;
-        // Dispatched with AppFrameSource None (a core-origin frame): it forwards through the same
-        // gate as anything else, so if it expects an answer it opens the transaction slot here and
-        // the loop above stops until that answer lands.
+        const AppLinkSource Saved = AppFrameSource;
+        AppFrameSource = From;
         DispatchPacket(Frame);
+        AppFrameSource = Saved;
     }
 }
 #endif

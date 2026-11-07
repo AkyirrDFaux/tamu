@@ -296,14 +296,57 @@ int main()
 
     // A frame that expects no answer is still held while an answer is owed (one medium), and the
     // deferral ring's fullness is what turns that into a counted clash rather than a silent loss.
+    // This is the rule Dispatcher.h and BusGate.h now both state: the gate holds EVERY frame while an
+    // answer is owed - the wire has no idle moment to slip a value update or a log record into - and
+    // the holds that cost an answer-less frame its time are counted (AppBusDeferredNoAnswer) rather
+    // than being invisible.
     {
         GateSim Sim;
         Sim.Now = 700;
         CHECK(Sim.Offer(Node02, AppRequest, ReadCmd, AppTrid, false, true));
-        CHECK(!Sim.Offer(Node04, Reply, ReadCmd, 0x0101, true, true)); // nothing gated it; held
+        CHECK(!BusGateNeedsAnswer(Node04, Reply));                    // nothing gated it by answering
+        CHECK(!Sim.Offer(Node04, Reply, ReadCmd, 0x0101, true, true)); // held anyway
         CHECK_EQ(Sim.Deferred, 1);
         CHECK(Sim.Offer(Node04, Reply, ReadCmd, 0x0101, true, false)); // ring full: it leaves
         CHECK_EQ(Sim.Clashes, 1);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The card's second find: the SAME app request keeps the same window whether it went straight
+    // out or had to wait in the deferral ring. The drain dispatches a held frame with the link it
+    // arrived on (Dispatcher.h restores AppBusDeferredFrom), so what classifies the transaction is
+    // the frame's origin - not "was the app pump calling right now".
+    // ---------------------------------------------------------------------------------------
+    {
+        const uint16_t StorageRead = MakeService(ServiceType::Storage, 1);
+
+        // The two deadlines the review measured against the real headers: an app forward 600 ms, the
+        // same frame re-sent as a core-origin request 250 ms.
+        CHECK_EQ(BusGateWindowMs(StorageRead, /*CoreOrigin=*/false), BUS_GATE_WINDOW_MS);
+        CHECK_EQ(BusGateWindowMs(StorageRead, /*CoreOrigin=*/true), BUS_GATE_WINDOW_CORE_MS);
+        CHECK_EQ(BUS_GATE_WINDOW_MS, 600);
+        CHECK_EQ(BUS_GATE_WINDOW_CORE_MS, 250);
+
+        // A node answering at 300 ms is inside the window fitted for a forwarded read (BusGate.h) and
+        // outside the core's. Forwarded, that is a healthy answer.
+        GateSim Sim;
+        Sim.Now = 100;
+        CHECK(Sim.Offer(Node02, AppRequest, StorageRead, AppTrid, /*CoreOrigin=*/false, true));
+        Sim.Now += 300;
+        CHECK(Sim.Pending()); // 300 ms into a forwarded read: still owed, not expired
+        Sim.Answer(AppTrid);
+        CHECK_EQ(Sim.Released, 1);
+        CHECK_EQ(Sim.Expires, 0);
+
+        // The same 300 ms in the core's window expires - the deadline a QUEUED app forward used to be
+        // given: the next frame goes out on top of the answer and the app reports a timeout for a node
+        // that answered.
+        GateSim Core;
+        Core.Now = 100;
+        CHECK(Core.Offer(Node02, CoreRequest, StorageRead, CorePollTrid, /*CoreOrigin=*/true, true));
+        Core.Now += 300;
+        CHECK(!Core.Pending());
+        CHECK_EQ(Core.Expires, 1);
     }
 
     // ---------------------------------------------------------------------------------------

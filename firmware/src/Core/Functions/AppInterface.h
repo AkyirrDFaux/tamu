@@ -292,10 +292,23 @@ extern uint32_t RS485TxStintWorstMs; // defined in Devices/Tamu_v2.0A/RSBus.h (l
 // next subscription poll) queue up behind it instead of going out. A frame the ring cannot hold
 // is not lost - it goes out and the open transaction records a clash, so the totals line's
 // `clash=` and `deferred=<total>/<dropped>` together say whether the depth is enough.
+//
+// The LINK a held frame arrived on is carried with it (`AppBusDeferredFrom`). The drain re-dispatches
+// these outside the pump, where `AppFrameSource` is None, and that flag is what the gate classifies a
+// frame by (BusGateWindowMs: an app forward 600 ms, a core-origin request 250 ms). Without the origin
+// the same app request got two different deadlines depending on whether it had to queue - a node
+// answering at 300 ms, inside the window that was fitted for it, expired at 250 ms, the next frame
+// went out on top of its answer and the app reported a timeout for a node that answered.
+//
+// `AppBusDeferredNoAnswer` counts the held frames that expect no answer at all (a subscription value
+// update, a log record). They are held like everything else - a half-duplex wire owed an answer has no
+// idle moment to slip one into - but the hold can last a Save All's window, so the delay is counted
+// instead of being invisible.
 #define APP_BUS_DEFER_DEPTH 8
 PacketFrame AppBusDeferred[APP_BUS_DEFER_DEPTH];
+AppLinkSource AppBusDeferredFrom[APP_BUS_DEFER_DEPTH] = {};
 uint8_t AppBusDeferredCount = 0;
-uint32_t AppBusDeferredTotal = 0, AppBusDeferredDrops = 0;
+uint32_t AppBusDeferredTotal = 0, AppBusDeferredDrops = 0, AppBusDeferredNoAnswer = 0;
 
 inline bool AppBusDefer(const PacketFrame &Frame)
 {
@@ -304,8 +317,12 @@ inline bool AppBusDefer(const PacketFrame &Frame)
         AppBusDeferredDrops++;
         return false;
     }
-    AppBusDeferred[AppBusDeferredCount++] = Frame;
+    AppBusDeferred[AppBusDeferredCount]     = Frame;
+    AppBusDeferredFrom[AppBusDeferredCount] = AppFrameSource; // the origin, not the drain's context
+    AppBusDeferredCount++;
     AppBusDeferredTotal++;
+    if (!BusGateNeedsAnswer(Frame.IdTgt, Frame.Flags))
+        AppBusDeferredNoAnswer++;
     return true;
 }
 
@@ -365,12 +382,12 @@ inline void AppBusGateDrain()
         AppBusGateDumpStarted = false;
         DeviceLog("BUSGATE",
                   "total forwards=%lu replies=%lu expired=%lu late=%lu clash=%lu lost=%lu "
-                  "deferred=%lu/%lu worst=%ums",
+                  "deferred=%lu/%lu noreply=%lu worst=%ums",
                   (unsigned long)AppBusGateForwards, (unsigned long)AppBusGateReplies,
                   (unsigned long)AppBusGateExpiries, (unsigned long)AppBusGateLates,
                   (unsigned long)AppBusGateClashes, (unsigned long)AppBusGateLosses,
                   (unsigned long)AppBusDeferredTotal, (unsigned long)AppBusDeferredDrops,
-                  (unsigned)AppBusGateWorst);
+                  (unsigned long)AppBusDeferredNoAnswer, (unsigned)AppBusGateWorst);
         // The window in force per request kind (Core/Functions/BusGate.h): an ordinary forwarded
         // app read/write, a core-origin request, and a store save.
         DeviceLog("BUSGATE", "window app/core/store=%u/%u/%ums held=%ums",
@@ -533,6 +550,11 @@ inline void AppBusGateNoteClash()
 // sliding onto the wire 3-10 ms after another request whose answer is still owed. The frame that
 // opens the slot is the frame that expects an answer (BusGateNeedsAnswer), and the slot is held
 // for that request kind's window (BusGateWindowMs).
+//
+// The window is asked with `AppFrameSource`, the link this frame ARRIVED on - not with "is the app
+// pump calling right now". A frame the deferred ring hands back is dispatched by
+// AppBusDeferredDrain outside the pump, and it restores the origin it recorded with the frame, so a
+// queued app forward keeps the app's window instead of being given the core's short one.
 inline bool AppBusGateOffer(const PacketFrame &Frame)
 {
     switch (BusGateVerdictFor(AppBusForwardPending(), AppBusDeferredCount < APP_BUS_DEFER_DEPTH))

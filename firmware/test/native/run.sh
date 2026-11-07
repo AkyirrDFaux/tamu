@@ -1698,6 +1698,7 @@ BG_RSBUS="$ROOT/src/Devices/Tamu_v2.0A/RSBus.h"
 BG_IFACE="$ROOT/src/Core/Functions/AppInterface.h"
 BG_DISPATCH="$ROOT/src/Core/Functions/Dispatcher.h"
 BG_BLE="$ROOT/src/Devices/Tamu_v2.0A/AppBLE.h"
+BG_GATE="$ROOT/src/Core/Functions/BusGate.h"
 bg_fail=0
 
 # One gated transmit function, and the transmit body behind it.
@@ -1772,6 +1773,24 @@ fi
 fail=$((fail + bg_fail))
 echo
 
+# ---- the four regressions of the second-pass review (t_ab6c7bdc) ----
+#
+# Two of the four live in wiring that cannot be linked on the host - the deferred ring's origin and the
+# latch's stack read - so they are asserted here on the source, while the decisions they feed run in
+# bus_gate_test.cpp and ble_latch_test.cpp above. The guards are separate scripts because each names
+# the defect it pins and can be run on its own.
+echo "### source guard: a deferred frame carries its origin, and an answer-less hold is counted"
+if ! bash "$ROOT/test/native/bus_defer_guard.sh" "$BG_IFACE" "$BG_DISPATCH" "$BG_GATE"; then
+    fail=$((fail + 1))
+fi
+echo
+
+echo "### source guard: the latch's liveness read allocates nothing, and its heal ends the session"
+if ! bash "$ROOT/test/native/ble_liveness_guard.sh" "$BG_BLE"; then
+    fail=$((fail + 1))
+fi
+echo
+
 # ---- the radio's survival fixes (t_44676a52) ----
 #
 # The decisions live in three host-tested headers; what the source guards pin is the WIRING - that the
@@ -1785,15 +1804,16 @@ ls_fail=0
 # pairing deadline armed on the refusal paths too, and the tick supervising the latch.
 if ! grep -q 'BleLatchTake(StaticBleLatch, ConnInfo.getConnHandle())' "$BLE_SRC" ||
    ! grep -q 'BleLatchSupervise();' "$BLE_SRC" ||
-   ! grep -q 'BleLatchTick(StaticBleLatch, BleHandleInList(Peers, StaticBleLatch.Drop),' "$BLE_SRC"; then
+   ! grep -q 'BleLatchTick(StaticBleLatch, BleHandleLive(StaticBleLatch.Drop),' "$BLE_SRC"; then
     echo "FAIL $BLE_SRC: the connect gate and the tick must use the host-tested latch (BleLinkLatch.h)"
     ls_fail=1
 fi
-# The self-heal is checked against the STACK's list, not against our own flags, and a link that never
-# held the session must not clear the session's state when it ends.
-if ! grep -q 'BleLatchHeld(StaticBleLatch) && !BleLinkListed(StaticBleLatch.Session)' "$BLE_SRC" ||
-   ! grep -q 'const bool WasSession = (StaticBleLatch.Session == Handle);' "$BLE_SRC"; then
-    echo "FAIL $BLE_SRC: a stale latch must be detected from the stack's live-handle list, and a refused peer's disconnect must not clear the session"
+# The self-heal is checked against the STACK's own connection table, not against our own flags, and a
+# link that never held the session must not clear the session's state when it ends. The stack read
+# itself (one allocation-free ble_gap_conn_find) and the heal's WasSession hand-off are pinned by
+# test/native/ble_liveness_guard.sh below - the greps here only say the latch is asked at all.
+if ! grep -q 'BleLatchHeld(StaticBleLatch) && !BleHandleLive(StaticBleLatch.Session)' "$BLE_SRC"; then
+    echo "FAIL $BLE_SRC: a stale latch must be detected from the stack's live-connection table"
     ls_fail=1
 fi
 if [ "$(grep -c 'BleConnHandle' "$BLE_SRC")" != 0 ]; then

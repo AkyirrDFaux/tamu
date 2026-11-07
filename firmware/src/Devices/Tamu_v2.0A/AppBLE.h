@@ -208,32 +208,26 @@ static BleRxAssembler StaticBleRxAssembler;
 // budget on purpose: nothing is waiting for a refusal to complete.
 #define BLE_REFUSAL_GRACE_MS 2000
 
-// Is `Handle` one of the handles in the stack's live-connection list? This is what the latch is
-// checked against - NimBLEServer's own list, not our flags - and it is what lets a lost onDisconnect
-// be repaired instead of becoming permanent. The list is a fixed-size array inside the server (no
-// allocation, no iterator to invalidate), so reading it from the app task is safe: the host task only
-// ever writes one slot at a time.
-static bool BleHandleInList(const std::vector<uint16_t> &Peers, uint16_t Handle)
+// Is `Handle` one of the stack's live connections? This is what the latch is checked against -
+// NimBLEServer's own connection table, not our flags - and it is what lets a lost onDisconnect be
+// repaired instead of becoming permanent.
+//
+// Read with the host's own `ble_gap_conn_find`, which copies a descriptor for one handle: no
+// allocation and nothing to invalidate. It is deliberately NOT `NimBLEServer::getPeerDevices()` -
+// that accessor builds a fresh `std::vector` out of the server's fixed array on every call
+// (managed_components/h2zero__esp-nimble-cpp/src/NimBLEServer.cpp:388), i.e. one heap allocation per
+// check, and this is asked from the app task every 500 ms and from `onConnect` in the host task. An
+// allocation that failed there read as "not listed", and "not listed" is the heal: a healthy
+// encrypted session torn down, advertising restarted, a second phone admitted into the freed latch -
+// two peers into one RX stream, which is the one thing the latch exists to prevent. Here "not found"
+// is an answer (BLE_HS_ENOTCONN), never a failure, so a link is only ever reported gone when the
+// stack says it is.
+static bool BleHandleLive(uint16_t Handle)
 {
-    if (Handle == 0xFFFF)
-        return false;
-    for (uint16_t H : Peers)
-        if (H == Handle)
-            return true;
-    return false;
-}
-
-// One copy of the list, for a check that has more than one handle to ask about.
-static std::vector<uint16_t> BleLiveLinks()
-{
-    if (!BleServer)
-        return std::vector<uint16_t>();
-    return BleServer->getPeerDevices();
-}
-
-static bool BleLinkListed(uint16_t Handle)
-{
-    return BleHandleInList(BleLiveLinks(), Handle);
+    if (Handle == 0xFFFF || !BleServer)
+        return false; // no handle, or no stack at all: there is no connection to be listed
+    struct ble_gap_conn_desc Desc;
+    return ble_gap_conn_find(Handle, &Desc) == 0;
 }
 
 // Asks the stack to drop `Handle` and RECORDS the request, so the tick can tell a teardown that
@@ -275,13 +269,17 @@ static void BleClearSecureDeadline()
 // through this, so a healed latch cannot leave a session flag set on a link that no longer exists -
 // which is what would keep advertising off (`BleConnected`) with nothing on the air to connect to.
 //
+// `WasSession` is passed in rather than re-derived from the latch: the supervisor's heal comes back
+// from BleLatchTick AFTER the tick has cleared the latch, so asking the latch again there always
+// answered "no" and the teardown did nothing. Every caller knows the answer - onDisconnect before the
+// release, the supervisor from the session it captured before the tick.
+//
 // A link that was never the session (a refused second peer) ending changes nothing about the live
 // session: only its own record goes. Without that distinction a second peer's disconnect cleared the
 // session's flags while the session was still up, which stopped its TX and put the advertisement back
 // on the air underneath it.
-static void BleSessionEnded(uint16_t Handle)
+static void BleSessionEnded(uint16_t Handle, bool WasSession)
 {
-    const bool WasSession = (StaticBleLatch.Session == Handle);
     BleLatchReleased(StaticBleLatch, Handle);
     if (BleSecureHandle == Handle)
         BleClearSecureDeadline();
@@ -297,14 +295,18 @@ static void BleSessionEnded(uint16_t Handle)
     AppbleResetSessionBreadcrumbs();
 }
 
+static void BleSessionEnded(uint16_t Handle)
+{
+    BleSessionEnded(Handle, StaticBleLatch.Session == Handle);
+}
+
 // One supervision pass over the latch (called from AppBLETick, app task). `BleLatchTick` decides;
 // this performs the stack call and the session teardown the decision implies.
 static void BleLatchSupervise()
 {
-    const std::vector<uint16_t> Peers = BleLiveLinks();
     const uint16_t SessionBefore = StaticBleLatch.Session;
-    const BleLatchAction A = BleLatchTick(StaticBleLatch, BleHandleInList(Peers, StaticBleLatch.Drop),
-                                          BleHandleInList(Peers, SessionBefore), TimeFromBoot());
+    const BleLatchAction A = BleLatchTick(StaticBleLatch, BleHandleLive(StaticBleLatch.Drop),
+                                          BleHandleLive(SessionBefore), TimeFromBoot());
     if (A.Step == BleLatchStep::Drop)
     {
         DeviceLog("APPBLE", "handle %u is still up after its drop: asking again (attempt %u, retries=%u)",
@@ -315,18 +317,23 @@ static void BleLatchSupervise()
     }
     if (A.Step == BleLatchStep::Heal)
     {
+        // The tick has already cleared the latch, so the session-ness has to come from the state
+        // BEFORE it ran - re-deriving it from the latch is what made the teardown a no-op.
         const bool WasSession = (A.Handle == SessionBefore);
+        const bool Listed     = BleHandleLive(A.Handle);
         if (WasSession)
             DeviceLog("APPBLE", "%s handle %u: freeing the session latch (heals=%u forced=%u)",
-                      BleHandleInList(Peers, A.Handle)
-                          ? "the stack will not terminate a link that never became a session,"
-                          : "the link is gone but onDisconnect never came for",
+                      Listed ? "the stack will not terminate a link that became a session,"
+                             : "the link is gone but onDisconnect never came for",
                       (unsigned)A.Handle, (unsigned)StaticBleLatch.Heals, (unsigned)StaticBleLatch.Forced);
         else
-            DeviceLog("APPBLE", "handle %u will not terminate; it never held the session, which is untouched "
-                                "(retries=%u forced=%u)",
-                      (unsigned)A.Handle, (unsigned)StaticBleLatch.Retries, (unsigned)StaticBleLatch.Forced);
-        BleSessionEnded(A.Handle);
+            DeviceLog("APPBLE", "%s handle %u: the latch's record is cleared, the session is untouched "
+                                "(retries=%u forced=%u heals=%u)",
+                      Listed ? "the stack will not terminate a link that never held the session;"
+                             : "the refused link is gone without onDisconnect;",
+                      (unsigned)A.Handle, (unsigned)StaticBleLatch.Retries, (unsigned)StaticBleLatch.Forced,
+                      (unsigned)StaticBleLatch.Heals);
+        BleSessionEnded(A.Handle, WasSession);
     }
 }
 
@@ -810,12 +817,12 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         // refused is admitted instead - "self-healing" from the phone's side has to mean the next
         // connect works, not that a retry loop eventually does (the tick's own pass would get there
         // within BLE_LATCH_CHECK_MS, but the peer in front of us would already have been dropped).
-        if (BleLatchHeld(StaticBleLatch) && !BleLinkListed(StaticBleLatch.Session))
+        if (BleLatchHeld(StaticBleLatch) && !BleHandleLive(StaticBleLatch.Session))
         {
             DeviceLog("APPBLE", "stale session latch on handle %u (the stack has no such link): clearing it",
                       (unsigned)StaticBleLatch.Session);
             StaticBleLatch.Heals = StaticBleLatch.Heals + 1;
-            BleSessionEnded(StaticBleLatch.Session);
+            BleSessionEnded(StaticBleLatch.Session, /*WasSession=*/true);
         }
 
         if (!BleLatchTake(StaticBleLatch, ConnInfo.getConnHandle()))

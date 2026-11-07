@@ -126,8 +126,22 @@ inline BleLatchAction BleLatchTick(BleLinkLatch &L, bool DropListed, bool Sessio
         {
             // Confirmed gone. A normal onDisconnect may already have cleared both; this is the
             // case where it did not.
+            //
+            // When the dropped link held the session this is a SESSION END, and it has to be
+            // reported as one: the caller's session state (`BleConnected`/`BleSecured`, the RX
+            // assembler, the MTU, the TX ring) is torn down only for a `Heal`, so clearing the
+            // latch here and returning None left the device advertising-under-a-live-session -
+            // `BleAdvWanted() && !BleConnected` never restarts the advertisement (the phone
+            // cannot find the device) and `AppBLEActive()` still reports a session, so the pump
+            // keeps filling a ring nobody drains. That is the stuck state this file exists to
+            // remove, one level up. Counted as a heal for the same reason.
+            A.Handle = L.Drop;
+            A.Step   = BleLatchStep::Heal;
             if (L.Session == L.Drop)
+            {
                 L.Session = 0xFFFF;
+                L.Heals   = L.Heals + 1;
+            }
             L.Drop     = 0xFFFF;
             L.Attempts = 0;
             L.DueMs    = 0;
