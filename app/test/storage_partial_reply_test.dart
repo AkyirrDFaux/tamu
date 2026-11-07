@@ -26,9 +26,9 @@
 /// re-requests could not recover anything a quiet second would not, and a page that lists N files
 /// paid it per file. The retry is the page's Try again, on a link that has had time to settle;
 /// the re-send policy ([StorageClient.readAttempts]) is kept for a request that THREW, never for
-/// a reply that arrived short. A device that answers nothing at all is this same one-send path:
-/// the link arms its stall watchdog at the send, so the silent read is closed as a zero-fragment
-/// partial (`chunks` empty, `stopped` false, `total` 0) and reported once, not three times.
+/// a reply that arrived short. That includes a reply that carried NOTHING: a head cut before the
+/// first fragment is a failed attempt and is re-sent, while a stream that STARTED and stopped is a
+/// reported hole (one send).
 /// The failure names the hole and the attempt count: `fragment 202 of 256 never arrived (33 of
 /// 256 missing, 223 received) ... It was asked 1 time(s).`
 library;
@@ -299,6 +299,53 @@ void main() {
   });
 
   group('recovery', () {
+    /// A reply that carried NOT ONE fragment: the head of a reply, cut before it started. The
+    /// app's own link no longer produces this shape (the stall watchdog is armed by the first
+    /// fragment, so the request deadline owns the head), but a channel can report it - and the
+    /// read policy's answer to it is the one this group pins.
+    const emptyHead = PacketResponse(
+      payload: [],
+      success: true,
+      fail: false,
+      stopped: false,
+      total: 0,
+    );
+
+    test('a reply that carried nothing is a head, and it is asked again', () async {
+      // A head is not a hole: nothing of the answer arrived, so the question is unanswered rather
+      // than answered short. The read re-sends (the shape the review found being reported once as
+      // a device that sent no part of the reply).
+      final channel = _ReplyChannel([emptyHead, _replay(whole)]);
+      installRequestChannel(channel);
+      addTearDown(() => installRequestChannel(null));
+
+      final read = await StorageClient(deviceId: 1).readFileTableResult();
+
+      expect(read.ok, isTrue, reason: 'the re-send arrived whole');
+      expect(read.records, hasLength(32));
+      expect(read.attempts, 2, reason: 'one re-send, then the answer');
+      expect(channel.asked, hasLength(2));
+    });
+
+    test('a head that never starts is bounded by the attempt count', () async {
+      final channel = _ReplyChannel([emptyHead]);
+      installRequestChannel(channel);
+      addTearDown(() => installRequestChannel(null));
+
+      final client = StorageClient(deviceId: 1);
+      final read = await client.readFileTableResult();
+
+      expect(read.ok, isFalse);
+      expect(
+        channel.asked,
+        hasLength(StorageClient.readAttempts),
+        reason: 'a head is retried like any failed attempt, and then it stops',
+      );
+      expect(read.detail, contains('no part of the reply'));
+      expect(read.detail, contains('asked 3 time(s)'));
+      expect(client.lastReadAttempts, StorageClient.readAttempts);
+    });
+
     test('the retry is the page\'s, on a quiet link - and it works', () async {
       // The re-request is now the user's Try again (or the page's next refresh), not three
       // bursts fired inside the failure. The read policy itself is unchanged in what it accepts.

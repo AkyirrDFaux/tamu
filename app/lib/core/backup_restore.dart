@@ -2493,9 +2493,18 @@ RestoreSavePolicy restoreSavePolicy = const RestoreSavePolicy();
 /// names the wait, and the failure names which of the two it was), because a single Save All can
 /// hold one of the link's eight request slots for the whole window.
 ///
-/// The saves of several devices run at once for the same reason: one after another, four devices
-/// are four windows of a run that has already written everything, while at once it costs the
-/// slowest of them.
+/// **The saves go one device at a time.** The device forwards ONE request at a time
+/// (`request_gate.dart`; measured on the rig 2026-11-05 as the reason a burst loses frames), and
+/// a save's window starts when the request is ADMITTED to the link, not when the node starts
+/// programming flash. Four saves launched together therefore spend three of the four windows
+/// queued: the fourth expires with its frame still behind the others, then waits [RestoreSavePolicy.settle]
+/// and asks a node that is itself queued for a light read, gets nothing, and reports "it did not
+/// answer a light read afterwards" - which reaches the user as "everything this run wrote to it is
+/// in its RAM only" for a save that ran and finished (the review's finding). The premise that
+/// "at once it costs the slowest of them" is false on a serialized bus: it costs the SUM, and the
+/// sum does not fit one window. So the phase is sequential and its bound is
+/// `ids.length` x (window + settle + probeWindow + resendWindow), i.e. 4 x 34 s = 136 s at the
+/// shipped 25/2/2/5 s, with every window meaning one save on the wire.
 Future<List<RestoreFailure>> _persistWrites(
   RestorePlan plan,
   Set<int> deviceIds, {
@@ -2508,29 +2517,30 @@ Future<List<RestoreFailure>> _persistWrites(
     RestoreProgress(
       phase: 'save',
       label:
-          'Saving ${ids.length} device(s) - Save All writes every block to flash, '
-          'so each may hold the link for up to ${policy.window.inSeconds} s',
+          'Saving ${ids.length} device(s), one at a time - Save All writes every block to flash '
+          'and the link carries one request at a time, so each may hold it for up to '
+          '${policy.window.inSeconds} s',
       completed: 0,
       total: ids.length,
     ),
   );
+  // Sequential on purpose (see above): a window is the time ONE save may be on the wire.
+  final failures = <RestoreFailure>[];
   var done = 0;
-  final results = await Future.wait([
-    for (final id in ids)
-      _saveOneDevice(plan, id, policy).then((failure) {
-        done++;
-        onProgress?.call(
-          RestoreProgress(
-            phase: 'save',
-            label: 'Saved $done/${ids.length} device(s)',
-            completed: done,
-            total: ids.length,
-          ),
-        );
-        return failure;
-      }),
-  ]);
-  return [for (final failure in results) ?failure];
+  for (final id in ids) {
+    final failure = await _saveOneDevice(plan, id, policy);
+    if (failure != null) failures.add(failure);
+    done++;
+    onProgress?.call(
+      RestoreProgress(
+        phase: 'save',
+        label: 'Saved $done/${ids.length} device(s)',
+        completed: done,
+        total: ids.length,
+      ),
+    );
+  }
+  return failures;
 }
 
 /// Saves one device, and says which way it failed when it did.

@@ -84,6 +84,9 @@ String restoreCodeText({RequestFault? fault, String? clientReason}) {
       case RequestFaultKind.notSent:
         return 'no code from the device (the app refused it and sent nothing'
             '${f.detail == null ? '' : ': ${f.detail}'})';
+      case RequestFaultKind.busy:
+        return 'no code from the device (the request never got a slot on the link'
+            '${f.detail == null ? '' : ': ${f.detail}'})';
     }
   }
   if (clientReason != null) {

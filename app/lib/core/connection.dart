@@ -455,26 +455,39 @@ class ConnectionManager extends ChangeNotifier
   /// drops the tail the app used to sit on the request for 10 s with the data already in hand.
   final Map<int, Timer> _fragStall = {};
 
-  /// How long a fragmented reply may be silent before it counts as truncated.
+  /// How long a fragmented reply that has STARTED may be silent before it counts as truncated.
   ///
-  /// Measured on the rig (2026-11-05, 16 kB `.TABLE` read over BLE, 256 fragments): the fragments
-  /// arrive 2-11 ms apart and the whole read takes 450-848 ms, so a legitimate stream never
-  /// pauses for anything like this long. It was 500 ms, which cut streams the device was still
-  /// draining - and every cut cost the whole file again (the read's re-request goes back to
-  /// offset 0, there is no resume form). Two seconds is 2.4x the slowest whole read ever measured
-  /// here and still a fifth of the read's own 10 s timeout, so a stream that really stopped is
-  /// reported quickly instead of being re-burst.
+  /// A stream only: the clock starts with the first fragment that lands and is re-armed by every
+  /// later one. The head of a reply - the wait before its first fragment - is deliberately not
+  /// on this clock, because on this bus it is mostly the device's own request queue rather than
+  /// silence: the device forwards ONE request at a time (`request_gate.dart`), so up to
+  /// [maxInFlightRequests] requests can be ahead of this one, each with the 2 s default request
+  /// window (~16 s worst case), and a `Save All` holds the link for its own 25 s window. No window
+  /// shorter than the request's deadline can tell "queued behind the save" from "the reply never
+  /// came", so the deadline owns the head and a head expiry is a FAILED attempt (the readers retry
+  /// it), while a stream that started and stopped stays a reported hole.
   ///
-  /// No rig was attached when this was widened (2026-11-07, `/dev/ttyACM0` absent), so the
-  /// inter-fragment gap itself could not be re-measured: the window is derived from the measured
-  /// whole-read duration, not from a new per-gap capture.
+  /// The number itself is a stream gap. Measured on the rig (2026-11-05, 16 kB `.TABLE` read over
+  /// BLE, 256 fragments): the fragments arrive 2-11 ms apart and the whole read takes 450-848 ms,
+  /// so a live stream never pauses for anything like this long. It was 500 ms, which cut streams
+  /// the device was still draining - and every cut cost the whole file again (the read has no
+  /// resume form). Two seconds is 2.4x the slowest whole read ever measured here and still a fifth
+  /// of the read's own 10 s deadline, so a stream that really stopped is reported quickly.
+  ///
+  /// No rig was attached when the head window was removed (2026-11-07, `/dev/ttyACM0` absent), so
+  /// the per-gap figure could not be re-measured either: the stream window is derived from the
+  /// measured whole-read duration, not from a new per-gap capture. The head window is not derived
+  /// at all - it is gone, and the queue arithmetic above is why.
   static const Duration fragmentStallTimeout = Duration(seconds: 2);
 
   /// How long a request may queue behind [maxInFlightRequests] slots before it fails with its own
   /// error ([RequestQueueTimeout]) instead of waiting for a slot that may never come free.
   ///
-  /// The longest ordinary request is the 2 s default, so a slot frees within two rounds for a
-  /// live link; five seconds means the queue is not "busy", it is wedged, and the caller hears so.
+  /// The longest ordinary request is the 2 s default, so a slot frees within two rounds for a live
+  /// link - but a `Save All` is one request that writes every block to flash and may hold its slot
+  /// for 25 s (`RestoreSavePolicy`), so an ordinary request issued during one can legitimately
+  /// spend this whole window queued. That is why the expiry is its OWN type: a caller reports
+  /// "the link is busy" rather than inventing a device that did not answer.
   static const Duration requestQueueTimeout = Duration(seconds: 5);
 
   /// The most requests this link keeps in flight at once.
@@ -1040,12 +1053,16 @@ class ConnectionManager extends ChangeNotifier
     }
   }
 
-  /// (Re)arms the "this reply stopped arriving" watchdog for [txId].
+  /// (Re)arms the "this reply stopped arriving" watchdog for [txId], one per fragment.
   ///
-  /// Armed when the request is SENT (a tolerant read) and re-armed by every fragment that
-  /// arrives. It used to be armed only by a fragment, which left the worst hole unwatched: a
-  /// reply whose FIRST fragment was lost armed nothing, so the read sat out its whole 10 s
-  /// timeout - three times, once per attempt - before saying anything.
+  /// Only a STREAM is watched: the clock starts with the first fragment that lands and is
+  /// re-armed by every later one. The head of a reply - the wait before its first fragment - is
+  /// not on this clock, because it is mostly the device's queue rather than silence (see
+  /// [fragmentStallTimeout]); the request's own deadline owns it. Arming at the send made an
+  /// ordinary queueing delay indistinguishable from a lost reply: a tolerant read was closed as a
+  /// zero-fragment partial while its frame was still being written to the platform, and reached the
+  /// user as "the device sent no part of the reply" for a frame the app had not sent yet - and
+  /// with no second send, because that shape is a reported hole rather than a retry.
   ///
   /// On expiry the reply is closed with what arrived: a tolerant request gets the partial reply
   /// (the readers can say WHERE the hole is), anything else fails with the fragment it stopped at.
@@ -1158,8 +1175,12 @@ class ConnectionManager extends ChangeNotifier
     try {
       slot = await _requestGate.acquire(wait: requestQueueTimeout);
     } on RequestQueueTimeout catch (error) {
+      // Its OWN type, not a TransportException: "the link is busy" and "the device did not answer"
+      // are different statements, and the app's request layer is the only place that can still
+      // tell them apart (see [RequestQueueTimeout]). Wrapping it made every queue expiry reach the
+      // screen as an unanswered device.
       AppDiagnostics.log('link', 'request never got a slot: $error');
-      throw TransportException('the link is busy: $error');
+      rethrow;
     }
     try {
       // A caller-supplied transaction ID lets several requests share one TRID (used by
@@ -1203,16 +1224,15 @@ class ConnectionManager extends ChangeNotifier
       /// become an unhandled async error in the zone, which is what a completer nobody awaits
       /// produces).
       Future<PacketResponse> roundTrip() async {
-        // A tolerant read's stall watchdog starts with the send: a reply whose FIRST fragment is
-        // lost must not wait out the request's own timeout to be reported.
-        if (tolerant) _armReplyStall(txId);
         final first = await Future.any<Object?>([
           transport.send(frame.toBytes()).then<Object?>((_) => null),
           completer.future,
         ]);
         if (first is PacketResponse) return first;
-        // The send is done: the reply's own window starts now.
-        if (tolerant) _armReplyStall(txId);
+        // No stall clock is started here. The wait for a reply's FIRST fragment is a head, not a
+        // stream: it holds this request's place in the device's queue (see
+        // [fragmentStallTimeout]), so it belongs to the deadline below. The stream watchdog is
+        // armed by the first fragment that actually lands (`_onStreamBytes`).
         return completer.future;
       }
 

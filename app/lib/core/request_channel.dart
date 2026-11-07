@@ -51,8 +51,10 @@ class ReplyGap {
           '${stoppedShort ? '; the stream stopped without its STOP frame' : ''}';
     }
     // Nothing arrived at all: the device declared no total, so there is no hole to name - the
-    // whole reply is the hole. (The stall watchdog closes a tolerant request this way when the
-    // first fragment is the one that was lost, and the link armed it from the send.)
+    // whole reply is the hole. The app's link no longer closes a reply this way (its stall
+    // watchdog is armed by the first fragment that lands, so a head is the request deadline's),
+    // but a channel that reports an empty head produces this shape, and a whole-file read treats
+    // it as a failed attempt and asks again rather than calling the device silent once.
     if (received == 0 && total == 0) {
       return 'the device sent no part of the reply before the stream went quiet';
     }
@@ -252,7 +254,14 @@ enum RequestFaultKind {
   /// `ValueUpdateApplicable` in the firmware - a zero-length value poisons the row it targets), or
   /// one the client can see has nowhere to go. Separate from [noLink] because the bus was fine and
   /// separate from [unusable] because nothing was ever sent.
-  notSent('not sent');
+  notSent('not sent'),
+
+  /// The request never got a turn: the link's request gate held every slot for the whole queue
+  /// bound (`RequestQueueTimeout`), so nothing was sent. Distinct from [noReply] because the device
+  /// was never asked - a `Save All` holds one slot for up to 25 s, so a sweep or a page that fires
+  /// during one waits out this bound without a single frame going out. Reporting that as an
+  /// unanswered node is a device verdict the app never measured.
+  busy('link busy');
 
   const RequestFaultKind(this.word);
 

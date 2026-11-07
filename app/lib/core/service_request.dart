@@ -1,7 +1,36 @@
 import 'diagnostics.dart';
 import 'protocol.dart';
 import 'request_channel.dart';
+import 'request_gate.dart';
 import 'types.dart';
+
+/// Records one request that never got a turn, and logs it under [tag].
+///
+/// The link's queue bound (`RequestQueueTimeout`) is not the device: not one frame went out.
+/// Every caller that reports why a request failed takes its kind from the trace, so this is the
+/// only place the two can stay apart.
+void _recordBusy(
+  RequestTrace? trace,
+  String tag,
+  int targetId,
+  ServiceType service,
+  int cid,
+  RequestQueueTimeout error,
+) {
+  AppDiagnostics.log(
+    tag,
+    'dev ${idToString(targetId)} $service/$cid not sent - the link is busy: $error',
+  );
+  trace?.record(
+    RequestFault(
+      kind: RequestFaultKind.busy,
+      deviceId: targetId,
+      service: service,
+      cid: cid,
+      detail: '$error',
+    ),
+  );
+}
 
 /// Sends one service request, turning a transport failure into `null` and logging it under [tag].
 ///
@@ -53,6 +82,12 @@ Future<List<int>?> serviceRequest(
       timeout: timeout ?? defaultTimeout,
       requestFrag: requestFrag,
     );
+  } on RequestQueueTimeout catch (error) {
+    // The request never got a turn: the link was busy, the device was never asked. Its own kind,
+    // because every other throw here is "the device did not answer" - and a queue expiry reported
+    // as silence is a device verdict nobody measured.
+    _recordBusy(trace, tag, targetId, service, cid, error);
+    return null;
   } catch (error) {
     AppDiagnostics.log(
       tag,
@@ -122,6 +157,9 @@ Future<PacketResponse?> serviceRequestWithFlags(
       );
     }
     return response;
+  } on RequestQueueTimeout catch (error) {
+    _recordBusy(trace, tag, targetId, service, cid, error);
+    return null;
   } catch (error) {
     AppDiagnostics.log(
       tag,

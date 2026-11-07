@@ -15,6 +15,7 @@ import 'notifications.dart';
 import 'protocol.dart';
 import 'register_client.dart';
 import 'request_channel.dart';
+import 'request_gate.dart';
 import 'service_request.dart';
 import 'sndb.dart' as sndb;
 import 'types.dart';
@@ -472,7 +473,23 @@ class DeviceDatabase extends ChangeNotifier {
   Future<void> _pingKnownDevice(DeviceEntry entry) async {
     final id = entry.id;
     for (var attempt = 1; attempt <= devicePingAttempts; attempt++) {
-      final reply = await _pingReply(id);
+      final PacketResponse? reply;
+      try {
+        reply = await _pingReply(id);
+      } on RequestQueueTimeout catch (error) {
+        // The link's slots were all held for the whole queue bound, so this ping never went out.
+        // That is a fact about the LINK, not about the node: it is not a miss (counting it would
+        // walk a perfectly live node to [deviceMissThreshold] - which is how a Save All's 25 s
+        // slot, or a page's own burst, used to make the whole roster read as gone), and re-sending
+        // into the same queue only pays the bound again. The node keeps the state it had, and the
+        // next sweep asks again.
+        AppDiagnostics.log(
+          'db',
+          'dev ${idToString(id)} ping not sent - the link is busy: $error '
+              '(the node keeps its state; this is not a miss)',
+        );
+        return;
+      }
       if (reply != null && !reply.fail && reply.gap == null) {
         _markAnswered(entry);
         return;
@@ -518,6 +535,10 @@ class DeviceDatabase extends ChangeNotifier {
         timeout: const Duration(milliseconds: 800),
       );
       return PacketResponse(payload: payload, success: true, fail: false);
+    } on RequestQueueTimeout {
+      // Not the node's answer: no frame left the host. Let it through, so the sweep can say the
+      // link was busy instead of counting a miss against the node.
+      rethrow;
     } catch (error) {
       AppDiagnostics.log('db', 'dev ${idToString(id)} ping failed: $error');
       return null;

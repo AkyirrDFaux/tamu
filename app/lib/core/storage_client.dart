@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'diagnostics.dart';
 import 'protocol.dart';
 import 'request_channel.dart';
+import 'request_gate.dart';
 import 'service_request.dart';
 import 'types.dart';
 
@@ -428,15 +429,16 @@ class StorageClient {
   ///
   /// Storage CID 5 asks a file BY NAME and has no offset form, so a re-request is the whole file
   /// again - there is nothing cheaper to retry. What is retried is [FileReadFault.failed]: the
-  /// send threw (the frame was lost, the link dropped mid-request, the queue bound refused it),
-  /// or a reply that carried no file bytes after placement.
+  /// send threw (the frame was lost, the link dropped mid-request), the reply carried no usable
+  /// file bytes, or NOTHING of the reply ever arrived. That last one is the HEAD of a reply and it
+  /// is the device's queue, not silence (`connection.dart` `fragmentStallTimeout`: the device
+  /// forwards one request at a time, so a read can sit behind up to eight of them or behind a 25 s
+  /// Save All), so it is bounded by the request deadline (10 s) and re-sent like any other failed
+  /// attempt.
   ///
-  /// A reply that came back SHORT is NOT re-sent - see [_readWhole] - and neither is one that
-  /// never started. The link arms its stall watchdog at the SEND (`connection.dart`,
-  /// `_armReplyStall`), so a device that answers nothing is closed inside the stall window as a
-  /// zero-fragment partial (`chunks` empty, `stopped` false, `total` 0, "the device sent no part
-  /// of the reply before the stream went quiet") and reported once. Three whole re-requests is
-  /// therefore no longer the cost of one lost fragment, nor of a silent read.
+  /// A reply that came back SHORT or with a HOLE is NOT re-sent - see [_readWhole]: it arrived
+  /// incomplete from the ring that just dropped it, and asking the same request again lands in the
+  /// same ring. That is the one shape that is reported rather than retried.
   static const int readAttempts = 3;
 
   /// The pause before each re-send; [readAttempts] - 1 entries. Short, because the failure it
@@ -450,17 +452,19 @@ class StorageClient {
   ///
   /// An attempt fails when the reply lost a fragment, when its STOP frame never came, when the
   /// placed bytes are shorter than [size], or when the request itself threw. Which of those is
-  /// re-sent depends on [kind]: a `partial` reply (a hole, a missing STOP, a short body - and a
-  /// reply that never started) is logged with the hole's index and returned after ONE send,
-  /// while a `failed` attempt (the request threw, or its reply carried no file bytes) is asked
-  /// for again after the matching [readRetryBackoff] pause. After [readAttempts] sends the last
-  /// fault is returned and the caller surfaces it. This never waits forever: every attempt is
-  /// bounded by the request timeout and a stream that stops by the stall watchdog.
+  /// re-sent depends on [kind]: a `partial` reply (a hole, a missing STOP, a short body - a stream
+  /// that STARTED and then stopped) is logged with the hole's index and returned after ONE send,
+  /// while a `failed` attempt (the request threw, its reply carried no file bytes, or nothing of it
+  /// ever arrived) is asked for again after the matching [readRetryBackoff] pause. After
+  /// [readAttempts] sends the last fault is returned and the caller surfaces it. This never waits
+  /// forever: every attempt is bounded by the request timeout, a stream that stops by the stream
+  /// watchdog, and a link whose slots are all taken by the queue bound (which is reported as a busy
+  /// link, not as a device that did not answer).
   ///
   /// [kind] says which of the three cases the attempt ended in: `absent` is the device answering
   /// FAIL with no bytes (the name is not in its file table) - a whole-file read does NOT retry
-  /// that, because the answer will be the same three times; `partial` is a reply that lost a
-  /// fragment / its STOP frame / its tail; `failed` is nothing usable at all.
+  /// that, because the answer will be the same three times; `partial` is a reply that started and
+  /// lost a fragment / its STOP frame / its tail; `failed` is nothing usable at all.
   Future<
     ({
       PacketResponse? reply,
@@ -509,6 +513,24 @@ class StorageClient {
       kind = null;
       try {
         reply = await _readFileReply(channel, name, onProgress: onProgress);
+      } on RequestQueueTimeout catch (error) {
+        // The link never gave this read a turn, so the device was never asked. Re-sending costs the
+        // whole queue bound again (5 s) for a queue that is still held by whatever was ahead of it,
+        // so the read ends here and says which of the two things happened: a busy link, not a
+        // device that did not answer.
+        AppDiagnostics.log(
+          'storage',
+          'read "$name": never got a slot on the link: $error',
+        );
+        return (
+          reply: null,
+          placed: null,
+          fault:
+              'the link was busy holding other requests (${error.inFlight} of '
+              '${error.limit} slots taken, nothing came free in '
+              '${error.waited.inMilliseconds} ms), so this read was never sent',
+          kind: FileReadFault.failed,
+        );
       } catch (error) {
         fault = 'the device did not answer ($error)';
         kind = FileReadFault.failed;
@@ -517,8 +539,16 @@ class StorageClient {
       if (fault == null) {
         final gap = reply!.gap;
         if (gap != null) {
+          // A reply that carried NOT ONE fragment is a HEAD that was cut, not a hole in a stream:
+          // nothing of the answer arrived, so asking again is the same question once the link has
+          // had time to move, and it is retried below. A reply that STARTED and then stopped is
+          // the reported hole ([FileReadFault.partial]) and is never re-burst. The link's stream
+          // watchdog is armed by the first fragment that lands, so a head is normally closed by the
+          // request deadline instead - this branch is the shape for a channel that reports it.
           fault = gap.message;
-          kind = FileReadFault.partial;
+          kind = gap.received == 0
+              ? FileReadFault.failed
+              : FileReadFault.partial;
         } else if (!reply.ok && reply.payload.isEmpty && reply.chunks.isEmpty) {
           // The device's answer for a name its file table does not carry: FLAG_FAIL with no
           // payload and no fragment (firmware `Core/Services/Storage.h`, `BeginRead`). That is
