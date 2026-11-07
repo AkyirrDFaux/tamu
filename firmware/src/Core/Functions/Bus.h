@@ -18,6 +18,44 @@
 #define RS485_SILENCE_BYTES    8
 #define RS485_SILENCE_TIMEOUT_MS 100
 
+// One whole frame on the line: sync byte (1) + header (12) + the longest payload (116) = 129 bytes
+// x 10 bit times / 460800 baud = 2.80 ms. This is the unit the retry backoff is built on.
+#define RS485_FRAME_US 2800
+// The same frame in whole milliseconds, rounded up: the backoff is expressed in ms because BOTH
+// targets sleep in milliseconds (the core's scheduler sleeps a tick, the node's `Sleep()` is a
+// SysTick ms wait), so a sub-millisecond figure could never be honoured by either.
+#define RS485_FRAME_MS ((RS485_FRAME_US + 999) / 1000)
+
+// The retry backoff, in milliseconds (card t_763b4cde).
+//
+// The old expression was `(RawRand() % 16) + 1` ms, and it was wrong twice over:
+//   * RANGE - 1..16 ms against a 2.80 ms frame: a 1 ms draw is under half a frame, which the
+//     silence window afterwards (174-260 us) absorbs, so the retry could re-enter the collision it
+//     was backing off from.
+//   * PHASE - RawRand() is the LCG s' = 13s + 9 (mod 16) in its low nibble, a cycle of length
+//     exactly 16 (14,15,12,5,10,11,8,1,6,7,4,13,2,3,0,9 repeating). Two nodes drawing at the same
+//     call index re-drew the SAME delay on attempts 2 and 3, so a collision repeated in lockstep.
+//
+// The delay is now a function of this node's own short address, the attempt number and the TOP of
+// the PRNG state, on a 32-step grid:
+//     group = (Addr * 5 + Attempt) & 7      (5 is coprime with 8: distinct addresses differ)
+//     sub   = ((Rand >> 16) ^ Addr) & 3
+//     delay = 2 ms + group * 4 + sub        = 2 .. 33 ms
+// Two nodes that collided draw at the same call index (they are in phase), and the group term -
+// four steps (4 ms) wide - then separates them: the group differs for any two addresses that
+// differ modulo 8, and a 4-step gap cannot be cancelled by the 3-step sub range, so their delays
+// differ by at least 1 ms whatever the PRNG says. 1 ms is ~4x the silence window, so the first of
+// the pair is transmitting for a whole frame while the second one's silence wait keeps restarting
+// on those bytes: the collision is broken on the FIRST retry, not the third. The random term uses
+// the high half of the state (full 2^32 period), so the 16-step low nibble never reaches the
+// result, and the address+attempt term means the sequence is not a fixed cycle at all.
+inline uint8_t RS485BackoffMs(uint16_t Addr, uint8_t Attempt, uint32_t Rand)
+{
+    const uint32_t Group = ((uint32_t)Addr * 5u + (uint32_t)Attempt) & 7u;
+    const uint32_t Sub = (((Rand >> 16) ^ (uint32_t)Addr) & 3u);
+    return (uint8_t)(2u + Group * 4u + Sub);
+}
+
 // Waits for the line to be silent for 8 bytes + Priority/8 + random 0-3 bytes, bounded by `CapMs`
 // (RS485_SILENCE_TIMEOUT_MS unless the caller is inside a stint that has already spent part of its
 // budget) so a continuously-busy or shorted bus cannot wedge the caller.

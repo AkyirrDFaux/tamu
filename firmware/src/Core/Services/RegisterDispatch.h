@@ -100,6 +100,21 @@ inline bool RegisterService::Handle(const PacketFrame &Frame) {
 
     // Recall All / Save All - the whole device, no BlockInfo (Docs/Services/Register.md).
     // Partial saving/recall is the app's job (direct file writes / direct register writes).
+    //
+    // Save All is the one command here whose EXECUTION costs flash: it writes `.SV` as a staging
+    // create plus a rename, i.e. two file-table records, and an invalidated record is never reused
+    // (StorageBlockFS.h) - so a retransmission executed again walks a node's 8-slot table towards
+    // the full state that answers FLAG_FAIL (the 0x40/0x4E refusals measured on nodes 0.3/0.4).
+    // It is therefore answered from the repeat record instead of being executed twice
+    // (Core/Functions/BusRepeat.h). Recall All only reads the same store into RAM and is not
+    // guarded; register writes are RAM-only on a node, so only Save All persists them.
+    if (BusRepeatGuarded(Frame.Cmd) && BusRepeatHit(Frame, (uint16_t)TimeFromBoot())) {
+        SendResponse(Frame, nullptr, 0, BusRepeatStatus());
+#ifdef USE_APP_INTERFACE
+        AppBusRepeatsAnswered = AppBusRepeatsAnswered + 1;
+#endif
+        return true;
+    }
     if (Cid == (uint8_t)RegisterCid::RecallAll) { HandleSaveRecallAll(Frame, false); return true; }
     if (Cid == (uint8_t)RegisterCid::SaveAll)    { HandleSaveRecallAll(Frame, true);  return true; }
 

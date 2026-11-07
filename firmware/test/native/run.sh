@@ -103,6 +103,64 @@ for SPEED in "-DOPTIMIZE_SPEED" ""; do
     echo
 done
 
+# t_763b4cde: retransmission is why a duplicated Save All filled a node's file table. The guard
+# (Core/Functions/BusRepeat.h) and the address/attempt-decorrelated backoff (Bus.h RS485BackoffUs)
+# are host-clean, so the real code is driven here: which CIDs are guarded, that a repeat inside the
+# window answers from the record while anything else is a new transaction, and that two nodes one
+# address apart separate by more than the CSMA window on the first retry.
+echo "### native bus-retransmission tests (repeat guard + backoff decorrelation)"
+build_run "busrepeat" "bus_repeat_test.cpp"
+echo
+
+# The dispatcher half is device-layer (it pulls every service) and cannot be linked on the host, so
+# the wiring is pinned on the source: a repeat must be ANSWERED from the record and must SKIP the
+# service switch, the outcome must be recorded where the reply is built, and no retry site may still
+# draw its backoff from the lockstep expression.
+echo "### source guard: a retransmission is answered, never executed twice"
+REPEAT_FAIL=0
+REGISTER_SRC="src/Core/Services/RegisterDispatch.h"
+STORAGE_SRC="src/Core/Services/Storage.h"
+REPLY_SRC="src/Core/Functions/MemoryBackup.h"
+# The two services that own the guarded CIDs must ask the guard BEFORE executing, answer from the
+# record, and not fall through to the handler.
+for SVC in "$REGISTER_SRC" "$STORAGE_SRC"; do
+    if ! grep -q 'BusRepeatGuarded(Frame.Cmd) && BusRepeatHit(Frame, (uint16_t)TimeFromBoot())' "$SVC"; then
+        echo "FAIL $SVC: a repeat is no longer consulted before the command executes"
+        REPEAT_FAIL=1
+    fi
+    if ! grep -q 'SendResponse(Frame, nullptr, 0, BusRepeatStatus())' "$SVC"; then
+        echo "FAIL $SVC: a repeat must be ANSWERED from the record, or the requester times out"
+        REPEAT_FAIL=1
+    fi
+    if ! grep -A 6 'BusRepeatHit(Frame, (uint16_t)TimeFromBoot())' "$SVC" | grep -q 'return true;'; then
+        echo "FAIL $SVC: the replay must return, or the command executes anyway"
+        REPEAT_FAIL=1
+    fi
+done
+if ! grep -q 'BusRepeatNote(Frame, Status, Len' "$REPLY_SRC"; then
+    echo "FAIL $REPLY_SRC: SendResponse no longer records the outcome a repeat is answered from"
+    REPEAT_FAIL=1
+fi
+# No retry site may still draw its backoff from the lockstep low-nibble expression. The pattern is
+# anchored to lines that do not start a comment, so the headers may keep explaining the old bug.
+for RSBUS in src/Devices/Tamu_v2.0A/RSBus.h src/Devices/DAS_v0.1/RSBus.h; do
+    if grep -qE '^[^/]*RawRand\(\) *% *16' "$RSBUS"; then
+        echo "FAIL $RSBUS: the lockstep low-nibble backoff is back"
+        REPEAT_FAIL=1
+    fi
+done
+# Every retry site uses the shared helper: Tamu 2 (packet + raw bootloader), DAS 1.
+if [ "$(grep -c 'RS485BackoffMs(' src/Devices/Tamu_v2.0A/RSBus.h)" != 2 ] ||
+   [ "$(grep -c 'RS485BackoffMs(' src/Devices/DAS_v0.1/RSBus.h)" != 1 ]; then
+    echo "FAIL: every retry site must use RS485BackoffMs (Tamu 2: packet + raw bootloader, DAS 1)"
+    REPEAT_FAIL=1
+fi
+if [ "$REPEAT_FAIL" = 0 ]; then
+    echo "PASS: both services answer a repeat from the record, SendResponse records it, and no retry site keeps the lockstep draw"
+fi
+if [ "$REPEAT_FAIL" != 0 ]; then fail=$((fail + 1)); fi
+echo
+
 echo "### native alignment tests (PacketFrame alignment + unaligned buffer access)"
 build_run "align" "align_test.cpp"
 echo

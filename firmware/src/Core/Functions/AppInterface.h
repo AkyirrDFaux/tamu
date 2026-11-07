@@ -264,6 +264,15 @@ uint32_t AppLinkEnqueueDropsUsb = 0; // the inbound queue was full and the USB f
 uint32_t AppLinkFrameRejectsBle = 0; // a BLE link frame failed its CRC and was re-synced
 uint32_t AppLinkEnqueueDropsBle = 0; // the inbound queue was full and the BLE frame was dropped
 uint32_t AppBusSendFails = 0;     // a bus transmit exhausted its retries (core-origin included)
+// (card t_763b4cde) The counter above cannot tell WHICH frame was lost. A core-origin request
+// that never got onto the wire used to be invisible twice over: the dispatcher ignored the
+// transmit's return and no gate slot tracks a frame the core started for itself, so a subscription
+// install or a script's foreign access simply never happened while its caller believed it had been
+// sent. Counted here, printed in the same BUSGATE line as sendfails.
+uint32_t AppBusCoreRequestLost = 0;
+// A retransmission answered from the repeat record instead of being executed a second time
+// (Core/Functions/BusRepeat.h). Zero on a quiet bus; non-zero proves the guard is doing its job.
+uint32_t AppBusRepeatsAnswered = 0;
 extern uint32_t BusRxCrcRejects;  // defined in Core/Functions/Bus.h (the RX assembler's owner)
 extern uint32_t BusRxDestroyed;   // defined in Core/Functions/Bus.h (bytes the RX path had to drop)
 extern uint32_t RS485TxStintWorstMs; // defined in Devices/Tamu_v2.0A/RSBus.h (longest send, ms)
@@ -368,9 +377,10 @@ inline void AppBusGateDrain()
         DeviceLog("BUSGATE", "link usb rejects=%lu drops=%lu | ble rejects=%lu drops=%lu",
                   (unsigned long)AppLinkFrameRejectsUsb, (unsigned long)AppLinkEnqueueDropsUsb,
                   (unsigned long)AppLinkFrameRejectsBle, (unsigned long)AppLinkEnqueueDropsBle);
-        DeviceLog("BUSGATE", "bus sendfails=%lu rxrejects=%lu rxdestroyed=%lu txstint=%lums",
+        DeviceLog("BUSGATE", "bus sendfails=%lu rxrejects=%lu rxdestroyed=%lu txstint=%lums corelost=%lu repeats=%lu",
                   (unsigned long)AppBusSendFails, (unsigned long)BusRxCrcRejects,
-                  (unsigned long)BusRxDestroyed, (unsigned long)RS485TxStintWorstMs);
+                  (unsigned long)BusRxDestroyed, (unsigned long)RS485TxStintWorstMs,
+                  (unsigned long)AppBusCoreRequestLost, (unsigned long)AppBusRepeatsAnswered);
     }
 }
 #endif

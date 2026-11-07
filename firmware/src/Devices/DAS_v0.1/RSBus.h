@@ -181,8 +181,11 @@ bool SendAndVerifyPacket(const PacketFrame &Data) {
             return true; // Success!
         }
 
-        // Collision or failed echo: random backoff before retry
-        Sleep((RawRand() % 16) + 1);
+        // Collision or failed echo: back off at least one frame (2.80 ms), decorrelated by this
+        // node's own address and the attempt number. The old `(RawRand() % 16) + 1` ms was under a
+        // frame at the low end and its low 4 bits cycle with period 16, so two colliding nodes
+        // re-drew the same delay and collided again (Core/Functions/Bus.h).
+        Sleep(RS485BackoffMs(DeviceStatus.ShortAddress, (uint8_t)Attempt, RawRand()));
     }
     DasErrorFlag = true; // the red LED indicates the bus error (priority over the LED block)
     PinLow(LEDW);

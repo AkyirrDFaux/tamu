@@ -9,6 +9,7 @@
 #include "Core/Functions/MemoryTypes.h"
 #include "Core/Functions/Packet.h"
 #include "Core/Functions/Storage.h"
+#include "Core/Functions/BusRepeat.h" // repeat guard: a retransmission must not execute twice
 
 void DispatchPacket(const PacketFrame &Frame);
 
@@ -43,6 +44,10 @@ __attribute__((noinline)) void SendResponse(const PacketFrame &Frame, const uint
     PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
                      (uint8_t)(FLAG_TYPE | FLAG_START | FLAG_STOP | Status), Payload, Len);
     DispatchPacket(TxFrame);
+    // A guarded request's outcome is remembered here, where the status the handler decided is
+    // still in hand and a reply was really sent: a retransmission of it is then answered from the
+    // record instead of being executed a second time (Core/Functions/BusRepeat.h).
+    BusRepeatNote(Frame, Status, Len, (uint16_t)TimeFromBoot());
 }
 
 // Emits one FRAG fragment: the caller has placed `n` content bytes at tx_frame.payload + 4,

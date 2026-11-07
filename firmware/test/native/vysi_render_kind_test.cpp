@@ -30,6 +30,10 @@
 #include "Core/Functions/Packet.h"
 DeviceStatusStruct DeviceStatus;
 void DispatchPacket(const PacketFrame &) {}
+// The reply builder (Core/Functions/MemoryBackup.h SendResponse) records a guarded request's
+// outcome for the bus repeat guard and asks the device's monotonic clock for it. Nothing here
+// sends a reply, so a fixed clock is enough to link.
+uint32_t TimeFromBoot() { return 0; }
 void DeviceLog(const char *, const char *, ...) {}
 PacketFrame TxFrame;
 

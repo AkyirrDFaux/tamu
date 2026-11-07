@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Functions/Packet.h"
+#include "Core/Functions/BusRepeat.h" // repeat guard: a retransmission must not execute twice
 #ifdef USE_APP_INTERFACE
 #include "Core/Functions/AppInterface.h"
 #endif
@@ -155,7 +156,19 @@ void DispatchPacket(const PacketFrame &Frame)
         // collide with an answer still owed is held there and sent by AppBusDeferredDrain when
         // that answer lands - the gate's scope is the wire, not the frame's origin, so nothing
         // has to know here whether this frame came from the app.
-        SendAndVerifyPacket(Frame);
+        //
+        // A false return means the frame never got onto the wire (a gate-held frame reports true and
+        // is sent later by AppBusDeferredDrain). For a frame the CORE originated - a subscription
+        // install, a script's foreign register access, a confirm-required value update - nothing
+        // else records the loss: the gate ring tracks app forwards only, so the request simply never
+        // existed while its caller believes it was sent. Counted beside AppBusSendFails.
+        const bool Sent = SendAndVerifyPacket(Frame);
+#ifdef USE_APP_INTERFACE
+        if (!Sent && AppFrameSource == AppLinkSource::None)
+            AppBusCoreRequestLost = AppBusCoreRequestLost + 1;
+#else
+        (void)Sent;
+#endif
     }
 }
 

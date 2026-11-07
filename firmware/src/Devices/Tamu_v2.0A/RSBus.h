@@ -22,7 +22,8 @@
 //     as a whole cannot outlive it, and every wait inside the send serves the app link
 //     (RS485AppLinkTick) instead of stopping it.
 //
-// Worst case: RS485_TX_STINT_MS + one attempt's non-wait work (10 + 10 + 20 + 16 = 56 ms) = 356 ms.
+// Worst case: RS485_TX_STINT_MS + one attempt's non-wait work (10 + 10 + 20 + 33 = 73 ms, the 33
+// being the largest retry backoff RS485BackoffMs can draw) = 373 ms.
 // The measured maximum is on the device as RS485TxStintWorstMs (BUSGATE totals line, txstint=).
 #define RS485_TX_STINT_MS 300
 #define RS485_ECHO_TIMEOUT_MS 10
@@ -266,8 +267,12 @@ static bool RS485TransmitVerified(const PacketFrame &Data)
             return true;
         }
 
-        // Collision or failed echo: back off with a fresh random delay
-        uint32_t BackoffMs = (RawRand() % 16) + 1;
+        // Collision or failed echo: back off with a fresh delay. The delay is at least one frame
+        // (2.80 ms) and is decorrelated by this core's own address and the attempt number - the old
+        // `(RawRand() % 16) + 1` was under a frame at the low end and its low 4 bits cycle with
+        // period 16, which put two colliding nodes back in lockstep (Core/Functions/Bus.h).
+        const uint32_t BackoffMs =
+            RS485BackoffMs(DeviceStatus.ShortAddress, (uint8_t)Attempt, RawRand());
         if (!AppInterface.Connected) // diagnostics only when no app is attached to the console
         {
             ESP_LOGW("RS485", "Attempt %d failed (%s), backoff %lums", Attempt + 1,
@@ -360,7 +365,8 @@ bool RS485SendRaw(const uint8_t *Data, size_t Len)
 
         if (!Collided && Verified == Len)
             return true;
-        RS485SleepTicking((RawRand() % 16) + 1);
+        // Same frame-or-longer, address-decorrelated backoff as the packet path (Bus.h).
+        RS485SleepTicking(RS485BackoffMs(DeviceStatus.ShortAddress, (uint8_t)Attempt, RawRand()));
     }
     return false;
 }

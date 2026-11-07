@@ -2,6 +2,7 @@
 
 #include "Core/Functions/Packet.h"
 #include "Core/Functions/Storage.h"
+#include "Core/Functions/BusRepeat.h" // a retransmitted file-table command must not execute twice
 
 // App-link hooks the streamed read asks about (Core/Functions/AppInterface.h). Declared inline
 // here because a service header is parsed before the link's own header; a target without an app
@@ -237,6 +238,23 @@ inline bool StorageService::Handle(const PacketFrame &Frame)
     bool IsResponse = (Frame.Flags & FLAG_TYPE);
 
     if (IsResponse) return true;
+
+    // A retransmission of the last file-table command this node executed is ANSWERED from the
+    // record, not executed again (Core/Functions/BusRepeat.h): the sender re-sends when its own
+    // echo fails, and a failed echo does not mean the frame never arrived. Format/Create/Delete/
+    // Resize/Rename all append or invalidate file-table records (StorageBlockFS.h), and an
+    // invalidated record is never reused, so a second execution permanently spends table slots.
+    // Read (CID 5) and the write stream (CID 6) are not guarded: a read repeats harmlessly and a
+    // write fragment is refused by its own sequence check, with a 2-byte ack the status reply
+    // could not reproduce.
+    if (BusRepeatGuarded(Frame.Cmd) && BusRepeatHit(Frame, (uint16_t)TimeFromBoot()))
+    {
+        SendResponse(Frame, nullptr, 0, BusRepeatStatus());
+#ifdef USE_APP_INTERFACE
+        AppBusRepeatsAnswered = AppBusRepeatsAnswered + 1;
+#endif
+        return true;
+    }
 
     switch (Cid) {
         case 0: { // Format per docs 03.00
