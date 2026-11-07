@@ -25,7 +25,10 @@
 /// 24 KiB transmit ring that just dropped fragments, before that ring has drained. Three whole
 /// re-requests could not recover anything a quiet second would not, and a page that lists N files
 /// paid it per file. The retry is the page's Try again, on a link that has had time to settle;
-/// the re-send policy ([StorageClient.readAttempts]) is kept for a reply that never came at all.
+/// the re-send policy ([StorageClient.readAttempts]) is kept for a request that THREW, never for
+/// a reply that arrived short. A device that answers nothing at all is this same one-send path:
+/// the link arms its stall watchdog at the send, so the silent read is closed as a zero-fragment
+/// partial (`chunks` empty, `stopped` false, `total` 0) and reported once, not three times.
 /// The failure names the hole and the attempt count: `fragment 202 of 256 never arrived (33 of
 /// 256 missing, 223 received) ... It was asked 1 time(s).`
 library;
@@ -395,13 +398,14 @@ void main() {
   });
 
   test(
-    'the retry policy is bounded, stated, and only for a reply that never came',
+    'the retry policy is bounded, stated, and only for a request that threw',
     () {
       expect(
         StorageClient.readAttempts,
         3,
         reason:
-            'one attempt + two re-sends, for a request that produced no reply at all',
+            'one attempt + two re-sends, for a request that never placed a reply '
+            '(not for a reply that arrived short)',
       );
       expect(StorageClient.readRetryBackoff, hasLength(2));
       expect(

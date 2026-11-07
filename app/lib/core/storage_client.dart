@@ -124,7 +124,7 @@ class FileRead {
   /// The device holds no file by this name - a legitimate empty result, not a failure.
   bool get absent => fault == FileReadFault.absent;
 
-  /// The file exists but the reply arrived incomplete; it was re-requested and never decoded.
+  /// The file exists but the reply arrived incomplete; it was reported once and never decoded.
   bool get partial => fault == FileReadFault.partial;
 
   /// Nothing usable came back (no link, no answer, a refusal this read cannot read as "absent").
@@ -423,14 +423,20 @@ class StorageClient {
     }
   }
 
-  /// How many times one whole-file read is SENT when its replies never arrive at all: the first
-  /// attempt plus two re-sends.
+  /// How many times one whole-file read is SENT when the attempt ended in
+  /// [FileReadFault.failed]: the first attempt plus two re-sends.
   ///
   /// Storage CID 5 asks a file BY NAME and has no offset form, so a re-request is the whole file
-  /// again - there is nothing cheaper to retry. This bound is for the case that deserves a
-  /// retry: no reply, no bytes, a thrown request (the frame itself was lost, the link dropped and
-  /// came back). A reply that ARRIVED with a hole in it is NOT re-sent - see [_readWhole] - so
-  /// three whole re-requests is no longer the cost of one lost fragment.
+  /// again - there is nothing cheaper to retry. What is retried is [FileReadFault.failed]: the
+  /// send threw (the frame was lost, the link dropped mid-request, the queue bound refused it),
+  /// or a reply that carried no file bytes after placement.
+  ///
+  /// A reply that came back SHORT is NOT re-sent - see [_readWhole] - and neither is one that
+  /// never started. The link arms its stall watchdog at the SEND (`connection.dart`,
+  /// `_armReplyStall`), so a device that answers nothing is closed inside the stall window as a
+  /// zero-fragment partial (`chunks` empty, `stopped` false, `total` 0, "the device sent no part
+  /// of the reply before the stream went quiet") and reported once. Three whole re-requests is
+  /// therefore no longer the cost of one lost fragment, nor of a silent read.
   static const int readAttempts = 3;
 
   /// The pause before each re-send; [readAttempts] - 1 entries. Short, because the failure it
@@ -443,11 +449,13 @@ class StorageClient {
   /// Reads one file whole, with the recovery policy.
   ///
   /// An attempt fails when the reply lost a fragment, when its STOP frame never came, when the
-  /// placed bytes are shorter than [size], or when the request itself threw. A failed attempt is
-  /// logged with the hole's index and the whole file is asked for again after the matching
-  /// [readRetryBackoff] pause; after [readAttempts] sends the last fault is returned and the
-  /// caller surfaces it. This never waits forever: every attempt is bounded by the request
-  /// timeout and a stream that stops by the stall watchdog.
+  /// placed bytes are shorter than [size], or when the request itself threw. Which of those is
+  /// re-sent depends on [kind]: a `partial` reply (a hole, a missing STOP, a short body - and a
+  /// reply that never started) is logged with the hole's index and returned after ONE send,
+  /// while a `failed` attempt (the request threw, or its reply carried no file bytes) is asked
+  /// for again after the matching [readRetryBackoff] pause. After [readAttempts] sends the last
+  /// fault is returned and the caller surfaces it. This never waits forever: every attempt is
+  /// bounded by the request timeout and a stream that stops by the stall watchdog.
   ///
   /// [kind] says which of the three cases the attempt ended in: `absent` is the device answering
   /// FAIL with no bytes (the name is not in its file table) - a whole-file read does NOT retry
@@ -579,12 +587,13 @@ class StorageClient {
     return (reply: reply, placed: null, fault: fault, kind: kind);
   }
 
-  /// Why an incomplete reply was not asked for again: the read has no offset form, so a
-  /// re-request is the whole file - into the same buffer that just dropped it.
+  /// Why a reply that came back short was not asked for again: the read has no offset form, so a
+  /// re-request is the whole file - back down the link that just failed to deliver it, whether it
+  /// delivered a hole or nothing at all.
   static String _notResentNote(FileReadFault? kind) =>
       kind == FileReadFault.partial
       ? ' It was not asked again: this read has no offset form, so a re-request is the '
-            'whole file again, landing in the buffer that just dropped it.'
+            'whole file again, back down the link that just failed to deliver it.'
       : '';
 
   /// `256 of 256 fragments, STOP received, 16384 byte(s)` - the shape a rig log quotes, so a
@@ -675,8 +684,8 @@ class StorageClient {
   int lastReadAttempts = 0;
 
   /// Why the last whole-file read did not produce a complete file, in one sentence a page can
-  /// show - null when it did. A truncated reply is never rendered as data: the read is
-  /// re-requested ([readAttempts] sends) and only then does this get a value.
+  /// show - null when it did. A truncated reply is never rendered as data: it is reported after
+  /// one send, a request that threw after [readAttempts], and only then does this get a value.
   String? lastReadError;
 
   /// Parses 16-byte file-table records. Unwritten entries are all 0xFF and terminate the
