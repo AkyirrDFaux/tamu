@@ -15,7 +15,22 @@ import 'widgets.dart';
 /// device sitting in bootloader mode, and see the write/verify progress. Doubles as the user
 /// guide for entering bootloader mode and for what the progress means.
 class UpdatePage extends StatefulWidget {
-  const UpdatePage({super.key});
+  const UpdatePage({
+    super.key,
+    this.isConnected,
+    this.clientFactory,
+    this.initialImage,
+  });
+
+  /// Whether the app has a link, for a test that mounts the page with no manager (the app passes
+  /// nothing and the page reads [ConnectionManager.instance]).
+  final bool Function()? isConnected;
+
+  /// Builds the bootloader channel; a test supplies a client over its own transport.
+  final BootloaderClient Function()? clientFactory;
+
+  /// A firmware image already chosen, for a test that cannot open a file picker.
+  final Uint8List? initialImage;
 
   @override
   State<UpdatePage> createState() => _UpdatePageState();
@@ -29,6 +44,7 @@ class _UpdatePageState extends State<UpdatePage> {
 
   bool _probing = false;
   bool _busy = false;
+  bool _cancelRequested = false;
   bool? _probeOk;
   BootloaderIdentity? _identity;
   bool _directToCore = false;
@@ -38,9 +54,25 @@ class _UpdatePageState extends State<UpdatePage> {
 
   ConnectionManager get _link => ConnectionManager.instance;
 
+  @override
+  void initState() {
+    super.initState();
+    final image = widget.initialImage;
+    if (image != null) {
+      _image = image;
+      _fileName = 'image.bin';
+    }
+  }
+
+  /// Whether there is a link: the injected answer when a test provides one.
+  bool get _connected => widget.isConnected?.call() ?? _link.isConnected;
+
   /// The bootloader channel: the connected core's own USB bootloader when selected, else the
   /// core's Device `0020/0021` passthrough to the node bus.
-  BootloaderClient _client() {
+  BootloaderClient _client() =>
+      widget.clientFactory?.call() ?? _defaultClient();
+
+  BootloaderClient _defaultClient() {
     if (_directToCore) {
       final t = ConnectionManager.instance.transport;
       if (t is UsbTransport) {
@@ -58,6 +90,13 @@ class _UpdatePageState extends State<UpdatePage> {
   void _addLog(String line) {
     if (!mounted) return;
     setState(() => _log.add(line));
+  }
+
+  /// Asks the flash to stop. The run checks this between chunks (and between corrections), so it
+  /// ends after the chunk in flight rather than at the next pass.
+  void _cancelUpdate() {
+    setState(() => _cancelRequested = true);
+    _addLog('Stopping after the chunk in flight...');
   }
 
   Future<void> _chooseFile() async {
@@ -89,7 +128,7 @@ class _UpdatePageState extends State<UpdatePage> {
   /// with its app-space size and name. The running app waits for the standard sync byte and
   /// ignores the raw 0xCA frame.
   Future<bool> _probe() async {
-    if (!_link.isConnected) {
+    if (!_connected) {
       _addLog('No link: connect to the core on the Connection page first.');
       return false;
     }
@@ -124,13 +163,14 @@ class _UpdatePageState extends State<UpdatePage> {
       showNotice('Choose a firmware file first');
       return;
     }
-    if (!_link.isConnected) {
+    if (!_connected) {
       showNotice('Connect to the core first');
       return;
     }
 
     setState(() {
       _busy = true;
+      _cancelRequested = false;
       _result = null;
       _progress = null;
       _probeOk = null;
@@ -165,6 +205,8 @@ class _UpdatePageState extends State<UpdatePage> {
       final result = await client.flash(
         image,
         maxImageSize: id.appSize,
+        deadline: BootloaderClient.flashDeadline,
+        isCancelled: () => _cancelRequested,
         onProgress: (p) {
           if (mounted) setState(() => _progress = p);
         },
@@ -182,10 +224,20 @@ class _UpdatePageState extends State<UpdatePage> {
           '(${result.corrections} corrections). Check the link and retry.',
         );
       }
+    } on FlashAborted catch (aborted) {
+      // Cancelled, past its deadline, or a chunk the node never took: the device holds a partial
+      // image, so this is a failure to show, not a result to interpret.
+      _addLog('Update stopped: ${aborted.message}.');
+      _addLog('A partial image is safe to retry from the start.');
     } catch (error) {
       _addLog('Update failed: $error');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _cancelRequested = false;
+        });
+      }
     }
   }
 
@@ -256,7 +308,7 @@ class _UpdatePageState extends State<UpdatePage> {
 
   Widget _targetCard(BuildContext context) {
     final core = _db.byId(coreId);
-    final connected = _link.isConnected;
+    final connected = _connected;
     return InfoCard(
       title: 'Target',
       children: [
@@ -376,18 +428,33 @@ class _UpdatePageState extends State<UpdatePage> {
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
           child: Align(
             alignment: Alignment.centerLeft,
-            child: FilledButton.icon(
-              icon: _busy
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.system_update_alt),
-              label: Text(_busy ? 'Updating...' : 'Update'),
-              onPressed: (_busy || _image == null || !_link.isConnected)
-                  ? null
-                  : _startUpdate,
+            child: Row(
+              children: [
+                FilledButton.icon(
+                  icon: _busy
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.system_update_alt),
+                  label: Text(_busy ? 'Updating...' : 'Update'),
+                  onPressed: (_busy || _image == null || !_connected)
+                      ? null
+                      : _startUpdate,
+                ),
+                // A flash writes ~13,500 chunks and reads them all back; without this the only
+                // way out of a run against a node that left bootloader mode was to wait for it.
+                // It stops between chunks, so the chunk in flight is still acknowledged.
+                if (_busy) ...[
+                  const SizedBox(width: 12),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.stop),
+                    label: Text(_cancelRequested ? 'Stopping...' : 'Cancel'),
+                    onPressed: _cancelRequested ? null : _cancelUpdate,
+                  ),
+                ],
+              ],
             ),
           ),
         ),

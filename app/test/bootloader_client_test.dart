@@ -16,6 +16,10 @@ class FakeTransport implements BootloaderTransport {
   final Set<int> timeoutOnce = {};
   bool alwaysNullRead = false;
 
+  /// True to refuse every write the way a node that has left bootloader mode does: a FAIL with a
+  /// stale last-written offset, for every chunk and every attempt.
+  bool alwaysReject = false;
+
   /// True to mirror the passthrough: writes are ACKed with a success flag but no last-written
   /// offset, so the client cannot reconcile per chunk and the verify pass must catch a drop.
   bool nullOffsetAcks = false;
@@ -31,6 +35,11 @@ class FakeTransport implements BootloaderTransport {
     Duration timeout,
   ) async {
     writes++;
+    if (alwaysReject) {
+      return nullOffsetAcks
+          ? const WriteAck(false)
+          : WriteAck(false, lastWrittenOffset: _last);
+    }
     // A rejected write is acknowledged with the device's (stale) last-written offset.
     if (rejectOnce.remove(offset)) {
       return nullOffsetAcks
@@ -126,13 +135,110 @@ void main() {
     expect(t.reads, greaterThan(t.writes));
   });
 
-  test('an unreachable node never confirms and needs no corrections', () async {
-    final t = FakeTransport()..alwaysNullRead = true;
-    final result = await _client(t).flash(_image(100));
+  group('a flash that cannot finish stops in bounded time', () {
+    // The card's case: the node leaves bootloader mode after identify() succeeded, so every
+    // write (or every read) goes nowhere. The pass used to walk all 13,500 chunks and then
+    // repeat it up to 20 times, because the write result was discarded and a null read only
+    // counted as "retry next pass". It now stops at the first chunk that does not land.
+    const chunks = 100; // 3,200 bytes: the same shapes, a test-sized walk
 
-    expect(result.verified, isFalse);
-    expect(result.corrections, 0);
-    expect(result.passes, greaterThan(1));
+    test('the first write the node never takes ends the write pass', () async {
+      final t = FakeTransport()..alwaysReject = true;
+
+      await expectLater(
+        _client(t).flash(_image(chunks * Bootloader.payloadSize)),
+        throwsA(
+          isA<FlashAborted>()
+              .having((a) => a.chunk, 'chunk', 1)
+              .having((a) => a.total, 'total', chunks)
+              .having((a) => a.message, 'message', contains('never confirmed')),
+        ),
+      );
+      expect(
+        t.writes,
+        3,
+        reason: 'three attempts on ONE chunk, not one attempt on every chunk',
+      );
+    });
+
+    test('a node that stops answering ends the verify pass', () async {
+      final t = FakeTransport()..alwaysNullRead = true;
+
+      await expectLater(
+        _client(t).flash(_image(chunks * Bootloader.payloadSize)),
+        throwsA(
+          isA<FlashAborted>()
+              .having((a) => a.chunk, 'chunk', 1)
+              .having(
+                (a) => a.message,
+                'message',
+                contains('stopped answering'),
+              ),
+        ),
+      );
+      expect(
+        t.reads,
+        5,
+        reason:
+            'the first chunk\'s five read attempts, then stop - not 100 chunks '
+            'x 20 passes',
+      );
+      expect(t.writes, chunks, reason: 'the write pass had already run');
+    });
+
+    test('the deadline stops a run before its first chunk', () async {
+      final t = FakeTransport();
+
+      await expectLater(
+        _client(t).flash(
+          _image(chunks * Bootloader.payloadSize),
+          // An already-expired deadline is what a test can do to prove the check runs at all;
+          // the real one is BootloaderClient.flashDeadline.
+          deadline: const Duration(milliseconds: -1),
+        ),
+        throwsA(
+          isA<FlashAborted>().having(
+            (a) => a.message,
+            'message',
+            contains('deadline'),
+          ),
+        ),
+      );
+      expect(t.writes, 0);
+    });
+
+    test('the user can cancel between chunks', () async {
+      final t = FakeTransport();
+
+      await expectLater(
+        _client(t).flash(
+          _image(chunks * Bootloader.payloadSize),
+          // Two chunks land, then the flag goes up.
+          isCancelled: () => t.writes >= 2,
+        ),
+        throwsA(
+          isA<FlashAborted>()
+              .having((a) => a.message, 'message', contains('cancelled'))
+              .having((a) => a.chunk, 'chunk', 3),
+        ),
+      );
+      expect(
+        t.writes,
+        2,
+        reason: 'the chunk in flight was not abandoned mid-write',
+      );
+    });
+
+    test('the real deadline leaves room for a full image', () {
+      // 13,500 chunks at 50 ms of write pacing each is the worst legitimate run.
+      const realChunks = 13500;
+      final paced = BootloaderClient().writePacing * realChunks;
+      expect(
+        BootloaderClient.flashDeadline,
+        greaterThan(paced),
+        reason: 'paced writes alone are ${paced.inMinutes} min',
+      );
+    });
   });
 
   test('identify exposes the app size and name', () async {

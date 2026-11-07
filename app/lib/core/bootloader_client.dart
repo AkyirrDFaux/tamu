@@ -314,6 +314,34 @@ class _Chunk {
   const _Chunk(this.offset, this.data);
 }
 
+/// A flash run that stopped without completing: its deadline passed, the user cancelled it, a
+/// chunk was never programmed, or the node stopped answering mid-pass.
+///
+/// Thrown rather than returned because every one of these leaves the device with a partial image
+/// and nothing to verify: the caller must hear it as a failure, not read a `verified: false`
+/// result as "it finished and did not check out".
+class FlashAborted implements Exception {
+  const FlashAborted(this.reason, {this.chunk, this.total});
+
+  /// What stopped the run, in one sentence a person can act on.
+  final String reason;
+
+  /// The image chunk being handled when it stopped, when there was one.
+  final int? chunk;
+
+  /// The image's chunk count, when it was known.
+  final int? total;
+
+  /// `the update stopped at chunk 812 of 13512: ...`
+  String get message => chunk == null
+      ? reason
+      : 'the update stopped at chunk $chunk${total == null ? '' : ' of $total'}: '
+            '$reason';
+
+  @override
+  String toString() => message;
+}
+
 /// Flashes a device's main binary: write it all, then read it back and correct the chunks
 /// that differ until one full pass is clean.
 class BootloaderClient {
@@ -339,6 +367,13 @@ class BootloaderClient {
 
   /// Upper bound on verification passes, so a device that never converges still returns.
   final int maxPasses;
+
+  /// How long one [flash] run may take as a whole. The app space is 32-byte chunks and the
+  /// passthrough paces writes 50 ms apart, so a full image is ~11 minutes of paced writes alone,
+  /// plus a verify pass and its corrections. Forty-five minutes is past any run that is making
+  /// progress, and far short of the hours a node that left bootloader mode used to cost - that
+  /// case is now stopped at the first unverified chunk, so this is the backstop, not the fix.
+  static const Duration flashDeadline = Duration(minutes: 45);
 
   BootloaderClient({
     int coreId = 1,
@@ -422,10 +457,19 @@ class BootloaderClient {
   /// chunk confirmed against the device's write acknowledgement); then every chunk is read
   /// back in one pass, mistakes are rewritten, and the pass repeats until one pass finds
   /// nothing to correct. Returns [FlashResult.verified] only then.
+  ///
+  /// Stops instead of crawling: the first chunk the node does not accept fails the run
+  /// ([FlashAborted]) - the write pass used to discard its own result and walk all ~13,500
+  /// chunks of an image into a node that had left bootloader mode, and a verify pass used to
+  /// read the whole image again, up to [maxPasses] times. [deadline] bounds the run as a whole
+  /// and [isCancelled] is the user's way out; both are checked between chunks, so neither waits
+  /// for a pass to finish.
   Future<FlashResult> flash(
     Uint8List image, {
     int? maxImageSize,
     void Function(FlashProgress progress)? onProgress,
+    Duration deadline = flashDeadline,
+    bool Function()? isCancelled,
   }) async {
     // Refuse an image the device's app space cannot hold, before spending a write pass on it.
     // The caller gets the size from identify(); the device would reject the out-of-range writes
@@ -438,11 +482,42 @@ class BootloaderClient {
     final chunks = _chunk(image);
     final total = chunks.length;
     var writes = 0, reads = 0, corrections = 0;
+    final started = DateTime.now();
+
+    /// The two ways out that are not the device's fault, checked between chunks.
+    void checkRun(int chunk, String phase) {
+      if (isCancelled?.call() ?? false) {
+        throw FlashAborted(
+          'you cancelled it while $phase',
+          chunk: chunk,
+          total: total,
+        );
+      }
+      if (DateTime.now().difference(started) > deadline) {
+        throw FlashAborted(
+          'it passed its ${deadline.inMinutes} minute deadline while $phase',
+          chunk: chunk,
+          total: total,
+        );
+      }
+    }
 
     // 1. Write the entire binary. Each write is acknowledged, so a rejected/dropped chunk is
     //    reconciled and retried right here rather than deferred to the verify pass.
     for (var i = 0; i < total; i++) {
-      await writeChunk(chunks[i].offset, chunks[i].data);
+      checkRun(i + 1, 'writing');
+      // The result used to be discarded, so a node that had left bootloader mode was walked
+      // through the whole image with every write failing. The first unverified chunk ends it.
+      final written = await writeChunk(chunks[i].offset, chunks[i].data);
+      if (!written) {
+        throw FlashAborted(
+          'the node never confirmed the chunk at offset 0x'
+          '${chunks[i].offset.toRadixString(16)} after $writeAttempts attempts; '
+          'it may have left bootloader mode',
+          chunk: i + 1,
+          total: total,
+        );
+      }
       writes++;
       onProgress?.call(
         FlashProgress(
@@ -457,15 +532,23 @@ class BootloaderClient {
     //    full pass reads every chunk back clean.
     for (var pass = 1; pass <= maxPasses; pass++) {
       final mistakes = <_Chunk>[];
-      var unread = 0;
       for (var i = 0; i < total; i++) {
+        checkRun(i + 1, 'verifying');
         final data = await readChunk(chunks[i].offset);
         reads++;
-        // A null read is a timeout, not a mismatch: retry it on the next pass rather than
-        // rewrite it, but it still means this pass did not verify the whole image.
+        // A read that exhausted its own attempts (5 tries with growing windows, ~8 s of
+        // silence) is the node being gone, not a mismatch: end the run here instead of reading
+        // the rest of the image and then trying the whole pass again.
         if (data == null) {
-          unread++;
-        } else if (!_sameBytes(data, chunks[i].data)) {
+          throw FlashAborted(
+            'the node stopped answering (offset 0x'
+            '${chunks[i].offset.toRadixString(16)}, $readAttempts read attempts); '
+            'it may have left bootloader mode',
+            chunk: i + 1,
+            total: total,
+          );
+        }
+        if (!_sameBytes(data, chunks[i].data)) {
           mistakes.add(chunks[i]);
         }
         onProgress?.call(
@@ -480,7 +563,7 @@ class BootloaderClient {
       }
 
       // Confirmed only when one pass read every chunk back identical in one go.
-      if (mistakes.isEmpty && unread == 0) {
+      if (mistakes.isEmpty) {
         onProgress?.call(
           FlashProgress(
             phase: FlashPhase.done,
@@ -499,7 +582,16 @@ class BootloaderClient {
       }
 
       for (var i = 0; i < mistakes.length; i++) {
-        await writeChunk(mistakes[i].offset, mistakes[i].data);
+        checkRun(i + 1, 'correcting');
+        final written = await writeChunk(mistakes[i].offset, mistakes[i].data);
+        if (!written) {
+          throw FlashAborted(
+            'the device never took the correction for the chunk at offset 0x'
+            '${mistakes[i].offset.toRadixString(16)} after $writeAttempts attempts',
+            chunk: i + 1,
+            total: mistakes.length,
+          );
+        }
         writes++;
         corrections++;
         onProgress?.call(
