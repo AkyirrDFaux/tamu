@@ -1536,4 +1536,55 @@ else
 fi
 echo
 
+# t_4c9c5fa8, structural half: the board's RSBus cannot be linked on the host (it pulls the UART
+# driver, esp_timer and the app link), so the parts of the fix that ARE the fix are asserted on the
+# source. A regression here is silent on the host and only shows up as "a node that never answered"
+# on the rig, which is exactly what cost a whole restore cycle to find:
+#   - nothing on this path may DISCARD received bytes: no uart_flush_input (it ran after the
+#     silence wait, whose cap can expire mid-frame with the tail still in the driver ring) and no
+#     buffered-length-then-read drain loop;
+#   - the silence wait observes the line through the keep path, and the assembler's byte source
+#     reads that keep ring BEFORE the UART (byte order: the kept bytes are the older ones);
+#   - the drop counter exists and is reported in the BUSGATE totals line beside rxrejects.
+echo "### source guard: RSBus keeps received bytes, drops none silently, and reports what it loses"
+TAMU_RSBUS="$ROOT/src/Devices/Tamu_v2.0A/RSBus.h"
+BUS_H="$ROOT/src/Core/Functions/Bus.h"
+APP_IFACE="$ROOT/src/Core/Functions/AppInterface.h"
+rxbus_fail=0
+if grep -q 'uart_flush_input' "$TAMU_RSBUS"; then
+    echo "FAIL $TAMU_RSBUS: uart_flush_input is back on the transmit path - it can remove a reply"
+    rxbus_fail=1
+fi
+if grep -q 'uart_get_buffered_data_len' "$TAMU_RSBUS"; then
+    echo "FAIL $TAMU_RSBUS: a buffered-length/drain loop is back - it consumed the bytes it counted"
+    rxbus_fail=1
+fi
+if [ "$(grep -c 'RS485KeepBufferedRx' "$TAMU_RSBUS")" -lt 2 ]; then
+    echo "FAIL $TAMU_RSBUS: the silence wait and the pre-TX read must both go through RS485KeepBufferedRx"
+    rxbus_fail=1
+fi
+# The byte source: ReceivePacket() must take the keep ring first, then the UART.
+approx_src=$(sed -n '/^int ReceivePacket(PacketFrame \*Data)/,$p' "$TAMU_RSBUS")
+if ! printf '%s\n' "$approx_src" | grep -q 'RxKeep.Pop(Byte)' ||
+   ! printf '%s\n' "$approx_src" | grep -q 'uart_read_bytes(UART_NUM_1, &Byte, 1, 0)'; then
+    echo "FAIL $TAMU_RSBUS: ReceivePacket must read the keep ring first and then the UART"
+    rxbus_fail=1
+fi
+if ! grep -q 'uint32_t BusRxDestroyed = 0;' "$BUS_H"; then
+    echo "FAIL $BUS_H: BusRxDestroyed is gone - a dropped RX byte would be invisible again"
+    rxbus_fail=1
+fi
+if ! grep -q 'rxdestroyed=%lu' "$APP_IFACE"; then
+    echo "FAIL $APP_IFACE: the BUSGATE totals line must report rxdestroyed= beside rxrejects="
+    rxbus_fail=1
+fi
+# The transmit stint: one deadline for the whole send, and the app link served inside it.
+if ! grep -q 'RS485_TX_STINT_MS' "$TAMU_RSBUS" || ! grep -q 'RS485AppLinkTick' "$TAMU_RSBUS"; then
+    echo "FAIL $TAMU_RSBUS: the send must be bounded by RS485_TX_STINT_MS and must tick the app link"
+    rxbus_fail=1
+fi
+[ $rxbus_fail = 0 ] && echo "PASS: no RX byte is flushed or drained away, the keep ring feeds the assembler first, and the loss is counted and reported"
+fail=$((fail + rxbus_fail))
+echo
+
 exit $fail
