@@ -9,6 +9,8 @@
 
 #include "NimBLEDevice.h"
 #include "Blocks/BleAdmissionPolicy.h"
+#include "Blocks/BleLinkLatch.h"     // the single-session latch and its supervisor
+#include "Blocks/BleRxAssembler.h"   // the bounded, self-resynchronising chunk assembler
 #include "Blocks/BleSecurityPolicy.h"
 #include "Blocks/BleWindowPolicy.h"
 #include "BlePasskeyStore.h" // the passkey and the policy stamp of the bond store (NVS `ble`)
@@ -69,10 +71,24 @@ bool AppBLELinkSecured()
 }
 
 static uint32_t BleWindowEndMs = 0;           // 0 = the connectable window is closed
-static uint32_t BleSecureDeadlineMs = 0;      // 0 = no unsecured link pending
+// The pairing deadline: a link that has not become a session by then is dropped by AppBLETick. It is
+// armed for EVERY link that is left up without a session - including the refusals, which used to
+// return before a deadline existed and so could leave a link with no timeout at all - and it is
+// cleared only once the drop has been handed to the latch's supervisor (Blocks/BleLinkLatch.h), which
+// is what retries it and clears the latch if the stack will not co-operate.
+static uint16_t BleSecureHandle = 0xFFFF;     // the link the deadline belongs to
+static uint32_t BleSecureDeadlineMs = 0;      // 0 = no unadmitted link pending
 static uint32_t BleSecureBudgetUsedMs = 0;    // the budget the pending link was granted (for the log)
 static bool BleSecureLinkMitm = false;        // ... and whether it was granted the passkey budget
-static uint16_t BleConnHandle = 0xFFFF;
+
+// The one link that may hold the radio, and the supervisor that makes its release verifiable.
+// The session handle used to be a bare variable: set where a link arrived, cleared only in
+// onDisconnect, and every refusal's `disconnect()` answer was thrown away - so a teardown that did
+// not produce the callback left the device advertising and dropping every peer for the life of the
+// boot (Blocks/BleLinkLatch.h has the whole story). The state machine owns it now, and AppBLETick
+// checks it against the stack's own list of live links instead of trusting the callback.
+static BleLinkLatch StaticBleLatch;
+
 // When the current link came up (uptime ms, taken in onConnect). The connect-time refusal is only
 // "immediate" if it can be measured, so onDisconnect logs the link's whole lifetime: a refused link
 // reads a few milliseconds, a session reads as long as the app was connected (Issues.md E73).
@@ -171,53 +187,149 @@ static bool BleSetGapName(const char *Name)
 // connect/disconnect callbacks), never from AppBLETick - see the framer race note there.
 static WireStreamParser BleParser;
 
-// Reassembles the length-prefixed BLE chunks (uint16 LE + stream). BlueZ may
-// deliver characteristic writes fragmented or coalesced arbitrarily, so this
-// cannot assume one onWrite == one complete chunk.
-struct BleRxAssembler
+// Reassembles the length-prefixed BLE chunks (uint16 LE + stream). BlueZ may deliver
+// characteristic writes fragmented or coalesced arbitrarily, so this cannot assume one onWrite ==
+// one complete chunk. The assembler itself is Blocks/BleRxAssembler.h: a declared length beyond
+// what the link can carry is refused, a chunk that stops arriving is abandoned on a clock, and both
+// are counted (`Resyncs`) so a desync says so instead of quietly failing every CRC for the rest of
+// the session. Its `MaxNeed` is the negotiated MTU's bound, tightened in onMTUChange.
+static BleRxAssembler StaticBleRxAssembler;
+
+// ===== The session latch's helpers =====
+//
+// The rules live in Blocks/BleLinkLatch.h; these are the only places the stack's connection list and
+// the disconnect call are touched, so the rules are about state and never about a nil check.
+
+// How often the app task asks the stack whether the latched link is still there. Once per half
+// second is far faster than any teardown that matters and costs a vector read.
+#define BLE_LATCH_CHECK_MS 500
+
+// A refused link gets this long to tear down before the tick drops it. Shorter than a pairing
+// budget on purpose: nothing is waiting for a refusal to complete.
+#define BLE_REFUSAL_GRACE_MS 2000
+
+// Is `Handle` one of the handles in the stack's live-connection list? This is what the latch is
+// checked against - NimBLEServer's own list, not our flags - and it is what lets a lost onDisconnect
+// be repaired instead of becoming permanent. The list is a fixed-size array inside the server (no
+// allocation, no iterator to invalidate), so reading it from the app task is safe: the host task only
+// ever writes one slot at a time.
+static bool BleHandleInList(const std::vector<uint16_t> &Peers, uint16_t Handle)
 {
-    uint16_t Need      = 0;   // stream bytes of the current chunk
-    uint16_t Got       = 0;   // stream bytes accumulated so far
-    bool     HaveLen   = false;
-    uint8_t  LenBuf[2] = {0, 0};
+    if (Handle == 0xFFFF)
+        return false;
+    for (uint16_t H : Peers)
+        if (H == Handle)
+            return true;
+    return false;
+}
 
-    // Clears the in-flight chunk state.
-    // Called on connect/disconnect: a session that ends mid-chunk would otherwise leave
-    // haveLen/got set, and the next session's first bytes would be read as payload instead of
-    // a length prefix - the frame then never completes and nothing is ever dispatched, with no
-    // CRC rejection to show for it either.
-    inline void Reset()
+// One copy of the list, for a check that has more than one handle to ask about.
+static std::vector<uint16_t> BleLiveLinks()
+{
+    if (!BleServer)
+        return std::vector<uint16_t>();
+    return BleServer->getPeerDevices();
+}
+
+static bool BleLinkListed(uint16_t Handle)
+{
+    return BleHandleInList(BleLiveLinks(), Handle);
+}
+
+// Asks the stack to drop `Handle` and RECORDS the request, so the tick can tell a teardown that
+// happened from one the stack refused. Every refusal path and every deadline goes through here;
+// before, each one called disconnect() and threw the answer away.
+static void BleDropLink(uint16_t Handle, const char *Why)
+{
+    if (Handle == 0xFFFF)
+        return;
+    BleLatchDrop(StaticBleLatch, Handle, TimeFromBoot());
+    if (!BleServer)
+        return;
+    if (BleServer->disconnect(Handle))
+        DeviceLog("APPBLE", "drop requested: handle %u (%s)", (unsigned)Handle, Why);
+    else
+        DeviceLog("APPBLE", "drop of handle %u refused by the stack (%s): the supervisor retries it",
+                  (unsigned)Handle, Why);
+}
+
+// The pairing deadline for `Handle`: the link has `BudgetMs` to become a session before the tick
+// drops it. Armed on every path that leaves a link up WITHOUT a session - the judged path, and now
+// the refusals too (they used to return before a deadline existed, so a refused link that would not
+// tear down had no timeout at all).
+static void BleArmSecureDeadline(uint16_t Handle, uint32_t BudgetMs, bool Mitm)
+{
+    BleSecureHandle       = Handle;
+    BleSecureBudgetUsedMs = BudgetMs;
+    BleSecureLinkMitm     = Mitm;
+    BleSecureDeadlineMs   = TimeFromBoot() + BudgetMs;
+}
+
+static void BleClearSecureDeadline()
+{
+    BleSecureHandle     = 0xFFFF;
+    BleSecureDeadlineMs = 0;
+}
+
+// Everything a session owns, released. onDisconnect and the latch's self-heal both end a session
+// through this, so a healed latch cannot leave a session flag set on a link that no longer exists -
+// which is what would keep advertising off (`BleConnected`) with nothing on the air to connect to.
+//
+// A link that was never the session (a refused second peer) ending changes nothing about the live
+// session: only its own record goes. Without that distinction a second peer's disconnect cleared the
+// session's flags while the session was still up, which stopped its TX and put the advertisement back
+// on the air underneath it.
+static void BleSessionEnded(uint16_t Handle)
+{
+    const bool WasSession = (StaticBleLatch.Session == Handle);
+    BleLatchReleased(StaticBleLatch, Handle);
+    if (BleSecureHandle == Handle)
+        BleClearSecureDeadline();
+    if (!WasSession)
+        return;
+
+    BleConnected = false;
+    BleSecured   = false;
+    StaticBleRxAssembler.Reset();
+    BleParser.Reset();
+    BleMtu = 23;
+    AppInterface.TxFlushAll(); // pending responses belong to the dead session
+    AppbleResetSessionBreadcrumbs();
+}
+
+// One supervision pass over the latch (called from AppBLETick, app task). `BleLatchTick` decides;
+// this performs the stack call and the session teardown the decision implies.
+static void BleLatchSupervise()
+{
+    const std::vector<uint16_t> Peers = BleLiveLinks();
+    const uint16_t SessionBefore = StaticBleLatch.Session;
+    const BleLatchAction A = BleLatchTick(StaticBleLatch, BleHandleInList(Peers, StaticBleLatch.Drop),
+                                          BleHandleInList(Peers, SessionBefore), TimeFromBoot());
+    if (A.Step == BleLatchStep::Drop)
     {
-        Need    = 0;
-        Got     = 0;
-        HaveLen = false;
+        DeviceLog("APPBLE", "handle %u is still up after its drop: asking again (attempt %u, retries=%u)",
+                  (unsigned)A.Handle, (unsigned)StaticBleLatch.Attempts, (unsigned)StaticBleLatch.Retries);
+        if (BleServer)
+            BleServer->disconnect(A.Handle);
+        return;
     }
-
-    // Feeds one raw byte; returns true when a stream byte should go into the RX ring.
-    inline bool Feed(uint8_t Byte, uint8_t *Out)
+    if (A.Step == BleLatchStep::Heal)
     {
-        if (!HaveLen)
-        {
-            LenBuf[Got++] = Byte;
-            if (Got == 2)
-            {
-                Need   = (uint16_t)(LenBuf[0] | (LenBuf[1] << 8));
-                Got    = 0;
-                HaveLen= true;
-                if (Need == 0) { DeviceLog("APPBLE", "Zero-length BLE chunk dropped"); HaveLen = false; }
-            }
-            return false;
-        }
-
-        *Out = Byte;
-        if (++Got >= Need)
-        {
-            Got = 0;
-            HaveLen = false;
-        }
-        return true;
+        const bool WasSession = (A.Handle == SessionBefore);
+        if (WasSession)
+            DeviceLog("APPBLE", "%s handle %u: freeing the session latch (heals=%u forced=%u)",
+                      BleHandleInList(Peers, A.Handle)
+                          ? "the stack will not terminate a link that never became a session,"
+                          : "the link is gone but onDisconnect never came for",
+                      (unsigned)A.Handle, (unsigned)StaticBleLatch.Heals, (unsigned)StaticBleLatch.Forced);
+        else
+            DeviceLog("APPBLE", "handle %u will not terminate; it never held the session, which is untouched "
+                                "(retries=%u forced=%u)",
+                      (unsigned)A.Handle, (unsigned)StaticBleLatch.Retries, (unsigned)StaticBleLatch.Forced);
+        BleSessionEnded(A.Handle);
     }
-} StaticBleRxAssembler;
+}
+
 
 // ===== Connectable window =====
 //
@@ -662,10 +774,10 @@ void AppBLEApplySecurityPolicy()
     //     is admitted under the code in force when it came up, so after a change it is a stranger
     //     by definition - the phone has to pair again inside a window.
     const bool Revoked = AppBLEEnforceBondPolicy();
-    if (Revoked && BleConnHandle != 0xFFFF && BleServer)
+    if (Revoked && BleLatchHeld(StaticBleLatch))
     {
         DeviceLog("APPBLE", "dropping the live session: the passkey it authenticated with is gone");
-        BleServer->disconnect(BleConnHandle);
+        BleDropLink(StaticBleLatch.Session, "passkey changed under it");
     }
 }
 
@@ -688,16 +800,37 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         // the refusal has to be here: the second phone is disconnected immediately and its GATT
         // access never reaches a handler. The phone sees a normal "disconnected by the device",
         // and the log names the reason.
-        if (BleConnHandle != 0xFFFF && BleConnHandle != ConnInfo.getConnHandle())
+        //
+        // Every refusal below arms the pairing deadline BEFORE it returns and asks for the drop
+        // through BleDropLink, which records the request: a refused link that the stack will not
+        // tear down is then on a clock and under supervision instead of leaving the latch (or a
+        // zombie ACL) behind with nothing watching it.
+        // A latched link the stack no longer holds is not a session: it is the stuck latch this
+        // whole mechanism exists for. Clearing it HERE means the connect that would have been
+        // refused is admitted instead - "self-healing" from the phone's side has to mean the next
+        // connect works, not that a retry loop eventually does (the tick's own pass would get there
+        // within BLE_LATCH_CHECK_MS, but the peer in front of us would already have been dropped).
+        if (BleLatchHeld(StaticBleLatch) && !BleLinkListed(StaticBleLatch.Session))
+        {
+            DeviceLog("APPBLE", "stale session latch on handle %u (the stack has no such link): clearing it",
+                      (unsigned)StaticBleLatch.Session);
+            StaticBleLatch.Heals = StaticBleLatch.Heals + 1;
+            BleSessionEnded(StaticBleLatch.Session);
+        }
+
+        if (!BleLatchTake(StaticBleLatch, ConnInfo.getConnHandle()))
         {
             DeviceLog("APPBLE", "refused a second peer: a link is already live (handle %u)",
-                      (unsigned)BleConnHandle);
-            PServer->disconnect(ConnInfo.getConnHandle());
+                      (unsigned)StaticBleLatch.Session);
+            BleArmSecureDeadline(ConnInfo.getConnHandle(), BLE_REFUSAL_GRACE_MS, BlePolicyNow().Mitm);
+            BleDropLink(ConnInfo.getConnHandle(), "second peer");
             return;
         }
 
-        BleConnHandle = ConnInfo.getConnHandle();
         BleMtu = 23;
+        // The link's own chunk bound is not known until its MTU exchange; until then only the
+        // absolute ceiling applies (Blocks/BleRxAssembler.h).
+        StaticBleRxAssembler.MaxNeed = BLE_STREAM_CHUNK_ABS_MAX;
         BleSecured = false;
         BleConnected = false;
         StaticBleRxAssembler.Reset();
@@ -712,7 +845,8 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         if (!BleEnabled)
         {
             DeviceLog("APPBLE", "refused: the radio is disabled");
-            PServer->disconnect(ConnInfo.getConnHandle());
+            BleArmSecureDeadline(ConnInfo.getConnHandle(), BLE_REFUSAL_GRACE_MS, BlePolicyNow().Mitm);
+            BleDropLink(ConnInfo.getConnHandle(), "the radio is disabled");
             return;
         }
 
@@ -743,7 +877,8 @@ class BleServerCallbacks : public NimBLEServerCallbacks
             DeviceLog("APPBLE", "refused %s (identity %s): not bonded, window closed - no pairing started",
                       ConnInfo.getAddress().toString().c_str(),
                       ConnInfo.getIdAddress().toString().c_str());
-            PServer->disconnect(ConnInfo.getConnHandle());
+            BleArmSecureDeadline(ConnInfo.getConnHandle(), BLE_REFUSAL_GRACE_MS, BlePolicyNow().Mitm);
+            BleDropLink(ConnInfo.getConnHandle(), "not bonded, window closed");
             return;
         }
 
@@ -780,9 +915,7 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         // read the prompt and type six digits (BleSecureBudgetMs; the old single 5 s figure dropped
         // every passkey pairing mid-procedure). AppBLETick drops the link when it passes and says
         // which case it was.
-        BleSecureBudgetUsedMs = BleSecureBudgetMs(Policy);
-        BleSecureLinkMitm = Policy.Mitm;
-        BleSecureDeadlineMs = TimeFromBoot() + BleSecureBudgetUsedMs;
+        BleArmSecureDeadline(ConnInfo.getConnHandle(), BleSecureBudgetMs(Policy), Policy.Mitm);
     }
 
     void onDisconnect(NimBLEServer *PServer, NimBLEConnInfo &ConnInfo, int Reason) override
@@ -792,16 +925,10 @@ class BleServerCallbacks : public NimBLEServerCallbacks
         // milliseconds old, a session as long as the app held it.
         DeviceLog("APPBLE", "link down after %u ms (secured=%u reason=0x%02x)",
                   (unsigned)(TimeFromBoot() - BleLinkUpMs), (unsigned)BleSecured, (unsigned)Reason);
-        BleConnected = false;
-        BleSecured = false;
-        BleConnHandle = 0xFFFF;
-        BleSecureDeadlineMs = 0;
-        // Drop any half-received chunk with the session (see BleRxAssembler::reset).
-        StaticBleRxAssembler.Reset();
-        BleParser.Reset();
-        BleMtu = 23;
-        AppInterface.TxFlushAll(); // pending responses belong to the dead session
-        AppbleResetSessionBreadcrumbs();
+        // Everything else a session owns (the latch, the deadline, the assembler, the TX ring) is
+        // released in one place, shared with the latch's self-heal - see BleSessionEnded.
+        (void)PServer;
+        BleSessionEnded(ConnInfo.getConnHandle());
     }
 
     // Encryption change / pairing completed. This is where a link is judged: the app session is
@@ -819,8 +946,8 @@ class BleServerCallbacks : public NimBLEServerCallbacks
                       BleLinkBondingClosed ? ", no pairing window" : "");
             BleSecured = false;
             BleConnected = false;
-            if (BleServer)
-                BleServer->disconnect(ConnInfo.getConnHandle());
+            BleArmSecureDeadline(ConnInfo.getConnHandle(), BLE_REFUSAL_GRACE_MS, Policy.Mitm);
+            BleDropLink(ConnInfo.getConnHandle(), "not encrypted+bonded");
             return;
         }
 
@@ -831,8 +958,8 @@ class BleServerCallbacks : public NimBLEServerCallbacks
             DeviceLog("APPBLE", "unauthenticated link refused: a passkey is set");
             BleSecured = false;
             BleConnected = false;
-            if (BleServer)
-                BleServer->disconnect(ConnInfo.getConnHandle());
+            BleArmSecureDeadline(ConnInfo.getConnHandle(), BLE_REFUSAL_GRACE_MS, Policy.Mitm);
+            BleDropLink(ConnInfo.getConnHandle(), "unauthenticated");
             return;
         }
 
@@ -852,15 +979,16 @@ class BleServerCallbacks : public NimBLEServerCallbacks
             AppBLEBondStoreChanged();
             BleSecured = false;
             BleConnected = false;
-            if (BleServer)
-                BleServer->disconnect(ConnInfo.getConnHandle());
+            BleArmSecureDeadline(ConnInfo.getConnHandle(), BLE_REFUSAL_GRACE_MS, Policy.Mitm);
+            BleDropLink(ConnInfo.getConnHandle(), "paired outside the window");
             return;
         }
 
         BleSecured = true;
         BleConnected = true;
         BleMtu = ConnInfo.getMTU();
-        BleSecureDeadlineMs = 0;
+        StaticBleRxAssembler.MaxNeed = BleMaxChunkForMtu(BleMtu);
+        BleClearSecureDeadline();
         // The naming rule's trigger (Blocks/AutoName.h "WHEN"): this link came up with an EMPTY bond
         // store and has just made the device's first bond. Raised here and performed by the app
         // task on its next pass (Devices/Tamu_v2.0A/BleAutoName.h), because the write is a
@@ -919,6 +1047,9 @@ class BleServerCallbacks : public NimBLEServerCallbacks
     void onMTUChange(uint16_t MTU, NimBLEConnInfo &ConnInfo) override
     {
         BleMtu = MTU;
+        // The RX chunk assembler's bound follows the link it is reading: a chunk can never declare
+        // more than this link can carry (Blocks/BleRxAssembler.h).
+        StaticBleRxAssembler.MaxNeed = BleMaxChunkForMtu(MTU);
     }
 
     void onPhyUpdate(NimBLEConnInfo &ConnInfo, uint8_t TxPhy, uint8_t RxPhy) override
@@ -955,8 +1086,22 @@ class BleTxCallbacks : public NimBLECharacteristicCallbacks
 
         for (size_t i = 0; i < Len; i++)
         {
-            uint8_t Byte;
-            if (!StaticBleRxAssembler.Feed((uint8_t)Value[i], &Byte))
+            uint8_t Byte = 0;
+            const BleFeedResult F = StaticBleRxAssembler.Feed((uint8_t)Value[i], TimeFromBoot(), &Byte);
+            if (F.Resynced)
+            {
+                // The chunk in flight was abandoned (its declared length cannot be carried, or it
+                // stopped arriving). The byte that showed it starts a fresh prefix, but the PACKET
+                // parser still holds the bytes of a frame that will never finish - so it is reset
+                // with the assembler. This is the line that makes the recovery visible: before,
+                // the session silently failed every CRC from here on.
+                BleParser.Reset();
+                DeviceLog("APPBLE", "RX chunk resync #%u (overruns=%u truncations=%u): dropped the partial chunk",
+                          (unsigned)StaticBleRxAssembler.Resyncs,
+                          (unsigned)StaticBleRxAssembler.Overruns,
+                          (unsigned)StaticBleRxAssembler.Truncations);
+            }
+            if (!F.Stream)
                 continue;
             // Assembled stream bytes go straight into the wire-stream parser;
             // complete frames are queued for the pump (no intermediate buffer).
@@ -1048,6 +1193,10 @@ static void StartAppAdvertising()
               UuidOk, NameOk, Started, GapNameOk);
 }
 
+// Why the last radio start failed, in a form the log can name. A start that fails has to say WHICH
+// call failed - "radio start failed" alone left the owner (and the rig) with no next step.
+static const char *BleStartFail = "not attempted";
+
 // Starts the radio: the NimBLE host, the pairing policy and the GATT table (built from that
 // policy). Called at boot when the block's Enabled is true, and later if it is switched on.
 // Idempotent per boot: BleRadioUp guards it.
@@ -1061,7 +1210,8 @@ static bool AppBLERadioStart()
 
     if (!NimBLEDevice::init(Name))
     {
-        DeviceLog("APPBLE", "radio start failed");
+        BleStartFail = "NimBLEDevice::init() returned false";
+        DeviceLog("APPBLE", "radio start failed: %s", BleStartFail);
         return false;
     }
     NimBLEDevice::setMTU(512);
@@ -1082,12 +1232,21 @@ static bool AppBLERadioStart()
     BleServer = NimBLEDevice::createServer();
     if (!BleServer)
     {
-        DeviceLog("APPBLE", "createServer failed");
+        BleStartFail = "NimBLEDevice::createServer() returned null";
+        DeviceLog("APPBLE", "radio start failed: %s", BleStartFail);
         return false;
     }
     BleServer->setCallbacks(&StaticBleServerCallbacks);
 
     NimBLEService *Svc = BleServer->createService(BLE_SERVICE_UUID);
+    if (!Svc)
+    {
+        // A half-built radio is worse than none: it would advertise a service nobody can use. Say
+        // which call failed and let the backoff decide whether to try again.
+        BleStartFail = "createService() returned null";
+        DeviceLog("APPBLE", "radio start failed: %s", BleStartFail);
+        return false;
+    }
 
     // Every characteristic permission requires encryption (the flags below carry the *_ENC bits),
     // plus *_AUTHEN when a passkey is set: the ATT server refuses an unencrypted or
@@ -1096,6 +1255,12 @@ static bool AppBLERadioStart()
     Rx->setCallbacks(&StaticBleTxCallbacks);
 
     BleTx = Svc->createCharacteristic(BLE_TX_CHAR_UUID, Policy.TxFlags);
+    if (!Rx || !BleTx)
+    {
+        BleStartFail = "createCharacteristic() returned null";
+        DeviceLog("APPBLE", "radio start failed: %s", BleStartFail);
+        return false;
+    }
 
     // (NimBLEService::start() is a no-op / deprecated: services start with the server.)
 
@@ -1107,6 +1272,7 @@ static bool AppBLERadioStart()
     const int Bonds = NimBLEDevice::getNumBonds();
 
     memcpy(BleAppliedName, Name, SYSTEM_NAME_LEN + 1);
+    BleStartFail = "none";
     BleRadioUp = true;
     BleEnabled = true;
     // Do NOT start advertising here: AppBLETick owns that, and its first pass starts one straight
@@ -1128,6 +1294,71 @@ static bool AppBLERadioStart()
     return true;
 }
 
+// ===== A radio that will not start =====
+//
+// `AppBLESettingsApply` runs every main-loop pass (~500 Hz), and it used to call
+// `AppBLERadioStart()` unconditionally whenever the block wanted the radio and it was not up. A
+// start that fails (NimBLE's init, the server, the service, the characteristics) therefore ran
+// again on the very next pass: ~500 init/createServer cycles a second on a half-initialised stack,
+// which does not recover the radio - it just burns the task and makes the failure invisible.
+//
+// The attempt is now counted and spaced: BLE_START_RETRY_MS doubling per failure, and after
+// BLE_START_MAX_ATTEMPTS the device gives up and says so, naming the call that failed. The give-up
+// state is not silent and not permanent: a write to the block's Enabled field (a fresh enable) and
+// the GPIO8 reset both clear it, because both are a person asking again.
+#define BLE_START_MAX_ATTEMPTS 3
+#define BLE_START_FIRST_RETRY_MS 2000
+
+static uint8_t  BleStartAttempts = 0;  // starts since the last success (0 = nothing failed)
+static uint32_t BleStartRetryMs  = 0;  // 0 = an attempt may run now
+static bool     BleStartGaveUp  = false;
+
+// Clears the backoff: a deliberate request to start the radio again.
+static void BleRadioStartResetBackoff()
+{
+    BleStartAttempts = 0;
+    BleStartRetryMs  = 0;
+    BleStartGaveUp   = false;
+}
+
+// One start attempt, on the backoff. Called wherever the radio is meant to be up and is not.
+static void BleRadioStartAttempt()
+{
+    const uint32_t Now = TimeFromBoot();
+    if (BleStartGaveUp)
+        return; // it has been said once already; only a fresh enable or a reset retries
+    if (BleStartRetryMs != 0 && (int32_t)(Now - BleStartRetryMs) < 0)
+        return; // still backing off
+
+    if (AppBLERadioStart())
+    {
+        if (BleStartAttempts > 0)
+            DeviceLog("APPBLE", "radio came up on attempt %u", (unsigned)(BleStartAttempts + 1));
+        BleRadioStartResetBackoff();
+        return;
+    }
+
+    BleStartAttempts = (uint8_t)(BleStartAttempts + 1);
+    BleStartRetryMs  = 0;
+    if (BleStartAttempts >= BLE_START_MAX_ATTEMPTS)
+    {
+        BleStartGaveUp = true;
+        // The one line that matters: which call failed, how many times were tried, and what will
+        // make the device try again. The radio is DOWN here - BleRadioUp stays false, so nothing
+        // advertises - and advertising must never claim otherwise.
+        DeviceLog("APPBLE", "radio start GIVEN UP after %u attempts (%s): the block's Enabled write "
+                            "or the GPIO8 reset starts it again",
+                  (unsigned)BleStartAttempts, BleStartFail);
+        return;
+    }
+
+    const uint32_t Backoff = (uint32_t)BLE_START_FIRST_RETRY_MS << (BleStartAttempts - 1);
+    BleStartRetryMs = Now + Backoff;
+    DeviceLog("APPBLE", "radio start failed (%s), attempt %u/%u: retrying in %u ms",
+              BleStartFail, (unsigned)BleStartAttempts, (unsigned)BLE_START_MAX_ATTEMPTS,
+              (unsigned)Backoff);
+}
+
 // Brings the radio level with the block's Enabled and Display name fields. Called from the main
 // loop (BleSettingsSync) so a write takes effect within one iteration; the pairing policy needs
 // no call here - BlePolicyNow() reads the block at every use, and a written passkey applies
@@ -1140,7 +1371,11 @@ void AppBLESettingsApply()
 
     if (WantEnabled && !BleRadioUp)
     {
-        AppBLERadioStart(); // first enable, or the boot of a device that had it on
+        // First enable, or the boot of a device that had it on - or a retry of a start that failed.
+        // The retry is on a backoff (BleRadioStartAttempt): a radio that will not come up must not
+        // be re-initialised on every loop pass, which is what this did - NimBLEDevice::init() +
+        // createServer() up to ~500 times a second on a half-initialised stack.
+        BleRadioStartAttempt();
         return;
     }
 
@@ -1154,12 +1389,12 @@ void AppBLESettingsApply()
         {
             BleEnabled = false;
             BleWindowEndMs = 0;
-            BleSecureDeadlineMs = 0;
+            BleClearSecureDeadline();
             BleAdvRestart = false;
             // The advertisement was stopped here, so the tick must not look for a transition.
             BleAdvStateApplied = false;
-            if (BleServer && BleConnHandle != 0xFFFF)
-                BleServer->disconnect(BleConnHandle);
+            if (BleLatchHeld(StaticBleLatch))
+                BleDropLink(StaticBleLatch.Session, "the radio was disabled");
             NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
             if (Adv)
                 Adv->stop();
@@ -1261,24 +1496,29 @@ bool AppBLEStackReset(bool ForgetBonds)
     BleTx = nullptr;
     BleRadioUp = false;
     BleEnabled = false;
-    BleConnHandle = 0xFFFF;
+    // Every handle the old stack knew is meaningless now: the latch and the deadline go with it.
+    BleLatchClearAll(StaticBleLatch);
     BleSecured = false;
     BleConnected = false;
     BleOldConnected = false;
     BleAdvRestart = false;
     BleAdvStateApplied = false;
     BleWindowEndMs = 0;
-    BleSecureDeadlineMs = 0;
+    BleClearSecureDeadline();
     BleMtu = 23;
     BleLinkBondCount = 0;
     BleLinkBondingClosed = false;
     StaticBleRxAssembler.Reset();
+    StaticBleRxAssembler.MaxNeed = BLE_STREAM_CHUNK_ABS_MAX;
     BleParser.Reset();
     AppInterface.TxFlushAll(); // pending responses belonged to the sessions that just died
 
+    // A reset is a person asking for a fresh start, so it also clears a radio-start give-up: if the
+    // stack can be brought back, this is the attempt that does it.
+    BleRadioStartResetBackoff();
     if (!AppBLERadioStart())
     {
-        DeviceLog("APPBLE", "reset: the radio did not come back up");
+        DeviceLog("APPBLE", "reset: the radio did not come back up (%s)", BleStartFail);
         return false;
     }
 
@@ -1377,21 +1617,38 @@ void AppBLETick()
         BleAdvRestart = true;
     }
 
+    // ==== the session latch ====
+    // Every check of "is a link really there" happens here, against the stack's own list, at a
+    // cadence (BLE_LATCH_CHECK_MS) rather than every pass: this is what repairs a teardown whose
+    // onDisconnect never came, and what keeps a link the stack refuses to terminate from holding
+    // the radio for the life of the boot (Blocks/BleLinkLatch.h).
+    static uint32_t LatchCheckMs = 0;
+    if ((uint32_t)(TimeFromBoot() - LatchCheckMs) >= BLE_LATCH_CHECK_MS)
+    {
+        LatchCheckMs = TimeFromBoot();
+        BleLatchSupervise();
+    }
+
     // A connection that has not become encrypted+bonded by its deadline belongs to a peer that
     // never started - or never completed - pairing. Drop it; a session is only ever established
     // by onAuthenticationComplete. The log names the case, because the two have different causes:
     // with a passkey the phone had a dialog up and nobody typed the code in time, without one the
     // peer simply never paired.
-    if (!BleSecured && BleSecureDeadlineMs != 0 &&
-        (int32_t)(TimeFromBoot() - BleSecureDeadlineMs) >= 0)
+    //
+    // The deadline belongs to BleSecureHandle (the link it was armed for), not to the session, so a
+    // refused SECOND peer's deadline cannot drop the live session. And the deadline is cleared only
+    // AFTER the drop has been requested and handed to the latch's supervisor, which retries it and
+    // frees the latch if the stack will not co-operate: clearing it first (which this did) left a
+    // drop that failed with nothing left to retry it.
+    if (BleSecureDeadlineMs != 0 && (int32_t)(TimeFromBoot() - BleSecureDeadlineMs) >= 0)
     {
-        BleSecureDeadlineMs = 0;
-        DeviceLog("APPBLE", "dropping a link that did not become secure within %u ms (%s)",
-                  (unsigned)BleSecureBudgetUsedMs,
+        const uint16_t Pending = BleSecureHandle;
+        DeviceLog("APPBLE", "dropping handle %u: it did not become secure within %u ms (%s)",
+                  (unsigned)Pending, (unsigned)BleSecureBudgetUsedMs,
                   BleSecureLinkMitm ? "passkey set: the code was not entered"
                                     : "just works: pairing never completed");
-        if (BleServer && BleConnHandle != 0xFFFF)
-            BleServer->disconnect(BleConnHandle);
+        BleClearSecureDeadline();
+        BleDropLink(Pending, "did not become secure in time");
     }
 
     // Deferred advertising restart.

@@ -190,6 +190,11 @@ bool OnBleEnabledWrite(const StaticBlockDescriptor &Block, uint16_t Index, const
 
     BleSettingsPersistent *Per = (BleSettingsPersistent *)Block.PersistentData;
     Per->Enabled = *(const uint8_t *)Data ? 1 : 0;
+    // A write to this field is a person asking for the radio: it is also the way out of a start
+    // that failed and was given up on (AppBLE.h, "A radio that will not start"), so the backoff -
+    // and with it the give-up state - is cleared here rather than waiting for a reboot.
+    if (Per->Enabled)
+        BleRadioStartResetBackoff();
     BleSettingsSync(); // apply it now, not on the next pass
     DeviceLog("BLESEC", "radio %s by the block", Per->Enabled ? "enabled" : "disabled");
     return true;

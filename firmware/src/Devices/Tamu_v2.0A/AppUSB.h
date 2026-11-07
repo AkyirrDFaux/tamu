@@ -21,6 +21,7 @@
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #include "Core/Functions/AppInterface.h"
+#include "Blocks/UsbTxStall.h" // "the host stopped draining the port" (TX pacing)
 
 #define USB_FRAME_START 0xFA
 #define USB_FRAME_STOP 0xBF
@@ -36,6 +37,27 @@
 // host merely holds the port.
 static uint32_t UsbLastRx = 0;
 #define USB_TX_SILENCE_MS 500
+
+// The TX side's own reading of the port: how long it has been since the driver took a byte
+// (Blocks/UsbTxStall.h). Shared by the RX path - a frame from the host proves it is reading again -
+// and by AppUSBSend/AppUSBTick.
+static UsbTxStall UsbTx;
+
+// A single pump pass may block for this long in the USB TX path, at most. The old shape allowed
+// four 50 ms `usb_serial_jtag_write_bytes` calls per 64-byte frame - 200 ms per pass - and with the
+// cable in and a host that is not reading that is exactly what every pass paid, which also delayed
+// AppBLETick, the display, the scripts and every BLE timeout behind them. 20 ms (two writes of
+// 10 ms) is inside one connection interval and leaves the app task responsive even when the port is
+// being obstructive.
+#define USB_TX_PASS_BUDGET_MS 20
+#define USB_TX_WRITE_MS (USB_TX_PASS_BUDGET_MS / 2)
+
+// Has the port stopped taking bytes? Read by the pump (AppInterface.h TxFlush) so USB TX is skipped
+// while a host that holds the port open reads nothing.
+bool AppUsbTxStalled()
+{
+    return UsbTx.Stalled(TimeFromBoot());
+}
 
 // True when no app frame has arrived over USB for a while (the port is open but the app is gone),
 // or when none has arrived at all since boot - nothing received means nothing to be in the middle
@@ -179,6 +201,9 @@ static WireStreamParser WireParser;
 static void AppRxStream(const uint8_t *Data, uint16_t Len)
 {
     UsbLastRx = TimeFromBoot();
+    // The host is talking, so it is reading: any "the port has stopped taking bytes" state ends
+    // here, which is what resumes USB TX after a purge (Blocks/UsbTxStall.h).
+    UsbTx.Clear();
     for (uint16_t i = 0; i < Len; i++)
     {
         if (WireParser.Feed(Data[i]))
@@ -275,15 +300,20 @@ uint16_t AppUSBSend(const uint8_t *Data, uint16_t Len)
 
         size_t Total = (size_t)(4 + Chunk);
         size_t Sent = 0;
-        // Bounded: four 50 ms writes is 200 ms for 64 bytes, far beyond a host that is reading -
-        // a longer wait means the port is dead and holding the app task would stall the device.
-        for (int Attempt = 0; Attempt < 4 && Sent < Total; Attempt++)
+        // Bounded hard: a pass blocks at most USB_TX_PASS_BUDGET_MS (20 ms) in two writes of 10 ms.
+        // The old shape allowed four 50 ms writes - 200 ms per 64-byte frame - so with the cable in
+        // and a host that was not reading, every pump pass paid 200 ms and the BLE state machine,
+        // the display and the script runner all waited behind it.
+        for (int Attempt = 0; Attempt < 2 && Sent < Total; Attempt++)
         {
-            int Wrote = usb_serial_jtag_write_bytes(Frame + Sent, Total - Sent, pdMS_TO_TICKS(50));
+            int Wrote = usb_serial_jtag_write_bytes(Frame + Sent, Total - Sent, pdMS_TO_TICKS(USB_TX_WRITE_MS));
             if (Wrote <= 0)
                 break;
             Sent += (size_t)Wrote;
         }
+        // The port accepted nothing: the stall clock starts, and after USB_TX_STALL_MS the pump
+        // stops offering it bytes and drops what is queued (Blocks/UsbTxStall.h).
+        UsbTx.Note((uint16_t)Sent, TimeFromBoot());
         if (Sent < Total)
             break; // the link is not taking bytes: the caller keeps the rest queued
         Off += Chunk;
@@ -294,6 +324,13 @@ uint16_t AppUSBSend(const uint8_t *Data, uint16_t Len)
 // Called from the pump (ApplicationTask). Watches the physical USB link: when the host
 // disconnects, flush anything pending and reset the framing state so a re-attaching host
 // starts from a clean stream.
+//
+// It is also where a dead-but-connected port is dealt with. `usb_serial_jtag_is_connected()` is a
+// SOF test, so a host that holds the port open and reads nothing keeps `Connected` true while the
+// driver's 2 KB TX ring fills with replies nobody will take. Once the port has accepted nothing for
+// USB_TX_STALL_MS those bytes belong to a host that is not there: they are dropped ONCE, the episode
+// is logged, and AppInterface's pump skips USB TX until a frame from the host proves it is reading
+// again (AppRxStream clears the state).
 void AppUSBTick()
 {
     static bool WasConnected = false;
@@ -303,6 +340,17 @@ void AppUSBTick()
         AppInterface.TxFlushAll();
         // AppLinkTask owns both framers; a Reset() here would race the task's Feed().
         UsbResync = true;
+        UsbTx.Clear(); // the next host starts with a clean stall clock
     }
     WasConnected = Connected;
+
+    const uint32_t Now = TimeFromBoot();
+    if (UsbTx.TakeReport(Now))
+    {
+        const uint16_t Pending = (uint16_t)(AppInterface.TxHead - AppInterface.TxTail);
+        AppInterface.TxFlushAll(); // nobody is going to read it
+        DeviceLog("USBLINK", "USB TX stalled: the host accepted nothing for %u ms - dropped %u queued "
+                             "bytes, USB TX paused until it sends again (episode %u)",
+                  (unsigned)USB_TX_STALL_MS, (unsigned)Pending, (unsigned)UsbTx.Episodes);
+    }
 }

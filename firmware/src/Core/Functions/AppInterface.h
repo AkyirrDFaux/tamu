@@ -32,6 +32,10 @@ typedef int portMUX_TYPE;
 // Defined in the device AppUSB.h (included after this header); used by the TX
 // pump to stop draining responses into a USB port the app has stopped reading.
 bool AppUsbSilent();
+// Also from the device AppUSB.h: whether the port has stopped taking bytes at all - a host that
+// holds it open and reads nothing (Blocks/UsbTxStall.h). Distinct from AppUsbSilent: a host can be
+// sending requests and reading none of the replies, and that is the case this exists for.
+bool AppUsbTxStalled();
 
 // Outgoing stream ring: serialized frames waiting to be flushed to the app links.
 //
@@ -656,7 +660,17 @@ inline void AppInterfaceService::TxCommit(uint16_t Count)
 // same work Pump() does.
 inline void AppInterfaceService::TxFlush()
 {
-    if (AppUSBActive() && TxRing && !(AppBLEActive() && AppUsbSilent()))
+    // USB first - and skipped when the port is not being read, whether or not a BLE session is up.
+    // Two tests, both about the HOST rather than about BLE:
+    //   - AppUsbSilent(): no app frame inside ~500 ms (or none since boot). Nothing on the ring is
+    //     unsolicited - every reply answers a request - so a host that says nothing is not waiting
+    //     for anything, and the bytes stay queued until it speaks;
+    //   - AppUsbTxStalled(): the port has accepted no bytes at all for USB_TX_STALL_MS, i.e. the
+    //     driver ring is full and the host is not draining it. AppUSBTick purges that once.
+    // Before this, the only skip was `AppBLEActive() && AppUsbSilent()`, so with the cable in and
+    // nobody reading, a device with NO BLE session blocked this pass on the port. A pass is now
+    // capped at USB_TX_PASS_BUDGET_MS (20 ms, AppUSB.h) and normally costs nothing at all.
+    if (AppUSBActive() && TxRing && !AppUsbSilent() && !AppUsbTxStalled())
     {
         uint8_t Chunk[60];
         for (;;)

@@ -353,6 +353,28 @@ echo "### native BLE Settings write-rule tests (the cable, or a secured BLE sess
 build_run "blewrite" "ble_write_test.cpp"
 echo
 
+# t_44676a52: the radio's four survival mechanisms, each a host-clean state machine.
+#
+#   ble_rx_test.cpp      the RX chunk assembler (Blocks/BleRxAssembler.h): a declared length beyond the
+#                        link is refused, a chunk that stops arriving is abandoned on its clock, both are
+#                        counted, and the frame that follows a deliberately truncated write PARSES.
+#   ble_latch_test.cpp   the single-session latch (Blocks/BleLinkLatch.h): a lost onDisconnect is
+#                        repaired and the next connect is admitted; a teardown the stack refuses is
+#                        retried and then forced; a second peer can never release the live session.
+#   usb_tx_stall_test.cpp  the USB TX stall detector (Blocks/UsbTxStall.h): a port that takes nothing is
+#                        reported once per episode and cleared the moment the host sends a frame.
+echo "### native BLE RX assembler tests (a truncated chunk resyncs; the next frame parses)"
+build_run "blerx" "ble_rx_test.cpp"
+echo
+
+echo "### native BLE session-latch tests (a lost teardown heals; a refused one is retried then forced)"
+build_run "blelatch" "ble_latch_test.cpp"
+echo
+
+echo "### native USB TX stall tests (a port that takes nothing is reported once and skipped)"
+build_run "usbtxstall" "usb_tx_stall_test.cpp"
+echo
+
 # The naming rule (Blocks/AutoName.h): a device names itself "<Prefix>-<serial tail>" on its first
 # bond, and only while its System `Name` field is undisturbed - so a name the app or a setup restore
 # wrote wins, whichever side of the pairing it landed on. The rule, the field shape and the decision
@@ -585,8 +607,10 @@ if [ "$(grep -c 'BLE_SECURE_DEADLINE_MS' "$APPBLE_SRC")" != 0 ]; then
     blessec_guard_fail=1
 fi
 connect_body=$(sed -n '/void onConnect(NimBLEServer/,/^    }$/p' "$APPBLE_SRC")
-if ! printf '%s\n' "$connect_body" | grep -q 'BleSecureBudgetUsedMs = BleSecureBudgetMs(Policy);' ||
-   ! printf '%s\n' "$connect_body" | grep -q 'BleSecureDeadlineMs = TimeFromBoot() + BleSecureBudgetUsedMs;'; then
+# t_44676a52: the arming moved into BleArmSecureDeadline (so every refusal path arms it too), so the
+# budget is granted through that one helper - and the deadline arithmetic lives there with it.
+if ! printf '%s\n' "$connect_body" | grep -q 'BleArmSecureDeadline(ConnInfo.getConnHandle(), BleSecureBudgetMs(Policy), Policy.Mitm);' ||
+   ! grep -q 'BleSecureDeadlineMs   = TimeFromBoot() + BudgetMs;' "$APPBLE_SRC"; then
     echo "FAIL $APPBLE_SRC: onConnect must grant the policy's budget (BleSecureBudgetMs)"
     blessec_guard_fail=1
 fi
@@ -733,7 +757,7 @@ if printf '%s\n' "$apply_body" | grep -q 'if (Policy.Mitm'; then
     e68_guard_fail=1
 fi
 revoke_line=$(printf '%s\n' "$apply_body" | grep -n '= AppBLEEnforceBondPolicy();' | head -1 | cut -d: -f1)
-drop_line=$(printf '%s\n' "$apply_body" | grep -n 'BleServer->disconnect(BleConnHandle);' | head -1 | cut -d: -f1)
+drop_line=$(printf '%s\n' "$apply_body" | grep -n 'BleDropLink(StaticBleLatch.Session, "passkey changed under it");' | head -1 | cut -d: -f1)
 if [ -z "$drop_line" ] || [ -z "$revoke_line" ] || [ "$drop_line" -le "$revoke_line" ]; then
     echo "FAIL $APPBLE_SRC: a changed passkey must drop the live session after revoking its bonds (E68)"
     e68_guard_fail=1
@@ -1746,6 +1770,90 @@ if ! grep -q '"link usb rejects=%lu drops=%lu | ble rejects=%lu drops=%lu"' "$BG
 fi
 [ $bg_fail = 0 ] && echo "PASS: one gated door onto the bus, no origin-based scope, no head-of-line block, both drop counters reported"
 fail=$((fail + bg_fail))
+echo
+
+# ---- the radio's survival fixes (t_44676a52) ----
+#
+# The decisions live in three host-tested headers; what the source guards pin is the WIRING - that the
+# device code goes through them rather than keeping a second copy of the old behaviour beside them.
+BLE_SRC="$ROOT/src/Devices/Tamu_v2.0A/AppBLE.h"
+USB_SRC="$ROOT/src/Devices/Tamu_v2.0A/AppUSB.h"
+IFACE_SRC="$ROOT/src/Core/Functions/AppInterface.h"
+ls_fail=0
+
+# (A/B) The single-session latch: no bare handle, every teardown routed through the supervisor, the
+# pairing deadline armed on the refusal paths too, and the tick supervising the latch.
+if ! grep -q 'BleLatchTake(StaticBleLatch, ConnInfo.getConnHandle())' "$BLE_SRC" ||
+   ! grep -q 'BleLatchSupervise();' "$BLE_SRC" ||
+   ! grep -q 'BleLatchTick(StaticBleLatch, BleLinkListed(StaticBleLatch.Drop),' "$BLE_SRC"; then
+    echo "FAIL $BLE_SRC: the connect gate and the tick must use the host-tested latch (BleLinkLatch.h)"
+    ls_fail=1
+fi
+if [ "$(grep -c 'BleConnHandle' "$BLE_SRC")" != 0 ]; then
+    echo "FAIL $BLE_SRC: the bare BleConnHandle is back - the latch must own the session handle"
+    ls_fail=1
+fi
+# Two disconnect call sites only: BleDropLink (which records and checks the answer) and the
+# supervisor's retry. Anywhere else is a refusal that throws its answer away again.
+if [ "$(grep -c -- '->disconnect(' "$BLE_SRC")" != 2 ]; then
+    echo "FAIL $BLE_SRC: a teardown bypasses BleDropLink, so its result is unchecked again"
+    ls_fail=1
+fi
+# The refusals arm the pairing deadline before returning (the six connect/auth refusal sites).
+if [ "$(grep -c 'BleArmSecureDeadline(ConnInfo.getConnHandle(), BLE_REFUSAL_GRACE_MS' "$BLE_SRC")" != 6 ]; then
+    echo "FAIL $BLE_SRC: a refusal path leaves a link up without a deadline (want 6 armed refusals)"
+    ls_fail=1
+fi
+# The deadline is assigned in exactly one place - BleClearSecureDeadline - so it can never be zeroed
+# before the drop has been handed to the supervisor (which is what B was).
+if [ "$(grep -c '^    BleSecureDeadlineMs = 0;' "$BLE_SRC")" != 1 ]; then
+    echo "FAIL $BLE_SRC: the deadline is cleared somewhere other than BleClearSecureDeadline (it must follow the drop, not precede it)"
+    ls_fail=1
+fi
+
+# (C) The RX assembler: bounded, timed, and its resync resets the packet parser with it.
+if ! grep -q 'StaticBleRxAssembler.Feed((uint8_t)Value\[i\], TimeFromBoot(), &Byte)' "$BLE_SRC"; then
+    echo "FAIL $BLE_SRC: the assembler is fed without its clock, so a truncated chunk desyncs for ever"
+    ls_fail=1
+fi
+if ! grep -q 'if (F.Resynced)' "$BLE_SRC" || ! grep -q 'BleParser.Reset();' "$BLE_SRC"; then
+    echo "FAIL $BLE_SRC: a resync must reset the packet parser too (the caller's half of the realignment)"
+    ls_fail=1
+fi
+if ! grep -q 'StaticBleRxAssembler.MaxNeed = BleMaxChunkForMtu(MTU);' "$BLE_SRC"; then
+    echo "FAIL $BLE_SRC: the assembler's bound does not follow the negotiated MTU"
+    ls_fail=1
+fi
+
+# (D) The USB TX path: a bounded pass, and a skip that does not depend on BLE being active.
+if grep -q 'pdMS_TO_TICKS(50)' "$USB_SRC" || ! grep -q 'pdMS_TO_TICKS(USB_TX_WRITE_MS)' "$USB_SRC"; then
+    echo "FAIL $USB_SRC: a 50 ms write is back - one pass could block 200 ms again"
+    ls_fail=1
+fi
+if ! grep -q '#define USB_TX_PASS_BUDGET_MS 20' "$USB_SRC" || ! grep -q 'Attempt < 2' "$USB_SRC"; then
+    echo "FAIL $USB_SRC: the pass budget must stay 20 ms (two writes of 10 ms)"
+    ls_fail=1
+fi
+if ! grep -q 'AppUSBActive() && TxRing && !AppUsbSilent() && !AppUsbTxStalled()' "$IFACE_SRC"; then
+    echo "FAIL $IFACE_SRC: TxFlush must skip a silent or stalled USB port regardless of BLE"
+    ls_fail=1
+fi
+if ! grep -q 'UsbTx.TakeReport(Now)' "$USB_SRC" || ! grep -q 'UsbTx.Clear();' "$USB_SRC"; then
+    echo "FAIL $USB_SRC: the stall must be purged once per episode and cleared when the host speaks"
+    ls_fail=1
+fi
+
+# (E) A radio start that fails is backed off, not re-initialised every pass.
+if ! grep -q 'BleRadioStartAttempt();' "$BLE_SRC" || ! grep -q 'if (BleStartGaveUp)' "$BLE_SRC"; then
+    echo "FAIL $BLE_SRC: a failed radio start must go through the backoff/give-up path"
+    ls_fail=1
+fi
+if grep -q 'AppBLERadioStart(); // first enable' "$BLE_SRC"; then
+    echo "FAIL $BLE_SRC: the unbounded start site is back"
+    ls_fail=1
+fi
+[ $ls_fail = 0 ] && echo "PASS: the latch is supervised, the assembler bounded and timed, the USB pass capped and skipped, the radio start backed off"
+fail=$((fail + ls_fail))
 echo
 
 exit $fail
