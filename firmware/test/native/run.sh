@@ -1814,6 +1814,21 @@ if ! bash "$ROOT/test/native/bus_defer_guard.sh" "$BG_IFACE" "$BG_DISPATCH" "$BG
 fi
 echo
 
+# t_a20f0442: the core's OWN requests (a subscription install/renewal, a script's foreign register
+# access, a confirm-required value update) have no app link to report back on, and the dispatcher
+# used to discard `SendAndVerifyPacket`'s result for them - a request that exhausted its three
+# retries never existed while its caller believed it had been sent. The counter that names it
+# (AppBusCoreRequestLost) is device-layer wiring, so it is pinned on the source, and the guard is
+# its own script so it can be re-run against the pre-fix dispatcher and watched to FAIL:
+#   bash test/native/bus_core_lost_guard.sh src/Core/Functions/AppInterface.h \
+#       src/Core/Functions/Dispatcher.h src/Devices/Tamu_v2.0A/RSBus.h
+echo "### source guard: a lost core-origin request is counted, beside AppBusSendFails, and printed"
+if ! bash "$ROOT/test/native/bus_core_lost_guard.sh" "$BG_IFACE" "$BG_DISPATCH" \
+     "$ROOT/src/Devices/Tamu_v2.0A/RSBus.h"; then
+    fail=$((fail + 1))
+fi
+echo
+
 echo "### source guard: the latch's liveness read allocates nothing, and its heal ends the session"
 if ! bash "$ROOT/test/native/ble_liveness_guard.sh" "$BG_BLE"; then
     fail=$((fail + 1))
