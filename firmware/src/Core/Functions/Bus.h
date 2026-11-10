@@ -87,6 +87,50 @@ inline uint8_t RS485BackoffMs(uint16_t Addr, uint8_t Attempt, uint32_t Rand)
     return (uint8_t)(2u + ((Phase ^ Draw) & 0x1Fu));
 }
 
+// The transmit stint (cards t_4c9c5fa8 / t_45490cbe).
+//
+// One send is 1..RS485_RETRIES attempts on the device's MAIN task - on the core the same task that
+// runs AppInterface.Pump, the display, the scripts and the radios - so every ms it blocks is a ms
+// the app link is not served. Before this it could hold that task for ~770 ms: 3 attempts x
+// (100 ms silence + 20 ms sync echo + 20 ms first-chunk echo + 100 ms tx-done + up to 16 ms
+// backoff), and the app was mid-transaction. Three things bound it:
+//
+//   * ONE deadline for the whole send (RS485_TX_STINT_MS): an attempt that starts after it never
+//     runs, and each attempt's silence window is clipped to what is left of it, so a continuously
+//     busy or shorted bus costs the task the stint and not three full attempts on top of it;
+//   * the echo and tx-done windows sized from the LINE: a 16-byte chunk at 460800 is 0.35 ms and
+//     the whole longest frame is 2.80 ms (RS485_FRAME_US), so 10 ms and 20 ms are 3.5x and 7x a
+//     frame - a missing echo is still detected, just not after 20 ms;
+//   * every wait inside the send serves the caller's link work instead of stopping it
+//     (RS485AppLinkTick on the core; the DAS has no link to serve), in slices: the silence wait
+//     yields every 1 ms, the tx-done poll is RS485_TX_DONE_SLICE_MS, the backoff sleeps in
+//     RS485_BACKOFF_SLICE_MS.
+//
+// Worst case: RS485_TX_STINT_MS + the last attempt's non-wait work = 300 + (2 echo windows +
+// tx-done + the largest backoff) = 373 ms. The longest stretch the app link goes unserved is one
+// attempt's two echo windows plus the first tx-done poll (2 x RS485_ECHO_TIMEOUT_MS +
+// RS485_TX_DONE_SLICE_MS = 22 ms): the echoes are the only blocking calls left in a send, they are
+// back to back, and a tick between them would put a gap INSIDE the frame for the receiver.
+// test/native/tx_stint_test.cpp measures both figures off the helpers below; the device reports the
+// measured stint on the BUSGATE totals line as txstint=.
+#define RS485_TX_STINT_MS 300
+#define RS485_ECHO_TIMEOUT_MS 10
+#define RS485_TX_DONE_TIMEOUT_MS 20
+#define RS485_TX_DONE_SLICE_MS 2 // one uart_wait_tx_done() poll inside the tx-done wait
+#define RS485_BACKOFF_SLICE_MS 5 // one sleep inside the retry backoff
+// RS485BackoffMs draws 2..33 ms (2 + the low 5 bits). Named so the stint's budget is computed from
+// the same figure the draw obeys instead of restating it in a comment.
+#define RS485_BACKOFF_MAX_MS 33
+
+// No blocking call inside a send may stop the app link for longer than the card allows (50 ms).
+static_assert(2 * RS485_ECHO_TIMEOUT_MS + RS485_TX_DONE_SLICE_MS <= 50,
+              "the back-to-back echo windows plus one tx-done poll are the longest unserved stretch");
+// ... and the send as a whole is the deadline plus one attempt's non-wait work.
+static_assert(RS485_TX_STINT_MS + 2 * RS485_ECHO_TIMEOUT_MS + RS485_TX_DONE_TIMEOUT_MS +
+                      RS485_BACKOFF_MAX_MS <=
+                  400,
+              "the transmit stint's worst case outgrew the budget (see Issues E78/E81 neighbours)");
+
 // Waits for the line to be silent for 8 bytes + Priority/8 + random 0-3 bytes, bounded by `CapMs`
 // (RS485_SILENCE_TIMEOUT_MS unless the caller is inside a stint that has already spent part of its
 // budget) so a continuously-busy or shorted bus cannot wedge the caller.
@@ -117,6 +161,58 @@ static void RS485WaitForSilence(uint8_t Priority, ActiveFn Active, NowUs NowUsCb
         if ((NowUsCb() - WaitStart) >= CapMs * 1000u)
             return; // Give up: transmit into the best window we had
         YieldCb();
+    }
+}
+
+// Waits that keep the caller's link alive (card t_45490cbe).
+//
+// The retry backoff was one vTaskDelay() and the tx-done wait one uart_wait_tx_done() for its whole
+// timeout (100 ms before that window was sized from the line), and either one stopped the whole
+// task - the app link is mid-transaction during a send. They are loops here, with the chip-specific
+// calls injected - the same shape as RS485WaitForSilence above, which is what lets
+// test/native/tx_stint_test.cpp drive the real code on the host with a virtual clock instead of
+// checking a comment:
+//   now_us()   - a microsecond clock (may wrap; only short spans are compared).
+//   tick()     - the link work: the core passes RS485AppLinkTick, which moves queued reply bytes
+//                and ticks the radios and deliberately dispatches NOTHING (the send that is running
+//                owns the wire; a dispatch could start a second transmit).
+//   sleep_ms() - a short pause in whole milliseconds.
+//
+// `SliceMs` 0 means the poll itself already blocked (uart_wait_tx_done with a 2 ms timeout), so the
+// loop adds no sleep of its own and the pacing is exactly what it was before this card.
+
+// Polls `Done` until it answers true or `TimeoutMs` elapsed, ticking the link after every poll.
+template <typename DoneFn, typename NowUs, typename TickFn, typename SleepMsFn>
+static bool RS485WaitTicking(DoneFn Done, NowUs NowUsCb, TickFn TickCb, SleepMsFn SleepMsCb,
+                             uint32_t TimeoutMs, uint32_t SliceMs)
+{
+    const uint32_t Start = NowUsCb();
+    for (;;)
+    {
+        if (Done())
+            return true;
+        TickCb();
+        if ((uint32_t)(NowUsCb() - Start) >= TimeoutMs * 1000u)
+            return false;
+        if (SliceMs != 0)
+            SleepMsCb(SliceMs);
+    }
+}
+
+// Sleeps `Ms`, ticking the link before the sleep and after every slice of it.
+template <typename NowUs, typename TickFn, typename SleepMsFn>
+static void RS485SleepTicking(NowUs NowUsCb, TickFn TickCb, SleepMsFn SleepMsCb, uint32_t Ms)
+{
+    const uint32_t Start = NowUsCb();
+    for (;;)
+    {
+        TickCb();
+        const int32_t LeftUs = (int32_t)(Ms * 1000u) - (int32_t)(uint32_t)(NowUsCb() - Start);
+        if (LeftUs <= 0)
+            return;
+        SleepMsCb(LeftUs > RS485_BACKOFF_SLICE_MS * 1000
+                      ? (uint32_t)RS485_BACKOFF_SLICE_MS
+                      : (uint32_t)((LeftUs + 999) / 1000));
     }
 }
 

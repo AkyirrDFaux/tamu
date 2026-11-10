@@ -8,26 +8,18 @@
 #define RS485_EN_PIN (GPIO_NUM_9)
 
 // ---------------------------------------------------------------------------------------------
-// Transmit stint (card t_4c9c5fa8)
+// Transmit stint (cards t_4c9c5fa8 / t_45490cbe)
 //
-// One send is 1..RS485_RETRIES attempts, and it runs on the main task - the one that also runs
-// AppInterface.Pump, the display, the scripts, the subscriptions and AppBLETick. Its worst case
-// used to be ~700 ms (per attempt: 100 ms silence cap + 20 ms sync echo + 20 ms first-chunk echo
-// + 100 ms tx-done + up to 16 ms backoff, times three). Two things bound it now:
+// The bound and the waits it is made of live in Core/Functions/Bus.h, which is where the arithmetic
+// can be measured on the host (test/native/tx_stint_test.cpp): ONE deadline for the whole send
+// (RS485_TX_STINT_MS), echo/tx-done windows sized from the line (RS485_ECHO_TIMEOUT_MS,
+// RS485_TX_DONE_TIMEOUT_MS), and a link tick inside every wait (RS485AppLinkTick below).
 //
-//   * the echo and tx-done windows are sized from the LINE instead of picked by feel: a 16-byte
-//     chunk at 460800 is 0.35 ms and the whole longest frame is 2.8 ms, so 10 ms and 20 ms are
-//     28x and 7x the line time - a missing echo is still detected, just not after 20 ms;
-//   * every attempt draws its silence window from ONE deadline (RS485_TX_STINT_MS), so the send
-//     as a whole cannot outlive it, and every wait inside the send serves the app link
-//     (RS485AppLinkTick) instead of stopping it.
-//
-// Worst case: RS485_TX_STINT_MS + one attempt's non-wait work (10 + 10 + 20 + 33 = 73 ms, the 33
-// being the largest retry backoff RS485BackoffMs can draw) = 373 ms.
+// Worst case on the device: RS485_TX_STINT_MS + the last attempt's non-wait work = 373 ms. The
+// longest stretch the app link goes unserved inside that is one attempt's two echo windows plus the
+// first tx-done poll (22 ms, back to back: ticking between the echoes would put a gap inside the
+// frame).
 // The measured maximum is on the device as RS485TxStintWorstMs (BUSGATE totals line, txstint=).
-#define RS485_TX_STINT_MS 300
-#define RS485_ECHO_TIMEOUT_MS 10
-#define RS485_TX_DONE_TIMEOUT_MS 20
 
 // Configures UART1 as the RS-485 transceiver (TX/RX pins, baud rate, driver install, enable pin).
 void SetupRS485()
@@ -144,33 +136,30 @@ static void RS485WaitForSilence(uint8_t Priority, uint32_t CapMs)
         CapMs);
 }
 
-// uart_wait_tx_done() blocks for its whole timeout; poll it in 2 ms slices so the app link keeps
-// moving while the last bytes leave the wire.
+// Waits for the last bit to leave the wire, serving the app link between polls: uart_wait_tx_done()
+// blocks for its whole timeout, so the poll is one RS485_TX_DONE_SLICE_MS slice and the tick runs
+// after each one (Bus.h RS485WaitTicking).
 static bool RS485WaitTxDone(uint32_t TimeoutMs)
 {
-    const int64_t Start = esp_timer_get_time();
-    for (;;)
-    {
-        if (uart_wait_tx_done(UART_NUM_1, pdMS_TO_TICKS(2)) == ESP_OK)
-            return true;
-        RS485AppLinkTick();
-        if ((esp_timer_get_time() - Start) >= (int64_t)TimeoutMs * 1000)
-            return false;
-    }
+    return RS485WaitTicking(
+        [](void) -> bool {
+            return uart_wait_tx_done(UART_NUM_1, pdMS_TO_TICKS(RS485_TX_DONE_SLICE_MS)) == ESP_OK;
+        },
+        [](void) -> uint32_t { return (uint32_t)esp_timer_get_time(); },
+        [](void) { RS485AppLinkTick(); },
+        [](uint32_t Ms) { vTaskDelay(pdMS_TO_TICKS(Ms)); },
+        TimeoutMs, 0);
 }
 
-// The retry backoff, in 5 ms slices so the app link does not stop for it either.
-static void RS485SleepTicking(uint32_t Ms)
+// The retry backoff, in RS485_BACKOFF_SLICE_MS slices so the app link does not stop for it either
+// (Bus.h RS485SleepTicking).
+static void RS485BackoffSleep(uint32_t Ms)
 {
-    const int64_t Start = esp_timer_get_time();
-    for (;;)
-    {
-        RS485AppLinkTick();
-        const int64_t LeftUs = (int64_t)Ms * 1000 - (esp_timer_get_time() - Start);
-        if (LeftUs <= 0)
-            return;
-        vTaskDelay(pdMS_TO_TICKS(LeftUs > 5000 ? 5 : (LeftUs + 999) / 1000));
-    }
+    RS485SleepTicking(
+        [](void) -> uint32_t { return (uint32_t)esp_timer_get_time(); },
+        [](void) { RS485AppLinkTick(); },
+        [](uint32_t SliceMs) { vTaskDelay(pdMS_TO_TICKS(SliceMs)); },
+        Ms);
 }
 
 // Sends `Data` over the RS-485 bus with CSMA/CD collision avoidance. Per Docs/RSBus and Packets.md the
@@ -280,7 +269,7 @@ static bool RS485TransmitVerified(const PacketFrame &Data)
             ESP_LOGW("RS485", "Attempt %d failed (%s), backoff %lums", Attempt + 1,
                      Collided ? "collision" : "echo incomplete", (unsigned long)BackoffMs);
         }
-        RS485SleepTicking(BackoffMs);
+        RS485BackoffSleep(BackoffMs);
     }
 
     const uint32_t StintMs = (uint32_t)((esp_timer_get_time() - StintStart) / 1000);
@@ -368,7 +357,7 @@ bool RS485SendRaw(const uint8_t *Data, size_t Len)
         if (!Collided && Verified == Len)
             return true;
         // Same frame-or-longer, address-decorrelated backoff as the packet path (Bus.h).
-        RS485SleepTicking(RS485BackoffMs(DeviceStatus.ShortAddress, (uint8_t)Attempt, RawRand()));
+        RS485BackoffSleep(RS485BackoffMs(DeviceStatus.ShortAddress, (uint8_t)Attempt, RawRand()));
     }
     return false;
 }

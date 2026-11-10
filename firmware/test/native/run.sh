@@ -112,6 +112,19 @@ echo "### native bus-retransmission tests (repeat guard + backoff decorrelation)
 build_run "busrepeat" "bus_repeat_test.cpp"
 echo
 
+# t_45490cbe: a bus send runs on the main task that also pumps the app link, so the card asks two
+# questions about the transmit stint - how long a send may block it, and how long the link may go
+# UNSERVED inside a send. Both are measured here off the device's real waits (Bus.h
+# RS485WaitForSilence / RS485WaitTicking / RS485SleepTicking) with a virtual clock: the longest
+# unserved stretch of any line shape is the two back-to-back echo windows plus one tx-done poll
+# (22 ms, inside the card's 50 ms), the worst send is 373 ms (the deadline plus one attempt's
+# non-wait work), and every wait ticks the link at its slice. RED: .pio/probe/txstint_red.sh - the
+# pre-fix constants are refused by Bus.h's static_assert, and a backoff that sleeps in one block
+# fails 8 checks.
+echo "### native transmit-stint tests (the send is bounded, and the app link is served inside it)"
+build_run "txstint" "tx_stint_test.cpp"
+echo
+
 # t_8dead2f1: the same guard, but exercised through a RECEIVING SERVICE - the real
 # StorageService::Handle over the real StorageBlockFS on a fake 512 B NOR flash in the DAS geometry -
 # so "the request executed once" is measured on the store (the file table's append position: the
@@ -1683,9 +1696,35 @@ if ! grep -q 'rxdestroyed=%lu' "$APP_IFACE"; then
     echo "FAIL $APP_IFACE: the BUSGATE totals line must report rxdestroyed= beside rxrejects="
     rxbus_fail=1
 fi
-# The transmit stint: one deadline for the whole send, and the app link served inside it.
+# The transmit stint (card t_45490cbe): one deadline for the whole send, every wait inside it
+# served by the app link, and no blocking call left that would stop the link for longer than the
+# two echo windows. The policy constants live in Bus.h (so test/native/tx_stint_test.cpp measures
+# the same figures the device uses), and the three waits are the shared ticking helpers - a bare
+# vTaskDelay or a uart_wait_tx_done with its own timeout back in the send would be a stall again.
 if ! grep -q 'RS485_TX_STINT_MS' "$TAMU_RSBUS" || ! grep -q 'RS485AppLinkTick' "$TAMU_RSBUS"; then
     echo "FAIL $TAMU_RSBUS: the send must be bounded by RS485_TX_STINT_MS and must tick the app link"
+    rxbus_fail=1
+fi
+if ! grep -q 'define RS485_TX_STINT_MS' "$BUS_H" || ! grep -q 'define RS485_ECHO_TIMEOUT_MS' "$BUS_H" ||
+   ! grep -q 'define RS485_TX_DONE_TIMEOUT_MS' "$BUS_H"; then
+    echo "FAIL $BUS_H: the stint's windows belong beside the waits that honour them (host-measurable)"
+    rxbus_fail=1
+fi
+if ! grep -q 'RS485WaitTicking' "$BUS_H" || ! grep -q 'RS485SleepTicking' "$BUS_H"; then
+    echo "FAIL $BUS_H: RS485WaitTicking/RS485SleepTicking are gone - a wait stopped ticking the link"
+    rxbus_fail=1
+fi
+STINT_TICKS=$(grep -c 'RS485AppLinkTick' "$TAMU_RSBUS")
+if [ "$STINT_TICKS" -lt 3 ]; then
+    echo "FAIL $TAMU_RSBUS: the silence wait, the tx-done wait and the backoff must all tick the app link (found $STINT_TICKS)"
+    rxbus_fail=1
+fi
+if grep -q 'vTaskDelay' "$TAMU_RSBUS" && ! grep -q 'RS485WaitTxDone\|RS485BackoffSleep' "$TAMU_RSBUS"; then
+    echo "FAIL $TAMU_RSBUS: a sleep in the send is not one of the ticking waits"
+    rxbus_fail=1
+fi
+if ! grep -q 'RS485BackoffSleep(' "$TAMU_RSBUS"; then
+    echo "FAIL $TAMU_RSBUS: the retry backoff must go through RS485BackoffSleep (a ticked sleep)"
     rxbus_fail=1
 fi
 [ $rxbus_fail = 0 ] && echo "PASS: no RX byte is flushed or drained away, the keep ring feeds the assembler first, and the loss is counted and reported"

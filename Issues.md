@@ -570,6 +570,21 @@ are hardware-only.
   the RX ring, i.e. the transmit-side work (nothing may transmit while a reply is owed, card
   `t_45490cbe`), not the counter. The node-side half of the same class is E59.
 
+- **E83 The bootloader's raw transmit is the only send with no stint deadline** (card `t_45490cbe`,
+  2026-11-10, host-measured - no rig run). The packet path (`RS485TransmitVerified`) draws every
+  attempt from one `RS485_TX_STINT_MS` deadline, so a busy or shorted bus costs the main task 373 ms
+  at most, with the app link ticked inside it (measured: see the card's handoff and
+  `firmware/test/native/tx_stint_test.cpp`). `RS485SendRaw` - the bootloader passthrough's own frame
+  writer, a different frame type with no 0xAA sync - kept the per-attempt structure: 3 attempts, each
+  up to 100 ms of silence + one echo window per chunk (10 ms each) + up to 33 ms of backoff, i.e.
+  ~460 ms worst case (`firmware/src/Devices/Tamu_v2.0A/RSBus.h:327-363`). Its three waits DO tick the
+  app link (`RS485WaitForSilence` and `RS485BackoffSleep`), so the link is served inside it, but one
+  passthrough write can still hold the main task for nearly half a second. Deliberately not changed
+  on this card: the raw path is only entered while a bootloader passthrough is outstanding (a
+  firmware update, no app transaction in flight), and clipping it to a stint means deciding what a
+  refused attempt does to the passthrough's 1 s reply deadline (`Core/Services/Device.h`) - the
+  bootloader card's (`t_334a1347`) territory, not the packet stint's.
+
 ## BLE Settings block (2026-10-28)
 
 **2026-10-29, owner ruling "simplify the BLE block" - the block is SIX fields, and this note is the
