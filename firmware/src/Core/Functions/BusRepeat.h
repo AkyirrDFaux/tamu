@@ -52,16 +52,51 @@ uint32_t TimeFromBoot();
 // transmit stint (it can only retry for so long) and cannot extend protection over a DIFFERENT
 // request, because that one carries a new TRID.
 //
-// NOT guarded (checked against the handlers, so the list is not a guess):
+// WHY ONE RECORD AND NOT A TABLE: the ledger protects the last guarded request only. In the case it
+// exists for that is enough - the sender's retry arrives within its echo window plus its own 2-33 ms
+// backoff of its transmit, while the execution that retry duplicates is still running on the
+// receiver (a node's Save All answered in 127-181 ms on the rig, card t_763b4cde) - so the repeat is
+// sitting in the RX ring when the handler finishes and replies, and no later request can overtake
+// it. The residual, stated plainly: a repeat that somehow arrives AFTER a different guarded command
+// has executed is not recognised and would execute again. A second entry would cost another 12 B of
+// the DAS's fully spent 2048 B (996 B statics + 1052 B stack), i.e. it would come out of the stack,
+// so one entry is the deliberate choice; the key (source + TRID + CMD) plus the window make a wrong
+// HIT - the worse failure, a request that never runs - impossible for anything but the same
+// transaction.
+//
+// NOT guarded, with the verdict reached by reading each handler (t_8dead2f1 re-checked the whole
+// CID table against the flash writers, not just the two services that ask the ledger):
 //   * Register CID 4 (Recall All): it re-reads the same store into RAM. No record is appended.
-//   * Storage CID 5 (Read): a read executed twice returns the same bytes.
-//   * Storage CID 6 (Write, fragment): the handler refuses a fragment whose sequence is not
-//     WriteSeq+1 (Storage.h), so a repeat is not applied - and its reply can carry the 2-byte
-//     sequence ack, which the status-only replay could not reproduce.
-//   * Register value writes: RAM only on a node (its static space is RAM; only Save All writes it
-//     to flash), so a repeat writes the same value again.
-//   * Every System/Subscriptions/Log/Device CID: no flash append. Device's reset/bootloader-entry
-//     CIDs are disruptive, not corrupting, and are NOT covered here (see the card handoff).
+//   * Storage CID 5 (Read): a read appends nothing; a repeat returns the same bytes. Its reply is
+//     payload-bearing, so the status-only record could not replay it either.
+//   * Storage CID 6 (Write, fragment): a write fragment touches FILE DATA in place, never the file
+//     table, so it spends no record. Its reply carries the 2-byte sequence ack, which the
+//     status-only record cannot reproduce; the stream's own check is what keeps a repeat from being
+//     applied twice. NOTE: a fragment whose index is 0 always RE-OPENS the stream
+//     (Storage.h), so a repeated fragment 0 rewrites the same bytes at offset 0 - harmless, but not
+//     refused. Every later fragment must be exactly WriteSeq+1, so a repeat of it is refused.
+//   * Register value writes and the dynamic-block CIDs (Create/Delete/GetName/SetName): the value
+//     and the tombstone live in RAM; only Save All (guarded) writes `.DT_`/`.DV_`/`.SV`.
+//   * Subscriptions requester CIDs (0x11 Set / 0x13 Save): they DO append `.SUBREQ`, but the writer
+//     already skips the rewrite when the file holds exactly the bytes it would write
+//     (SubscriptionsPersist.h SaveRequesterTable), so a duplicate execution spends no record - and
+//     a cancelled entry is gone on the second pass, which writes nothing. Provider CIDs persist
+//     through Save All only.
+//   * Device CID 0x12 (SNDB write): it writes REGISTRY SLOTS inside an existing file (in place, and
+//     only compacts - delete + create, i.e. 2 records - when the file is full), and its reply echoes
+//     the 16-byte record, which the status-only record could not reproduce. A duplicate therefore
+//     costs a registry slot, and costs table records only if it lands exactly when the file is full.
+//     Left unguarded deliberately; recorded as a known gap rather than claimed.
+//   * Format (CID 0) IS guarded: it recreates the table, so a duplicate execution is not free.
+//   * Every System/Log/Script CID: no flash append at all. Device's reset/bootloader-entry CIDs are
+//     disruptive rather than corrupting and are NOT covered (a known gap, not a claim).
+//
+// The append cost per execution, as measured by test/native/storage_repeat_test.cpp on a store in the
+// DAS geometry: Resize +1 record every time it runs (so its duplicate would too), Create/Rename +1,
+// Delete 0 (it invalidates the offset word in place). A duplicate Create (duplicate name) or Rename
+// (old name gone) FAILS, so what a repeat costs there is a spurious FLAG_FAIL to the requester -
+// which the replay fixes - while Save All and Resize are the two that append twice, and Save All is
+// the expensive one at 2 records per execution.
 
 // How long a repeat is treated as a retransmission of the last executed request.
 //

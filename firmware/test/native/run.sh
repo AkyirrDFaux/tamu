@@ -112,6 +112,17 @@ echo "### native bus-retransmission tests (repeat guard + backoff decorrelation)
 build_run "busrepeat" "bus_repeat_test.cpp"
 echo
 
+# t_8dead2f1: the same guard, but exercised through a RECEIVING SERVICE - the real
+# StorageService::Handle over the real StorageBlockFS on a fake 512 B NOR flash in the DAS geometry -
+# so "the request executed once" is measured on the store (the file table's append position: the
+# first slot whose offset is 0xFFFFFFFF), which is exactly what a duplicated file-table command
+# spends. GREEN: a repeat appends nothing and is answered with the original reply, while the same
+# bytes under a new TRID append +1 (so the second frame was not merely dropped). The RED run
+# (.pio/probe/red_repeat_path.py) fails those assertions with the ledger switched off.
+echo "### native retransmission dedupe through the storage service (a repeat appends nothing)"
+build_run "storagerepeat" "storage_repeat_test.cpp" -DBOARD_DAS_v0_1 -DSTORAGE_FLASH_SIZE=512 -DSTORAGE_BLOCK_SIZE=64 -DMEMORY_BACKUP_CAP=128
+echo
+
 # The dispatcher half is device-layer (it pulls every service) and cannot be linked on the host, so
 # the wiring is pinned on the source: a repeat must be ANSWERED from the record and must SKIP the
 # service switch, the outcome must be recorded where the reply is built, and no retry site may still
