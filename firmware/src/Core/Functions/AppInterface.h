@@ -141,6 +141,11 @@ public:
     // are; AppBusGateOffer below opens and releases the slot).
     volatile bool BusPending = false;
     volatile uint16_t BusPendingTrid = 0;
+    // The CMD of the request that opened the slot. A subscription TRID is shared by every frame
+    // about that subscription - the provider's value updates carry it too - so the answer is
+    // recognised by TRID AND CMD (BusGateIsAnswer); without the CMD a value update would close a
+    // Change's slot early and the next frame would go out with the Change still answered-not.
+    volatile uint16_t BusPendingCmd = 0;
     uint32_t BusPendingSince = 0;
     uint16_t BusPendingWindow = BUS_GATE_WINDOW_MS; // fitted to the request kind that opened it
 };
@@ -253,6 +258,7 @@ struct AppBusGateLateSlot
 {
     uint16_t Tgt;
     uint16_t Trid;
+    uint16_t Cmd; // an answer echoes the request's CMD as well as its TRID (BusGateIsAnswer)
     uint32_t At; // send time of the window that closed unanswered
     bool Used;
 };
@@ -321,7 +327,7 @@ inline bool AppBusDefer(const PacketFrame &Frame)
     AppBusDeferredFrom[AppBusDeferredCount] = AppFrameSource; // the origin, not the drain's context
     AppBusDeferredCount++;
     AppBusDeferredTotal++;
-    if (!BusGateNeedsAnswer(Frame.IdTgt, Frame.Flags))
+    if (!BusGateNeedsAnswer(Frame.IdTgt, Frame.Flags, Frame.Cmd))
         AppBusDeferredNoAnswer++;
     return true;
 }
@@ -412,6 +418,7 @@ inline void AppBusGateDrain()
 inline void AppBusForwardStart(const PacketFrame &Frame, uint16_t WindowMs)
 {
     AppInterface.BusPendingTrid = Frame.Trid;
+    AppInterface.BusPendingCmd = Frame.Cmd;
     AppInterface.BusPendingSince = DeviceStatus.UptimeMs;
     AppInterface.BusPendingWindow = WindowMs;
     AppInterface.BusPending = true;
@@ -491,6 +498,7 @@ inline bool AppBusForwardPending()
         // separates "the node answered too late for the window" from "the node never answered".
         AppBusGateLate[AppBusGateLateNext].Tgt = AppBusGateOpenTgt;
         AppBusGateLate[AppBusGateLateNext].Trid = AppInterface.BusPendingTrid;
+        AppBusGateLate[AppBusGateLateNext].Cmd = AppInterface.BusPendingCmd;
         AppBusGateLate[AppBusGateLateNext].At = AppInterface.BusPendingSince;
         AppBusGateLate[AppBusGateLateNext].Used = false;
         AppBusGateLateNext = (uint8_t)((AppBusGateLateNext + 1) % APP_BUS_GATE_LATE_SLOTS);
@@ -500,10 +508,17 @@ inline bool AppBusForwardPending()
     return true;
 }
 
-// The answer to a forwarded request came back (a response from another device).
-inline void AppBusForwardSawReply(uint16_t Trid)
+// The answer to a forwarded request came back (a response from another device). It must echo the
+// request's TRID AND its CMD (BusGateIsAnswer): a subscription value update carries the same
+// subscription TRID as the Change it is not the answer to, so a TRID-only match would release a
+// pending 040x/1 on a provider's push and let the next frame onto the wire on top of the Change's
+// real answer. What answers a 040x/1 is the provider's reply with Cmd = Change (the current value,
+// or FLAG_SUCCESS for a cancel); a confirm-required value update is answered by the requester's
+// confirmation with Cmd = ValueUpdate, the Cmd of the update it answers.
+inline void AppBusForwardSawReply(uint16_t Trid, uint16_t Cmd)
 {
-    if (AppInterface.BusPending && AppInterface.BusPendingTrid == Trid)
+    if (AppInterface.BusPending && AppInterface.BusPendingTrid == Trid &&
+        AppInterface.BusPendingCmd == Cmd)
     {
         AppInterface.BusPending = false;
 #ifdef TYPE_CORE
@@ -518,7 +533,7 @@ inline void AppBusForwardSawReply(uint16_t Trid)
     for (uint8_t i = 0; i < APP_BUS_GATE_LATE_SLOTS; i++)
     {
         AppBusGateLateSlot &Slot = AppBusGateLate[i];
-        if (!Slot.Used && Slot.Trid == Trid)
+        if (!Slot.Used && Slot.Trid == Trid && Slot.Cmd == Cmd)
         {
             Slot.Used = true;
             AppBusGateRecord(Slot.Tgt, Trid, (uint32_t)(DeviceStatus.UptimeMs - Slot.At), ABG_LATE);
@@ -548,8 +563,9 @@ inline void AppBusGateNoteClash()
 // the core's own requests (a subscription install/renewal, a script's foreign register access, a
 // confirm-required value update) leave through the same door, so they take the slot instead of
 // sliding onto the wire 3-10 ms after another request whose answer is still owed. The frame that
-// opens the slot is the frame that expects an answer (BusGateNeedsAnswer), and the slot is held
-// for that request kind's window (BusGateWindowMs).
+// opens the slot is the frame that expects an answer (BusGateNeedsAnswer - which is decided by the
+// flags AND the Cmd, because a 040x/1 Change is answered without carrying REQACK), and the slot is
+// held for that request kind's window (BusGateWindowMs).
 //
 // The window is asked with `AppFrameSource`, the link this frame ARRIVED on - not with "is the app
 // pump calling right now". A frame the deferred ring hands back is dispatched by
@@ -571,7 +587,7 @@ inline bool AppBusGateOffer(const PacketFrame &Frame)
     default:
         break;
     }
-    if (BusGateNeedsAnswer(Frame.IdTgt, Frame.Flags))
+    if (BusGateNeedsAnswer(Frame.IdTgt, Frame.Flags, Frame.Cmd))
         AppBusForwardStart(Frame,
                            BusGateWindowMs(Frame.Cmd, AppFrameSource == AppLinkSource::None));
     return true;

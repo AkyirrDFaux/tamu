@@ -75,7 +75,29 @@ fi
 if ! grep -q '^inline BusGateVerdict BusGateVerdictFor(bool GateOpen, bool DeferRoom)$' "$GATE"; then
     note "$GATE" "BusGateVerdictFor changed shape - the gate holds EVERY frame while an answer is owed; 'expects no answer' is not a reason to transmit"
 fi
-if ! grep -q 'if (!BusGateNeedsAnswer(Frame.IdTgt, Frame.Flags))' "$IFACE"; then
+# --- (4) the answered unicast the flag-only test missed, and the answer that closes it ---------------
+#
+# A `Subscriptions` Change (040x/1) is answered - the provider returns the source's current value, or
+# FLAG_SUCCESS for a cancel - but every construction of it is FLAG_START|FLAG_STOP, with no REQACK
+# (SubscriptionsPersist.h RegisterRequesterProvider, SubscriptionsControl.h
+# SubscriptionsCancelProvider, SubscriptionsRequester.h orphan cancel). A gate keyed only on REQACK
+# therefore never held a slot for it, and the next frame went out with the Change still owed its
+# answer - the card's evidence item 1. The gate must classify it by CID, and the release must match
+# the CMD as well as the TRID, because the provider's value UPDATES carry the same subscription TRID.
+if ! grep -q '#define BUS_GATE_SUB_CHANGE_CID' "$GATE"; then
+    note "$GATE" "BUS_GATE_SUB_CHANGE_CID is gone - the 040x/1 Change is answered but carries no REQACK"
+fi
+if ! grep -q 'GetServiceType(Cmd) == ServiceType::Subscriptions' "$GATE" ||
+   ! grep -q 'GetServiceCID(Cmd) == BUS_GATE_SUB_CHANGE_CID' "$GATE"; then
+    note "$GATE" "BusGateNeedsAnswer must classify the 040x/1 Change as a transaction (by service and CID)"
+fi
+if ! grep -q '^inline bool BusGateIsAnswer(' "$GATE"; then
+    note "$GATE" "BusGateIsAnswer is gone - the slot would close on any frame echoing the TRID"
+fi
+if ! grep -q 'AppInterface.BusPendingCmd = Frame.Cmd;' "$IFACE"; then
+    note "$IFACE" "the open slot must remember the request's CMD, or a value update closes it early"
+fi
+if ! grep -q 'if (!BusGateNeedsAnswer(Frame.IdTgt, Frame.Flags, Frame.Cmd))' "$IFACE"; then
     note "$IFACE" "AppBusDefer must classify held frames with the host-tested BusGateNeedsAnswer()"
 fi
 if ! grep -qE 'AppBusDeferredNoAnswer *(\+\+|=[^;]*\+ *1)' "$IFACE"; then
@@ -90,6 +112,6 @@ if ! grep -q 'AppBusDeferredNoAnswer' "$DISPATCH"; then
 fi
 
 if [ "$fail" = 0 ]; then
-    echo "PASS: a held frame carries and gets back its origin, the gate holds every frame by one rule, and answer-less holds are counted and reported"
+    echo "PASS: a held frame carries and gets back its origin, the gate holds every frame by one rule, an answer-less hold is counted, and the answered 040x/1 Change takes the slot while a value update cannot close it"
 fi
 exit "$fail"

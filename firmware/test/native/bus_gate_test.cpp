@@ -66,6 +66,10 @@ static const uint8_t Reply = FLAG_TYPE | FLAG_START | FLAG_STOP;                
 static const uint8_t StatusReply = FLAG_TYPE | FLAG_REQACK | FLAG_START | FLAG_STOP | FLAG_SUCCESS;
 static const uint8_t ConfirmUpdate = FLAG_TYPE | FLAG_REQACK | FLAG_START | FLAG_STOP;
 static const uint8_t AckNoReply = FLAG_START | FLAG_STOP;                           // one-way ack
+// The 040x/1 Change subscription exactly as the tree builds it: no REQACK (SubscriptionsPersist.h
+// RegisterRequesterProvider, SubscriptionsControl.h SubscriptionsCancelProvider,
+// SubscriptionsRequester.h orphan cancel) although the provider answers it.
+static const uint8_t SubChangeRequest = FLAG_START | FLAG_STOP;
 
 static const uint16_t Node02 = MakeId(1, 2);
 static const uint16_t Node04 = MakeId(1, 4);
@@ -73,6 +77,9 @@ static const uint16_t ReadCmd = MakeService(ServiceType::Register, 1);   // Regi
 static const uint16_t SaveAllCmd = MakeService(ServiceType::Register, BUS_GATE_SAVE_ALL_CID);
 static const uint16_t RecallAllCmd = MakeService(ServiceType::Register, 4);
 static const uint16_t StorageCmd = MakeService(ServiceType::Storage, BUS_GATE_SAVE_ALL_CID);
+static const uint16_t SubChangeCmd = MakeService(ServiceType::Subscriptions, BUS_GATE_SUB_CHANGE_CID);
+static const uint16_t SubValueCmd = MakeService(ServiceType::Subscriptions, 0); // provider value update
+static const uint16_t SubCancelCmd = SubChangeCmd;                               // 040x/1, empty payload
 
 // ---- A model of the device half, built ONLY from the real decisions -------------------------
 //
@@ -86,6 +93,7 @@ struct GateSim
     uint32_t OpenedAt = 0;
     uint16_t Window = 0;
     uint16_t Trid = 0;
+    uint16_t Cmd = 0; // the open request's CMD: the answer must echo it (BusGateIsAnswer)
     uint32_t Now = 0;
     uint16_t WireTrid[256] = {};
     int Wire = 0, Deferred = 0, Clashes = 0, Expires = 0, Released = 0;
@@ -104,7 +112,7 @@ struct GateSim
     }
 
     // One frame offered to the bus. Returns true when it went out now, false when it was held.
-    bool Offer(uint16_t Tgt, uint8_t Flags, uint16_t Cmd, uint16_t Trid_, bool CoreOrigin, bool DeferRoom)
+    bool Offer(uint16_t Tgt, uint8_t Flags, uint16_t Cmd_, uint16_t Trid_, bool CoreOrigin, bool DeferRoom)
     {
         const bool GateOpen = Pending();
         const BusGateVerdict V = BusGateVerdictFor(GateOpen, DeferRoom);
@@ -116,12 +124,13 @@ struct GateSim
         if (V == BusGateVerdict::SendAndClash)
             Clashes++;
         // A needed answer opens the slot (SendAndVerifyPacket asks this before transmitting).
-        if (BusGateNeedsAnswer(Tgt, Flags))
+        if (BusGateNeedsAnswer(Tgt, Flags, Cmd_))
         {
             Open = true;
             OpenedAt = Now;
-            Window = BusGateWindowMs(Cmd, CoreOrigin);
+            Window = BusGateWindowMs(Cmd_, CoreOrigin);
             Trid = Trid_;
+            Cmd = Cmd_;
             InFlight++;
             if (InFlight > MaxInFlight) MaxInFlight = InFlight;
         }
@@ -130,16 +139,18 @@ struct GateSim
         return true;
     }
 
-    // The answer to the open transaction landed (Dispatcher -> AppBusForwardSawReply).
-    void Answer(uint16_t Trid_)
+    // A frame arrived from another device (Dispatcher -> AppBusForwardSawReply): the answer to the
+    // open transaction iff it echoes both the TRID and the CMD.
+    void Answer(uint16_t Trid_, uint16_t Cmd_)
     {
-        if (Open && Trid == Trid_)
+        if (Open && BusGateIsAnswer(Trid, Cmd, Trid_, Cmd_))
         {
             Open = false;
             Released++;
             InFlight = 0;
         }
     }
+    void Answer(uint16_t Trid_) { Answer(Trid_, Cmd); } // the ordinary case: the same CMD
 };
 
 int main()
@@ -148,20 +159,48 @@ int main()
     // Item 1: which frames are transactions. The gate's scope is the wire, not the origin: a
     // core-origin request that carries REQACK takes the same slot as an app frame.
     // ---------------------------------------------------------------------------------------
-    CHECK(BusGateNeedsAnswer(Node02, AppRequest));          // an app forward
-    CHECK(BusGateNeedsAnswer(Node02, CoreRequest));         // a subscription poll / script access
-    CHECK(BusGateNeedsAnswer(Node02, ConfirmUpdate));       // value update awaiting a confirmation
-    CHECK(!BusGateNeedsAnswer(ADDR_BROADCAST, AppRequest)); // several answers: nothing to wait for
-    CHECK(!BusGateNeedsAnswer(Node02, StatusReply));        // a status reply is an answer itself
-    CHECK(!BusGateNeedsAnswer(Node02, Reply));              // a plain answer is nobody's request
-    CHECK(!BusGateNeedsAnswer(Node02, AckNoReply));         // a one-way ack expects nothing
+    CHECK(BusGateNeedsAnswer(Node02, AppRequest, ReadCmd));          // an app forward
+    CHECK(BusGateNeedsAnswer(Node02, CoreRequest, ReadCmd));         // a script access / time sync
+    CHECK(BusGateNeedsAnswer(Node02, ConfirmUpdate, SubValueCmd));   // value update awaiting a confirmation
+    CHECK(!BusGateNeedsAnswer(ADDR_BROADCAST, AppRequest, ReadCmd)); // several answers: nothing to wait for
+    CHECK(!BusGateNeedsAnswer(Node02, StatusReply, ReadCmd));        // a status reply is an answer itself
+    CHECK(!BusGateNeedsAnswer(Node02, Reply, ReadCmd));              // a plain answer is nobody's request
+    CHECK(!BusGateNeedsAnswer(Node02, AckNoReply, ReadCmd));         // a one-way ack expects nothing
+
+    // The 040x/1 Change subscription: answered WITHOUT carrying REQACK, and the flag-only test -
+    // the one the first review round found - missed it entirely. The flags are the tree's own
+    // (SubChangeRequest = FLAG_START|FLAG_STOP), so this asserts the frame that is really sent.
+    CHECK(BusGateNeedsAnswer(Node02, SubChangeRequest, SubChangeCmd));      // install / renewal
+    CHECK(BusGateNeedsAnswer(Node02, SubChangeRequest, SubCancelCmd));      // cancel (FLAG_SUCCESS reply)
+    CHECK(BusGateNeedsAnswer(Node02, SubChangeRequest | FLAG_REQACK, SubChangeCmd)); // if the bit is set
+    // Only the CID makes it one: an answer-less unicast of any other kind stays ungated, and a
+    // BROADCAST Change still opens nothing (several providers may answer).
+    CHECK(!BusGateNeedsAnswer(Node02, SubChangeRequest, ReadCmd));
+    CHECK(!BusGateNeedsAnswer(Node02, SubChangeRequest, SubValueCmd));
+    CHECK(!BusGateNeedsAnswer(Node02, SubChangeRequest, StorageCmd));
+    CHECK(!BusGateNeedsAnswer(ADDR_BROADCAST, SubChangeRequest, SubChangeCmd));
+    // A status reply is never a transaction, whatever its CID.
+    CHECK(!BusGateNeedsAnswer(Node02, SubChangeRequest | FLAG_TYPE | FLAG_SUCCESS, SubChangeCmd));
+
+    // What closes it: the provider's reply to the Change - Cmd echoed (SubReply carries the
+    // request's Cmd), the current value for an install/renewal or FLAG_SUCCESS for a cancel.
+    const uint16_t SubTrid = TRID_SUB_BASE + 7;
+    CHECK(BusGateIsAnswer(SubTrid, SubChangeCmd, SubTrid, SubChangeCmd));
+    // ... and what must NOT close it early: the provider's value UPDATE, which echoes the same
+    // subscription TRID as CID 0 (SubscriptionsProvider.h), and an unrelated frame.
+    CHECK(!BusGateIsAnswer(SubTrid, SubChangeCmd, SubTrid, SubValueCmd));
+    CHECK(!BusGateIsAnswer(SubTrid, SubChangeCmd, SubTrid + 1, SubChangeCmd));
+    // A confirm-required value update's slot is closed by the confirmation, which carries the
+    // Cmd of the update it answers (SubscriptionsRequester.h, CID 0, no FLAG_TYPE).
+    CHECK(BusGateIsAnswer(SubTrid, SubValueCmd, SubTrid, SubValueCmd));
+    CHECK(!BusGateIsAnswer(SubTrid, SubValueCmd, SubTrid, SubChangeCmd));
 
     // The old rule, kept here as the defect: gating keyed on the APP TRID range, which is exactly
     // what "AppFrameSource != None" did at the dispatcher. A core request (subscription TRIDs are
     // 0x1000-0x1FFF) was never gated.
     const uint16_t CorePollTrid = TRID_SUB_BASE + 5;
     const uint16_t AppTrid = TRID_APP_BASE + 1;
-    CHECK_EQ(BusGateNeedsAnswer(Node02, CoreRequest) && CorePollTrid < TRID_APP_BASE, 1); // new: gated
+    CHECK_EQ(BusGateNeedsAnswer(Node02, CoreRequest, ReadCmd) && CorePollTrid < TRID_APP_BASE, 1); // new: gated
     CHECK_EQ(CorePollTrid < TRID_APP_BASE, 1);                                            // old: not gated
     CHECK_EQ(AppTrid >= TRID_APP_BASE, 1);                                                // old: gated
 
@@ -241,7 +280,7 @@ int main()
     {
         // The old rule, modelled exactly: a frame opened the slot only if it came from the app.
         const auto OldRuleNeedsAnswer = [](uint8_t Flags, uint16_t Trid) {
-            return BusGateNeedsAnswer(Node02, Flags) && Trid >= TRID_APP_BASE;
+            return BusGateNeedsAnswer(Node02, Flags, ReadCmd) && Trid >= TRID_APP_BASE;
         };
         int OldSent = 0;
         bool OldOpen = false;
@@ -294,6 +333,66 @@ int main()
         CHECK_EQ(Sim.Expires, 0);
     }
 
+    // ---------------------------------------------------------------------------------------
+    // Item 1, the shape the first review round found ungated: two 040x/1 Changes (the second row's
+    // attempt at the same instant) 3 ms apart, with no REQACK on either. Under the old flag-only
+    // test neither opened a slot; under the CID rule the second is held, and a provider's VALUE
+    // UPDATE arriving with the same subscription TRID does NOT close the first one's slot - only
+    // the Change's own answer does.
+    // ---------------------------------------------------------------------------------------
+    {
+        const uint16_t SubTrid1 = TRID_SUB_BASE + 3;
+        const uint16_t SubTrid2 = TRID_SUB_BASE + 4;
+
+        // The old test, verbatim: REQACK only.
+        const auto OldNeedsAnswer = [](uint8_t Flags) { return (Flags & FLAG_REQACK) != 0; };
+        CHECK(!OldNeedsAnswer(SubChangeRequest)); // the defect: the answered Change opened nothing
+
+        GateSim Sim;
+        Sim.Now = 4000;
+        CHECK(Sim.Offer(Node02, SubChangeRequest, SubChangeCmd, SubTrid1, /*CoreOrigin=*/true, true));
+        CHECK(Sim.Pending());                       // a Change now holds the medium
+        Sim.Now += 3;
+        CHECK(!Sim.Offer(Node04, SubChangeRequest, SubChangeCmd, SubTrid2, true, true)); // held
+        CHECK_EQ(Sim.Wire, 1);
+
+        // A provider value update for the SAME subscription TRID lands (CID 0, FLAG_TYPE). It is
+        // not the answer to the Change: the slot must stay owed, or the next frame goes out on top
+        // of the Change's real answer.
+        Sim.Now += 2;
+        Sim.Answer(SubTrid1, SubValueCmd);
+        CHECK_EQ(Sim.Released, 0);
+        CHECK(Sim.Pending());
+        CHECK(!Sim.Offer(Node04, SubChangeRequest, SubChangeCmd, SubTrid2, true, true)); // still held
+        CHECK_EQ(Sim.Wire, 1);
+
+        // The provider's answer to the Change: Cmd echoed, current value (or FLAG_SUCCESS for a
+        // cancel). That is what closes the slot, and the held Change then goes out.
+        Sim.Now += 9;
+        Sim.Answer(SubTrid1, SubChangeCmd);
+        CHECK_EQ(Sim.Released, 1);
+        Sim.Now += 1;
+        CHECK(Sim.Offer(Node04, SubChangeRequest, SubChangeCmd, SubTrid2, true, true));
+        CHECK_EQ(Sim.Wire, 2);
+        CHECK_EQ(Sim.Clashes, 0);
+        CHECK_EQ(Sim.MaxInFlight, 1);
+        CHECK_EQ(Sim.Expires, 0);
+    }
+
+    // A cancel is the same CID, answered with FLAG_SUCCESS: same slot, same close.
+    {
+        const uint16_t CancelTrid = TRID_SUB_BASE + 9;
+        GateSim Sim;
+        Sim.Now = 6000;
+        CHECK(Sim.Offer(Node02, SubChangeRequest, SubCancelCmd, CancelTrid, true, true));
+        CHECK(Sim.Pending());
+        Sim.Now += 6;
+        Sim.Answer(CancelTrid, SubCancelCmd);
+        CHECK_EQ(Sim.Released, 1);
+        CHECK_EQ(Sim.Expires, 0);
+    }
+
+
     // A frame that expects no answer is still held while an answer is owed (one medium), and the
     // deferral ring's fullness is what turns that into a counted clash rather than a silent loss.
     // This is the rule Dispatcher.h and BusGate.h now both state: the gate holds EVERY frame while an
@@ -304,7 +403,7 @@ int main()
         GateSim Sim;
         Sim.Now = 700;
         CHECK(Sim.Offer(Node02, AppRequest, ReadCmd, AppTrid, false, true));
-        CHECK(!BusGateNeedsAnswer(Node04, Reply));                    // nothing gated it by answering
+        CHECK(!BusGateNeedsAnswer(Node04, Reply, ReadCmd));           // nothing gated it by answering
         CHECK(!Sim.Offer(Node04, Reply, ReadCmd, 0x0101, true, true)); // held anyway
         CHECK_EQ(Sim.Deferred, 1);
         CHECK(Sim.Offer(Node04, Reply, ReadCmd, 0x0101, true, false)); // ring full: it leaves

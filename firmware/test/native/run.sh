@@ -1732,16 +1732,22 @@ if [ "$(grep -c 'AppLinkFrameNeedsBus(Frame)) break' "$BG_DISPATCH")" != 0 ]; th
     echo "FAIL $BG_DISPATCH: the RX loop leaves on a blocked head again (the head-of-line block)"
     bg_fail=1
 fi
-if [ "$(grep -c 'AppBusForwardSawReply(Frame.Trid);' "$BG_DISPATCH")" != 1 ] ||
+if [ "$(grep -c 'AppBusForwardSawReply(Frame.Trid, Frame.Cmd);' "$BG_DISPATCH")" != 1 ] ||
    grep -q 'if ((Frame.Flags & FLAG_TYPE) && Frame.IdSrc != DeviceStatus.ShortAddress)' "$BG_DISPATCH"; then
     echo "FAIL $BG_DISPATCH: any frame from another device matching the open TRID releases the slot (a value update's confirmation is not FLAG_TYPE)"
+    bg_fail=1
+fi
+# ... and the release matches the CMD as well as the TRID: a provider's value update carries the
+# subscription TRID of a Change that is still owed its answer (BusGateIsAnswer in BusGate.h).
+if ! grep -q 'AppInterface.BusPendingCmd == Cmd' "$BG_IFACE"; then
+    echo "FAIL $BG_IFACE: the slot must not close on a frame that echoes the TRID but not the CMD (a subscription value update)"
     bg_fail=1
 fi
 
 # The device half of the gate: the offer, the pick and the expiry all go through BusGate.h.
 if ! grep -q 'switch (BusGateVerdictFor(AppBusForwardPending(), AppBusDeferredCount < APP_BUS_DEFER_DEPTH))' "$BG_IFACE" ||
    ! grep -q 'if (AppBusDefer(Frame))' "$BG_IFACE" ||
-   ! grep -q 'BusGateNeedsAnswer(Frame.IdTgt, Frame.Flags)' "$BG_IFACE" ||
+   ! grep -q 'BusGateNeedsAnswer(Frame.IdTgt, Frame.Flags, Frame.Cmd)' "$BG_IFACE" ||
    ! grep -q 'BusGateWindowMs(Frame.Cmd, AppFrameSource == AppLinkSource::None)' "$BG_IFACE"; then
     echo "FAIL $BG_IFACE: AppBusGateOffer must decide with the host-tested helpers (BusGateVerdictFor/NeedsAnswer/WindowMs)"
     bg_fail=1

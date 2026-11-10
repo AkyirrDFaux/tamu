@@ -11,6 +11,12 @@
 // asked at that one place (Devices/Tamu_v2.0A/RSBus.h), which is what extends it to every
 // answered unicast: the app's forwards AND the core's own requests (a subscription
 // install/renewal, a script's foreign register access, a confirm-required value update).
+//
+// Two of the decisions below are not obvious and are each the fix for a measured defect:
+//   - BusGateNeedsAnswer takes the Cmd as well as the flags: a `Subscriptions` Change (040x/1) is
+//     answered although it carries no REQACK (BUS_GATE_SUB_CHANGE_CID);
+//   - BusGateIsAnswer matches the Cmd as well as the TRID: a provider's value update shares the
+//     subscription TRID with the Change's answer, so the TRID alone would close the slot early.
 
 #include <cstdint>
 #include "Core/Functions/Packet.h"
@@ -45,21 +51,65 @@
 // service headers (they pull the storage layer in).
 #define BUS_GATE_SAVE_ALL_CID 5
 
+// `Subscriptions` service CID 1 is Change subscription (Core/Services/SubscriptionsDefs.h
+// SubCid::Change) - the requester's install, renewal and cancel (040x/1). Repeated here for the
+// same reason as the CID above.
+//
+// It is the ONE request in the tree that is answered without carrying FLAG_REQACK, so a flag-only
+// transaction test misses it - the card's evidence item 1. Every construction of it is
+// `FLAG_START | FLAG_STOP`:
+//   Core/Services/SubscriptionsPersist.h  RegisterRequesterProvider (install and renewal)
+//   Core/Services/SubscriptionsControl.h  SubscriptionsCancelProvider  (cancel)
+//   Core/Services/SubscriptionsRequester.h HandleRequesterValueUpdate (orphan cancel)
+// and every one of them is answered: the provider's Change handler answers with the source's
+// current value, or with FLAG_SUCCESS for a cancel (SubscriptionsControl.h SubCid::Change, Docs
+// Services/Subscriptions.md "Inter-device Commands": request = subscription table, response =
+// current value; "Renewal": "extends its timeout and answers success as usual"). Docs/RSBus and
+// Packets.md defines REQACK as "request a response", so the frame is a transaction whether or not
+// the sender set the bit. Classified by CID here rather than by adding the flag to the wire: the
+// gate is the only reader of it, and a node's Change handler does not look at flags at all.
+#define BUS_GATE_SUB_CHANGE_CID 1
+
 // Whether this frame puts a transaction on the wire, i.e. whether an answer is owed to it.
 //
-// Every app request carries REQACK (app/lib/core/protocol.dart PacketFrame.single), and so does
-// every core-origin request that wants a reply: a subscription install/renewal, a script's
-// foreign register access, a confirm-required value update. Two shapes are NOT transactions:
+// Every app request carries REQACK (app/lib/core/protocol.dart PacketFrame.single), and so
+// does every core-origin request that wants a reply: a script's foreign register access, a
+// subscription value update that requests a confirmation, a time sync. Two shapes are NOT
+// transactions:
 //   - a status reply (SUCCESS/FAIL) is an answer, never a request, even if REQACK was echoed
 //     into it - nothing will come back for it;
 //   - a broadcast can be answered by several devices, so there is no single answer to wait for,
 //     and one device's answer closing a gate another device is still owed would be a false
 //     release that starts the next frame on top of that answer.
-inline bool BusGateNeedsAnswer(uint16_t IdTgt, uint8_t Flags)
+// And one shape IS a transaction without the bit: a unicast `Subscriptions` Change (040x/1), see
+// BUS_GATE_SUB_CHANGE_CID. `Cmd` is what decides that, so it is part of the test.
+inline bool BusGateNeedsAnswer(uint16_t IdTgt, uint8_t Flags, uint16_t Cmd)
 {
-    if (!(Flags & FLAG_REQACK)) return false;
     if (Flags & (FLAG_SUCCESS | FLAG_FAIL)) return false;
-    return IdTgt != ADDR_BROADCAST;
+    if (IdTgt == ADDR_BROADCAST) return false;
+    if (GetServiceType(Cmd) == ServiceType::Subscriptions &&
+        GetServiceCID(Cmd) == BUS_GATE_SUB_CHANGE_CID)
+        return true;
+    return (Flags & FLAG_REQACK) != 0;
+}
+
+// Is a frame that arrived from another device the ANSWER to the open transaction?
+//
+// An answer echoes the request's TRID *and its CMD* (Core/Functions/Packet.h FinalizeReply -
+// "the request's CMD names the service"; Dispatcher.h routes by it; every reply builder in the
+// tree echoes both: SendResponse, SubReply, FinalizeReply, the Device service, the repeat replay).
+//
+// The TRID alone is not enough. A subscription TRID is shared by every frame about that
+// subscription, and the one that matters here is the provider's VALUE UPDATE (CID 0): it is a
+// FLAG_TYPE frame, it carries the subscription's TRID, and it can arrive between a Change and the
+// Change's answer - closing on it would let the next frame go out while the Change is still owed
+// its answer, which is exactly the collision the gate exists to prevent. The Change's answer comes
+// back with Cmd = Change (SubReply echoes the request's Cmd), so the CMD is what separates them;
+// the value update's confirmation comes back with Cmd = ValueUpdate, the Cmd of the update it
+// answers, so the confirmation still closes its own slot.
+inline bool BusGateIsAnswer(uint16_t OpenTrid, uint16_t OpenCmd, uint16_t Trid, uint16_t Cmd)
+{
+    return Trid == OpenTrid && Cmd == OpenCmd;
 }
 
 // The window a request kind keeps the medium (see the table above). `CoreOrigin` is a frame the

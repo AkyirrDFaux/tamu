@@ -62,9 +62,12 @@ void DispatchPacket(const PacketFrame &Frame)
         // transaction slot (AppInterface.h AppBusForwardPending), which is what lets the next
         // queued frame go out. The TRID match inside the call decides, so this is asked for every
         // frame from another device - not only a FLAG_TYPE one, or a value update's confirmation
-        // would leave the slot open until its window expired.
+        // would leave the slot open until its window expired. The CMD has to match as well
+        // (BusGateIsAnswer): a provider's value update echoes the subscription TRID of the
+        // 040x/1 Change that is still owed its answer, and closing the slot on that push would put
+        // the next frame on the wire on top of the Change's real answer.
         if (Frame.IdSrc != DeviceStatus.ShortAddress)
-            AppBusForwardSawReply(Frame.Trid);
+            AppBusForwardSawReply(Frame.Trid, Frame.Cmd);
 #endif
         // Only the gated routing blocks below read this, so declare it under the same guard;
         // a target with none of them enabled (a DAS node) must not carry an unused local.
