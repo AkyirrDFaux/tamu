@@ -521,7 +521,21 @@ are hardware-only.
   class (E59: the DAS drains its own RX ring while it waits for the bus) is the leading candidate, and
   ~28 % is far above the 2-3 % single-transaction residual E76 recorded, so it needs its own
   measurement - a node-side lost-request counter, or a wire capture - rather than another core-side
-  change.
+  change. **Re-measured on the delivered image 2026-11-10** (card `t_49b1ab5b`, core `26.11.10` iter 8,
+  `firmware.bin` sha256 `3ffd38e92238235013d834d07e6e64acba401b371b8743403f3fc5189f33ba5d`, 709,552 B):
+  `rxdestroyed=0` in five BUSGATE read-backs over two 20x identity bursts and four restores, with
+  `late=0`, `lost=0` and `txstint` worst **52 ms**; the totals line after the last restore reads
+  `forwards=1737 replies=1404 expired=325 late=0 clash=8 lost=0 deferred=90/0 noreply=11 worst=255ms` /
+  `bus sendfails=0 rxrejects=39 rxdestroyed=0 txstint=52ms corelost=0 repeats=0`. The bursts answered
+  **158/160** (79/80 twice: one miss on 0.2, one on 0.3, core 40/40) and the misses are `EXPIRED
+  hold=255ms` records with `late=0` - no answer arrived at all, none was destroyed. The three restores
+  after the setup was in place failed **1, 2 and 2 writes of 131** (the first restore, on the freshly
+  flashed core before its requester rows existed, was clean: `written=132`), every failure again a
+  single-shot `Register` CID 3 write - `Meas2 #1 Filter Coefficient` (0.2, 0.3), `Meas2 #1 Sensor Type`
+  (0.4), `Meas1 #0 Filter Coefficient` (0.2), `Meas1 #0 Sensor Type` (0.3) and `System Name` (0.3) - and
+  every run still ends `0 read-back mismatch(es)`, so the rig holds the archive's values. With the core's
+  four `DeltaPeriodic` (500 ms) requester rows live (its own snapshot: 7 rows, `answer_age` 151-429 ms),
+  core-origin frames really were on the wire throughout.
 
 - **E80 The retry backoff still has one address class that cannot be separated** (card `t_d7802076`,
   2026-11-10, host-verified only - no rig run in that card). The delay is now `2 + (phase ^ draw) ms`
