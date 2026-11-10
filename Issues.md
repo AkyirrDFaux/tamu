@@ -502,6 +502,27 @@ are hardware-only.
   here needs the RX path split (an ISR-fed ring the echo check does not consume, or a separate
   echo buffer), which is a redesign of this file, not a patch.
 
+- **E79 A restore still loses 1-2 of its 131 writes although the core's RX path no longer destroys
+  anything** (`t_4c9c5fa8`; measured on the rig 2026-11-10, image `26.11.7.13`, `firmware.bin`
+  sha256 `393d130c32bb886769df8ad93b92a9d721ec6416b5c88cd5270d140813a5cb3e`). The card's RX fix is in
+  and holds: **`rxdestroyed=0`** in every read-back (six restores, one 20x identity burst, ~2,500
+  forwarded transactions; `rxrejects` 7 -> 67 on the same counter, `txstint` worst 92 ms). Yet six
+  restores reported 0, 1, 0, 1, 2, 1 failed writes out of 131, and every single failure was the same
+  shape: a `Register` CID 3 write to a **`Meas2` (#1)** field of a DAS (Sensor Type / Sampling Rate /
+  Filter Coefficient) on 0.2, 0.3 or 0.4 - never a read, never the core, never `Meas1`. Two of those
+  timed-out entries already held the archive's value on the device (`Meas2 Sensor Type` 3/3/2 =
+  `LDR 10K`/`LDR 10K`/`Raw Resistance`, `Sampling Rate` 10/10/200, matching `akyirr_setup.zip`), so
+  the failure costs the report line, not the state. Over the same runs the gate ring shows **~285
+  forwards / ~207 answered / ~79 expired per restore, i.e. ~28 % of forwarded transactions get no
+  answer inside their window**; the app's read policy retries and absorbs that (a 40-read probe to
+  0.4 answered 40/40 with +27 `rxrejects` arriving from other traffic in the same window). **Not
+  attributed:** with nothing destroyed at the core and the burst answered 17-20/20 per node, the
+  request either never reached the node or its answer never left it. The DAS half of the same defect
+  class (E59: the DAS drains its own RX ring while it waits for the bus) is the leading candidate, and
+  ~28 % is far above the 2-3 % single-transaction residual E76 recorded, so it needs its own
+  measurement - a node-side lost-request counter, or a wire capture - rather than another core-side
+  change.
+
 ## BLE Settings block (2026-10-28)
 
 **2026-10-29, owner ruling "simplify the BLE block" - the block is SIX fields, and this note is the
