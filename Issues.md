@@ -553,6 +553,23 @@ are hardware-only.
   measurement, not another core-side change. Flashing is unaffected: the ascending writer retries a
   refused read-back and wrote all 432 chunks with 0 resyncs.
 
+- **E82 One RX read still discards what arrives during a transmit, and it is not counted** (card
+  `t_049cbe93`, 2026-11-10, static - no rig run). `BusRxDestroyed` is now the complete account of
+  what the core's RX path drops *outside* a transmission: one increment, in the keep ring's refusal
+  branch, monotone, printed as `rxdestroyed=` beside `rxrejects=` in the `BUSGATE` totals line, and
+  pinned at that shape by `firmware/test/native/run.sh` (the guard is RED against `e3ea9c1^`, an
+  increment moved out of the branch, a reset, a second increment, a widened `rxrejects` and a
+  renamed label). What it does **not** cover is the echo check: `RS485TransmitVerified` and
+  `RS485SendRaw` still call `uart_read_bytes` for one chunk at a time while TX-enable is asserted,
+  and up to a chunk of anything else on the line in that window is consumed by the comparison and
+  never reaches the assembler (`firmware/src/Devices/Tamu_v2.0A/RSBus.h:235,246,354`). It is left
+  uncounted on purpose: on a clean transmit every byte in that window is our own echo, so counting
+  the window would make a quiet bus read as lossy, and the only countable bytes are the positions
+  that mismatch - a bitwise mixture of two transmitters rather than anybody's byte, in a frame that
+  is interleaved and re-sent anyway. Removing the read would mean an echo path that does not consume
+  the RX ring, i.e. the transmit-side work (nothing may transmit while a reply is owed, card
+  `t_45490cbe`), not the counter. The node-side half of the same class is E59.
+
 ## BLE Settings block (2026-10-28)
 
 **2026-10-29, owner ruling "simplify the BLE block" - the block is SIX fields, and this note is the

@@ -1692,6 +1692,69 @@ fi
 fail=$((fail + rxbus_fail))
 echo
 
+# t_049cbe93: the SEMANTICS of the destroyed-byte counter (the block above only checks that it
+# exists). BusRxDestroyed is the number that lets "the node never answered" be told apart from
+# "this core ate its answer" in a BUSGATE read-back, so it has to count destruction and nothing
+# else:
+#   - exactly ONE increment in the whole firmware tree, and it sits inside the keep ring's refusal
+#     branch - the one place a received byte is thrown away (a full ring). Counting bytes the ring
+#     or the assembler kept, or the resynchronisation bytes the assembler skips before a 0xAA sync,
+#     would make a quiet bus read as lossy and the counter would answer nothing;
+#   - nothing else writes it: no reset, no decrement, no compound assignment - monotone since boot,
+#     which is what makes "rxdestroyed=0" in a bench read-back mean "no byte was ever dropped";
+#   - BusRxCrcRejects keeps its own meaning: one increment, in RxValidateFrame (the assembler's own
+#     CRC check), so "frames the assembler received" and "bytes the RX path dropped" cannot merge.
+# The four paths are already set by the block above; ${VAR:-...} lets this block be pointed at a
+# mutated copy of the tree, which is how the guard's RED run is done.
+echo "### source guard: BusRxDestroyed counts destruction only, and rxrejects stays the assembler's"
+TAMU_RSBUS=${TAMU_RSBUS:-$ROOT/src/Devices/Tamu_v2.0A/RSBus.h}
+BUS_H=${BUS_H:-$ROOT/src/Core/Functions/Bus.h}
+APP_IFACE=${APP_IFACE:-$ROOT/src/Core/Functions/AppInterface.h}
+SRC_ROOT=${SRC_ROOT:-$ROOT/src}
+rxdestroyed_fail=0
+# (1) one increment site, tree-wide - a second one is a byte counted twice or a byte not dropped.
+DESTROY_SITES=$(grep -rc 'BusRxDestroyed = BusRxDestroyed + 1;' "$SRC_ROOT" | awk -F: '{ Total += $2 } END { print Total + 0 }')
+if [ "$DESTROY_SITES" != 1 ]; then
+    echo "FAIL: BusRxDestroyed must have exactly one increment site under $SRC_ROOT (found $DESTROY_SITES)"
+    rxdestroyed_fail=1
+fi
+# (2) and that site is inside `if (!RxKeep.Push(...)) { ... }` - it fires for a refused byte only.
+# The block is brace-matched from the refusal test, so an increment moved out of (or below) the
+# branch, or one that would fire for a byte the ring accepted, drops out of it.
+DESTROY_BLOCK=$(awk '/if \(!RxKeep\.Push\(Buf\[i\]\)\)/ { f=1; Depth=0 }
+    f { print; Op=gsub(/\{/, "{"); Cl=gsub(/\}/, "}"); Depth += Op - Cl;
+        if (Depth == 0 && (Op + Cl) > 0) exit }' "$TAMU_RSBUS")
+if ! printf '%s\n' "$DESTROY_BLOCK" | grep -q 'BusRxDestroyed = BusRxDestroyed + 1;'; then
+    echo "FAIL $TAMU_RSBUS: the increment must sit inside the keep ring's refusal branch (a byte the ring accepted is not destroyed)"
+    rxdestroyed_fail=1
+fi
+# (3) no other write of any shape.
+DESTROY_OTHER=$(grep -rn -e 'BusRxDestroyed[[:space:]]*[-+*/]*=' -e 'BusRxDestroyed[+-][+-]' "$SRC_ROOT" \
+    | grep -v 'uint32_t BusRxDestroyed = 0;' \
+    | grep -v 'BusRxDestroyed = BusRxDestroyed + 1;' | wc -l)
+if [ "$DESTROY_OTHER" != 0 ]; then
+    echo "FAIL: BusRxDestroyed may only be defined and incremented, never reset or decremented ($DESTROY_OTHER other write(s))"
+    rxdestroyed_fail=1
+fi
+# (4) rxrejects: one increment, in the assembler's CRC check - the frames the assembler did receive.
+CRC_SITES=$(grep -rc 'BusRxCrcRejects = BusRxCrcRejects + 1;' "$SRC_ROOT" | awk -F: '{ Total += $2 } END { print Total + 0 }')
+RXVALID_BODY=$(awk '/^inline int RxValidateFrame\(PacketFrame \*Data\)/{ f=1 } f{ print } f && /^}/{ exit }' "$BUS_H")
+CRC_ORDER=$(printf '%s\n' "$RXVALID_BODY" \
+    | grep -n -F -e 'if (Crc8(' -e 'BusRxCrcRejects = BusRxCrcRejects + 1;' \
+    | sed 's/^[0-9]*:[[:space:]]*//; s/[[:space:]]*\/\/.*$//; s/^if (Crc8(.*/if (Crc8(/' | tr '\n' '|')
+if [ "$CRC_SITES" != 1 ] || [ "$CRC_ORDER" != "if (Crc8(|BusRxCrcRejects = BusRxCrcRejects + 1;|" ]; then
+    echo "FAIL: rxrejects must keep counting only the assembler's CRC-failing frames (sites=$CRC_SITES, in RxValidateFrame='$CRC_ORDER')"
+    rxdestroyed_fail=1
+fi
+# (5) and the counter is visible: directly beside rxrejects in the BUSGATE totals line.
+if ! grep -q 'rxrejects=%lu rxdestroyed=%lu' "$APP_IFACE"; then
+    echo "FAIL $APP_IFACE: rxdestroyed must be printed directly beside rxrejects in the BUSGATE totals line"
+    rxdestroyed_fail=1
+fi
+[ $rxdestroyed_fail = 0 ] && echo "PASS: only a keep-ring refusal increments BusRxDestroyed (monotone), and rxrejects stays the assembler's CRC count"
+fail=$((fail + rxdestroyed_fail))
+echo
+
 # t_e5f46574. The bus transaction gate's decisions (Core/Functions/BusGate.h) run here: which
 # frames are transactions at all, the window per request kind, the wrap-safe expiry, and which
 # queued frame the pump may dispatch. The device half - the slot, the deferral ring, the
