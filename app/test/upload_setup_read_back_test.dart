@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/backup.dart';
 import 'package:tamuapp/core/backup_format.dart';
 import 'package:tamuapp/core/register_client.dart';
+import 'package:tamuapp/core/script_client.dart';
 import 'package:tamuapp/core/types.dart';
 
 import '../tool/upload_setup.dart';
@@ -214,6 +215,89 @@ void main() {
       expect(script.kind, ReadBackClass.notApplied);
       expect(script.line, contains('expected a script that runs without an error'));
       expect(script.line, contains('actual the slot is in error (state 4)'));
+    });
+  });
+
+  // A DAS advertises Node|SubscriptionProvide (0x300) and runs no Script service, so the 12 slot
+  // reads `_readBack` used to send it were 12 unanswered forwards, each paid for with the link's
+  // 3 s timeout: 72 per restore over 3 nodes x 2 passes, 22 % of its forwarded traffic and ~3.6 min
+  // of wall time (Issues.md E79, attributed on t_e7518382). The loop now asks nothing of a device
+  // whose capabilities lack the bit.
+  group('upload_setup read-back: the script slot loop is gated on Capability.scripts', () {
+    /// The set a DAS advertises: `0x300`, Node|SubscriptionProvide, no script role.
+    const dasCaps = Capability.node | Capability.subscriptionProvide;
+
+    test('a device without Capability.scripts is asked for no slot at all', () async {
+      final asked = <int>[];
+      final states = await readBackScriptSlots(
+        capabilities: dasCaps,
+        readState: (slot) async {
+          asked.add(slot);
+          return const ScriptReport(state: 1, depth: 0, line: 0);
+        },
+      );
+
+      expect(
+        asked,
+        isEmpty,
+        reason:
+            'every slot read is a forwarded request the device cannot answer, so the gate has to '
+            'stop the loop before the first send - not filter its empty answers afterwards',
+      );
+      expect(states, isEmpty);
+      expect(
+        readBackScriptsLine(capabilities: dasCaps, states: states),
+        'scripts=(no script service: the device cannot run scripts)',
+        reason:
+            'an empty bracket would read as "no scripts loaded" - the line has to name the '
+            'capability, the way the requester and provider lines do',
+      );
+      expect(dasCaps & Capability.scripts, 0);
+    });
+
+    test('a device with the bit still has all 12 slots read, and the line lists them', () async {
+      const caps = Capability.core | Capability.scripts;
+      final asked = <int>[];
+      final states = await readBackScriptSlots(
+        capabilities: caps,
+        readState: (slot) async {
+          asked.add(slot);
+          // Slot 3 does not answer: a read that did not answer is skipped, not invented.
+          if (slot == 3) return null;
+          return ScriptReport(
+            state: slot == 4 ? 4 : 1,
+            depth: 0,
+            line: 0,
+            instruction: slot == 4 ? 0x0105 : 0,
+          );
+        },
+      );
+
+      expect(
+        asked,
+        List<int>.generate(12, (i) => i),
+        reason: 'the gate skips a device that cannot run scripts, nothing else',
+      );
+      expect(states, hasLength(11));
+      expect(states.map((s) => s.slot), isNot(contains(3)));
+
+      final line = readBackScriptsLine(capabilities: caps, states: states);
+      expect(line, startsWith('scripts=['));
+      expect(line, contains('0:state=1'));
+      expect(line, contains('4:state=4 ERR'));
+      expect(line, isNot(contains('no script service')));
+    });
+
+    test('a device that can run scripts and answers nothing is an empty table', () async {
+      // The other half of "the line names which case it is": a script-capable device whose 12
+      // reads all went unanswered is not a device that cannot run scripts.
+      const caps = Capability.core | Capability.scripts;
+      final states = await readBackScriptSlots(
+        capabilities: caps,
+        readState: (slot) async => null,
+      );
+      expect(states, isEmpty);
+      expect(readBackScriptsLine(capabilities: caps, states: states), 'scripts=[]');
     });
   });
 }

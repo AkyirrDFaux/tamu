@@ -576,6 +576,44 @@ class ReadBackSnapshot {
   });
 }
 
+/// One loaded slot as the read-back saw it: which slot, its state, and whether it faulted.
+typedef ScriptSlotReadBack = ({int slot, int state, bool error});
+
+/// The read-back's script line: the 12 slots the device answered, or the reason it was not asked.
+///
+/// A device without the script role has no Script service to answer with, so the line says that
+/// instead of an empty bracket a reader would take for "no scripts loaded" (the same way the
+/// requester and provider lines report a table the device cannot hold).
+String readBackScriptsLine({
+  required int capabilities,
+  required List<ScriptSlotReadBack> states,
+}) => capabilities & Capability.scripts == 0
+    ? 'scripts=(no script service: the device cannot run scripts)'
+    : 'scripts=[${states.map((s) => '${s.slot}:state=${s.state}'
+              '${s.error ? ' ERR' : ''}').join(', ')}]';
+
+/// Reads a device's 12 script slots, and asks nothing at all of one that cannot run scripts.
+///
+/// A DAS advertises Node|SubscriptionProvide (0x300) and its dispatcher drops a Script request on
+/// the floor, so each of those reads costs the link's full 3 s timeout: 12 slots x 3 nodes x 2
+/// passes is 72 unanswered forwards per restore, 22 % of its forwarded traffic and ~3.6 min of its
+/// wall time (Issues.md E79). The gate is the same one [reloadChangedScripts] applies before it
+/// reads a slot map, and only the request is skipped - a device that CAN run scripts is read
+/// exactly as before.
+Future<List<ScriptSlotReadBack>> readBackScriptSlots({
+  required int capabilities,
+  required Future<ScriptReport?> Function(int slot) readState,
+}) async {
+  if (capabilities & Capability.scripts == 0) return const [];
+  final states = <ScriptSlotReadBack>[];
+  for (var slot = 0; slot < 12; slot++) {
+    final state = await readState(slot);
+    if (state == null) continue;
+    states.add((slot: slot, state: state.state, error: state.hasError));
+  }
+  return states;
+}
+
 /// Reads each target device back, prints what it holds, and returns its differences.
 ///
 /// The device owns its persistence files, so this is a read of the live device (not of the
@@ -613,12 +651,13 @@ Future<List<ReadBackMismatch>> _readBack(RestorePlan plan, String label) async {
         ? await _tableRead(subs.readProviderSubscriptions)
         : const <ProviderSubscription>[];
 
-    final states = <({int slot, int state, bool error})>[];
-    for (var slot = 0; slot < 12; slot++) {
-      final state = await scripts.readState(slot);
-      if (state == null) continue;
-      states.add((slot: slot, state: state.state, error: state.hasError));
-    }
+    // A device that cannot run scripts has no Script service to answer with, so its 12 slots are
+    // not asked at all: each read would be a forward the device never answers, paid for with the
+    // link's 3 s timeout (Issues.md E79). A device that can run them is read exactly as before.
+    final states = await readBackScriptSlots(
+      capabilities: target.capabilities,
+      readState: scripts.readState,
+    );
     snapshots.add(
       ReadBackSnapshot(
         deviceId: target.id,
@@ -644,7 +683,7 @@ Future<List<ReadBackMismatch>> _readBack(RestorePlan plan, String label) async {
       '    provider=${!canProvide ? '(no provider table: the device cannot provide)' : provider == null ? 'no answer' : provider.map((p) => '0x${p.trid.toRadixString(16)}').join(', ')}',
     );
     stdout.writeln(
-      '    scripts=[${states.map((s) => '${s.slot}:state=${s.state}${s.error ? ' ERR' : ''}').join(', ')}]',
+      '    ${readBackScriptsLine(capabilities: target.capabilities, states: states)}',
     );
 
     // Files are reported, not gated: the device's own table decides names and layout.
