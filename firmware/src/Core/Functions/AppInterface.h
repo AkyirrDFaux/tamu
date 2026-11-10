@@ -699,16 +699,23 @@ inline void AppInterfaceService::TxCommit(uint16_t Count)
 inline void AppInterfaceService::TxFlush()
 {
     // USB first - and skipped when the port is not being read, whether or not a BLE session is up.
-    // Two tests, both about the HOST rather than about BLE:
-    //   - AppUsbSilent(): no app frame inside ~500 ms (or none since boot). Nothing on the ring is
-    //     unsolicited - every reply answers a request - so a host that says nothing is not waiting
-    //     for anything, and the bytes stay queued until it speaks;
-    //   - AppUsbTxStalled(): the port has accepted no bytes at all for USB_TX_STALL_MS, i.e. the
-    //     driver ring is full and the host is not draining it. AppUSBTick purges that once.
-    // Before this, the only skip was `AppBLEActive() && AppUsbSilent()`, so with the cable in and
-    // nobody reading, a device with NO BLE session blocked this pass on the port. A pass is now
-    // capped at USB_TX_PASS_BUDGET_MS (20 ms, AppUSB.h) and normally costs nothing at all.
-    if (AppUSBActive() && TxRing && !AppUsbSilent() && !AppUsbTxStalled())
+    //
+    // Card t_334a1347: this used to be skipped whenever AppUsbSilent() - no app frame for ~500 ms -
+    // on the assumption that "nothing on the ring is unsolicited, so a host that says nothing is
+    // not waiting for anything". That assumption is false for a reply the core owes on a DEADLINE
+    // longer than the window, and the core has exactly one: the bootloader passthrough settles a
+    // request the node did not answer after KPtTimeoutMs (1 s), so its FLAG_FAIL was queued and
+    // then never pumped. Measured on the rig: 3 of 128 passthrough requests were answered by
+    // nothing at all while the core's own counters said `ok=125 timeout=3 req=128` - the refusal
+    // existed and the app still waited out its own timeout.
+    //
+    // The link's own "nobody is reading" test is AppUsbTxStalled() (Blocks/UsbTxStall.h): a port
+    // that accepted NOTHING for USB_TX_STALL_MS, which is also what purges the ring. So a silent
+    // host that IS reading costs one write attempt (bounded by USB_TX_WRITE_MS) and takes the
+    // bytes; a silent host that is not reaches the stall test within that window and is dropped
+    // there, so the dead-port case stays bounded and still ends in one purge instead of a blocked
+    // pass forever.
+    if (AppUSBActive() && TxRing && !AppUsbTxStalled())
     {
         uint8_t Chunk[60];
         for (;;)

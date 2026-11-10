@@ -1905,12 +1905,32 @@ if ! grep -q '#define USB_TX_PASS_BUDGET_MS 20' "$USB_SRC" || ! grep -q 'Attempt
     echo "FAIL $USB_SRC: the pass budget must stay 20 ms (two writes of 10 ms)"
     ls_fail=1
 fi
-if ! grep -q 'AppUSBActive() && TxRing && !AppUsbSilent() && !AppUsbTxStalled()' "$IFACE_SRC"; then
-    echo "FAIL $IFACE_SRC: TxFlush must skip a silent or stalled USB port regardless of BLE"
+if ! grep -q 'AppUSBActive() && TxRing && !AppUsbTxStalled()' "$IFACE_SRC"; then
+    echo "FAIL $IFACE_SRC: TxFlush must skip only a STALLED USB port - a silent host may be waiting for a slow reply"
+    ls_fail=1
+fi
+# Card t_334a1347: the silence test used to be part of that skip, on the assumption that a host
+# that says nothing is waiting for nothing. Any reply the core owes on a deadline longer than the
+# ~500 ms window broke it - the bootloader passthrough settles its refusal after 1 s, and that
+# FLAG_FAIL was queued and never pumped: 3 of 128 passthrough requests were answered by nothing at
+# all on the rig while the core's own counters said `ok=125 timeout=3 req=128`. The dead-port case
+# is the stall test's (Blocks/UsbTxStall.h), which also purges the ring.
+if grep -q '^[^/]*TxRing && !AppUsbSilent()' "$IFACE_SRC"; then
+    echo "FAIL $IFACE_SRC: the silent-host test is back in TxFlush - it suppresses every reply slower than ~500 ms (the passthrough deadline FAIL included)"
     ls_fail=1
 fi
 if ! grep -q 'UsbTx.TakeReport(Now)' "$USB_SRC" || ! grep -q 'UsbTx.Clear();' "$USB_SRC"; then
     echo "FAIL $USB_SRC: the stall must be purged once per episode and cleared when the host speaks"
+    ls_fail=1
+fi
+
+# Card t_334a1347: every passthrough early return answers. A request the core cannot encode used
+# to `return;` with no reply at all, which the app cannot tell from a dead node - it just waits out
+# its own timeout. The three refusals (busy, short write, short read) each build a FLAG_FAIL frame.
+DEVSVC_SRC="$ROOT/src/Core/Services/Device.h"
+if ! grep -q 'RefuseShortRequest(Frame, 4 + Bootloader::PAYLOAD_SIZE)' "$DEVSVC_SRC" ||
+   ! grep -q 'RefuseShortRequest(Frame, 4)' "$DEVSVC_SRC"; then
+    echo "FAIL $DEVSVC_SRC: a passthrough request with a short payload must be refused with FLAG_FAIL, not ignored"
     ls_fail=1
 fi
 

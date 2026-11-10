@@ -42,6 +42,10 @@ private:
     // the raw frame, RS485SendRaw's it, records the pending request and returns; the main
     // loop's PollBootloaderPassthrough collects the reply.
     void HandleBootloaderPassthrough(const PacketFrame &Frame, uint8_t Cid);
+    // Answers a passthrough request whose payload is too short to encode with FLAG_FAIL instead of
+    // returning silently: an unanswered request is indistinguishable from a dead node to the app,
+    // which then waits out its own timeout (card t_334a1347).
+    void RefuseShortRequest(const PacketFrame &Frame, uint8_t Need);
     bool BootloaderRxFeed(uint8_t Byte);               // sink for raw bootloader reply bytes
     static inline DeviceService *RxInstance = nullptr; // the single instance, for that hook
 
@@ -51,6 +55,7 @@ private:
     // the idle main loop pays one bool load and no bus access. The routing fields let the
     // poll rebuild the Device response for the original requester after Handle* has returned.
     static constexpr uint32_t KPtTimeoutMs = 1000; // reply deadline (ms)
+    static constexpr uint32_t KPtDumpAfterMs = 10000; // idle before the totals line is printed
     bool PtPending    = false;                    // a request is issued and not yet settled
     uint8_t PtCid     = 0;                        // passthrough CID (0x20/0x21/0x22)
     uint16_t PtSrc    = 0;                        // reply routing: original request IdSrc
@@ -61,6 +66,25 @@ private:
     uint8_t PtRx[Bootloader::MAX_FRAME_SIZE];     // bootloader reply frame
     uint16_t PtRxLen = 0;                         // bytes accumulated in PtRx
     bool PtRxReady = false;                       // PtRx holds a complete, decoded reply frame
+
+    // Passthrough diagnostics (card t_334a1347). A request that gets no reply at all is
+    // indistinguishable from a dead node unless the core says where it stopped: refused short,
+    // never sent, sent but the node silent, or settled and the reply lost on the way back. These
+    // are 16-bit counters and one line; the passthrough is the ONLY way a node is flashed, so a
+    // silent failure has to be diagnosable from the rig without a rebuild.
+    uint16_t PtReqCount    = 0; // requests that reached the handler
+    uint16_t PtBusyRefused = 0; // a request arrived while one was still outstanding
+    uint16_t PtShortRefused = 0; // request payload too short to encode
+    uint16_t PtSendFail    = 0; // RS485SendRaw never got the raw frame out
+    uint16_t PtSinkBytes   = 0; // raw bytes the sink consumed
+    uint16_t PtSinkFrames  = 0; // complete, valid 0xCA reply frames decoded
+    uint16_t PtSinkBad     = 0; // 0xCA frames that failed the size/parity check
+    uint16_t PtOkCount     = 0; // settled with a reply
+    uint16_t PtTimeouts    = 0; // settled on the deadline (no reply)
+    uint32_t PtLastMs      = 0; // UptimeMs of the last request handled
+    uint32_t PtDumpedAt    = 0; // UptimeMs of the last totals line
+    uint16_t PtDumpedReq   = 0; // PtReqCount at that dump: nothing new, nothing printed
+    uint8_t PtShortLogged  = 0; // the short-payload refusal has been logged once since boot
 #endif
 
     // Sends a single-packet Device service reply back to the requester (src mirrored).
@@ -211,10 +235,14 @@ void DeviceService::HandleSNDB(const PacketFrame &Frame)
 // a time - a second one while pending is refused, never queued.
 inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame, uint8_t Cid)
 {
+    PtReqCount = (uint16_t)(PtReqCount + 1);
+    PtLastMs = DeviceStatus.UptimeMs;
+
     // Busy: refuse a second request rather than queue it, so the app must wait for the
     // outstanding one to settle (its reply or the 1 s timeout).
     if (PtPending)
     {
+        PtBusyRefused = (uint16_t)(PtBusyRefused + 1);
         PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
                         FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
         DispatchPacket(TxFrame);
@@ -233,7 +261,10 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
     else if (Cid == 0x21)
     { // Send write packet: Offset (4) + Payload (32).
         if (PayloadBytes(Frame) < 4 + Bootloader::PAYLOAD_SIZE)
+        {
+            RefuseShortRequest(Frame, 4 + Bootloader::PAYLOAD_SIZE);
             return;
+        }
         Offset = LoadUnaligned<uint32_t>(Frame.Payload);
         Bootloader::EncodeWrite(Offset, Frame.Payload + 4, Raw);
         Len = Bootloader::DATA_SIZE;
@@ -241,7 +272,10 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
     else
     { // Request read -> Offset (4).
         if (PayloadBytes(Frame) < 4)
+        {
+            RefuseShortRequest(Frame, 4);
             return;
+        }
         Offset = LoadUnaligned<uint32_t>(Frame.Payload);
         Bootloader::EncodeReadRequest(Offset, Raw);
         Len = Bootloader::READ_REQ_SIZE;
@@ -267,6 +301,7 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
 
     if (!RS485SendRaw(Raw, Len))
     {
+        PtSendFail = (uint16_t)(PtSendFail + 1);
         PtPending = false;
         BootloaderRxSink = nullptr;
         PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
@@ -274,6 +309,23 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
         DispatchPacket(TxFrame);
         return;
     }
+}
+
+// A passthrough request that cannot be encoded is REFUSED, not ignored: the app cannot tell "the
+// core rejected this" from "the node is dead" when nothing comes back, and it then waits out its
+// own timeout (card t_334a1347). One FAIL reply, and the check is logged once since boot.
+inline void DeviceService::RefuseShortRequest(const PacketFrame &Frame, uint8_t Need)
+{
+    PtShortRefused = (uint16_t)(PtShortRefused + 1);
+    if (!PtShortLogged)
+    {
+        PtShortLogged = 1;
+        DeviceLog("BLPT", "refused a short passthrough request: cid=0x%02X payload=%u need=%u",
+                  (unsigned)GetServiceCID(Frame.Cmd), (unsigned)PayloadBytes(Frame), (unsigned)Need);
+    }
+    PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
+                    FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
+    DispatchPacket(TxFrame);
 }
 
 // Byte sink for the bootloader reply, installed on the shared bus reader (RSBus.h
@@ -285,6 +337,7 @@ inline bool DeviceService::BootloaderRxFeed(uint8_t Byte)
 {
     if (!PtPending || PtRxReady)
         return false;
+    PtSinkBytes = (uint16_t)(PtSinkBytes + 1);
     if (PtRxLen == 0)
     {
         if (Byte != Bootloader::START)
@@ -306,7 +359,12 @@ inline bool DeviceService::BootloaderRxFeed(uint8_t Byte)
         if (PtRxLen >= Need)
         {
             if (Bootloader::Decode(PtRx, Need) != Bootloader::INVALID)
+            {
                 PtRxReady = true;
+                PtSinkFrames = (uint16_t)(PtSinkFrames + 1);
+            }
+            else
+                PtSinkBad = (uint16_t)(PtSinkBad + 1);
             PtRxLen = 0; // corrupt frame: resync on the next 0xCA
         }
     }
@@ -318,8 +376,33 @@ inline bool DeviceService::BootloaderRxFeed(uint8_t Byte)
 // only builds the Device response (or FAILs on the deadline). TIMEOUT = 1 s.
 inline void DeviceService::PollBootloaderPassthrough()
 {
+    // Idle: still settle the diagnostics. A request that got no reply has to be countable AFTER
+    // the fact - the app only sees its own timeout, and "no reply" out of the core and "no reply"
+    // out of the node are the same silence to it. Printed once per run of passthrough traffic,
+    // 10 s after the last request, through DeviceLog (which itself keeps off a talking link).
     if (!PtPending)
+    {
+        if (PtReqCount != PtDumpedReq &&
+            (uint32_t)(DeviceStatus.UptimeMs - PtLastMs) >= KPtDumpAfterMs)
+        {
+            PtDumpedReq = PtReqCount;
+            PtDumpedAt = DeviceStatus.UptimeMs;
+            // The one line a rig session needs after a passthrough run: how many requests arrived,
+            // how many were refused/sent/failed, how many raw bytes the node actually put on the
+            // wire (sinkbytes/frames - a silent request has sinkbytes for the requests that were
+            // answered only), and whether the settle was a reply or the deadline. `timeout` above
+            // zero with `sinkbytes` flat is a node that never answered; both flat is a request
+            // that never left. Printed 10 s after the last request, and DeviceLog keeps it off a
+            // link the app is still using.
+            DeviceLog("BLPT",
+                      "total req=%u busy=%u short=%u sendfail=%u sinkbytes=%u frames=%u bad=%u "
+                      "ok=%u timeout=%u",
+                      (unsigned)PtReqCount, (unsigned)PtBusyRefused, (unsigned)PtShortRefused,
+                      (unsigned)PtSendFail, (unsigned)PtSinkBytes, (unsigned)PtSinkFrames,
+                      (unsigned)PtSinkBad, (unsigned)PtOkCount, (unsigned)PtTimeouts);
+        }
         return; // not expecting a reply: one bool test, no bus access
+    }
 
     // The reply frame is assembled by BootloaderRxFeed on the shared bus reader (RSBus.h);
     // there is no bus access here. Build the Device response from it, or FAIL on the deadline.
@@ -354,6 +437,7 @@ inline void DeviceService::PollBootloaderPassthrough()
         }
 
         PtPending = false;
+        PtOkCount = (uint16_t)(PtOkCount + 1);
         BootloaderRxSink = nullptr;
         PacketConstruct(&TxFrame, PtSrc, PtCmd, PtTrid, Flags, Out, OutLen);
         DispatchPacket(TxFrame);
@@ -364,6 +448,7 @@ inline void DeviceService::PollBootloaderPassthrough()
     if ((int32_t)(DeviceStatus.UptimeMs - PtDeadline) >= 0)
     {
         PtPending = false;
+        PtTimeouts = (uint16_t)(PtTimeouts + 1);
         BootloaderRxSink = nullptr;
         PacketConstruct(&TxFrame, PtSrc, PtCmd, PtTrid,
                         FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);

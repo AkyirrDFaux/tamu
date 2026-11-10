@@ -537,6 +537,22 @@ are hardware-only.
   backoff a registering node draws. Not measured on the rig: an in-phase pair is a bench injection the
   `t_e8ddb64a` card's collision test does not stage.
 
+- **E81 The DAS bootloader still ignores ~4 % of passthrough requests** (card `t_334a1347`,
+  2026-11-10, measured on the rig). The core-side half is closed in the same card: a silent USB host
+  used to stop the TX pump, so the passthrough's 1 s deadline `FLAG_FAIL` was built, queued and never
+  sent - `ok=125 timeout=3 req=128` in the core's own counters while three requests were answered by
+  nothing at all, which is what the app reads as a dead node. Every request now gets an answer
+  (60/60 and 86/90+4 refusals in the confirming runs). What remains is the node: it puts nothing on
+  the wire for ~4 % of requests (4 of 90; 3 of 128 before the pump fix), identify and read included,
+  so write time is not the explanation. The `BLPT total req/n busy/short/sendfail/sinkbytes/frames/
+  bad/ok/timeout` line separates the cases: `sendfail=0` (our raw frame left, echo verified) and
+  `sinkbytes` flat for the requests that failed means the loss is in the node's bootloader RX. The
+  passthrough READ path has a second, separate glitch: one chunk in 432 comes back garbled (0xBC
+  where the image has 0x40) in about one run in two, which is why a reader accepts a chunk only when
+  two consecutive reads agree (`te8_das_readback.py`). Both need a node-side or wire-level
+  measurement, not another core-side change. Flashing is unaffected: the ascending writer retries a
+  refused read-back and wrote all 432 chunks with 0 resyncs.
+
 ## BLE Settings block (2026-10-28)
 
 **2026-10-29, owner ruling "simplify the BLE block" - the block is SIX fields, and this note is the
