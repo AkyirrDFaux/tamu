@@ -181,10 +181,12 @@ bool SendAndVerifyPacket(const PacketFrame &Data) {
             return true; // Success!
         }
 
-        // Collision or failed echo: back off at least one frame (2.80 ms), decorrelated by this
-        // node's own address and the attempt number. The old `(RawRand() % 16) + 1` ms was under a
-        // frame at the low end and its low 4 bits cycle with period 16, so two colliding nodes
-        // re-drew the same delay and collided again (Core/Functions/Bus.h).
+        // Collision or failed echo: back off at least one frame, decorrelated by this node's own
+        // address and the attempt number - the helper draws 2..33 ms from this node's address
+        // phase XORed with the PRNG/attempt draw, so a pair still in phase separates by at least
+        // 1 ms on the FIRST retry. The old `(RawRand() % 16) + 1` ms was under a frame at the low
+        // end and its low 4 bits cycle with period 16; the first replacement's mod-8 group still
+        // locked every pair of addresses 8 apart (Core/Functions/Bus.h RS485BackoffMs).
         Sleep(RS485BackoffMs(DeviceStatus.ShortAddress, (uint8_t)Attempt, RawRand()));
     }
     DasErrorFlag = true; // the red LED indicates the bus error (priority over the LED block)

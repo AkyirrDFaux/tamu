@@ -267,10 +267,12 @@ static bool RS485TransmitVerified(const PacketFrame &Data)
             return true;
         }
 
-        // Collision or failed echo: back off with a fresh delay. The delay is at least one frame
-        // (2.80 ms) and is decorrelated by this core's own address and the attempt number - the old
-        // `(RawRand() % 16) + 1` was under a frame at the low end and its low 4 bits cycle with
-        // period 16, which put two colliding nodes back in lockstep (Core/Functions/Bus.h).
+        // Collision or failed echo: back off. The delay is 2..33 ms - at least 0.7 frame - and is
+        // the address PHASE XORed with a PRNG/attempt draw, so two nodes that are still in phase
+        // separate by at least 1 ms on the first retry (the old `(RawRand() % 16) + 1` was under a
+        // frame at the low end, its low 4 bits cycle with period 16, and the first replacement's
+        // `(Addr * 5) & 7` group made every pair of addresses 8 apart draw the same delay).
+        // Derivation and the kernel analysis: Core/Functions/Bus.h RS485BackoffMs.
         const uint32_t BackoffMs =
             RS485BackoffMs(DeviceStatus.ShortAddress, (uint8_t)Attempt, RawRand());
         if (!AppInterface.Connected) // diagnostics only when no app is attached to the console

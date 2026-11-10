@@ -523,6 +523,20 @@ are hardware-only.
   measurement - a node-side lost-request counter, or a wire capture - rather than another core-side
   change.
 
+- **E80 The retry backoff still has one address class that cannot be separated** (card `t_d7802076`,
+  2026-11-10, host-verified only - no rig run in that card). The delay is now `2 + (phase ^ draw) ms`
+  with `phase = (Addr & 31) ^ ((Addr >> 5) & 31) ^ ((Addr >> 10) & 31)` and `draw = ((Rand >> 16) & 31)
+  ^ Attempt` (`firmware/src/Core/Functions/Bus.h`), which guarantees that two nodes whose addresses
+  differ in the low 5 bits never draw the same delay while they are in phase - 32 slots is the budget
+  (1 ms per slot, 2..33 ms, and the transmit stint's worst case does not move). The residual is the
+  fold's kernel: 2047 of the 65535 XOR differences map to phase 0, the smallest being **33**, so a pair
+  such as node 1 and node 32 on one net (1 ^ 32 = 33) still draws identically when both PRNG states are
+  identical. Closing it needs either a wider window (which the 300 ms stint and the 2 KB DAS do not
+  afford) or a per-node PRNG seed, and the DAS cannot seed from its own address at boot: `ShortAddress`
+  stays 0 until the discover loop answers (`Devices/DAS_v0.1/Main.h:162-207`), i.e. after the first
+  backoff a registering node draws. Not measured on the rig: an in-phase pair is a bench injection the
+  `t_e8ddb64a` card's collision test does not stage.
+
 ## BLE Settings block (2026-10-28)
 
 **2026-10-29, owner ruling "simplify the BLE block" - the block is SIX fields, and this note is the

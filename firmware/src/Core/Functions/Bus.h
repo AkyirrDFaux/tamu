@@ -26,34 +26,65 @@
 // SysTick ms wait), so a sub-millisecond figure could never be honoured by either.
 #define RS485_FRAME_MS ((RS485_FRAME_US + 999) / 1000)
 
-// The retry backoff, in milliseconds (card t_763b4cde).
+// The retry backoff, in milliseconds (cards t_763b4cde / t_d7802076).
 //
-// The old expression was `(RawRand() % 16) + 1` ms, and it was wrong twice over:
+// The original expression was `(RawRand() % 16) + 1` ms, and it was a lockstep generator rather
+// than jitter:
 //   * RANGE - 1..16 ms against a 2.80 ms frame: a 1 ms draw is under half a frame, which the
-//     silence window afterwards (174-260 us) absorbs, so the retry could re-enter the collision it
+//     silence window afterwards (174-264 us) absorbs, so the retry could re-enter the collision it
 //     was backing off from.
 //   * PHASE - RawRand() is the LCG s' = 13s + 9 (mod 16) in its low nibble, a cycle of length
 //     exactly 16 (14,15,12,5,10,11,8,1,6,7,4,13,2,3,0,9 repeating). Two nodes drawing at the same
 //     call index re-drew the SAME delay on attempts 2 and 3, so a collision repeated in lockstep.
 //
-// The delay is now a function of this node's own short address, the attempt number and the TOP of
-// the PRNG state, on a 32-step grid:
-//     group = (Addr * 5 + Attempt) & 7      (5 is coprime with 8: distinct addresses differ)
-//     sub   = ((Rand >> 16) ^ Addr) & 3
-//     delay = 2 ms + group * 4 + sub        = 2 .. 33 ms
-// Two nodes that collided draw at the same call index (they are in phase), and the group term -
-// four steps (4 ms) wide - then separates them: the group differs for any two addresses that
-// differ modulo 8, and a 4-step gap cannot be cancelled by the 3-step sub range, so their delays
-// differ by at least 1 ms whatever the PRNG says. 1 ms is ~4x the silence window, so the first of
-// the pair is transmitting for a whole frame while the second one's silence wait keeps restarting
-// on those bytes: the collision is broken on the FIRST retry, not the third. The random term uses
-// the high half of the state (full 2^32 period), so the 16-step low nibble never reaches the
-// result, and the address+attempt term means the sequence is not a fixed cycle at all.
+// The first replacement (t_763b4cde) grouped the delay as `(Addr * 5 + Attempt) & 7` and was still
+// a lockstep generator, only with a longer period: the group read the address only through
+// `Addr mod 8` and the sub term through `Addr mod 4`, so two nodes whose addresses differ by a
+// multiple of 8 - 0.1 and 0.9 on one net, any two nets' node 1 - drew an identical group AND an
+// identical sub term, and stayed in phase for ever. (Measured: the degenerate set was exactly the
+// multiples of 8, the smallest 8.)
+//
+// The delay is now a 5-bit ADDRESS PHASE XORed with a draw:
+//     phase = (Addr & 31) ^ ((Addr >> 5) & 31) ^ ((Addr >> 10) & 31)   -- all 16 address bits
+//     draw  = ((Rand >> 16) & 31) ^ Attempt
+//     delay = 2 + (phase ^ draw) ms                                    = 2 .. 33 ms
+//
+// * Why the pair separates within ONE attempt. XOR is a bijection, so two nodes that are still in
+//   phase (same PRNG state and attempt, hence the same draw) keep exactly the difference their
+//   ADDRESSES give them: the delays are equal only when phase(A) == phase(B). The phase is linear
+//   over GF(2), so phase(A) ^ phase(B) == phase(A ^ B) and the fold's KERNEL is the whole story.
+//   Over the 16-bit address space the kernel holds 2047 of the 65535 differences and its smallest
+//   member is 33, so any two addresses whose XOR difference is 33 or less always draw different
+//   delays - for every draw and every attempt. Inside one net (device IDs 0..1023) the degenerate
+//   differences are exactly the multiples of 33, the smallest pair being node 1 and node 32
+//   (1 ^ 32 = 33). A bus whose node numbers sit in one 32-address block - every real one; SNDB
+//   reserves 1 and allocates from 2 upwards - cannot produce the same delay from two nodes at all.
+//   Two nodes that are NOT in phase (the core seeds from esp_random, the DAS from SysTick at boot)
+//   land on the same slot with probability 1/32 per attempt - 1/1024 over both retries.
+// * The draw reads the TOP half of the PRNG state, whose period is the full 2^32, so the 16-step
+//   low nibble never reaches the delay; XORing it over the phase moves the value uniformly over all
+//   32 slots (every slot is reachable from every address) without disturbing the difference above.
+// * Numbers. One frame is 129 bytes x 10 bit times / 460800 = 2.800 ms. The window is 2..33 ms =
+//   0.71 .. 11.8 frames, chosen in whole milliseconds because both targets sleep in ms (the core's
+//   scheduler tick, the node's `Sleep`). A separated pair is at least 1 ms apart = 0.36 frame =
+//   3.8x the longest silence window (8 + 15/8 + 3 = 12 byte times = 264 us), so the earlier node is
+//   still driving the line when the later one's silence wait ends; two independent draws differ by
+//   10.7 ms on average, ((32^2 - 1) / (3 * 32)), i.e. 3.8 frames.
+// * Budget. The window is UNCHANGED (2..33 ms), so RS485_TX_STINT_MS' worst case does not move: a
+//   send draws at most 3 x 33 = 99 ms of backoff, and the 2 ms floor cannot starve a busy bus -
+//   waiting for the line is the silence wait's job, not the backoff's.
+//
+// Deliberately NOT used: a real timer or a per-node seed. Either would also decorrelate two nodes,
+// but a per-node term inside the draw lets it CANCEL the 1 ms address separation (equality becomes
+// 1-in-32 for every pair instead of impossible), and the DAS cannot seed from its own address at
+// boot anyway - `ShortAddress` stays 0 until the discover loop answers (Devices/DAS_v0.1/Main.h),
+// so nothing device-unique exists before the first backoff is drawn.
 inline uint8_t RS485BackoffMs(uint16_t Addr, uint8_t Attempt, uint32_t Rand)
 {
-    const uint32_t Group = ((uint32_t)Addr * 5u + (uint32_t)Attempt) & 7u;
-    const uint32_t Sub = (((Rand >> 16) ^ (uint32_t)Addr) & 3u);
-    return (uint8_t)(2u + Group * 4u + Sub);
+    const uint32_t Phase = ((uint32_t)Addr & 0x1Fu) ^ (((uint32_t)Addr >> 5) & 0x1Fu)
+                         ^ (((uint32_t)Addr >> 10) & 0x1Fu);
+    const uint32_t Draw = ((Rand >> 16) & 0x1Fu) ^ (uint32_t)Attempt;
+    return (uint8_t)(2u + ((Phase ^ Draw) & 0x1Fu));
 }
 
 // Waits for the line to be silent for 8 bytes + Priority/8 + random 0-3 bytes, bounded by `CapMs`

@@ -103,11 +103,11 @@ for SPEED in "-DOPTIMIZE_SPEED" ""; do
     echo
 done
 
-# t_763b4cde: retransmission is why a duplicated Save All filled a node's file table. The guard
-# (Core/Functions/BusRepeat.h) and the address/attempt-decorrelated backoff (Bus.h RS485BackoffUs)
-# are host-clean, so the real code is driven here: which CIDs are guarded, that a repeat inside the
-# window answers from the record while anything else is a new transaction, and that two nodes one
-# address apart separate by more than the CSMA window on the first retry.
+# t_763b4cde / t_d7802076: retransmission is why a duplicated Save All filled a node's file table.
+# The guard (Core/Functions/BusRepeat.h) and the address-phase backoff (Bus.h RS485BackoffMs) are
+# host-clean, so the real code is driven here: which CIDs are guarded, that a repeat inside the
+# window answers from the record while anything else is a new transaction, and that two nodes whose
+# addresses differ draw different delays while they are still in phase (the lockstep case).
 echo "### native bus-retransmission tests (repeat guard + backoff decorrelation)"
 build_run "busrepeat" "bus_repeat_test.cpp"
 echo
@@ -164,6 +164,18 @@ done
 if [ "$(grep -c 'RS485BackoffMs(' src/Devices/Tamu_v2.0A/RSBus.h)" != 2 ] ||
    [ "$(grep -c 'RS485BackoffMs(' src/Devices/DAS_v0.1/RSBus.h)" != 1 ]; then
     echo "FAIL: every retry site must use RS485BackoffMs (Tamu 2: packet + raw bootloader, DAS 1)"
+    REPEAT_FAIL=1
+fi
+# t_d7802076: the helper's address term must FOLD the whole short address. A group read from the low
+# address bits only (`(Addr * 5 + Attempt) & 7`, which shipped in 52c07aa) is a lockstep of period 8 -
+# nodes 1 and 9, 0.2 and 0.10, every pair 8 apart, drew the identical delay for ever.
+BACKOFF_SRC="src/Core/Functions/Bus.h"
+if ! grep -q 'Addr >> 5' "$BACKOFF_SRC" || ! grep -q 'Addr >> 10' "$BACKOFF_SRC"; then
+    echo "FAIL $BACKOFF_SRC: the backoff no longer folds the whole short address"
+    REPEAT_FAIL=1
+fi
+if grep -qE 'Addr \* 5u? *\+ *\(uint32_t\)Attempt' "$BACKOFF_SRC"; then
+    echo "FAIL $BACKOFF_SRC: the mod-8 group backoff is back"
     REPEAT_FAIL=1
 fi
 if [ "$REPEAT_FAIL" = 0 ]; then

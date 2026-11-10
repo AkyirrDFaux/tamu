@@ -12,10 +12,12 @@
 //
 //   2. The backoff was `(RawRand() % 16) + 1` ms: 1-16 ms against a 2.80 ms frame, drawn from a
 //      low nibble whose cycle is exactly 16, so two nodes in phase re-drew the same delay on
-//      attempts 2 and 3 and collided again in lockstep.
+//      attempts 2 and 3 and collided again in lockstep. The first replacement grouped the delay
+//      from `Addr mod 8` and `Addr mod 4` (cards t_763b4cde, t_d7802076), which is a lockstep of
+//      period 8: nodes 1 and 9, or 0.2 and 0.10, drew the identical delay for ever.
 //
 // This test drives the real header (not a model): the guarded-CID predicate, the record/hit/note
-// logic, and the real RS485BackoffUs over the real RawRand sequence. The dispatcher wiring (that a
+// logic, and the real RS485BackoffMs over the real RawRand sequence. The dispatcher wiring (that a
 // hit SKIPS execution, that SendResponse notes the outcome) is a device-layer property that cannot
 // be linked on the host, so it is pinned by source guards in test/native/run.sh.
 #include <cstdint>
@@ -189,7 +191,7 @@ static void TestRecordRefuses()
 
 // ------------------------------------------------------------------------------------------------
 // 4. The backoff: a millisecond grid wider than one frame, and a pair of nodes that collided
-//    separates on the FIRST retry (the old expression could draw the same delay for both).
+//    separates on the FIRST retry (card t_d7802076).
 // ------------------------------------------------------------------------------------------------
 static void TestBackoffRange()
 {
@@ -211,12 +213,13 @@ static void TestBackoffRange()
                 if (Ms < Min) Min = Ms;
                 if (Ms > Max) Max = Ms;
             }
-    // 2 ms + (group 0..7) * 4 + (sub 0..3) = 2 .. 33 ms: 1.4x to 11.8x one frame, so every draw
-    // in the window is worth at least a frame of line time (the old 1 ms floor was not).
+    // 2 ms + (slot 0..31) * 1 = 2 .. 33 ms: 0.7x to 11.8x one frame. The window is deliberately
+    // the SAME as the first replacement's (2..33), so the transmit stint's worst case, its comment
+    // in Devices/Tamu_v2.0A/RSBus.h and the budget arithmetic do not move.
     std::printf("  backoff window: %u .. %u ms (one frame = %u ms)\n", Min, Max, (unsigned)RS485_FRAME_MS);
     CHECK_EQ(Min, 2);
     CHECK_EQ(Max, 33);
-    CHECK(Min >= RS485_FRAME_MS - 1);
+    CHECK(Min * 1000 > (RS485_SILENCE_BYTES + 15 / 8 + 3) * RS485_BYTE_TIME_US);
     CHECK(Max >= 3 * RS485_FRAME_MS);
 }
 
@@ -224,35 +227,101 @@ static void TestBackoffSeparates()
 {
     // THE property the card asks for: two colliding nodes separate within ONE attempt.
     //
-    // Two nodes that collided draw at the same call index - they are in phase, and under the old
-    // expression that meant the same delay. Feed both the SAME draw and sweep the whole input space
-    // the formula takes from the PRNG ((Rand >> 16) & 3) for every address a bus carries and every
-    // attempt. The group term is 4 ms wide and the sub term spans 3 ms, so the pair is never closer
-    // than 1 ms - 4x the silence window, and the earlier node's frame then holds the line for a
-    // whole frame while the later one waits for silence.
-    unsigned Same = 0;
-    unsigned Worst = 0xFFFFFFFF;
-    for (uint16_t A = 1; A <= 8; A++)
-        for (uint16_t B = (uint16_t)(A + 1); B <= 8; B++)
-            for (uint8_t Attempt = 0; Attempt < RS485_RETRIES; Attempt++)
-                for (uint32_t Hi = 0; Hi < 4; Hi++)
+    // Two nodes that collided draw at the same call index - they are in phase, so they pass the
+    // SAME PRNG word and the same attempt number, and their delays are equal only when their
+    // ADDRESS PHASE is equal. Everything therefore reduces to the fold's kernel, and the test
+    // sweeps it exhaustively instead of trusting a sample of addresses: for every XOR difference
+    // an address pair can have, over every attempt and 32 draws, count the pairs that land on the
+    // same step.
+    unsigned SameInBlock = 0;  // differences 1..32 that land on the same step: must be 0
+    uint32_t Degenerate[4] = {0, 0, 0, 0};
+    unsigned DegenerateCount = 0;
+    unsigned WorstInBlock = 0xFFFFFFFF;
+    uint32_t FirstDegenerate = 0;
+    for (uint32_t D = 1; D <= 1024; D++) // one net's device-ID space (10 bits)
+    {
+        // The phase is linear over GF(2), so phase(A) ^ phase(B) == phase(A ^ B): a base of 0 and
+        // the difference D stand for every pair (A, A ^ D).
+        bool AnyEqual = false;
+        for (uint8_t Attempt = 0; Attempt < RS485_RETRIES; Attempt++)
+            for (int i = 0; i < 32; i++)
+            {
+                const uint32_t Rand = 0x9E3779B9u * (uint32_t)(i + 1);
+                const uint32_t Da = RS485BackoffMs(0, Attempt, Rand);
+                const uint32_t Db = RS485BackoffMs((uint16_t)D, Attempt, Rand);
+                if (Da == Db)
                 {
-                    const uint32_t Rand = (Hi << 16) | 0x0000ABCDu;
-                    const uint32_t Da = RS485BackoffMs(A, Attempt, Rand);
-                    const uint32_t Db = RS485BackoffMs(B, Attempt, Rand);
-                    const uint32_t Delta = (Da > Db ? Da - Db : Db - Da);
-                    if (Delta < Worst) Worst = Delta;
-                    if (Delta == 0) Same++;
+                    AnyEqual = true;
+                    continue;
                 }
-    std::printf("  backoff, in-phase draws (the lockstep case): worst |delta| = %u ms over "
-                "8 addresses x 3 attempts x 4 draws, %u pairs on the same step\n",
-                Worst, Same);
-    CHECK_EQ(Same, 0);
-    CHECK(Worst >= 1);
+                if (D <= 32) // the block the card must guarantee: how close can a pair land?
+                {
+                    const uint32_t Delta = (Da > Db ? Da - Db : Db - Da);
+                    if (Delta < WorstInBlock) WorstInBlock = Delta;
+                }
+            }
+        if (AnyEqual)
+        {
+            DegenerateCount++;
+            if (D <= 32) SameInBlock++;
+            if (FirstDegenerate == 0) FirstDegenerate = D;
+            if (DegenerateCount <= 4) Degenerate[DegenerateCount - 1] = D;
+        }
+    }
+    std::printf("  backoff, in-phase draws: differences 1..32 all separated (%u on the same step), "
+                "smallest degenerate XOR difference %u, %u degenerate of 1024 inside one net, "
+                "worst |delta| %u ms\n",
+                SameInBlock, FirstDegenerate, DegenerateCount, WorstInBlock);
+    CHECK_EQ(SameInBlock, 0);
+    CHECK_EQ(FirstDegenerate, 33);
+    // Inside one net the degenerate differences are exactly the multiples of 33: the smallest pair
+    // is node 1 and node 32 (1 ^ 32 == 33), and a bus whose node numbers sit in one 32-address
+    // block - every real one, allocation starts at 2 - cannot draw the same delay twice.
+    CHECK_EQ(DegenerateCount, 31);
+    for (unsigned i = 0; i < 4; i++)
+        CHECK_EQ(Degenerate[i], 33u * (i + 1));
+    CHECK(WorstInBlock >= 1); // the pairs that DO separate are never closer than one grid step
 
-    // Nodes draw from their OWN PRNG state, so a pair can land on the same step by chance: the
-    // group fixes 4 of the 32 grid positions and the 4-value sub picks inside them, so ~1 draw in
-    // 32 for a pair in the same group. Measured here, and asserted under 5 %.
+    // The regression this card is about: under the first replacement the group read `Addr mod 8`
+    // and the sub term `Addr & 3`, so nodes 1 and 9 (and every pair 8 apart) drew the identical
+    // delay for every draw and every attempt - a 8-address lockstep. Recomputed from that formula
+    // here so the claim is measured, then checked against the real helper.
+    auto OldLockstep = [](uint16_t A, uint16_t B) {
+        for (uint8_t Attempt = 0; Attempt < RS485_RETRIES; Attempt++)
+            for (int i = 0; i < 64; i++)
+            {
+                const uint32_t Rand = 0x1234567u * (uint32_t)(i + 1);
+                const uint32_t Da = 2 + (((A * 5 + Attempt) & 7) * 4) + (((Rand >> 16) ^ A) & 3);
+                const uint32_t Db = 2 + (((B * 5 + Attempt) & 7) * 4) + (((Rand >> 16) ^ B) & 3);
+                if (Da != Db) return false;
+            }
+        return true;
+    };
+    auto NewSeparates = [](uint16_t A, uint16_t B) {
+        for (uint8_t Attempt = 0; Attempt < RS485_RETRIES; Attempt++)
+            for (int i = 0; i < 64; i++)
+            {
+                const uint32_t Rand = 0x1234567u * (uint32_t)(i + 1);
+                if (RS485BackoffMs(A, Attempt, Rand) == RS485BackoffMs(B, Attempt, Rand))
+                    return false;
+            }
+        return true;
+    };
+    CHECK(OldLockstep(1, 9));      // the defect, in the formula that shipped in 52c07aa
+    CHECK(NewSeparates(1, 9));     // ... and gone in the address-phase fold
+    // The core (1) against every plausible node number. Node 32 is the ONE skipped case and it is
+    // the documented residual: 1 ^ 32 == 33 is the smallest degenerate difference, so that pair is
+    // still separated only to the extent the two PRNG states differ.
+    for (uint16_t B = 2; B <= 33; B++)
+    {
+        if (B == 32)
+            continue;
+        CHECK(NewSeparates(1, B));
+    }
+    CHECK(OldLockstep(1, 33)); // the old mod-8 group locked a pair 32 apart as well
+
+    // Nodes draw from their OWN PRNG state, so a pair can land on the same step by chance: 1 draw
+    // in 32 for two independent draws over the 32 slots. Measured here, asserted under 5 %.
     unsigned Nearby = 0, Pairs = 0;
     for (uint16_t A = 1; A <= 8; A++)
         for (uint16_t B = (uint16_t)(A + 1); B <= 8; B++)
@@ -269,11 +338,12 @@ static void TestBackoffSeparates()
     std::printf("  backoff, independent draws: %u of %u pair-draws on the same step (%.2f %%)\n",
                 Nearby, Pairs, 100.0 * (double)Nearby / (double)Pairs);
     CHECK(Nearby * 20 <= Pairs); // measured ~3 %, asserted under 5 %
+    CHECK(Nearby * 50 >= Pairs); // ... and no better than the 1-in-32 the 32-slot grid allows (>=2 %)
 
     // The pair that mattered on this rig - nodes 0.3 and 0.4, one address apart - never shares a
     // step, for any draw and attempt.
     for (uint8_t Attempt = 0; Attempt < RS485_RETRIES; Attempt++)
-        for (uint32_t Hi = 0; Hi < 4; Hi++)
+        for (uint32_t Hi = 0; Hi < 32; Hi++)
         {
             const uint32_t RandA = (Hi << 16) | 0x00001234u;
             const uint32_t RandB = (Hi << 16) | 0x00005678u;
