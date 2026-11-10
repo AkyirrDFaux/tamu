@@ -536,6 +536,54 @@ are hardware-only.
   every run still ends `0 read-back mismatch(es)`, so the rig holds the archive's values. With the core's
   four `DeltaPeriodic` (500 ms) requester rows live (its own snapshot: 7 rows, `answer_age` 151-429 ms),
   core-origin frames really were on the wire throughout.
+  **Attributed 2026-11-10** (card `t_e7518382`; same rig and the same image - core `26.11.10` iter 8,
+  `firmware.bin` sha256 `3ffd38e92238235013d834d07e6e64acba401b371b8743403f3fc5189f33ba5d`,
+  709,552 B, `sha256sum`-checked against `.pio/build/Tamu_v2_0A/firmware.bin`; all three DAS iter 8;
+  nothing flashed). **The ~22 % is not loss: 72 of the ~79 expired transactions per restore are
+  requests no DAS can answer.** The restore's read-back asks *every* device for its 12 script-slot
+  states, on both of its passes (`tool/upload_setup.dart`, `_readBack` ->
+  `for (slot = 0; slot < 12; slot++) ScriptClient.readState(slot)`), and a DAS is built without
+  `-D USE_SCRIPTS` (`[das]`, `firmware/platformio.ini`), so `Core/Functions/Dispatcher.h`'s
+  `case ServiceType::Script:` matches with an empty body: no reply, no error packet, and the core's
+  gate expires the transaction after its 600 ms window. Measured
+  (`.pio/probe/t_e75_script_probe.py`, one session, same node, same transport): `Script` CID 3 slot 0
+  to 0.2/0.3/0.4 -> **no reply in 3.02 / 3.04 / 3.04 s**, while a `Register` CID 2 read to the *same*
+  node answered in 13.8 / 10.9 / 10.2 ms and the *core* answered the same `Script` CID 3 in 5.5 ms.
+  The gate ring names them: **24 consecutive-TRID app expiries per node in two groups of 12**, one
+  group per read-back pass (0.2: `0xF182`-`0xF18D`, `0xF198`-`0xF1A3`; 0.3: `0xF181`-`0xF18C`,
+  `0xF198`-`0xF1A3`). 12 slots x 3 nodes x 2 passes = 72 = **22.3 % of a measured 323 forwarded
+  transactions** for one full restore - the card's figure exactly - and 24 per node against its
+  measured 26/25/25 spread. Each of those reads also costs the app its full 3 s timeout, which is
+  ~3.5 minutes of a restore's ~4.5.
+  **Discriminator (the card's item 1):** with the core's own traffic OFF - 8 loaded scripts stopped
+  (`Script` CID 4 action 10) and all 7 requester rows cancelled (`Subscriptions` `0x11` with a None
+  trigger), read back as `scripts={0..7: Stopped}` and `requester rows: 0`
+  (`.pio/probe/t_e75_quiet.py --off`) - **the expiries do not collapse**. Per-node restore passes
+  (`--device 0.2/0.3/0.4`), totals delta from the BUSGATE line: OFF `+36 expired / 210 forwards`,
+  `+32 / 211`, `+31 / 207`; ON `+29 / 228`, `+28 / 223`, `+27 / 228`. An OFF ring still shows the same
+  two groups of 12 expiries to that node (0.3: 23 `EXPIRED` + one record closed after the dump) and
+  **zero core-subscription records**, against 2 per ON run (`0x1003`/`0x1005`, the core's own polls at
+  their 250 ms window) - so the ungated core-origin unicasts, the wire and the DAS RX path are all
+  excluded as the cause of this mass. The residual real-node loss stays the separate ~1 % class
+  (E59): the same session's 20x identity burst answered **158/160** (0.2 20/20, 0.3 19/20, 0.4 20/20,
+  core 20/20), and the idle sequential reads lost 2 of 80 as well.
+  **Fix, outside this card:** the read-back's script loop has no capability gate, although the
+  subscription tables beside it check `SubscriptionRequest`/`SubscriptionProvide`. A DAS advertises
+  `Capabilities::Node | SubscriptionProvide` (0x300) and **not** `Capabilities::Scripts` (0x10); the
+  core advertises it. Gating that loop on the bit removes 72 of the ~79 expiries per restore and
+  ~3.5 minutes of wall time. (The other half - a DAS answering the Script service `FLAG_FAIL` instead
+  of silence - costs flash on a part with 524 B spare and would still cost the app 3 s per slot.)
+  **Restore quality on the same image today** (4 full restores, core traffic live, `akyirr_setup.zip`):
+  `written=126 failed=7` (the first, and the one that also re-installed the requester rows I had
+  cancelled - 2 of its 7 failures were those rows), then `132/0`, `132/0`, `131/1` - **2 of 4 clean**,
+  every run ending `0 read-back mismatch(es)`. So the 22 % mass never touched a write, and the
+  write-level loss E79 opened with remains a ~1 %-per-transaction event on the same single-shot
+  `Register` CID 3 shape (0.4 `Meas1`/`Meas2` fields, `System Name`), not the expiry mass.
+  **One new observation, not chased (out of this card's scope):** `rxdestroyed` was 0 in all nine
+  per-node passes (ON and OFF) and moved 0 -> 22 -> 44 across the full restores (`sendfails` 0 -> 3,
+  `lost` 0 -> 3 on the totals line) - i.e. bytes the keep ring refused appear only once the core's own
+  subscriptions are live again, ~11 per restore out of ~330 forwards. That is the E82/BusRxKeepRing
+  area the card excludes, recorded here so the next card starts from the number.
 
 - **E80 The retry backoff still has one address class that cannot be separated** (card `t_d7802076`,
   2026-11-10, host-verified only - no rig run in that card). The delay is now `2 + (phase ^ draw) ms`
