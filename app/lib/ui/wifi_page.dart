@@ -8,6 +8,7 @@ import '../core/transport.dart' show UsbTransport;
 import '../core/types.dart';
 import '../core/wifi_settings.dart';
 import '../core/notice.dart';
+import 'block_panel.dart';
 import 'formatters.dart' show kSecretMask;
 import 'theme.dart';
 import 'widgets.dart';
@@ -47,26 +48,17 @@ class WifiPage extends StatefulWidget {
   State<WifiPage> createState() => _WifiPageState();
 }
 
-class _WifiPageState extends State<WifiPage> with AutoRefreshMixin<WifiPage> {
+class _WifiPageState extends State<WifiPage>
+    with
+        AutoRefreshMixin<WifiPage>,
+        BlockPanelRefresh<WifiPage, WifiSnapshot> {
   late final RegisterClient _client =
       (widget.clientFactory ?? (int id) => RegisterClient(deviceId: id))(
         widget.deviceId,
       );
 
-  /// The last reading of the block, or null before the first successful one.
-  WifiSnapshot? _snapshot;
-
-  /// The raw field reads behind [_snapshot]: the write path takes a field's declared type and
-  /// width from here instead of guessing them.
-  Map<int, ({ValueInfo meta, List<int> value})?> _reads = const {};
-
-  /// False when the device's enumeration does not carry the block: the page then draws nothing.
-  bool _present = true;
-
-  bool _refreshing = false;
   bool _busy = false;
   bool _revealPassword = false;
-  String? _error;
 
   bool get _connected =>
       (widget.isConnected ?? (() => ConnectionManager.instance.isConnected))();
@@ -77,6 +69,35 @@ class _WifiPageState extends State<WifiPage> with AutoRefreshMixin<WifiPage> {
       (widget.isUsbLink ??
       () => ConnectionManager.instance.transport is UsbTransport)();
 
+  // What this panel is, for the shared refresh ([BlockPanelRefresh]): the `WiFi Settings` block,
+  // five fields, and a reading built from the fields the device answered.
+
+  @override
+  RegisterClient get blockClient => _client;
+
+  @override
+  bool get blockConnected => _connected;
+
+  @override
+  bool get blockBusy => _busy;
+
+  @override
+  bool hasBlock(Iterable<({int type, int maxInstance})> types) =>
+      hasWifiSettingsBlock(types);
+
+  @override
+  int get blockType => wifiSettingsBlockTypeValue;
+
+  @override
+  int get blockFieldCount => wifiFieldCount;
+
+  @override
+  String get blockName => 'WiFi';
+
+  @override
+  WifiSnapshot snapshotOf(Map<int, BlockFieldRead> reads) =>
+      WifiSnapshot.fromFields(reads);
+
   @override
   void initState() {
     super.initState();
@@ -86,66 +107,12 @@ class _WifiPageState extends State<WifiPage> with AutoRefreshMixin<WifiPage> {
   @override
   Future<void> onAutoRefresh() => _refresh();
 
-  void _snack(String message) {
-    if (!mounted) return;
-    showNotice(message);
-  }
-
-  Future<void> _refresh() async {
-    if (!_connected || _refreshing || _busy) return;
-    setState(() => _refreshing = true);
-    try {
-      final types = await _client.enumerateBlockTypes();
-      if (!mounted) return;
-      if (types == null) {
-        setState(() {
-          _refreshing = false;
-          _error = 'The device did not answer the block enumeration';
-        });
-        return;
-      }
-      if (!hasWifiSettingsBlock(types)) {
-        // No block, no panel. This is the stock firmware's answer, so it is not a failure.
-        setState(() {
-          _refreshing = false;
-          _present = false;
-          _error = null;
-          _snapshot = null;
-        });
-        return;
-      }
-
-      final reads = <int, ({ValueInfo meta, List<int> value})?>{};
-      for (var field = 0; field < wifiFieldCount; field++) {
-        reads[field] = await _client.readBlockField(
-          wifiSettingsBlockTypeValue,
-          0,
-          field,
-          0,
-        );
-      }
-      if (!mounted) return;
-      final answered = reads.values.any((r) => r != null);
-      setState(() {
-        _refreshing = false;
-        _present = true;
-        _reads = reads;
-        // Present but silent is a failure worth showing: the device claims a block it will not
-        // let anyone read, which is not the same thing as not having one.
-        _error = answered
-            ? null
-            : 'The WiFi block is present but did not answer a read';
-        _snapshot = answered ? WifiSnapshot.fromFields(reads) : null;
-      });
-    } finally {
-      if (mounted && _refreshing) setState(() => _refreshing = false);
-    }
-  }
+  Future<void> _refresh() => refreshBlock();
 
   /// The write's declared type: the device's own for a field it just answered for, and the
   /// block's documented type for one it did not (Enabled is a Bool, the rest are Text).
   int _writeType(int field) =>
-      _reads[field]?.meta.type ??
+      blockReads[field]?.meta.type ??
       (field == wifiFieldEnabled ? DataType.bool_.value : DataType.text.value);
 
   /// A text value at the width the device declared. The firmware pads a SHORTER Text write
@@ -153,7 +120,7 @@ class _WifiPageState extends State<WifiPage> with AutoRefreshMixin<WifiPage> {
   /// the full width: both rules then hold whatever the field's size is.
   List<int> _wireText(int field, String text) {
     final bytes = text.codeUnits.toList();
-    final size = _reads[field]?.meta.size ?? 0;
+    final size = blockReads[field]?.meta.size ?? 0;
     if (size > 0) {
       if (bytes.length > size) {
         bytes.length = size;
@@ -182,7 +149,7 @@ class _WifiPageState extends State<WifiPage> with AutoRefreshMixin<WifiPage> {
         // The field's own flags where the device just reported them (Enabled is Trigger +
         // Persistent, SSID Persistent), so the write describes the field the way the device's
         // table does.
-        flags: _reads[field]?.meta.flags ?? ValueFlags.persistent,
+        flags: blockReads[field]?.meta.flags ?? ValueFlags.persistent,
       ),
       bytes,
     );
@@ -199,7 +166,7 @@ class _WifiPageState extends State<WifiPage> with AutoRefreshMixin<WifiPage> {
       _busy = false;
       _revealPassword = false;
     });
-    _snack(
+    showNotice(
       !wrote
           ? (_overUsb
                 ? 'The device refused the write'
@@ -286,22 +253,22 @@ class _WifiPageState extends State<WifiPage> with AutoRefreshMixin<WifiPage> {
       PageActions.autoRefresh(
         control: this,
         onRefresh: _refresh,
-        refreshing: _refreshing,
-        error: _error != null,
+        refreshing: blockRefreshing,
+        error: blockError != null,
       ),
     ];
 
     // The block is missing: draw the panel as nothing at all (not an empty card, not an error).
-    if (!_present) return TamuPage(title: 'WiFi', actions: actions);
+    if (!blockPresent) return TamuPage(title: 'WiFi', actions: actions);
 
-    final snapshot = _snapshot;
-    if (_error != null && snapshot == null) {
+    final snapshot = blockSnapshot;
+    if (blockError != null && snapshot == null) {
       return TamuPage(
         title: 'WiFi',
         actions: actions,
         state: StateKind.error,
         stateMessage: 'WiFi block unavailable',
-        stateDetails: _error,
+        stateDetails: blockError,
         stateAction: OutlinedButton(
           onPressed: _refresh,
           child: const Text('Retry'),

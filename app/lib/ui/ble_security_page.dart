@@ -9,6 +9,7 @@ import '../core/register_client.dart';
 import '../core/transport.dart' show UsbTransport;
 import '../core/types.dart';
 import '../core/notice.dart';
+import 'block_panel.dart';
 import 'formatters.dart' show kSecretMask;
 import 'theme.dart';
 import 'widgets.dart';
@@ -67,26 +68,16 @@ class BleSecurityPage extends StatefulWidget {
 }
 
 class _BleSecurityPageState extends State<BleSecurityPage>
-    with AutoRefreshMixin<BleSecurityPage> {
+    with
+        AutoRefreshMixin<BleSecurityPage>,
+        BlockPanelRefresh<BleSecurityPage, BleSecuritySnapshot> {
   late final RegisterClient _client =
       (widget.clientFactory ?? (int id) => RegisterClient(deviceId: id))(
         widget.deviceId,
       );
 
-  /// The last reading of the block, or null before the first successful one.
-  BleSecuritySnapshot? _snapshot;
-
-  /// The raw field reads behind [_snapshot]: the write path takes a field's declared type and
-  /// width from here instead of guessing them.
-  Map<int, BleFieldRead> _reads = const {};
-
-  /// False when the device's enumeration does not carry the block: the page then draws nothing.
-  bool _present = true;
-
-  bool _refreshing = false;
   bool _busy = false;
   bool _revealPasskey = false;
-  String? _error;
 
   /// Ticks the pairing-window countdown while a window is open. One field read a second is enough
   /// to keep it honest.
@@ -99,6 +90,40 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   bool get _overUsb =>
       (widget.isUsbLink ??
       () => ConnectionManager.instance.transport is UsbTransport)();
+
+  // What this panel is, for the shared refresh ([BlockPanelRefresh]): the `BLE Settings` block,
+  // six fields, and a reading that knows which of them the device answered.
+
+  @override
+  RegisterClient get blockClient => _client;
+
+  @override
+  bool get blockConnected => _connected;
+
+  @override
+  bool get blockBusy => _busy;
+
+  @override
+  bool hasBlock(Iterable<({int type, int maxInstance})> types) =>
+      hasBleSettingsBlock(types);
+
+  @override
+  int get blockType => bleSettingsBlockTypeValue;
+
+  @override
+  int get blockFieldCount => bleFieldCount;
+
+  @override
+  String get blockName => 'Bluetooth';
+
+  @override
+  BleSecuritySnapshot snapshotOf(Map<int, BlockFieldRead> reads) =>
+      BleSecuritySnapshot.fromReads(reads);
+
+  /// A new reading decides whether the countdown ticks: an open window starts it, a closed one
+  /// stops it.
+  @override
+  void onBlockRead() => _syncWindowTimer();
 
   @override
   void initState() {
@@ -115,66 +140,11 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   @override
   Future<void> onAutoRefresh() => _refresh();
 
-  void _snack(String message) {
-    if (!mounted) return;
-    showNotice(message);
-  }
-
-  Future<void> _refresh() async {
-    if (!_connected || _refreshing || _busy) return;
-    setState(() => _refreshing = true);
-    try {
-      final types = await _client.enumerateBlockTypes();
-      if (!mounted) return;
-      if (types == null) {
-        setState(() {
-          _refreshing = false;
-          _error = 'The device did not answer the block enumeration';
-        });
-        return;
-      }
-      if (!hasBleSettingsBlock(types)) {
-        // No block, no panel: a device without the block is the normal case, not a failure.
-        setState(() {
-          _refreshing = false;
-          _present = false;
-          _error = null;
-          _snapshot = null;
-        });
-        return;
-      }
-
-      final reads = <int, BleFieldRead>{};
-      for (var field = 0; field < bleFieldCount; field++) {
-        reads[field] = await _client.readBlockField(
-          bleSettingsBlockTypeValue,
-          0,
-          field,
-          0,
-        );
-      }
-      if (!mounted) return;
-      final answered = reads.values.any((r) => r != null);
-      setState(() {
-        _refreshing = false;
-        _present = true;
-        _reads = reads;
-        // Present but silent is a failure worth showing: the device claims a block it will not
-        // let anyone read, which is not the same thing as not having one.
-        _error = answered
-            ? null
-            : 'The Bluetooth block is present but did not answer a read';
-        _snapshot = answered ? BleSecuritySnapshot.fromReads(reads) : null;
-      });
-      _syncWindowTimer();
-    } finally {
-      if (mounted && _refreshing) setState(() => _refreshing = false);
-    }
-  }
+  Future<void> _refresh() => refreshBlock();
 
   /// Starts the countdown tick when a window is open, stops it when it closes.
   void _syncWindowTimer() {
-    final left = _snapshot?.windowMs ?? 0;
+    final left = blockSnapshot?.windowMs ?? 0;
     if (left > 0 && _windowTimer == null) {
       _windowTimer = Timer.periodic(
         const Duration(seconds: 1),
@@ -202,11 +172,8 @@ class _BleSecurityPageState extends State<BleSecurityPage>
     );
     if (!mounted) return;
     if (read == null) return; // a lost answer is not a closed window
-    setState(() {
-      _reads = {..._reads, bleFieldWindow: read};
-      _snapshot = BleSecuritySnapshot.fromReads(_reads);
-    });
-    if ((_snapshot?.windowMs ?? 0) <= 0) {
+    setState(() => foldBlockRead(bleFieldWindow, read));
+    if ((blockSnapshot?.windowMs ?? 0) <= 0) {
       _windowTimer?.cancel();
       _windowTimer = null;
     }
@@ -215,12 +182,12 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   /// The write's declared type: the device's own for a field it just answered for, and the
   /// block's documented type for one it did not.
   int _writeType(int field, int fallback) =>
-      _reads[field]?.meta.type ?? fallback;
+      blockReads[field]?.meta.type ?? fallback;
 
   /// The flags a write describes the field with: what the device just reported, else the block's
   /// own treatment (a trigger, persistent for the two settings that are mirrored into `.SV`).
   int _writeFlags(int field, {bool persistent = false}) =>
-      _reads[field]?.meta.flags ??
+      blockReads[field]?.meta.flags ??
       (persistent
           ? ValueFlags.persistent | ValueFlags.trigger
           : ValueFlags.trigger);
@@ -261,7 +228,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
       _busy = false;
       _revealPasskey = false;
     });
-    _snack(
+    showNotice(
       !wrote
           ? bleWriteRefusal(overUsb: _overUsb, valueHint: valueHint)
           : !persist
@@ -284,7 +251,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
 
   Future<void> _setDisplayName(String name) {
     final bytes = name.codeUnits.toList();
-    final width = _reads[bleFieldDisplayName]?.meta.size ?? bleDisplayNameWidth;
+    final width = blockReads[bleFieldDisplayName]?.meta.size ?? bleDisplayNameWidth;
     if (bytes.length >= width) {
       bytes.length = width;
     } else {
@@ -325,7 +292,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
     done: ms <= 0
         ? 'Pairing window closed'
         : 'Pairing window open for ${bleWindowCountdown(ms)}',
-    valueHint: bleWindowProblem(ms, enabled: _snapshot?.enabled ?? false),
+    valueHint: bleWindowProblem(ms, enabled: blockSnapshot?.enabled ?? false),
   );
 
   /// The window editor: a length in milliseconds, with the device's own limits stated and the
@@ -336,7 +303,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
       context: context,
       builder: (context) => _WindowDialog(
         currentMs: currentMs,
-        enabled: _snapshot?.enabled ?? true,
+        enabled: blockSnapshot?.enabled ?? true,
         overUsb: _overUsb,
       ),
     );
@@ -372,7 +339,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
     );
     if (!mounted) return;
     setState(() => _busy = false);
-    _snack(
+    showNotice(
       reply != null
           ? done
           : bleBondsRefusal(overUsb: _overUsb, sent: bytes, held: held),
@@ -384,7 +351,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   /// read, because the device matches the frame slot by slot: an entry it does not recognise
   /// refuses the entire write.
   Future<void> _renameBond(int slot, String name) async {
-    final snapshot = _snapshot;
+    final snapshot = blockSnapshot;
     if (snapshot == null) return;
     await _writeBonds(
       bleBondsRenamed(snapshot.bonds, slot, name),
@@ -400,7 +367,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   /// has to pair again, and emptying the store makes the device open its automatic five-minute
   /// window.
   Future<void> _clearBond(BleBond bond) async {
-    final snapshot = _snapshot;
+    final snapshot = blockSnapshot;
     if (snapshot == null || bond.isEmpty) return;
     final slot = snapshot.bonds.indexOf(bond);
     final last = snapshot.bondCount == 1;
@@ -499,22 +466,22 @@ class _BleSecurityPageState extends State<BleSecurityPage>
       PageActions.autoRefresh(
         control: this,
         onRefresh: _refresh,
-        refreshing: _refreshing,
-        error: _error != null,
+        refreshing: blockRefreshing,
+        error: blockError != null,
       ),
     ];
 
     // The block is missing: draw the panel as nothing at all (not an empty card, not an error).
-    if (!_present) return TamuPage(title: 'Bluetooth', actions: actions);
+    if (!blockPresent) return TamuPage(title: 'Bluetooth', actions: actions);
 
-    final snapshot = _snapshot;
-    if (_error != null && snapshot == null) {
+    final snapshot = blockSnapshot;
+    if (blockError != null && snapshot == null) {
       return TamuPage(
         title: 'Bluetooth',
         actions: actions,
         state: StateKind.error,
         stateMessage: 'Bluetooth block unavailable',
-        stateDetails: _error,
+        stateDetails: blockError,
         stateAction: OutlinedButton(
           onPressed: _refresh,
           child: const Text('Retry'),
