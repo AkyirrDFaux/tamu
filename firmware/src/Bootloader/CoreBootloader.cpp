@@ -32,6 +32,7 @@
 #include "Bootloader/BootBudget.h"
 #include "Bootloader/BootDecision.h"
 #include "Bootloader/UpdaterAdmission.h"
+#include "Core/Devices/BootloaderIdentify.h" // the identify frame, shared with the node bootloaders
 #include "Core/Functions/Bootloader.h"
 #include "Core/Functions/BootloaderHost.h"
 
@@ -454,32 +455,9 @@ static void HandleRead(uint32_t Offset)
 }
 
 // The identify response is entirely build-time constant (app size + name), so the whole frame -
-// control/parity included - is precomputed and lives in flash.
-struct IdentifyFrame
-{
-    uint8_t Bytes[Bootloader::DATA_SIZE];
-};
-
-constexpr IdentifyFrame MakeIdentify(uint32_t Space, const char *Name)
-{
-    IdentifyFrame Frame{};
-    Frame.Bytes[0] = Bootloader::START;
-    Frame.Bytes[1] = Bootloader::CMD_IDENTIFY_RESP;
-    Frame.Bytes[2] = (uint8_t)(Space & 0xFFu);
-    Frame.Bytes[3] = (uint8_t)((Space >> 8) & 0xFFu);
-    Frame.Bytes[4] = (uint8_t)((Space >> 16) & 0xFFu);
-    Frame.Bytes[5] = (uint8_t)((Space >> 24) & 0xFFu);
-    for (uint8_t i = 0; i < Bootloader::NAME_SIZE; i++)
-    {
-        if (Name[i] == '\0')
-            break;
-        Frame.Bytes[6 + i] = (uint8_t)Name[i];
-    }
-    Frame.Bytes[Bootloader::DATA_SIZE - 1] = Bootloader::END;
-    Frame.Bytes[1] |= (uint8_t)(Bootloader::Parity(Frame.Bytes, Bootloader::DATA_SIZE) << 3);
-    return Frame;
-}
-
+// control/parity included - is precomputed and lives in flash. The builder is shared with the
+// DAS/Valu bootloaders (Core/Devices/BootloaderIdentify.h), so the three cannot disagree about
+// what an identify response is.
 constexpr IdentifyFrame Identify = MakeIdentify(OTA_APP_SIZE, "Tamu v2.0A");
 
 // One byte stream, both transports: a frame that arrives over BLE is assembled exactly the way a
