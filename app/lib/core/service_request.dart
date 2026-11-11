@@ -153,18 +153,7 @@ Future<PacketResponse?> serviceRequestWithFlags(
 }) async {
   final channel = requestChannel;
   if (channel == null) {
-    AppDiagnostics.log(
-      tag,
-      'dev ${idToString(targetId)} $service/$cid: no link',
-    );
-    trace?.record(
-      RequestFault(
-        kind: RequestFaultKind.noLink,
-        deviceId: targetId,
-        service: service,
-        cid: cid,
-      ),
-    );
+    _recordNoLink(trace, tag, targetId, service, cid);
     return null;
   }
   try {
@@ -189,19 +178,7 @@ Future<PacketResponse?> serviceRequestWithFlags(
     _recordBusy(trace, tag, targetId, service, cid, error);
     return null;
   } catch (error) {
-    AppDiagnostics.log(
-      tag,
-      'dev ${idToString(targetId)} $service/$cid failed: $error',
-    );
-    trace?.record(
-      RequestFault(
-        kind: RequestFaultKind.noReply,
-        deviceId: targetId,
-        service: service,
-        cid: cid,
-        detail: '$error',
-      ),
-    );
+    _recordNoReply(trace, tag, targetId, service, cid, error);
     return null;
   }
 }
