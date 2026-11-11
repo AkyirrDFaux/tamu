@@ -1073,8 +1073,9 @@ class RegisterClient {
 
   /// Saves the whole device to its backup (CID 4 "Save All"): the System block's persistent
   /// fields, every static block, and every dynamic block's .DT_/.DV_ files. Per
-  /// Docs/Services/Register.md the command carries no BlockInfo; partial saving is the app's
-  /// job (direct file writes - see `saveFieldToBackup`).
+  /// Docs/Services/Register.md the command carries no BlockInfo; a single field is saved by
+  /// rewriting the backup file the app holds (`device_backup.dart` `svSaveField`/`dvSaveField`)
+  /// and writing it back, which is the register page's path.
   Future<bool> saveAll({Duration timeout = const Duration(seconds: 25)}) async {
     // Writing every dynamic block runs the 64-slot orphan cleanup (flash page erases), which
     // can exceed the default request timeout.

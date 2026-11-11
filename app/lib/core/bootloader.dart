@@ -14,7 +14,7 @@
 /// 0b011 write-response, 0b100 read-request, 0b101 read-response. The write-response carries
 /// the offset of the last successfully written chunk (0xFFFFFFFF = nothing written yet); the
 /// identify-response carries the app-space size (u32) in the offset slot and the device name
-/// as the 32-byte, null-padded payload. [decode] returns [_invalid] (not 0) for a bad frame,
+/// as the 32-byte, null-padded payload. [decode] returns [invalid] (not 0) for a bad frame,
 /// because 0 is the valid identify-request command.
 ///
 /// Parity is even over the "rest of the packet" after the control byte's padding/parity: the
