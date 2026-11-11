@@ -92,6 +92,35 @@ private:
 // One instance per binary, in Core/Services/ (the FS global `Storage` is a different object).
 StorageService StorageSvc;
 
+// The fragment count of a whole-file read, and the refusal when the wire cannot express it.
+// One helper for both read paths - the app target's resumable stream (BeginRead) and the node's
+// single-dispatch stream - because the count, the overflow refusal and the Failed answer must be
+// the same on both or a file too large to stream fails differently on a core and on a node.
+//
+// Docs 03.05: "maximum 64 byte stream fragment"; the name travels in EVERY fragment (B12), so a
+// fragment carries [frag info][name echo (8)][content]. Counted without the `+ Cap - 1` form: an
+// untrusted FileSize near 0xFFFFFFFF overflows it, and a uint16 cast then wraps the total. The
+// requester is handed a fragment count matching neither the file nor the stream, the offset runs
+// past the end, and the length underflows into a large read of whatever is beyond the file. A size
+// the wire's fragment count cannot express is a failed read, never a silently truncated one.
+//
+// Returns false when it has already answered FLAG_FAIL; on success `*Frags` is at least 1, so an
+// empty file is one empty fragment rather than a zero-fragment reply.
+inline bool StorageReadFrags(const PacketFrame &Frame, const char *Name, uint32_t TotalContent,
+                             uint16_t ContentCap, uint16_t *Frags)
+{
+    uint32_t Count = TotalContent / ContentCap + ((TotalContent % ContentCap) ? 1u : 0u);
+    if (Count > 0xFFFFu)
+    {
+        DeviceLog("STORAGE", "read '%.8s': %u bytes needs %u fragments", Name,
+                  (unsigned)TotalContent, (unsigned)Count);
+        SendResponse(Frame, nullptr, 0, FLAG_FAIL);
+        return false;
+    }
+    *Frags = (uint16_t)(Count == 0 ? 1 : Count);
+    return true;
+}
+
 #ifdef USE_APP_INTERFACE
 inline bool StorageService::BeginRead(const PacketFrame &Frame)
 {
@@ -105,22 +134,10 @@ inline bool StorageService::BeginRead(const PacketFrame &Frame)
     }
 
     uint32_t TotalContent = FileSize;
-    // Docs 03.05: "maximum 64 byte stream fragment". The name travels in EVERY fragment (B12):
-    // each fragment is [frag info][name echo (8)][content].
     uint16_t ContentCap = MAX_FRAG_WORD_BYTES;
-    // Counted without the `+ Cap - 1` form: an untrusted FileSize near 0xFFFFFFFF overflows it,
-    // and the uint16 cast then wraps the total. The app is handed a fragment count matching
-    // neither the file nor this stream, the offset runs past the end, and the length underflows
-    // into a large read of whatever is beyond the file. A size the wire's fragment count cannot
-    // express is a failed read, never a silently truncated one.
-    uint32_t Frags = TotalContent / ContentCap + ((TotalContent % ContentCap) ? 1u : 0u);
-    if (Frags > 0xFFFFu)
-    {
-        DeviceLog("STORAGE", "read '%.8s': %u bytes needs %u fragments", Name,
-                  (unsigned)TotalContent, (unsigned)Frags);
-        SendResponse(Frame, nullptr, 0, FLAG_FAIL);
+    uint16_t Frags;
+    if (!StorageReadFrags(Frame, Name, TotalContent, ContentCap, &Frags))
         return false;
-    }
 
     if (Read.Active)
         DeviceLog("STORAGE", "read '%.8s' supersedes an open stream ('%.8s' at %u/%u)", Name,
@@ -134,7 +151,7 @@ inline bool StorageService::BeginRead(const PacketFrame &Frame)
     Read.Size = TotalContent;
     Read.Cap = ContentCap;
     Read.Frag = 0;
-    Read.Total = (uint16_t)(Frags == 0 ? 1 : Frags);
+    Read.Total = Frags;
     Read.Tgt = Frame.IdSrc;
     Read.Cmd = Frame.Cmd;
     Read.Trid = Frame.Trid;
@@ -339,23 +356,10 @@ inline bool StorageService::Handle(const PacketFrame &Frame)
                 uint32_t FileOffset, FileSize;
                 if (Storage.GetFileInfo(Name, &FileOffset, &FileSize)) {
                     uint32_t TotalContent = FileSize;
-                    // Docs 03.05: "maximum 64 byte stream fragment". The name travels in EVERY
-                    // fragment (B12): each fragment is [frag info][name echo (8)][content].
                     uint16_t ContentCap = MAX_FRAG_WORD_BYTES;
-                    // Counted without the `+ Cap - 1` form: an untrusted FileSize near 0xFFFFFFFF
-                    // overflows it, and the uint16 cast then wraps the total. The app is handed a
-                    // fragment count matching neither the file nor this loop, the offset runs past
-                    // the end, and the length underflows into a large read of whatever is beyond
-                    // the file. A size the wire's fragment count cannot express is a failed read,
-                    // never a silently truncated one.
-                    uint32_t Frags = TotalContent / ContentCap + ((TotalContent % ContentCap) ? 1u : 0u);
-                    if (Frags > 0xFFFFu) {
-                        DeviceLog("STORAGE", "read '%.8s': %u bytes needs %u fragments", Name,
-                                  (unsigned)TotalContent, (unsigned)Frags);
-                        SendResponse(Frame, nullptr, 0, FLAG_FAIL);
+                    uint16_t TotalFrags;
+                    if (!StorageReadFrags(Frame, Name, TotalContent, ContentCap, &TotalFrags))
                         break;
-                    }
-                    uint16_t TotalFrags = (uint16_t)(Frags == 0 ? 1 : Frags);
                     bool ReadOk = true;
                     for (uint16_t Frag = 0; Frag < TotalFrags; Frag++) {
                         memcpy(TxFrame.Payload + 4, Name, 8);
