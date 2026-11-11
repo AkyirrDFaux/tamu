@@ -21,16 +21,7 @@
 #include "Blocks/DeviceInfo.h" // DeviceStatusStruct, which Packet.h forward-uses
 #include "Core/Functions/Packet.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                   \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 // The device's packet-stream parser, in miniature (same rules as WireStreamParser::Feed).
 struct StreamParser

@@ -31,16 +31,7 @@
 
 #include "Core/Functions/NetId.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                             \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);              \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 // What a core's status looks like: the live net and the bus address built from it.
 struct LiveStatus {

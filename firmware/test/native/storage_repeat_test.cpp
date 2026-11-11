@@ -70,63 +70,10 @@ void DeviceLog(const char *, const char *, ...) {}
 #include "Core/Functions/MemoryBackup.h" // SendResponse (records a guarded outcome), WriteBackupFile
 #include "Core/Services/Storage.h"       // StorageService::Handle - the real dedupe path
 
-// ---- The fake 512 B NOR store the DAS runs on (8 x 64 B pages). ----
-static uint8_t Flash[STORAGE_FLASH_SIZE];
+// ---- The fake 512 B NOR store the DAS runs on (8 x 64 B pages), shared with the backup test. ----
+#include "fake_flash.h"
 
-bool StorageFlashDevice::Init()
-{
-    memset(Flash, 0xFF, sizeof(Flash));
-    return true;
-}
-
-uint32_t StorageFlashDevice::Read(uint32_t Offset, void *Data, uint32_t Size)
-{
-    if (Offset > STORAGE_FLASH_SIZE || Size > STORAGE_FLASH_SIZE - Offset) return 0;
-    memcpy(Data, Flash + Offset, Size);
-    return Size;
-}
-
-// NOR semantics: a program only clears bits, so a write onto a page that was not erased shows up
-// as a wrong read-back instead of being silently accepted.
-bool StorageFlashDevice::Write(uint32_t Offset, const void *Data, uint32_t Size)
-{
-    if (Offset > STORAGE_FLASH_SIZE || Size > STORAGE_FLASH_SIZE - Offset) return false;
-    const uint8_t *Src = (const uint8_t *)Data;
-    for (uint32_t i = 0; i < Size; i++) Flash[Offset + i] &= Src[i];
-    return true;
-}
-
-bool StorageFlashDevice::Erase(uint32_t Offset, uint32_t Size)
-{
-    if ((Offset & (STORAGE_BLOCK_SIZE - 1)) || (Size & (STORAGE_BLOCK_SIZE - 1))) return false;
-    if (Offset > STORAGE_FLASH_SIZE || Size > STORAGE_FLASH_SIZE - Offset) return false;
-    memset(Flash + Offset, 0xFF, Size);
-    return true;
-}
-
-bool StorageFlashDevice::Format() { return Erase(0, STORAGE_FLASH_SIZE); }
-
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);              \
-        }                                                                            \
-    } while (0)
-
-#define CHECK_EQ(got, want)                                                          \
-    do {                                                                             \
-        checks++;                                                                    \
-        const long long g = (long long)(got), w = (long long)(want);                 \
-        if (g != w) {                                                               \
-            failures++;                                                              \
-            std::printf("FAIL %s:%d: %s == %s (%lld != %lld)\n", __FILE__, __LINE__, \
-                        #got, #want, g, w);                                          \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 static const uint16_t CoreAddr = 0x0001;     // the requester (the core)
 static const uint16_t OtherCore = 0x0401;    // a second core, same TRID space

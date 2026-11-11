@@ -16,16 +16,7 @@
 
 #include "Blocks/UsbTxStall.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                   \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 // A port that takes nothing: the clock starts on the first empty pass and the episode is reported
 // exactly once, USB_TX_STALL_MS later.

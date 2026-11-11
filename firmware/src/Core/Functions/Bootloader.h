@@ -43,8 +43,8 @@ namespace Bootloader
 
     constexpr uint8_t PAYLOAD_SIZE   = 32;
     constexpr uint8_t HEADER_SIZE    = 6;  // start + control + offset
-    constexpr uint8_t READ_REQ_SIZE  = 7;  // header + end
-    constexpr uint8_t DATA_SIZE      = 39; // header + payload + end
+    constexpr uint8_t READ_REQ_SIZE  = HEADER_SIZE + 1;                    // header + end
+    constexpr uint8_t DATA_SIZE      = HEADER_SIZE + PAYLOAD_SIZE + 1;     // header + payload + end
     constexpr uint8_t NAME_SIZE      = 32; // identify-response name (null-padded)
     constexpr uint8_t MAX_FRAME_SIZE = DATA_SIZE;
 

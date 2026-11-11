@@ -30,27 +30,7 @@ DeviceStatusStruct DeviceStatus;
 
 #include "Core/Functions/BusGate.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                   \
-        }                                                                            \
-    } while (0)
-
-#define CHECK_EQ(a, b)                                                               \
-    do {                                                                             \
-        checks++;                                                                    \
-        const long long A = (long long)(a), B = (long long)(b);                      \
-        if (A != B) {                                                                \
-            failures++;                                                              \
-            printf("FAIL %s:%d: %s == %s (got %lld, want %lld)\n", __FILE__,        \
-                   __LINE__, #a, #b, A, B);                                          \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 // The measured answers these windows are fitted to (rig 2026-11-06, .pio/probe/gate_latency.py and
 // restore_measure4.gate.log): an ordinary forwarded read/write 13-14 ms, the longest answered

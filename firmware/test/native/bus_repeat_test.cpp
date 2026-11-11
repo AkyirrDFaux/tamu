@@ -29,27 +29,7 @@
 #include "Core/Functions/Bus.h"       // RS485BackoffUs, the silence constants
 #include "Core/Functions/BusRepeat.h" // BusRepeatGuarded / Hit / Note
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);              \
-        }                                                                            \
-    } while (0)
-
-#define CHECK_EQ(a, b)                                                               \
-    do {                                                                             \
-        checks++;                                                                    \
-        long long va = (long long)(a), vb = (long long)(b);                          \
-        if (va != vb) {                                                              \
-            failures++;                                                              \
-            std::printf("FAIL %s:%d: %s == %s (%lld vs %lld)\n", __FILE__, __LINE__, \
-                        #a, #b, va, vb);                                             \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 static const uint16_t CoreAddr = 0x0001; // the requester (the core)
 static const uint16_t NodeAddr = 0x0003; // this node

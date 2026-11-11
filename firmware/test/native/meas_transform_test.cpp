@@ -31,16 +31,7 @@
 
 #include "Core/Devices/Measuring.h" // MeasClampAdc and the block, as the two devices see it
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);              \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 // The published value as kOhm, the way a reader sees the Number.
 static double Kohm(Number Value) { return (double)Value.Value / 65536.0; }

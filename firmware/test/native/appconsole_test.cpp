@@ -32,16 +32,7 @@
 
 #include "Core/Functions/AppConsole.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                   \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 // The three inputs spelled out as the states the rig actually produces.
 static const bool UsbUp = true;

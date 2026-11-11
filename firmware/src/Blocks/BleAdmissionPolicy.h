@@ -32,9 +32,9 @@
 
 #include <cstdint>
 
-// BLE address types, restated so this header stays testable on the host:
-// 0 public, 1 random (static or private), 2 public identity, 3 random (static) identity.
-constexpr uint8_t BleAddrRandom = 1;
+// The address TYPE of a BLE identity is compared by its low bit (0 public, 1 random); the
+// "identity" types 2/3 are rewritten to 0/1 before NimBLE hands them out (see the note below), so
+// there is no separate constant to keep here.
 
 // The two halves of an identity address - the six bytes and whether they are public or random -
 // are the same. A peer whose RPA the controller resolved arrives as an *identity*: the HCI

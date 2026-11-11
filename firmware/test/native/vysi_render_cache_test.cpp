@@ -37,16 +37,7 @@ PacketFrame TxFrame;
 
 #include "Blocks/Vysi1Display.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);              \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 static const ValueInfo Enum1 = { (uint16_t)DataType::Enum, 1, 0 };
 static const ValueInfo Num4 = { (uint16_t)DataType::Number, 4, 0 };

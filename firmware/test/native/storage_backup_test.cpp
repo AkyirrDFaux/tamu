@@ -47,52 +47,9 @@ PacketFrame TxFrame;
 // MEMORY_BACKUP_CAP=128, BOARD_DAS_v0_1), so the layout exercised here is the layout the node runs.
 #include "Core/Functions/MemoryBackup.h"
 
-static uint8_t Flash[STORAGE_FLASH_SIZE];
+#include "fake_flash.h" // the fake NOR store this test drives (defined there once)
 
-bool StorageFlashDevice::Init()
-{
-    memset(Flash, 0xFF, sizeof(Flash));
-    return true;
-}
-
-uint32_t StorageFlashDevice::Read(uint32_t Offset, void *Data, uint32_t Size)
-{
-    if (Offset > STORAGE_FLASH_SIZE || Size > STORAGE_FLASH_SIZE - Offset) return 0;
-    memcpy(Data, Flash + Offset, Size);
-    return Size;
-}
-
-// NOR semantics: a program only clears bits (1 -> 0), so a write onto a page that was not erased
-// shows up as a wrong read-back instead of being silently accepted.
-bool StorageFlashDevice::Write(uint32_t Offset, const void *Data, uint32_t Size)
-{
-    if (Offset > STORAGE_FLASH_SIZE || Size > STORAGE_FLASH_SIZE - Offset) return false;
-    const uint8_t *Src = (const uint8_t *)Data;
-    for (uint32_t i = 0; i < Size; i++)
-        Flash[Offset + i] &= Src[i];
-    return true;
-}
-
-bool StorageFlashDevice::Erase(uint32_t Offset, uint32_t Size)
-{
-    if ((Offset & (STORAGE_BLOCK_SIZE - 1)) || (Size & (STORAGE_BLOCK_SIZE - 1))) return false;
-    if (Offset > STORAGE_FLASH_SIZE || Size > STORAGE_FLASH_SIZE - Offset) return false;
-    memset(Flash + Offset, 0xFF, Size);
-    return true;
-}
-
-bool StorageFlashDevice::Format() { return Erase(0, STORAGE_FLASH_SIZE); }
-
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);              \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 // The DAS's persistent mirror name, the same 8-byte record name Core/Services/StaticMemory.h's
 // StaticValuesName() returns (that header pulls the whole block model, which this test does not

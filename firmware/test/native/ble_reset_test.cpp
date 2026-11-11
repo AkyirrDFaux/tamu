@@ -24,16 +24,7 @@
 
 #include "Blocks/BleResetHold.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                   \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 // The loop pass: 10 ms of wall clock per tick, which is the shape of the device's main loop (2 ms
 // sleep, several services per pass).

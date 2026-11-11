@@ -23,16 +23,7 @@
 
 #include "Blocks/BleSettings.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                   \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 // The block's triggers live in the board glue (Devices/Tamu_v2.0A/BleSettingsGlue.h), which needs
 // the radio. Defining them here lets the table be driven and records that a write reached the

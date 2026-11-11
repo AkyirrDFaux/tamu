@@ -14,16 +14,7 @@
 
 #include "Blocks/AutoName.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                   \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 // The Tamu's serial: the low 48 bits of the factory MAC, in printed order
 // (Main.h GetSerialNumber, E4:B0:63:C8:20:70).

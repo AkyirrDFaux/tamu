@@ -73,11 +73,6 @@ static_assert(BLE_RESET_IGNORE_MS < BLE_RESET_CLEAR_MS,
 static_assert(BLE_RESET_BLINK_TOTAL_MS == 2500u,
               "five blinks of a 500 ms period are 2500 ms - the figure the card quotes");
 
-// The two pairings of the LED, spelled out because they are easy to confuse: the notification LED is
-// active LOW (the pin low lights it) and so is the button read (the pin low is a press).
-#define BLE_RESET_LED_LIT_LEVEL 0
-#define BLE_RESET_LED_DARK_LEVEL 1
-
 // What one step of the pin asks the device to do.
 enum class BleResetAction : uint8_t
 {

@@ -29,27 +29,7 @@
 #include "Blocks/DeviceInfo.h" // DeviceStatusStruct, which Packet.h forward-uses
 #include "Core/Functions/Bus.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);              \
-        }                                                                            \
-    } while (0)
-
-#define CHECK_EQ(got, want)                                                          \
-    do {                                                                             \
-        checks++;                                                                    \
-        const long long g = (long long)(got), w = (long long)(want);                 \
-        if (g != w) {                                                                \
-            failures++;                                                              \
-            std::printf("FAIL %s:%d: %s = %lld, want %lld\n", __FILE__, __LINE__,    \
-                        #got, g, w);                                                 \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 // The device's ring holds one whole longest frame (12 + 116 header/payload + the 0xAA sync byte =
 // 129) plus the head of the next; 160 is that with slack. Pinned here so a device that shrinks its

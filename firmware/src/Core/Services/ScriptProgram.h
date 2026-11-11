@@ -65,6 +65,25 @@ inline ValueInfo *ScriptService::AllocMetas(uint8_t Count) {
 
 // ===== Program compilation (instructions -> lines + If/While block table) =====
 
+// Walks `i` to the next INSTRUCTION symbol. An orphan line - symbols that carry no instruction -
+// is skipped whole (to its ENDLINE), which is the shape BOTH compilation passes need: they used to
+// carry a copy of this loop each, and the comment between them asked a human to keep the copies in
+// step. One function is that request made structural. Returns false when the run it walked held no
+// instruction (the caller continues with the next line); on true, `i` points AT the instruction and
+// the caller advances past it (it measures the destination count first).
+inline __attribute__((always_inline)) bool ScriptSkipToInstruction(const uint8_t *Instr, uint16_t Symbols, uint16_t &i)
+{
+    while (i < Symbols && Instr[i * 4] != SCRIPT_SYM_INSTRUCTION && Instr[i * 4] != SCRIPT_SYM_ENDLINE)
+        i++;
+    if (i >= Symbols || Instr[i * 4] != SCRIPT_SYM_INSTRUCTION)
+    {
+        while (i < Symbols && Instr[i * 4] != SCRIPT_SYM_ENDLINE) i++;
+        if (i < Symbols) i++; // endline of the skipped line
+        return false;
+    }
+    return true;
+}
+
 inline bool ScriptService::BuildProgram(LoadedScript *Script, const uint8_t *Instr, uint32_t InstrLen) {
     Script->InstrSymbols = (uint16_t)(InstrLen / 4);
     if (Script->InstrSymbols) {
@@ -77,15 +96,7 @@ inline bool ScriptService::BuildProgram(LoadedScript *Script, const uint8_t *Ins
     uint16_t Count = 0;
     uint16_t i = 0;
     while (i < Script->InstrSymbols) {
-        while (i < Script->InstrSymbols && Script->Instr[i * 4] != SCRIPT_SYM_INSTRUCTION &&
-               Script->Instr[i * 4] != SCRIPT_SYM_ENDLINE) {
-            i++;
-        }
-        if (i >= Script->InstrSymbols || Script->Instr[i * 4] != SCRIPT_SYM_INSTRUCTION) {
-            while (i < Script->InstrSymbols && Script->Instr[i * 4] != SCRIPT_SYM_ENDLINE) i++;
-            if (i < Script->InstrSymbols) i++;
-            continue;
-        }
+        if (!ScriptSkipToInstruction(Script->Instr, Script->InstrSymbols, i)) continue;
         i++; // instruction
         while (i < Script->InstrSymbols && Script->Instr[i * 4] != SCRIPT_SYM_ENDLINE) i++;
         if (i < Script->InstrSymbols) i++; // endline
@@ -101,8 +112,8 @@ inline bool ScriptService::BuildProgram(LoadedScript *Script, const uint8_t *Ins
     Script->LineStamp = (uint32_t *)calloc(Count, sizeof(uint32_t));
     if (!Script->Lines || !Script->BlockMatch || !Script->BlockKind || !Script->LineStamp) return false;
 
-    // Second pass: fill line descriptors and match If/While blocks. Mirrors the first
-    // pass exactly (including orphan-symbol skipping) so indexes stay aligned.
+    // Second pass: fill line descriptors and match If/While blocks. Same skip helper as the first
+    // pass, so a line the count pass skipped is a line this pass skips: indexes stay aligned.
     uint16_t *Stack = (uint16_t *)malloc((size_t)Count * sizeof(uint16_t));
     if (!Stack) return false;
     uint16_t Sp = 0;
@@ -110,15 +121,7 @@ inline bool ScriptService::BuildProgram(LoadedScript *Script, const uint8_t *Ins
     i = 0;
     while (Line < Count) {
         uint16_t Start = i;
-        while (i < Script->InstrSymbols && Script->Instr[i * 4] != SCRIPT_SYM_INSTRUCTION &&
-               Script->Instr[i * 4] != SCRIPT_SYM_ENDLINE) {
-            i++;
-        }
-        if (i >= Script->InstrSymbols || Script->Instr[i * 4] != SCRIPT_SYM_INSTRUCTION) {
-            while (i < Script->InstrSymbols && Script->Instr[i * 4] != SCRIPT_SYM_ENDLINE) i++;
-            if (i < Script->InstrSymbols) i++;
-            continue;
-        }
+        if (!ScriptSkipToInstruction(Script->Instr, Script->InstrSymbols, i)) continue;
         uint8_t DestCount = (uint8_t)(i - Start);
         uint8_t Cat = Script->Instr[i * 4 + 1];
         uint8_t Op = Script->Instr[i * 4 + 2];

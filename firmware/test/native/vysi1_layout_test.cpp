@@ -16,27 +16,7 @@
 
 #include "Blocks/Vysi1LayoutFile.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);              \
-        }                                                                            \
-    } while (0)
-
-#define CHECK_EQ(got, want)                                                          \
-    do {                                                                             \
-        checks++;                                                                    \
-        const long long g = (long long)(got), w = (long long)(want);                 \
-        if (g != w) {                                                                \
-            failures++;                                                              \
-            std::printf("FAIL %s:%d: %s = %lld, want %lld\n", __FILE__, __LINE__,    \
-                        #got, g, w);                                                 \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 static const uint16_t Capacity = 87;  // Vysi1Display::LedNum
 static const uint32_t MaxEntries = 256; // Vysi1Display::MaxLayoutEntries

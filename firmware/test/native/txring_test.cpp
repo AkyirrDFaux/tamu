@@ -24,16 +24,7 @@
 
 #include "Core/Functions/TxRing.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                   \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 // The reply the rig serves: 256 fragments of 88 B on the wire.
 static const size_t ReplyBytes = 22528;

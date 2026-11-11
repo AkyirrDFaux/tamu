@@ -51,7 +51,8 @@ constexpr uint16_t DynamicBase  = 0x3F0;
 constexpr uint16_t DynamicCount = 4;
 constexpr uint16_t ScriptBase   = 0x3F4;
 constexpr uint16_t ScriptCount  = 4;
-constexpr uint16_t ReservedBase = 0x3F8;
+// 0x3F8 and above are reserved by the spec: no block type there is addressable, so nothing in the
+// tree reads a "ReservedBase" - the range only has to stay empty (Docs/Services/Register.md).
 constexpr uint16_t Instances    = 64; // BlockInstance is 6 bits
 constexpr uint8_t  BankShift    = 6;  // instance bits
 

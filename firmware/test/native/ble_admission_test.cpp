@@ -30,16 +30,7 @@
 
 #include "Blocks/BleAdmissionPolicy.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                   \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 // BLE address types, spelled out so the test reads like the spec rather than like magic numbers.
 enum

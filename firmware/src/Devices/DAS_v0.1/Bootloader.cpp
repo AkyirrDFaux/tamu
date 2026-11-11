@@ -184,9 +184,9 @@ static bool WaitByte(uint8_t *Byte, uint32_t Start, uint32_t TimeoutCycles)
     return false;
 }
 
-// Reads one raw frame into `out`; returns its length or 0 on timeout/invalid. `timeout_us`
-// bounds the whole frame, not each byte, so a stalled frame is abandoned after one window
-// while a frame that keeps arriving still completes.
+// Reads one raw frame into `Out`; returns its length or 0 on timeout/invalid. `TimeoutUs` bounds
+// the whole frame, not each byte, so a stalled frame is abandoned after one window while a frame
+// that keeps arriving still completes.
 static int ReceiveFrame(uint8_t *Out, size_t Cap, uint32_t TimeoutUs)
 {
     uint32_t Start = SysTick->CNT;

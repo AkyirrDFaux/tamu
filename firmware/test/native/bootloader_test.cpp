@@ -14,27 +14,7 @@
 
 #include "Core/Functions/Bootloader.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);              \
-        }                                                                            \
-    } while (0)
-
-#define CHECK_EQ(got, want)                                                          \
-    do {                                                                             \
-        checks++;                                                                    \
-        const long long g = (long long)(got), w = (long long)(want);                 \
-        if (g != w) {                                                                \
-            failures++;                                                              \
-            std::printf("FAIL %s:%d: %s = %lld, want 0x%llX\n", __FILE__, __LINE__,  \
-                        #got, g, w);                                                 \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 // Independent even parity over the "rest of the packet": the command (byte 1, bits 0-2), the
 // offset and the payload (bytes 2..len-2). The markers and the padding bits are excluded.

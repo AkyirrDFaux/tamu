@@ -22,27 +22,7 @@
 #include "Core/Services/ScriptPow.h"
 #include "Core/Types/Log.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);              \
-        }                                                                            \
-    } while (0)
-
-#define CHECK_EQ(got, want)                                                          \
-    do {                                                                             \
-        checks++;                                                                    \
-        const long long g = (long long)(got), w = (long long)(want);                 \
-        if (g != w) {                                                                \
-            failures++;                                                              \
-            std::printf("FAIL %s:%d: %s = %lld, want %lld\n", __FILE__, __LINE__,    \
-                        #got, g, w);                                                 \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 static void Put16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)(v & 0xFF); p[1] = (uint8_t)(v >> 8); }
 static void Put32(uint8_t *p, uint32_t v) {

@@ -26,27 +26,7 @@
 #include "Blocks/WifiSettings.h"
 #include "Core/Types/Enums.h"
 
-static int checks = 0, failures = 0;
-
-#define CHECK(cond)                                                                  \
-    do {                                                                             \
-        checks++;                                                                    \
-        if (!(cond)) {                                                               \
-            failures++;                                                              \
-            printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                    \
-        }                                                                            \
-    } while (0)
-
-#define CHECK_EQ(got, want)                                                          \
-    do {                                                                             \
-        checks++;                                                                    \
-        const long long g = (long long)(got), w = (long long)(want);                 \
-        if (g != w) {                                                                \
-            failures++;                                                              \
-            printf("FAIL %s:%d: %s == %s (%lld != %lld)\n", __FILE__, __LINE__,      \
-                   #got, #want, g, w);                                               \
-        }                                                                            \
-    } while (0)
+#include "check.h"
 
 // The block's triggers live in the board glue, which needs NVS and the app link. These stubs behave
 // the way the real ones do in the two respects this test can see: the value is applied to the
