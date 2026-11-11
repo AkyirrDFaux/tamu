@@ -211,6 +211,24 @@ public:
         return true;
     }
 
+    // After a new record for `matches` has been appended: find where it landed and invalidate
+    // every OTHER live record matching, so the previous generation(s) stop being the current file.
+    //
+    // This tail was copied into all three append sites (RenameFile, and both halves of ResizeFile:
+    // shrink/same-size and extend-in-place). Keeping it in one place is not cosmetic: a shrink and
+    // a grow that invalidated differently would leave the store with two live generations of one
+    // file, and the app's readFileTable would then pick whichever it met first. If the end cannot
+    // be re-read the new record stays live and the old one untouched (no data loss); report the
+    // failure.
+    template <typename Match>
+    bool InvalidateOlderGenerations(Match Matches)
+    {
+        uint32_t Appended;
+        if (!GetEndOfFiletable(&Appended) || Appended == 0)
+            return false;
+        return InvalidateMatchingExcept(Matches, Appended - 1);
+    }
+
     // Calls `fn(name)` once for every live file record. A superseded record for the same
     // name can linger until the next save, so a name may repeat; callers that care dedupe.
     template <typename Func>
@@ -255,15 +273,9 @@ public:
             return false;
 
         // The appended record sits at the current end; invalidate every OTHER valid
-        // record still carrying either name (the previous generation under each). If the
-        // end cannot be re-read the new record stays live and the old one is untouched
-        // (no data loss); report the failure.
-        uint32_t Appended;
-        if (!GetEndOfFiletable(&Appended) || Appended == 0)
-            return false;
-        return InvalidateMatchingExcept(
-            [&](const char *EntryName) { return NameMatch(EntryName, OldName) || NameMatch(EntryName, NewName); },
-            Appended - 1);
+        // record still carrying either name (the previous generation under each).
+        return InvalidateOlderGenerations(
+            [&](const char *EntryName) { return NameMatch(EntryName, OldName) || NameMatch(EntryName, NewName); });
     }
 
     // Moves the full table into a fresh area of the same, fixed size (B15). Finds a new
@@ -504,11 +516,7 @@ public:
             NewRecord.Size = NewSize;
             if (!WriteFileRecord(NewRecord))
                 return false;
-            uint32_t Appended;
-            if (!GetEndOfFiletable(&Appended) || Appended == 0)
-                return false;
-            return InvalidateMatchingExcept([&](const char *EntryName) { return NameMatch(EntryName, Name); },
-                                            Appended - 1);
+            return InvalidateOlderGenerations([&](const char *EntryName) { return NameMatch(EntryName, Name); });
         }
 
         // Enlargement: reject before scanning if the file's linear range would leave the data
@@ -538,11 +546,7 @@ public:
             PendingOffset = 0;
             PendingBlocks = 0;
             if (!Ok) return false;
-            uint32_t Appended;
-            if (!GetEndOfFiletable(&Appended) || Appended == 0)
-                return false;
-            return InvalidateMatchingExcept([&](const char *EntryName) { return NameMatch(EntryName, Name); },
-                                            Appended - 1);
+            return InvalidateOlderGenerations([&](const char *EntryName) { return NameMatch(EntryName, Name); });
         }
 
         // Extending in place is not possible.
