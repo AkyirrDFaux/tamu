@@ -32,6 +32,57 @@ void _recordBusy(
   );
 }
 
+/// Records one request that found no link, and logs it under [tag].
+///
+/// A missing link is neither a busy link nor a device verdict: not one frame was attempted, and
+/// the request never named the device. Both request shapes start this way, so the fault keeps its
+/// own kind here once instead of in two copies.
+void _recordNoLink(
+  RequestTrace? trace,
+  String tag,
+  int targetId,
+  ServiceType service,
+  int cid,
+) {
+  AppDiagnostics.log(tag, 'dev ${idToString(targetId)} $service/$cid: no link');
+  trace?.record(
+    RequestFault(
+      kind: RequestFaultKind.noLink,
+      deviceId: targetId,
+      service: service,
+      cid: cid,
+    ),
+  );
+}
+
+/// Records one request the device did not answer, and logs it under [tag].
+///
+/// A throw from the channel is "the device did not answer" for every other failure: only the
+/// client knows whether a reply that arrived carries anything usable, which is why the reply
+/// checks stay there.
+void _recordNoReply(
+  RequestTrace? trace,
+  String tag,
+  int targetId,
+  ServiceType service,
+  int cid,
+  Object error,
+) {
+  AppDiagnostics.log(
+    tag,
+    'dev ${idToString(targetId)} $service/$cid failed: $error',
+  );
+  trace?.record(
+    RequestFault(
+      kind: RequestFaultKind.noReply,
+      deviceId: targetId,
+      service: service,
+      cid: cid,
+      detail: '$error',
+    ),
+  );
+}
+
 /// Sends one service request, turning a transport failure into `null` and logging it under [tag].
 ///
 /// Every per-service client wrapper is this call with its own service, timeout and tag - the
@@ -59,18 +110,7 @@ Future<List<int>?> serviceRequest(
 }) async {
   final channel = requestChannel;
   if (channel == null) {
-    AppDiagnostics.log(
-      tag,
-      'dev ${idToString(targetId)} $service/$cid: no link',
-    );
-    trace?.record(
-      RequestFault(
-        kind: RequestFaultKind.noLink,
-        deviceId: targetId,
-        service: service,
-        cid: cid,
-      ),
-    );
+    _recordNoLink(trace, tag, targetId, service, cid);
     return null;
   }
   try {
@@ -89,19 +129,7 @@ Future<List<int>?> serviceRequest(
     _recordBusy(trace, tag, targetId, service, cid, error);
     return null;
   } catch (error) {
-    AppDiagnostics.log(
-      tag,
-      'dev ${idToString(targetId)} $service/$cid failed: $error',
-    );
-    trace?.record(
-      RequestFault(
-        kind: RequestFaultKind.noReply,
-        deviceId: targetId,
-        service: service,
-        cid: cid,
-        detail: '$error',
-      ),
-    );
+    _recordNoReply(trace, tag, targetId, service, cid, error);
     return null;
   }
 }
