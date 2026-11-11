@@ -26,17 +26,18 @@ import 'widgets.dart';
 ///
 /// Three firmware rules shape the page:
 ///
-///  - **Every write to this block is refused unless the frame arrived over USB.** Over a BLE link
-///    the panel is therefore a read-out: the notice above the card says so up front, and a write
-///    the device refuses comes back as a sentence naming the reason rather than a no-op.
+///  - **A write needs USB or a secured Bluetooth session.** The gate is
+///    `BleWriteAllowed(overUsb, overBle, bleLinkSecured)` in `Blocks/BleWritePolicy.h`, so a bonded
+///    phone writes this block over BLE too. The notice above the card describes the link the app is
+///    on, not a rule that a BLE link is read-only, and a write the device refuses comes back as a
+///    sentence naming the reason rather than a no-op.
 ///  - **The bond list is a VIEW of the bond store.** Its rows are decoded from one `Undefined`
 ///    array (three entries of `address(6) + name(16)`), so an entry can be renamed or deleted —
 ///    but a peer appears in it by PAIRING, and a non-zero address the device does not hold is
 ///    refused as a whole frame. The panel says that in the empty rows instead of offering an
 ///    "add" control the device would reject.
 ///  - **`Window` is a command and a read-out.** A write opens the window for that many
-///    milliseconds and 0 closes it; the row shows the countdown the device reports. Only USB can
-///    write it, which is the same rule as the rest of the block.
+///    milliseconds and 0 closes it; the row shows the countdown the device reports.
 ///
 /// Advertising is on whenever the radio is up and enabled and no session is up (E64 ruling C);
 /// the bond store and the pairing window decide which links become a session instead. The block is
@@ -433,7 +434,16 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   Future<void> _askDisplayName(String current) async {
     final name = await showDialog<String>(
       context: context,
-      builder: (context) => _DisplayNameDialog(current: current),
+      builder: (context) => _TextEditDialog(
+        title: 'Display name',
+        explanation:
+            'The name phones see when they scan. Leave it empty and the device advertises its '
+            'own name from the System block instead.',
+        hint: 'Device name',
+        maxLength: bleDisplayNameWidth,
+        confirmLabel: 'Set name',
+        current: current,
+      ),
     );
     if (name == null || !mounted || name == current) return;
     await _setDisplayName(name);
@@ -462,7 +472,16 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   Future<void> _askBondName(int slot, String current) async {
     final name = await showDialog<String>(
       context: context,
-      builder: (context) => _BondNameDialog(current: current),
+      builder: (context) => _TextEditDialog(
+        title: 'Bond label',
+        explanation:
+            'A name for this phone, kept on the device beside its address so two bonded phones '
+            'can be told apart. The phone never sends one. Leave it empty to remove the label.',
+        hint: 'Phone name',
+        maxLength: bleBondNameLength,
+        confirmLabel: 'Set label',
+        current: current,
+      ),
     );
     if (name == null || !mounted || name == current) return;
     await _renameBond(slot, name);
@@ -694,24 +713,10 @@ class _BleSecurityPageState extends State<BleSecurityPage>
     return 'closed - no new pairing until a window is open. A bonded phone connects anyway.';
   }
 
-  /// The up-front statement that the whole block is read-only over this link, so the user is not
-  /// left filling a form the device will refuse.
-  List<Widget> _overBleNotice(BuildContext context) => [
-    const SizedBox(height: Spacing.md),
-    Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Icon(Icons.usb, size: IconSize.sm, color: kWarning),
-        const SizedBox(width: Spacing.sm),
-        Expanded(
-          child: Text(
-            bleWriteRestriction(overUsb: false)!,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ),
-      ],
-    ),
-  ];
+  /// The up-front statement about the link this app is on. What the device ACCEPTS is decided by
+  /// [bleWriteRefusal]; this line only says that the panel is being read over Bluetooth.
+  List<Widget> _overBleNotice(BuildContext context) =>
+      usbOnlyNotice(context, bleWriteRestriction(overUsb: false)!);
 }
 
 /// The state the panel is in, stated plainly: what the device reports about its radio and its
@@ -956,23 +961,12 @@ class _WindowDialogState extends State<_WindowDialog> {
             'now.',
             style: theme.textTheme.bodySmall,
           ),
-          if (!widget.overUsb) ...[
-            const SizedBox(height: Spacing.md),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.usb, size: IconSize.sm, color: kWarning),
-                const SizedBox(width: Spacing.sm),
-                Expanded(
-                  child: Text(
-                    'This app is connected over Bluetooth: the device will refuse the write. '
-                    'Connect over USB to open a window.',
-                    style: theme.textTheme.bodySmall,
-                  ),
-                ),
-              ],
+          if (!widget.overUsb)
+            ...usbOnlyNotice(
+              context,
+              'This app is connected over Bluetooth: the device will refuse the write. '
+              'Connect over USB to open a window.',
             ),
-          ],
           const SizedBox(height: Spacing.lg),
           TextField(
             controller: _controller,
@@ -1045,19 +1039,39 @@ class _PanelDialogBody extends StatelessWidget {
   );
 }
 
-/// The label editor for one bond. The label is the app's own — the NimBLE bond store keeps no peer
-/// name (`BleBondLabelStore.h`) — so the copy says what it is for rather than implying the phone
-/// reports it.
-class _BondNameDialog extends StatefulWidget {
-  const _BondNameDialog({required this.current});
+/// The one-line text editor this panel's dialogs use: a sentence saying what the field is for, the
+/// field with its length limit, and a Cancel/confirm row.
+///
+/// The bond label and the advertised name are the same editor with different words: the label is
+/// the app's own (the NimBLE bond store keeps no peer name, `BleBondLabelStore.h`), the name goes
+/// on the air. Both are trimmed, and an empty answer is a real answer.
+class _TextEditDialog extends StatefulWidget {
+  const _TextEditDialog({
+    required this.title,
+    required this.explanation,
+    required this.hint,
+    required this.maxLength,
+    required this.confirmLabel,
+    required this.current,
+  });
 
+  final String title;
+
+  /// What the field is for, above the field itself.
+  final String explanation;
+
+  final String hint;
+  final int maxLength;
+  final String confirmLabel;
+
+  /// The value the field starts with.
   final String current;
 
   @override
-  State<_BondNameDialog> createState() => _BondNameDialogState();
+  State<_TextEditDialog> createState() => _TextEditDialogState();
 }
 
-class _BondNameDialogState extends State<_BondNameDialog> {
+class _TextEditDialogState extends State<_TextEditDialog> {
   late final _controller = TextEditingController(text: widget.current);
 
   @override
@@ -1069,22 +1083,21 @@ class _BondNameDialogState extends State<_BondNameDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Bond label'),
+      title: Text(widget.title),
       content: _PanelDialogBody(
         children: [
           Text(
-            'A name for this phone, kept on the device beside its address so two bonded phones '
-            'can be told apart. The phone never sends one. Leave it empty to remove the label.',
+            widget.explanation,
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: Spacing.lg),
           TextField(
             controller: _controller,
             autofocus: true,
-            maxLength: bleBondNameLength,
-            decoration: const InputDecoration(hintText: 'Phone name'),
+            maxLength: widget.maxLength,
+            decoration: InputDecoration(hintText: widget.hint),
           ),
-                ],
+        ],
       ),
       actions: [
         TextButton(
@@ -1093,7 +1106,7 @@ class _BondNameDialogState extends State<_BondNameDialog> {
         ),
         FilledButton(
           onPressed: () => Navigator.pop(context, _controller.text.trim()),
-          child: const Text('Set label'),
+          child: Text(widget.confirmLabel),
         ),
       ],
     );
@@ -1154,23 +1167,12 @@ class _PasskeyDialogState extends State<_PasskeyDialog> {
             'cannot change it.',
             style: theme.textTheme.bodySmall,
           ),
-          if (!widget.overUsb) ...[
-            const SizedBox(height: Spacing.md),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.usb, size: IconSize.sm, color: kWarning),
-                const SizedBox(width: Spacing.sm),
-                Expanded(
-                  child: Text(
-                    'This app is connected over Bluetooth: the device will refuse the write. '
-                    'Connect over USB to set the code.',
-                    style: theme.textTheme.bodySmall,
-                  ),
-                ),
-              ],
+          if (!widget.overUsb)
+            ...usbOnlyNotice(
+              context,
+              'This app is connected over Bluetooth: the device will refuse the write. '
+              'Connect over USB to set the code.',
             ),
-          ],
           const SizedBox(height: Spacing.lg),
           TextField(
             controller: _controller,
@@ -1196,60 +1198,6 @@ class _PasskeyDialogState extends State<_PasskeyDialog> {
               ? () => Navigator.pop(context, digits)
               : null,
           child: const Text('Set passkey'),
-        ),
-      ],
-    );
-  }
-}
-
-/// The advertised-name editor: empty means "advertise the device's own name", which the copy says
-/// so an empty field is a choice rather than a mistake.
-class _DisplayNameDialog extends StatefulWidget {
-  const _DisplayNameDialog({required this.current});
-
-  final String current;
-
-  @override
-  State<_DisplayNameDialog> createState() => _DisplayNameDialogState();
-}
-
-class _DisplayNameDialogState extends State<_DisplayNameDialog> {
-  late final _controller = TextEditingController(text: widget.current);
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Display name'),
-      content: _PanelDialogBody(
-        children: [
-          Text(
-            'The name phones see when they scan. Leave it empty and the device advertises its '
-            'own name from the System block instead.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: Spacing.lg),
-          TextField(
-            controller: _controller,
-            autofocus: true,
-            maxLength: bleDisplayNameWidth,
-            decoration: const InputDecoration(hintText: 'Device name'),
-          ),
-                ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, _controller.text.trim()),
-          child: const Text('Set name'),
         ),
       ],
     );

@@ -2,12 +2,30 @@ import 'package:flutter/material.dart';
 
 import '../core/register_client.dart';
 import '../core/types.dart';
+import 'theme.dart';
 import 'widgets.dart';
 
 /// One field read as the device answered it, or null when it did not answer - the shape
 /// [RegisterClient.readBlockField] returns. (`core/ble_security.dart` names the same type
 /// [BleFieldRead]; a block panel does not have to be the BLE one to read a field.)
 typedef BlockFieldRead = ({ValueInfo meta, List<int> value})?;
+
+/// The up-front line a panel shows about a block that only takes a write over USB: the usb mark in
+/// the warning ink and one sentence. Returned as a list so the caller can spread it into a column
+/// (both block panels draw it the same way, and the sentence is the caller's).
+List<Widget> usbOnlyNotice(BuildContext context, String message) => [
+  const SizedBox(height: Spacing.md),
+  Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Icon(Icons.usb, size: IconSize.sm, color: kWarning),
+      const SizedBox(width: Spacing.sm),
+      Expanded(
+        child: Text(message, style: Theme.of(context).textTheme.bodySmall),
+      ),
+    ],
+  ),
+];
 
 /// The refresh of a settings panel built on ONE device block, and the state behind it.
 ///

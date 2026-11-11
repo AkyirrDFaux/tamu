@@ -277,25 +277,14 @@ class _WifiPageState extends State<WifiPage>
         padding: Insets.page,
         children: [
           _WifiConditionBanner(snapshot: snapshot),
-          if (!_overUsb) ...[
-            const SizedBox(height: Spacing.md),
-            // The device refuses a write that arrived over BLE (firmware WifiSettingsGlue.h), so
-            // say it before the form is filled rather than after a rejected write.
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.usb, size: IconSize.sm, color: kWarning),
-                const SizedBox(width: Spacing.sm),
-                Expanded(
-                  child: Text(
-                    'Changing these settings needs a USB link to the device; over any other '
-                    'link the device refuses the write.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              ],
+          // The device refuses a write that arrived over BLE (firmware WifiSettingsGlue.h), so
+          // say it before the form is filled rather than after a rejected write.
+          if (!_overUsb)
+            ...usbOnlyNotice(
+              context,
+              'Changing these settings needs a USB link to the device; over any other link the '
+              'device refuses the write.',
             ),
-          ],
           const SizedBox(height: Spacing.lg),
           InfoCard(
             title: 'WiFi Settings',
