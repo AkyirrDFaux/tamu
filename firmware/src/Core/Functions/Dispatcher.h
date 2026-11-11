@@ -166,7 +166,11 @@ void DispatchPacket(const PacketFrame &Frame)
         // else records the loss: the gate ring tracks app forwards only, so the request simply never
         // existed while its caller believes it was sent. Counted beside AppBusSendFails.
         const bool Sent = SendAndVerifyPacket(Frame);
-#ifdef USE_APP_INTERFACE
+        // Core only: AppBusCoreRequestLost is declared in AppInterface.h's TYPE_CORE block and
+        // reported by the core's BUSGATE line. The Valu app image has the app link here too, but
+        // no bus and no counter - a USE_APP_INTERFACE-only guard failed to compile there
+        // (t_33904a3b). TYPE_CORE is a build flag, so this does not depend on include order.
+#if defined(USE_APP_INTERFACE) && defined(TYPE_CORE)
         if (!Sent && AppFrameSource == AppLinkSource::None)
             AppBusCoreRequestLost = AppBusCoreRequestLost + 1;
 #else
