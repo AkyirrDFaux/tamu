@@ -22,10 +22,33 @@
 #include "ch32v20x.h"
 #include "tusb.h"
 #include "Core/Functions/AppInterface.h"
+#include "Blocks/UsbTxStall.h" // "the host stopped draining the port" (TX pacing)
 
 #define USB_FRAME_START 0xFA
 #define USB_FRAME_STOP 0xBF
 #define USB_FRAME_MAX_PAYLOAD 60
+
+// When the USB host has stopped draining the port.
+//
+// `tud_cdc_connected()` is a host-presence test, not a reading one: a host that opens the port and
+// then stops reading keeps it true while the CDC TX FIFO fills, and every offer in AppUSBSend then
+// waits out its full 'buffer has space' poll without moving a byte. That poll is what the pump pays
+// each pass (AppInterface.h TxFlush calls AppUSBSend through to the ring), so a dead-but-connected
+// port used to cost the main loop a full poll on every iteration - the same failure the core's
+// AppUSB.h fixes with this structure.
+//
+// The test is the one thing that separates an idle host from a dead one: a pass in which the port
+// accepted NOTHING (Blocks/UsbTxStall.h). After USB_TX_STALL_MS with no progress AppInterface's
+// pump stops offering USB bytes, and AppUSBTick drops what is queued; a link frame from the host
+// (AppRxStream) proves it is reading again and clears the state.
+static UsbTxStall UsbTx;
+
+// Has the port stopped taking bytes? Read by the pump (AppInterface.h TxFlush) so USB TX is skipped
+// while a host that holds the port open reads nothing.
+bool AppUsbTxStalled()
+{
+    return UsbTx.Stalled(TimeFromBoot());
+}
 
 // ===========================================================================
 // USB hardware bring-up - the recipe proven on this board (see
@@ -254,6 +277,9 @@ static WireStreamParser WireParser;
 // complete packets for dispatch by AppInterface.Pump().
 static void AppRxStream(const uint8_t *Data, uint16_t Len)
 {
+    // The host is talking, so it is reading: any "the port has stopped taking bytes" state ends
+    // here, which is what resumes USB TX after a purge (Blocks/UsbTxStall.h).
+    UsbTx.Clear();
     for (uint16_t i = 0; i < Len; i++)
     {
         if (WireParser.Feed(Data[i]))
@@ -310,10 +336,16 @@ uint16_t AppUSBSend(const uint8_t *Data, uint16_t Len)
             Timeout--;
         }
         if (Timeout == 0)
+        {
+            // The port took nothing for this frame: the stall clock starts, and after
+            // USB_TX_STALL_MS the pump stops offering it bytes (Blocks/UsbTxStall.h).
+            UsbTx.Note(0, TimeFromBoot());
             break;
+        }
 
         tud_cdc_write(Frame, (uint32_t)(4 + Chunk));
         tud_cdc_write_flush();
+        UsbTx.Note((uint16_t)(4 + Chunk), TimeFromBoot());
 
         Off += Chunk;
     }
@@ -331,6 +363,13 @@ void AppBLETick() {}
 void AppUSBTick()
 {
     tud_task();
+
+    // A port the host has stopped reading is not a slow one: once it has accepted nothing for
+    // USB_TX_STALL_MS those replies belong to a host that is not there, so they are dropped ONCE
+    // and the pump skips USB TX until a frame from the host proves it is reading again
+    // (Blocks/UsbTxStall.h). Without this the queue keeps a dead session's bytes for good.
+    if (UsbTx.TakeReport(TimeFromBoot()))
+        AppInterface.TxFlushAll();
 
     while (tud_cdc_available())
     {

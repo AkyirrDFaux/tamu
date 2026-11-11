@@ -568,7 +568,11 @@ Open:
       brings up the USB CDC App Interface (same `0xFA..0xBF` link protocol as the core), the
       LED-Button (PA2), three pull-down buttons (PB13-15), one fan PWM (PA8/TIM1) and three
       resistive inputs (PA6/PA1/PA0), and runs the mandatory + Dynamic-memory + Script services
-      over an 8 kB storage region at `0xE000`. It BUILDS (29 KB flash / 16.5 KB RAM); nothing is
+      over an 8 kB storage region at `0xE000`. It BUILDS: `pio run -e Valu_v2_0` links the app link
+      in as well - Flash 44440 B of 45056 B (98.6 %, 616 B spare), RAM 18364 B of 20480 B (89.7 %) -
+      after t_33904a3b fixed the env (it did not compile at `7d90a7f`: the services' repeat counters
+      and `AppUsbTxStalled()` were reached without the core-only declarations, and the Valu's AppUSB
+      had no stall test at all). Nothing is
       flashed on the rig (no hardware attached, and it still does not reach `main` when launched by
       the bootloader - above). Two unverifiable facts to
       settle on hardware: (a) the app's flash writes run at the framework's 144 MHz HCLK, where

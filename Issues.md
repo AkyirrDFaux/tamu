@@ -1918,30 +1918,3 @@ Probe-side quirks recorded while measuring: this host's adapter answers only the
 
 **Fixed in the same card, so the figures above are the only ones left:** the request gate's queue bound used to be paid up to three times per storage read (3 x 5 s of queueing, ~15.8 s worst case) and every expiry was reported as "the device did not answer". `RequestQueueTimeout` now keeps its own type through `ConnectionManager` (`app/lib/core/connection.dart:1177-1184`) and is recorded as `RequestFaultKind.busy`, so the report says the request never got a slot instead of naming a dead node; a whole-file read that never got a slot ends after ONE queue bound with "the link was busy holding other requests (...), so this read was never sent" (`app/lib/core/storage_client.dart:516-533`), and a discovery ping refuses to count a queue expiry as a miss (`app/lib/core/device_db.dart:472-495`).
 
-
-
-
-
-## Dedupe pass (2026-11-11, card t_3d6bec04): the `Valu_v2_0` environment does not compile at HEAD
-
-**Found while building every environment for the dedupe round; reported, not fixed - it is a bring-up
-job, not a dedupe.** Two layers, measured on `7d90a7f` in a detached worktree, so both predate that
-round's changes:
-
-1. The Valu app translation unit declares `-D USE_APP_INTERFACE` but reaches the services before the
-   app link's header. `Devices/Valu_v2.0/Main.h:12` includes `Storage.h`, and the guarded blocks there
-   (`Core/Services/Storage.h:254`, `Core/Services/RegisterDispatch.h:114`) and in the dispatcher
-   (`Core/Functions/Dispatcher.h:171`) use counters declared in `Core/Functions/AppInterface.h`, which
-   only `Devices/Valu_v2.0/AppUSB.h:24` includes - and `Main.h` never includes `AppUSB.h`. Errors:
-   `error: 'AppBusRepeatsAnswered' was not declared in this scope` (twice) and
-   `error: 'AppBusCoreRequestLost' was not declared in this scope`.
-2. Forward-declaring the two counters (an `extern` beside `AppTxRoomFor`/`AppTxIdle`/`AppTxDropped`,
-   which `Core/Services/Storage.h:9-14` already declares for exactly this reason) makes the TU compile,
-   and the link then fails: `undefined reference to 'AppBusRepeatsAnswered'` (from
-   `Core/Functions/Packet.h` and `Core/Services/Device.h:657`) and `undefined reference to
-   'AppUsbTxStalled()'`. The app link is not compiled into the Valu image at all - `AppInterface.h`'s
-   definitions, and the USB transport that calls into them, are missing. "USE_APP_INTERFACE on the
-   Valu" is a declaration without an implementation, which is why this env was never green.
-
-Every other environment in `platformio.ini` (DAS_v0_1, DAS_bootloader, Tamu_v2_0A, Tamu_bootloader,
-Tamu_badimage, Valu_bootloader) builds clean on the same tree.

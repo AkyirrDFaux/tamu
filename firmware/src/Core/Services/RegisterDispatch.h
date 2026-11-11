@@ -108,9 +108,15 @@ inline bool RegisterService::Handle(const PacketFrame &Frame) {
     // It is therefore answered from the repeat record instead of being executed twice
     // (Core/Functions/BusRepeat.h). Recall All only reads the same store into RAM and is not
     // guarded; register writes are RAM-only on a node, so only Save All persists them.
+    //
+    // The replay counter is core-only: AppBusRepeatsAnswered is declared in AppInterface.h's
+    // TYPE_CORE block, and the line that prints it is core-only too. A node that has an app link
+    // (the Valu app image) runs this same repeat guard, so the guard here needs both flags -
+    // gating it on USE_APP_INTERFACE alone did not compile there (t_33904a3b). See Storage.h's
+    // twin site.
     if (BusRepeatGuarded(Frame.Cmd) && BusRepeatHit(Frame, (uint16_t)TimeFromBoot())) {
         SendResponse(Frame, nullptr, 0, BusRepeatStatus());
-#ifdef USE_APP_INTERFACE
+#if defined(USE_APP_INTERFACE) && defined(TYPE_CORE)
         AppBusRepeatsAnswered = AppBusRepeatsAnswered + 1;
 #endif
         return true;

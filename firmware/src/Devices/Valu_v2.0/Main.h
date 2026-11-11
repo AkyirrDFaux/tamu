@@ -9,6 +9,14 @@ void LoadAllBackups();
 #include "Base.h"
 #include "Bus.h"
 #include "Log.h"
+// The App Interface core comes FIRST, before any service header: the services carry guarded
+// bookkeeping that lives in it (Storage.h / RegisterDispatch.h bump AppBusRepeatsAnswered,
+// Dispatcher.h bumps AppBusCoreRequestLost), and the pump in it is what drives this board's only
+// link. The core's own Main.h does the same (Devices/Tamu_v2.0A/Main.h:15). Including it here
+// rather than relying on Devices/Valu_v2.0/AppUSB.h - which is included far below, after the
+// blocks and the registry - is what the TU needs: a counter used before its declaration does not
+// compile, and an `extern` forward declaration would only move the failure to the link.
+#include "Core/Functions/AppInterface.h"
 #include "Storage.h"
 #include "Measuring.h"
 #include "Blocks/Button.h"

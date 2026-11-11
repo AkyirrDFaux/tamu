@@ -264,10 +264,16 @@ inline bool StorageService::Handle(const PacketFrame &Frame)
     // Read (CID 5) and the write stream (CID 6) are not guarded: a read repeats harmlessly and a
     // write fragment is refused by its own sequence check, with a 2-byte ack the status reply
     // could not reproduce.
+    //
+    // The replay counter is core-only: AppBusRepeatsAnswered is declared in AppInterface.h's
+    // TYPE_CORE block (the BUSGATE line that prints it is core-only too). A USE_APP_INTERFACE-only
+    // guard broke the one app-link build that is not the core - the Valu app image has the link and
+    // these services but not the counter, so the increment did not compile there (t_33904a3b).
+    // TYPE_CORE is a build flag, so the guard does not depend on include order either.
     if (BusRepeatGuarded(Frame.Cmd) && BusRepeatHit(Frame, (uint16_t)TimeFromBoot()))
     {
         SendResponse(Frame, nullptr, 0, BusRepeatStatus());
-#ifdef USE_APP_INTERFACE
+#if defined(USE_APP_INTERFACE) && defined(TYPE_CORE)
         AppBusRepeatsAnswered = AppBusRepeatsAnswered + 1;
 #endif
         return true;
