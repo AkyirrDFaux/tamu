@@ -21,6 +21,8 @@ import 'package:tamuapp/core/diagnostics.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/storage_client.dart';
+
+import 'support/fake_core.dart';
 import 'package:tamuapp/core/types.dart';
 
 /// A bus that answers - or refuses - the requests a restore sends, so a failing restore can be
@@ -83,41 +85,6 @@ class _RefusingBus implements RequestChannel {
 
   bool _refuses(ServiceType service, int cid) =>
       refuse.contains('${service.name}/$cid');
-
-  List<int> _slotMap() {
-    const slots = 8;
-    final map = List<int>.filled(slots, 0xFFFF);
-    loaded.forEach((slot, fileId) {
-      if (slot < slots) map[slot] = fileId;
-    });
-    return [
-      for (final id in map) ...[id & 0xFF, (id >> 8) & 0xFF],
-    ];
-  }
-
-  List<int> _tableReply() {
-    final names = [...tableNames];
-    final content = <int>[];
-    void record(String name, int size) {
-      content
-        ..addAll([0x40, 0, 0, 0])
-        ..addAll([size & 0xFF, (size >> 8) & 0xFF, (size >> 16) & 0xFF, 0])
-        ..addAll(StorageClient.padName(name));
-    }
-
-    record('.TABLE', (names.length + 1) * 16);
-    for (final name in names) {
-      record(name, files[name]?.length ?? 0);
-    }
-    final out = <int>[];
-    for (var off = 0; off < content.length; off += 64) {
-      final end = off + 64 > content.length ? content.length : off + 64;
-      out
-        ..addAll(StorageClient.padName('.TABLE'))
-        ..addAll(content.sublist(off, end));
-    }
-    return out;
-  }
 
   @override
   bool get isConnected => true;
@@ -190,7 +157,9 @@ class _RefusingBus implements RequestChannel {
           final name = StorageClient.unpadName(payload.sublist(0, 8));
           if (name == '.TABLE') {
             return PacketResponse(
-              payload: _tableReply(),
+              payload: tableReply([
+                ...tableNames,
+              ], (name) => files[name]?.length ?? 0),
               success: true,
               fail: false,
             );
@@ -217,7 +186,11 @@ class _RefusingBus implements RequestChannel {
     }
     if (service == ServiceType.script) {
       if (functionCid == 0) {
-        return PacketResponse(payload: _slotMap(), success: true, fail: false);
+        return PacketResponse(
+          payload: scriptSlotMap(loaded, slots: 8),
+          success: true,
+          fail: false,
+        );
       }
       return _ok;
     }

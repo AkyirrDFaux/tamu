@@ -120,8 +120,11 @@ class DeviceDatabase extends ChangeNotifier {
 
   bool get isRefreshing => _refreshing;
 
-  List<DeviceEntry> get all =>
-      List.unmodifiable(_devices.values.sortedBy((d) => d.id));
+  List<DeviceEntry> get all {
+    final devices = _devices.values.toList()
+      ..sort((a, b) => a.id.compareTo(b.id));
+    return List.unmodifiable(devices);
+  }
 
   DeviceEntry? byId(int id) => _devices[id];
 
@@ -561,9 +564,4 @@ class DeviceDatabase extends ChangeNotifier {
     final entries = await sndb.sndbEntries();
     return [for (final e in entries) (e.id, e.serial)];
   }
-}
-
-extension _SortExt<T> on Iterable<T> {
-  List<T> sortedBy(int Function(T) key) =>
-      toList()..sort((a, b) => key(a).compareTo(key(b)));
 }

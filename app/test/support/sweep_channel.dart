@@ -10,10 +10,11 @@
 /// the same sweep and must not disagree about its answers.
 library;
 
-import 'package:tamuapp/core/fragment_reassembler.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/types.dart';
+
+import 'fake_channel.dart';
 
 /// The three DAS serials the rig's core reports for ids 2, 3 and 4 (captured 2026-11-05).
 const List<String> dasSerials = [
@@ -44,16 +45,6 @@ final List<int> rigRoster = [
     ...rosterRecord(dasSerials[i], i + 2),
 ];
 
-/// The rig's whole reply: one fragment that is also the last one.
-PacketResponse wholeReply(List<int> body) => PacketResponse(
-  payload: body,
-  success: true,
-  fail: false,
-  chunks: [FragmentChunk(0, body)],
-  stopped: true,
-  total: 1,
-);
-
 /// A good ping answer: Device CID 1 acknowledges with an empty payload.
 PacketResponse pingOk() => wholeReply(const [0]);
 
@@ -69,7 +60,7 @@ PacketResponse pingHoled() => PacketResponse(
 );
 
 /// A fake App Interface channel one sweep can run against.
-class SweepChannel implements TolerantRequestChannel {
+class SweepChannel extends FakeTolerantChannel {
   SweepChannel({
     Map<int, List<PacketResponse?>>? pingScript,
     List<int>? roster,
@@ -102,50 +93,10 @@ class SweepChannel implements TolerantRequestChannel {
   final Map<int, int> pingsSent = {};
 
   @override
-  bool get isConnected => true;
-
-  @override
   int takeTxId() => 0xF900;
 
   @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => (await requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  )).payload;
-
-  @override
-  Future<PacketResponse> requestWithFlags(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) => requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  );
-
-  @override
-  Future<PacketResponse> requestTolerant(
+  Future<PacketResponse> answer(
     int targetId,
     ServiceType service,
     int functionCid, {

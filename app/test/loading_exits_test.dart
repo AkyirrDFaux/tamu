@@ -25,6 +25,8 @@ import 'package:tamuapp/core/notice.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/request_channel.dart';
+
+import 'support/fake_channel.dart';
 import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/types.dart';
@@ -81,7 +83,7 @@ final List<int> _table = [
 /// CID 5), the script slot map (Script CID 0), the roster (Device 0x13). Every other request - a
 /// register field, a write - answers an empty success, which is what the clients treat as "the
 /// device said nothing usable" rather than as a lost reply.
-class _Bus implements TolerantRequestChannel {
+class _Bus extends FakeTolerantChannel {
   _Bus({
     this.delay = Duration.zero,
     this.tableLost = false,
@@ -99,54 +101,14 @@ class _Bus implements TolerantRequestChannel {
   int _nextTxId = 0xF700;
 
   @override
-  bool get isConnected => true;
-
-  @override
   int takeTxId() => ++_nextTxId;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
 
   Future<void> _pause() async {
     if (delay > Duration.zero) await Future<void>.delayed(delay);
   }
 
   @override
-  Future<List<int>> request(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => (await requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  )).payload;
-
-  @override
-  Future<PacketResponse> requestWithFlags(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) => requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  );
-
-  @override
-  Future<PacketResponse> requestTolerant(
+  Future<PacketResponse> answer(
     int targetId,
     ServiceType service,
     int functionCid, {

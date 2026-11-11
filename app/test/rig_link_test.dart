@@ -17,6 +17,7 @@ import 'package:tamuapp/core/types.dart';
 
 import '../tool/rig_link.dart';
 import '../tool/upload_setup.dart';
+import 'support/fake_rig_link.dart';
 
 /// One `Device/Ping` reply, captured off the rig on 2026-10-21 over `/dev/ttyACM0`:
 /// `0xFA | crc8 0x50 | length 0x0C | packet (12 bytes) | 0xBF`.
@@ -159,47 +160,11 @@ List<int> _oneDeviceArchive() {
 
 /// A link that answers the ping and nothing else, so the CLI reaches the plan (with no live
 /// device to build one against) and then has to refuse the write.
-class _FakeRigLink implements RigLink {
+class _FakeRigLink extends ScriptedRigLink {
   final List<String> requests = [];
-  int closeCount = 0;
-  bool _closed = false;
 
   @override
-  bool get isConnected => !_closed;
-
-  @override
-  Future<void> close() async {
-    closeCount++;
-    _closed = true;
-  }
-
-  @override
-  int takeTxId() => tridAppBase;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => (await requestWithFlags(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-    requestFrag: requestFrag,
-    transactionId: transactionId,
-  )).payload;
-
-  @override
-  Future<PacketResponse> requestWithFlags(
+  Future<PacketResponse> answer(
     int targetId,
     ServiceType service,
     int functionCid, {

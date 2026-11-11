@@ -24,6 +24,7 @@ import 'package:tamuapp/core/types.dart';
 
 import '../tool/rig_link.dart';
 import '../tool/upload_setup.dart';
+import 'support/fake_rig_link.dart';
 
 /// The block type of the archive device this file restores: the rig's own failure.
 const int _button = 0x09;
@@ -424,7 +425,7 @@ List<int> _setupZip({
 /// replies: the first [enumerateFailures] block-type enumerations, and the first N instance-meta
 /// reads of a type in [metaFailures], go unanswered exactly as a lost reply does. A type in
 /// [deadTypes] never answers its instance-meta read at all.
-class _FakeRig implements RigLink {
+class _FakeRig extends ScriptedRigLink {
   _FakeRig({
     required this.types,
     this.instances = const {},
@@ -464,45 +465,9 @@ class _FakeRig implements RigLink {
   int enumerateCalls = 0;
   final Map<int, int> metaCalls = {};
   int typeFieldCalls = 0;
-  int closeCount = 0;
-  bool _closed = false;
 
   @override
-  bool get isConnected => !_closed;
-
-  @override
-  Future<void> close() async {
-    closeCount++;
-    _closed = true;
-  }
-
-  @override
-  int takeTxId() => tridAppBase;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => (await requestWithFlags(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-    requestFrag: requestFrag,
-    transactionId: transactionId,
-  )).payload;
-
-  @override
-  Future<PacketResponse> requestWithFlags(
+  Future<PacketResponse> answer(
     int targetId,
     ServiceType service,
     int functionCid, {

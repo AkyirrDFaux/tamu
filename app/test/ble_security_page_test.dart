@@ -6,6 +6,7 @@ import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/ble_security_page.dart';
 import 'package:tamuapp/ui/notice_host.dart';
 import 'package:tamuapp/ui/theme.dart';
+import 'support/block_reads.dart';
 
 /// The Bluetooth panel, served by a fake device so every state is reachable off the rig.
 ///
@@ -85,25 +86,10 @@ class _FakeBleDevice extends RegisterClient {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  ({ValueInfo meta, List<int> value}) read(
-    int type,
-    List<int> value, {
-    int flags = 0,
-    int? size,
-  }) => (
-    meta: ValueInfo(type: type, size: size ?? value.length, flags: flags),
-    value: value,
-  );
-
-  List<int> text(String s, int width) {
-    final bytes = s.codeUnits.toList();
-    if (bytes.length > width) {
-      bytes.length = width;
-    } else {
-      bytes.addAll(List<int>.filled(width - bytes.length, 0));
-    }
-    return bytes;
-  }
+  // One field read and a fixed-width text value: the two fixtures every panel test needs
+  // (`support/block_reads.dart`), under the names this suite reads them by.
+  final read = fieldBytes;
+  final text = paddedText;
 
   List<int> addr(String printed) => [
     for (final part in printed.split(':')) int.parse(part, radix: 16),

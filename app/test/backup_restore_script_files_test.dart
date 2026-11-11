@@ -7,6 +7,8 @@ import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_instructions.dart';
 import 'package:tamuapp/core/storage_client.dart';
+
+import 'support/fake_core.dart';
 import 'package:tamuapp/core/types.dart';
 
 /// A core that answers the service requests a restore sends, with a FILE TABLE the sweep can
@@ -41,8 +43,6 @@ class _FakeCore implements RequestChannel {
   /// Every request, in the order it was sent.
   final sent = <({ServiceType service, int cid, List<int> payload})>[];
 
-  static const slots = 16;
-
   int _txId = 0x100;
 
   static const _ok = PacketResponse(payload: [], success: true, fail: false);
@@ -51,47 +51,6 @@ class _FakeCore implements RequestChannel {
     success: false,
     fail: true,
   );
-
-  List<int> _slotMap() {
-    final map = List<int>.filled(slots, 0xFFFF);
-    loaded.forEach((slot, fileId) {
-      if (slot < slots) map[slot] = fileId;
-    });
-    return [
-      for (final id in map) ...[id & 0xFF, (id >> 8) & 0xFF],
-    ];
-  }
-
-  /// The `.TABLE` reply for the table the device holds: `.TABLE` first, then one 16-byte record
-  /// per file, chunked the way the Storage service fragments a read.
-  List<int> _tableReply() {
-    final names = table.keys.toList()..sort();
-    final content = <int>[];
-    void record(String name, int size) {
-      content
-        ..addAll([0x40, 0, 0, 0])
-        ..addAll([
-          size & 0xFF,
-          (size >> 8) & 0xFF,
-          (size >> 16) & 0xFF,
-          (size >> 24) & 0xFF,
-        ])
-        ..addAll(StorageClient.padName(name));
-    }
-
-    record('.TABLE', (names.length + 1) * 16);
-    for (final name in names) {
-      record(name, table[name]!);
-    }
-    final out = <int>[];
-    for (var off = 0; off < content.length; off += 64) {
-      final end = off + 64 > content.length ? content.length : off + 64;
-      out
-        ..addAll(StorageClient.padName('.TABLE'))
-        ..addAll(content.sublist(off, end));
-    }
-    return out;
-  }
 
   @override
   bool get isConnected => true;
@@ -113,7 +72,9 @@ class _FakeCore implements RequestChannel {
     int? transactionId,
   }) async {
     sent.add((service: service, cid: functionCid, payload: payload));
-    if (service == ServiceType.script && functionCid == 0) return _slotMap();
+    if (service == ServiceType.script && functionCid == 0) {
+      return scriptSlotMap(loaded);
+    }
     if (service == ServiceType.storage && functionCid == 6) {
       // A write fragment: frag info (4), the file name (8), then its slice of the content.
       final name = StorageClient.unpadName(payload.sublist(4, 12));
@@ -125,7 +86,7 @@ class _FakeCore implements RequestChannel {
       final name = StorageClient.unpadName(payload.sublist(0, 8));
       if (name == '.TABLE') {
         if (tableUnreadable) throw StateError('no reply');
-        return _tableReply();
+        return tableReply(table.keys.toList()..sort(), (name) => table[name]!);
       }
       final content = files[name] ?? List<int>.filled(table[name] ?? 0, 0);
       final out = <int>[];

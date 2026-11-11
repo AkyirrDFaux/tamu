@@ -18,8 +18,7 @@ import 'package:tamuapp/core/backup.dart';
 import 'package:tamuapp/ui/restore_result.dart';
 import 'package:tamuapp/ui/theme.dart';
 
-const Size _portrait = Size(360, 640);
-const Size _landscape = Size(800, 360);
+import 'support/layout_gate.dart';
 
 RestoreReport _report() => RestoreReport(
   at: DateTime(2026, 10, 25, 19, 30),
@@ -107,7 +106,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
   }
 
-  for (final size in const [_portrait, _landscape]) {
+  for (final size in const [portraitSize, landscapeSize]) {
     final name = '${size.width.toInt()}x${size.height.toInt()}';
 
     testWidgets('every reason is on the result screen and reachable at $name', (
@@ -184,7 +183,7 @@ void main() {
   testWidgets('a clean run says so instead of showing an empty list', (
     tester,
   ) async {
-    tester.view.physicalSize = _portrait;
+    tester.view.physicalSize = portraitSize;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -215,7 +214,7 @@ void main() {
   testWidgets(
     'structural skips are counted and named, never counted as failures',
     (tester) async {
-      tester.view.physicalSize = _portrait;
+      tester.view.physicalSize = portraitSize;
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);

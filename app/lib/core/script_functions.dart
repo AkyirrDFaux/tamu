@@ -41,14 +41,6 @@ import 'script_instructions.dart';
 /// Macros"): a call graph that nests deeper than this is refused at assembly.
 const int scriptMaxCallDepth = 8;
 
-/// A 16-byte function-reservation record for a referenced global function. Re-exported from the
-/// format layer ([encodeFunctionReservation]) so callers of assembly find it here too.
-List<int> functionReservationFor(ScriptFunction f) => encodeFunctionReservation(
-  fileId: f.globalFileId,
-  memOffset: f.globalMemOffset,
-  instrOffset: f.globalInstrOffset,
-);
-
 /// The `Call` operand for a local/macro body: a plain `Predefine/Index` line target, which the
 /// app resolves at assembly (main-program calls carry the combined absolute line index; a call
 /// inside a body carries the target's offset from that body's first line, which the firmware

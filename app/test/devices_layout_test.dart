@@ -34,30 +34,7 @@ import 'package:tamuapp/ui/devices_page.dart';
 import 'package:tamuapp/ui/theme.dart';
 import 'package:tamuapp/ui/widgets.dart';
 
-const Size _portrait = Size(360, 640);
-const Size _landscape = Size(800, 360);
-const List<Size> _bothOrientations = [_portrait, _landscape];
-
-/// The two sizes every touched element is pumped at, named as the card names them.
-String _name(Size size) => '${size.width.toInt()}x${size.height.toInt()}';
-
-/// Sets the logical window size for one test and restores it afterwards.
-void _useWindow(WidgetTester tester, Size size) {
-  tester.view.physicalSize = size;
-  tester.view.devicePixelRatio = 1.0;
-  addTearDown(tester.view.resetPhysicalSize);
-  addTearDown(tester.view.resetDevicePixelRatio);
-}
-
-/// Pumps [child] as the whole window: one layout frame, then a painted one.
-/// `pumpAndSettle` is not usable here - the Connection page's 1 s autorefresh
-/// timer never settles.
-Future<void> _pump(WidgetTester tester, Size size, Widget child) async {
-  _useWindow(tester, size);
-  await tester.pumpWidget(MaterialApp(theme: buildTheme(), home: child));
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 100));
-}
+import 'support/layout_gate.dart';
 
 void _report(String line) => debugPrint('[batch 5 gate] $line');
 
@@ -71,11 +48,11 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('Devices filter bar', () {
-    for (final size in _bothOrientations) {
-      testWidgets('the three controls fit a ${_name(size)} window', (
+    for (final size in bothOrientations) {
+      testWidgets('the three controls fit a ${sizeName(size)} window', (
         tester,
       ) async {
-        await _pump(
+        await pumpAtSize(
           tester,
           size,
           Scaffold(
@@ -97,14 +74,14 @@ void main() {
         expect(
           tester.takeException(),
           isNull,
-          reason: 'the filter bar overflowed at ${_name(size)}',
+          reason: 'the filter bar overflowed at ${sizeName(size)}',
         );
 
         final net = tester.getRect(find.byType(FilterChip).first);
         final type = tester.getRect(find.byType(FilterChip).last);
         final sort = tester.getRect(find.byType(PopupMenuButton<DevicesSort>));
         _report(
-          'filter bar ${_name(size)}: net=${net.width.toStringAsFixed(1)} '
+          'filter bar ${sizeName(size)}: net=${net.width.toStringAsFixed(1)} '
           'type=${type.width.toStringAsFixed(1)} '
           'sort=${sort.width.toStringAsFixed(1)} '
           'rows=${(sort.center.dy - net.center.dy).abs() > 1 ? 2 : 1}',
@@ -145,15 +122,15 @@ void main() {
   });
 
   group('Devices page', () {
-    for (final size in _bothOrientations) {
-      testWidgets('mounts with its filter bar at ${_name(size)}', (
+    for (final size in bothOrientations) {
+      testWidgets('mounts with its filter bar at ${sizeName(size)}', (
         tester,
       ) async {
-        await _pump(tester, size, const DevicesPage());
+        await pumpAtSize(tester, size, const DevicesPage());
         expect(
           tester.takeException(),
           isNull,
-          reason: 'the Devices page overflowed at ${_name(size)}',
+          reason: 'the Devices page overflowed at ${sizeName(size)}',
         );
         // Off-device there is no link, so the body is the empty state and the
         // bar below it is what this case measures.
@@ -161,7 +138,7 @@ void main() {
         expect(find.byType(DevicesFilterBar), findsOneWidget);
         expect(find.byType(FilterChip), findsNWidgets(2));
         _report(
-          'devices page ${_name(size)}: bar='
+          'devices page ${sizeName(size)}: bar='
           '${tester.getSize(find.byType(DevicesFilterBar)).toString()}',
         );
       });
@@ -169,11 +146,11 @@ void main() {
   });
 
   group('Device row (DeviceTile)', () {
-    for (final size in _bothOrientations) {
-      testWidgets('a long name and a signal readout fit ${_name(size)}', (
+    for (final size in bothOrientations) {
+      testWidgets('a long name and a signal readout fit ${sizeName(size)}', (
         tester,
       ) async {
-        await _pump(
+        await pumpAtSize(
           tester,
           size,
           Scaffold(
@@ -208,7 +185,7 @@ void main() {
         expect(
           tester.takeException(),
           isNull,
-          reason: 'the device row overflowed at ${_name(size)}',
+          reason: 'the device row overflowed at ${sizeName(size)}',
         );
         expect(find.byType(DeviceTile), findsOneWidget);
         expect(find.text('-92 dBm'), findsOneWidget);
@@ -218,7 +195,7 @@ void main() {
         final name = tester.getRect(find.text('SIXTEEN BYTE NM'));
         expect(name.right, lessThanOrEqualTo(row.right));
         _report(
-          'device row ${_name(size)}: row=${row.width.toStringAsFixed(0)} '
+          'device row ${sizeName(size)}: row=${row.width.toStringAsFixed(0)} '
           'name=${name.width.toStringAsFixed(0)}',
         );
       });
@@ -237,15 +214,15 @@ void main() {
       _device(6, 'DAS Echo', DeviceType.dualAnalogSensor),
     ];
 
-    for (final size in _bothOrientations) {
-      testWidgets('the blocks are sized from the width at ${_name(size)}', (
+    for (final size in bothOrientations) {
+      testWidgets('the blocks are sized from the width at ${sizeName(size)}', (
         tester,
       ) async {
-        await _pump(tester, size, Scaffold(body: GraphView(devices: devices)));
+        await pumpAtSize(tester, size, Scaffold(body: GraphView(devices: devices)));
         expect(
           tester.takeException(),
           isNull,
-          reason: 'the graph overflowed at ${_name(size)}',
+          reason: 'the graph overflowed at ${sizeName(size)}',
         );
 
         // Block width is derived, not the old constant 160: the even share of the
@@ -253,7 +230,7 @@ void main() {
         final block = tester.getSize(find.byType(Card).first);
         final expected = size.width == 800 ? 200.0 : 150.0;
         _report(
-          'graph ${_name(size)}: block='
+          'graph ${sizeName(size)}: block='
           '${block.width.toStringAsFixed(1)}x${block.height.toStringAsFixed(1)}',
         );
         expect(block.width, closeTo(expected, 0.5));
@@ -286,9 +263,9 @@ void main() {
   });
 
   group('Device view', () {
-    for (final size in _bothOrientations) {
+    for (final size in bothOrientations) {
       for (final scale in const [1.0, 2.0]) {
-        testWidgets('a 16-byte name stays inside the app bar at ${_name(size)} '
+        testWidgets('a 16-byte name stays inside the app bar at ${sizeName(size)} '
             '(text scale $scale)', (tester) async {
           // The docs' rename limit is 16 bytes, so this is the longest name the
           // page can be showing; at a 2x text scale it cannot fit the bar's
@@ -296,7 +273,7 @@ void main() {
           const longName = 'SIXTEEN BYTE NAME';
           tester.platformDispatcher.textScaleFactorTestValue = scale;
           addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-          await _pump(
+          await pumpAtSize(
             tester,
             size,
             Scaffold(
@@ -315,14 +292,14 @@ void main() {
             tester.takeException(),
             isNull,
             reason:
-                'the app-bar title row overflowed at ${_name(size)} '
+                'the app-bar title row overflowed at ${sizeName(size)} '
                 'with text scale $scale',
           );
 
           final title = tester.getRect(find.byType(DeviceTitle));
           final name = tester.getRect(find.text(longName));
           _report(
-            'device title ${_name(size)} scale $scale: title='
+            'device title ${sizeName(size)} scale $scale: title='
             '${title.width.toStringAsFixed(0)} '
             'name=${name.width.toStringAsFixed(0)}',
           );
@@ -335,14 +312,14 @@ void main() {
         });
       }
 
-      testWidgets('the page mounts at ${_name(size)}', (tester) async {
+      testWidgets('the page mounts at ${sizeName(size)}', (tester) async {
         // No link, so the page shows its loading state; this case is the page
         // shell (app bar + title row) laying out at both orientations.
-        await _pump(tester, size, const DeviceViewPage(deviceId: 2));
+        await pumpAtSize(tester, size, const DeviceViewPage(deviceId: 2));
         expect(
           tester.takeException(),
           isNull,
-          reason: 'the Device view page overflowed at ${_name(size)}',
+          reason: 'the Device view page overflowed at ${sizeName(size)}',
         );
         expect(find.byType(DeviceViewPage), findsOneWidget);
       });
@@ -350,13 +327,13 @@ void main() {
   });
 
   group('Connection page', () {
-    for (final size in _bothOrientations) {
-      testWidgets('mounts at ${_name(size)}', (tester) async {
-        await _pump(tester, size, const ConnectionPage());
+    for (final size in bothOrientations) {
+      testWidgets('mounts at ${sizeName(size)}', (tester) async {
+        await pumpAtSize(tester, size, const ConnectionPage());
         expect(
           tester.takeException(),
           isNull,
-          reason: 'the Connection page overflowed at ${_name(size)}',
+          reason: 'the Connection page overflowed at ${sizeName(size)}',
         );
         // No radio in the test host, so the list is empty: the page's own
         // chrome (app bar, source menu, refresh controls) is what lays out here.

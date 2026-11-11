@@ -20,6 +20,8 @@ import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/sndb.dart';
 
+import 'support/fake_channel.dart';
+
 /// The three records the rig's core answered with on 2026-11-05, as the probe printed them.
 const List<String> _rigSerials = [
   'CDABA26400000000000000000000',
@@ -36,16 +38,6 @@ List<int> _record(String serial, int id) => [
 final List<int> _rigBody = [
   for (var i = 0; i < _rigSerials.length; i++) ..._record(_rigSerials[i], i + 2),
 ];
-
-/// The rig's whole reply: one fragment that is also the last one.
-PacketResponse _whole(List<int> body) => PacketResponse(
-  payload: body,
-  success: true,
-  fail: false,
-  chunks: [FragmentChunk(0, body)],
-  stopped: true,
-  total: 1,
-);
 
 /// A reply that announced [total] fragments, delivered [delivered] of them, and then went quiet:
 /// the link's stall watchdog closes it, so `stopped` is false and the missing indexes are known.
@@ -73,57 +65,14 @@ PacketResponse _truncated(int total, List<int> deliveredIndexes) {
 
 /// A channel that answers the roster read from a list of replies (the last one repeats); a null
 /// entry is "the device did not answer" and is thrown, as a request timeout is.
-class _RosterChannel implements TolerantRequestChannel {
+class _RosterChannel extends FakeTolerantChannel {
   _RosterChannel(this.replies);
 
   final List<PacketResponse?> replies;
   final List<int> asked = [];
 
   @override
-  bool get isConnected => true;
-
-  @override
-  int takeTxId() => 0xF900;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => (await requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  )).payload;
-
-  @override
-  Future<PacketResponse> requestWithFlags(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) => requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  );
-
-  @override
-  Future<PacketResponse> requestTolerant(
+  Future<PacketResponse> answer(
     int targetId,
     ServiceType service,
     int functionCid, {
@@ -143,7 +92,7 @@ void main() {
   tearDown(() => installRequestChannel(null));
 
   test('the rig\'s 1-fragment roster reads as three records on the first attempt', () async {
-    final channel = _RosterChannel([_whole(_rigBody)]);
+    final channel = _RosterChannel([wholeReply(_rigBody)]);
     installRequestChannel(channel);
 
     final read = await readSndbRoster();
@@ -159,7 +108,7 @@ void main() {
   });
 
   test('a roster that lost a fragment is re-requested whole, then read', () async {
-    final channel = _RosterChannel([_truncated(3, [0, 1]), _whole(_rigBody)]);
+    final channel = _RosterChannel([_truncated(3, [0, 1]), wholeReply(_rigBody)]);
     installRequestChannel(channel);
 
     final read = await readSndbRoster();
@@ -194,7 +143,7 @@ void main() {
   });
 
   test('a body short of whole records fails instead of dropping the tail', () async {
-    final channel = _RosterChannel([_whole(_rigBody.sublist(0, 40))]);
+    final channel = _RosterChannel([wholeReply(_rigBody.sublist(0, 40))]);
     installRequestChannel(channel);
 
     final read = await readSndbRoster();
@@ -210,7 +159,7 @@ void main() {
   test('an empty reply is an empty registry, not a failed read', () async {
     // A core with nothing registered answers with an empty stream on purpose
     // (firmware `HandleSNDB`: `SendResponse(Frame, nullptr, 0)` when the count is 0).
-    final channel = _RosterChannel([_whole(const [])]);
+    final channel = _RosterChannel([wholeReply(const [])]);
     installRequestChannel(channel);
 
     final read = await readSndbRoster();

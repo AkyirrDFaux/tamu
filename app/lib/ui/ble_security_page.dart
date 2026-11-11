@@ -48,8 +48,12 @@ class BleSecurityPage extends StatefulWidget {
   /// Test seam: the refresh paths only run on a live link, which a widget test cannot fake.
   final bool Function()? isConnected;
 
-  /// Test seam: whether this app's own link to the device is USB, the only link the block
-  /// accepts a write on.
+  /// Test seam: whether this app's own link to the device is USB.
+  ///
+  /// The panel uses it to name the link in its copy, not to decide what may be written: the
+  /// firmware's gate for this block is USB **or a secured Bluetooth session**
+  /// (`Blocks/BleWritePolicy.h` `BleWriteAllowed`), and `core/ble_security.dart`
+  /// `bleLinkWritesSettings` is the app's half of that rule.
   final bool Function()? isUsbLink;
 
   /// Test seam: how the page builds its register client. Defaults to a real [RegisterClient].
@@ -86,7 +90,11 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   bool get _connected =>
       (widget.isConnected ?? (() => ConnectionManager.instance.isConnected))();
 
-  /// True when this app talks to the device over USB, the only link the block accepts a write on.
+  /// True when this app talks to the device over USB - the link the panel's copy names.
+  ///
+  /// It is NOT the write rule: a secured Bluetooth session writes this block too
+  /// (`Blocks/BleWritePolicy.h`; `bleLinkWritesSettings`), which is why the refusal path below
+  /// asks [bleWriteRefusal] rather than this flag.
   bool get _overUsb =>
       (widget.isUsbLink ??
       () => ConnectionManager.instance.transport is UsbTransport)();
@@ -472,30 +480,16 @@ class _BleSecurityPageState extends State<BleSecurityPage>
     ];
 
     // The block is missing: draw the panel as nothing at all (not an empty card, not an error).
-    if (!blockPresent) return TamuPage(title: 'Bluetooth', actions: actions);
+    final statePage = blockPanelStatePage(
+      title: 'Bluetooth',
+      unavailable: 'Bluetooth block unavailable',
+      reading: 'Reading Bluetooth settings',
+      onRefresh: _refresh,
+      actions: actions,
+    );
+    if (statePage != null) return statePage;
 
-    final snapshot = blockSnapshot;
-    if (blockError != null && snapshot == null) {
-      return TamuPage(
-        title: 'Bluetooth',
-        actions: actions,
-        state: StateKind.error,
-        stateMessage: 'Bluetooth block unavailable',
-        stateDetails: blockError,
-        stateAction: OutlinedButton(
-          onPressed: _refresh,
-          child: const Text('Retry'),
-        ),
-      );
-    }
-    if (snapshot == null) {
-      return TamuPage(
-        title: 'Bluetooth',
-        actions: actions,
-        state: StateKind.loading,
-        stateMessage: 'Reading Bluetooth settings',
-      );
-    }
+    final snapshot = blockSnapshot!;
 
     final bondsAnswered = snapshot.answeredField(bleFieldBonds);
     return TamuPage(
@@ -949,78 +943,74 @@ class _WindowDialogState extends State<_WindowDialog> {
         : bleWindowProblem(ms, enabled: widget.enabled);
     return AlertDialog(
       title: const Text('Pairing window'),
-      content: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'While a window is open any phone may pair with the device. A bonded phone '
-              'connects at any time, window or not.',
-              style: theme.textTheme.bodySmall,
-            ),
-            const SizedBox(height: Spacing.sm),
-            Text(
-              'The write opens the window for the number of milliseconds you enter; 0 closes it '
-              'now.',
-              style: theme.textTheme.bodySmall,
-            ),
-            if (!widget.overUsb) ...[
-              const SizedBox(height: Spacing.md),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.usb, size: IconSize.sm, color: kWarning),
-                  const SizedBox(width: Spacing.sm),
-                  Expanded(
-                    child: Text(
-                      'This app is connected over Bluetooth: the device will refuse the write. '
-                      'Connect over USB to open a window.',
-                      style: theme.textTheme.bodySmall,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-            const SizedBox(height: Spacing.lg),
-            TextField(
-              controller: _controller,
-              autofocus: true,
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                labelText: 'Milliseconds',
-                suffixText: 'ms',
-              ),
-            ),
-            const SizedBox(height: Spacing.sm),
-            Wrap(
-              spacing: Spacing.sm,
+      content: _PanelDialogBody(
+        children: [
+          Text(
+            'While a window is open any phone may pair with the device. A bonded phone '
+            'connects at any time, window or not.',
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: Spacing.sm),
+          Text(
+            'The write opens the window for the number of milliseconds you enter; 0 closes it '
+            'now.',
+            style: theme.textTheme.bodySmall,
+          ),
+          if (!widget.overUsb) ...[
+            const SizedBox(height: Spacing.md),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ActionChip(
-                  label: const Text('30 s'),
-                  onPressed: () => _preset(30000),
-                ),
-                ActionChip(
-                  label: const Text('1 min'),
-                  onPressed: () => _preset(60000),
-                ),
-                ActionChip(
-                  label: const Text('5 min'),
-                  onPressed: () => _preset(300000),
+                const Icon(Icons.usb, size: IconSize.sm, color: kWarning),
+                const SizedBox(width: Spacing.sm),
+                Expanded(
+                  child: Text(
+                    'This app is connected over Bluetooth: the device will refuse the write. '
+                    'Connect over USB to open a window.',
+                    style: theme.textTheme.bodySmall,
+                  ),
                 ),
               ],
             ),
-            if (problem != null) ...[
-              const SizedBox(height: Spacing.sm),
-              Text(
-                problem,
-                style: theme.textTheme.bodySmall?.copyWith(color: kWarning),
+          ],
+          const SizedBox(height: Spacing.lg),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(
+              labelText: 'Milliseconds',
+              suffixText: 'ms',
+            ),
+          ),
+          const SizedBox(height: Spacing.sm),
+          Wrap(
+            spacing: Spacing.sm,
+            children: [
+              ActionChip(
+                label: const Text('30 s'),
+                onPressed: () => _preset(30000),
+              ),
+              ActionChip(
+                label: const Text('1 min'),
+                onPressed: () => _preset(60000),
+              ),
+              ActionChip(
+                label: const Text('5 min'),
+                onPressed: () => _preset(300000),
               ),
             ],
+          ),
+          if (problem != null) ...[
+            const SizedBox(height: Spacing.sm),
+            Text(
+              problem,
+              style: theme.textTheme.bodySmall?.copyWith(color: kWarning),
+            ),
           ],
-        ),
+                ],
       ),
       actions: [
         TextButton(
@@ -1036,6 +1026,23 @@ class _WindowDialogState extends State<_WindowDialog> {
       ],
     );
   }
+}
+
+/// The body of every dialog on this panel: a left-aligned column that scrolls, so a dialog that
+/// grows past a short window still reaches its buttons.
+class _PanelDialogBody extends StatelessWidget {
+  const _PanelDialogBody({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: children,
+    ),
+  );
 }
 
 /// The label editor for one bond. The label is the app's own — the NimBLE bond store keeps no peer
@@ -1063,25 +1070,21 @@ class _BondNameDialogState extends State<_BondNameDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Bond label'),
-      content: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'A name for this phone, kept on the device beside its address so two bonded phones '
-              'can be told apart. The phone never sends one. Leave it empty to remove the label.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: Spacing.lg),
-            TextField(
-              controller: _controller,
-              autofocus: true,
-              maxLength: bleBondNameLength,
-              decoration: const InputDecoration(hintText: 'Phone name'),
-            ),
-          ],
-        ),
+      content: _PanelDialogBody(
+        children: [
+          Text(
+            'A name for this phone, kept on the device beside its address so two bonded phones '
+            'can be told apart. The phone never sends one. Leave it empty to remove the label.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: Spacing.lg),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            maxLength: bleBondNameLength,
+            decoration: const InputDecoration(hintText: 'Phone name'),
+          ),
+                ],
       ),
       actions: [
         TextButton(
@@ -1129,63 +1132,59 @@ class _PasskeyDialogState extends State<_PasskeyDialog> {
     final digits = _controller.text;
     return AlertDialog(
       title: const Text('Set the passkey'),
-      content: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              widget.currentSet
-                  ? 'The phone will ask for the new code the next time it pairs with this '
-                        'device. The code that is set now stops working.'
-                  : 'The phone will ask for this code the next time it pairs with this device, '
-                        'and so will every other phone.',
-              style: theme.textTheme.bodySmall,
-            ),
+      content: _PanelDialogBody(
+        children: [
+          Text(
+            widget.currentSet
+                ? 'The phone will ask for the new code the next time it pairs with this '
+                      'device. The code that is set now stops working.'
+                : 'The phone will ask for this code the next time it pairs with this device, '
+                      'and so will every other phone.',
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: Spacing.md),
+          Text(
+            '$blePasskeyNone returns the device to Just Works, which pairs with no code at '
+            'all.',
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: Spacing.md),
+          Text(
+            'If you forget the code you must set a new one over USB: a phone that cannot pair '
+            'cannot change it.',
+            style: theme.textTheme.bodySmall,
+          ),
+          if (!widget.overUsb) ...[
             const SizedBox(height: Spacing.md),
-            Text(
-              '$blePasskeyNone returns the device to Just Works, which pairs with no code at '
-              'all.',
-              style: theme.textTheme.bodySmall,
-            ),
-            const SizedBox(height: Spacing.md),
-            Text(
-              'If you forget the code you must set a new one over USB: a phone that cannot pair '
-              'cannot change it.',
-              style: theme.textTheme.bodySmall,
-            ),
-            if (!widget.overUsb) ...[
-              const SizedBox(height: Spacing.md),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.usb, size: IconSize.sm, color: kWarning),
-                  const SizedBox(width: Spacing.sm),
-                  Expanded(
-                    child: Text(
-                      'This app is connected over Bluetooth: the device will refuse the write. '
-                      'Connect over USB to set the code.',
-                      style: theme.textTheme.bodySmall,
-                    ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.usb, size: IconSize.sm, color: kWarning),
+                const SizedBox(width: Spacing.sm),
+                Expanded(
+                  child: Text(
+                    'This app is connected over Bluetooth: the device will refuse the write. '
+                    'Connect over USB to set the code.',
+                    style: theme.textTheme.bodySmall,
                   ),
-                ],
-              ),
-            ],
-            const SizedBox(height: Spacing.lg),
-            TextField(
-              controller: _controller,
-              autofocus: true,
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              maxLength: blePasskeyLength,
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                labelText: 'Six digits',
-                hintText: '123456',
-              ),
+                ),
+              ],
             ),
           ],
-        ),
+          const SizedBox(height: Spacing.lg),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            maxLength: blePasskeyLength,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(
+              labelText: 'Six digits',
+              hintText: '123456',
+            ),
+          ),
+                ],
       ),
       actions: [
         TextButton(
@@ -1227,25 +1226,21 @@ class _DisplayNameDialogState extends State<_DisplayNameDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Display name'),
-      content: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'The name phones see when they scan. Leave it empty and the device advertises its '
-              'own name from the System block instead.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: Spacing.lg),
-            TextField(
-              controller: _controller,
-              autofocus: true,
-              maxLength: bleDisplayNameWidth,
-              decoration: const InputDecoration(hintText: 'Device name'),
-            ),
-          ],
-        ),
+      content: _PanelDialogBody(
+        children: [
+          Text(
+            'The name phones see when they scan. Leave it empty and the device advertises its '
+            'own name from the System block instead.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: Spacing.lg),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            maxLength: bleDisplayNameWidth,
+            decoration: const InputDecoration(hintText: 'Device name'),
+          ),
+                ],
       ),
       actions: [
         TextButton(

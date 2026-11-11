@@ -6,6 +6,8 @@ import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/script_client.dart';
 import 'package:tamuapp/core/storage_client.dart';
+
+import 'support/fake_core.dart';
 import 'package:tamuapp/core/types.dart';
 
 /// A core that answers the service requests a restore sends, so `applyRestorePlan` can be driven
@@ -18,9 +20,6 @@ class _FakeCore implements RequestChannel {
   /// device state the restore left behind.
   final Map<int, int> loaded;
 
-  /// The slot count the core reports (a v2 core's script table, generously padded).
-  static const slots = 16;
-
   /// Every request, in the order it was sent.
   final sent = <({ServiceType service, int cid, List<int> payload})>[];
 
@@ -28,16 +27,6 @@ class _FakeCore implements RequestChannel {
   final files = <String, List<int>>{};
 
   int _txId = 0x100;
-
-  List<int> _slotMap() {
-    final map = List<int>.filled(slots, 0xFFFF);
-    loaded.forEach((slot, fileId) {
-      if (slot < slots) map[slot] = fileId;
-    });
-    return [
-      for (final id in map) ...[id & 0xFF, (id >> 8) & 0xFF],
-    ];
-  }
 
   @override
   bool get isConnected => true;
@@ -59,7 +48,9 @@ class _FakeCore implements RequestChannel {
     int? transactionId,
   }) async {
     sent.add((service: service, cid: functionCid, payload: payload));
-    if (service == ServiceType.script && functionCid == 0) return _slotMap();
+    if (service == ServiceType.script && functionCid == 0) {
+      return scriptSlotMap(loaded);
+    }
     if (service == ServiceType.storage && functionCid == 6) {
       // A write fragment: frag info (4), the file name (8), then its slice of the content.
       final name = StorageClient.unpadName(payload.sublist(4, 12));
@@ -70,42 +61,14 @@ class _FakeCore implements RequestChannel {
       // The file sweep reads the file table; a device that does not answer it looks like one
       // nobody can tell a stale script file from.
       if (StorageClient.unpadName(payload.sublist(0, 8)) == '.TABLE') {
-        return _tableReply();
+        return tableReply(
+          files.keys.toList()..sort(),
+          (name) => files[name]!.length,
+        );
       }
       throw StateError('no such file');
     }
     return const [];
-  }
-
-  /// The `.TABLE` reply for the files this device holds (`.TABLE` first, then one record per
-  /// file, chunked with the per-fragment 8-byte name echo).
-  List<int> _tableReply() {
-    final names = files.keys.toList()..sort();
-    final content = <int>[];
-    void record(String name, int size) {
-      content
-        ..addAll([0x40, 0, 0, 0])
-        ..addAll([
-          size & 0xFF,
-          (size >> 8) & 0xFF,
-          (size >> 16) & 0xFF,
-          (size >> 24) & 0xFF,
-        ])
-        ..addAll(StorageClient.padName(name));
-    }
-
-    record('.TABLE', (names.length + 1) * 16);
-    for (final name in names) {
-      record(name, files[name]!.length);
-    }
-    final out = <int>[];
-    for (var off = 0; off < content.length; off += 64) {
-      final end = off + 64 > content.length ? content.length : off + 64;
-      out
-        ..addAll(StorageClient.padName('.TABLE'))
-        ..addAll(content.sublist(off, end));
-    }
-    return out;
   }
 
   @override

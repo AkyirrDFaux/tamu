@@ -16,6 +16,8 @@ import 'package:tamuapp/core/fragment_reassembler.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/request_channel.dart';
+
+import 'support/fake_channel.dart';
 import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/types.dart';
@@ -63,7 +65,7 @@ enum _Answer { whole, lost }
 
 /// A device for the three read paths these pages use: the file table (Storage CID 5), the loaded
 /// script slot map (Script CID 0) and the roster (Device CID 0x13). Everything else answers empty.
-class _Device implements TolerantRequestChannel {
+class _Device extends FakeTolerantChannel {
   _Device({
     this.table = _Answer.whole,
     this.slots = _Answer.whole,
@@ -87,50 +89,7 @@ class _Device implements TolerantRequestChannel {
   static const int _rosterCid = 0x13;
 
   @override
-  bool get isConnected => true;
-
-  @override
-  int takeTxId() => 0xF700;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => (await requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  )).payload;
-
-  @override
-  Future<PacketResponse> requestWithFlags(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) => requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  );
-
-  @override
-  Future<PacketResponse> requestTolerant(
+  Future<PacketResponse> answer(
     int targetId,
     ServiceType service,
     int functionCid, {

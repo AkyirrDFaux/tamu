@@ -12,6 +12,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/fragment_reassembler.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
+
+import 'support/fake_channel.dart';
 import 'package:tamuapp/core/transport.dart';
 import 'package:tamuapp/ui/scripts_page.dart';
 import 'package:tamuapp/ui/theme.dart';
@@ -29,7 +31,7 @@ class _Link extends ChangeNotifier {
 
 /// A device that answers the Script slot map with an empty one (nothing loaded). Every request is
 /// counted, so a page that sent something with no link is visible.
-class _Device implements TolerantRequestChannel {
+class _Device extends FakeTolerantChannel {
   _Device({required this.link});
 
   final _Link link;
@@ -40,50 +42,7 @@ class _Device implements TolerantRequestChannel {
   void Function()? onSlotMap;
 
   @override
-  bool get isConnected => true;
-
-  @override
-  int takeTxId() => 0xF700;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => (await requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  )).payload;
-
-  @override
-  Future<PacketResponse> requestWithFlags(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) => requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  );
-
-  @override
-  Future<PacketResponse> requestTolerant(
+  Future<PacketResponse> answer(
     int targetId,
     ServiceType service,
     int functionCid, {

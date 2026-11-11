@@ -40,6 +40,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/fragment_reassembler.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
+
+import 'support/fake_channel.dart';
 import 'package:tamuapp/core/storage_client.dart';
 
 const int _txId = 0xF321; // the transaction the probe used
@@ -108,57 +110,17 @@ List<PacketFrame> _firstFragments(List<int> stream, int count) =>
 
 /// A channel that answers a storage read from a list of replies, repeating the last one; a null
 /// entry is "the device did not answer".
-class _ReplyChannel implements TolerantRequestChannel {
+class _ReplyChannel extends FakeTolerantChannel {
   _ReplyChannel(this.replies);
 
   final List<PacketResponse?> replies;
   final List<String> asked = [];
 
   @override
-  bool get isConnected => true;
-
-  @override
   int takeTxId() => 0xF900;
 
   @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => (await requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  )).payload;
-
-  @override
-  Future<PacketResponse> requestWithFlags(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) => requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  );
-
-  @override
-  Future<PacketResponse> requestTolerant(
+  Future<PacketResponse> answer(
     int targetId,
     ServiceType service,
     int functionCid, {

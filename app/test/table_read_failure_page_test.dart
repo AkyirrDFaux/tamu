@@ -23,6 +23,8 @@ import 'package:tamuapp/core/fragment_reassembler.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/request_channel.dart';
+
+import 'support/fake_channel.dart';
 import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/register_page.dart';
@@ -46,7 +48,7 @@ enum _Mode {
 
 /// A device that answers the file table from [_Mode], and everything else (the Script slot map)
 /// with an empty success - the pages' other reads are not what these tests are about.
-class _TableDevice implements TolerantRequestChannel {
+class _TableDevice extends FakeTolerantChannel {
   _TableDevice(this.mode, this.tableBytes);
 
   _Mode mode;
@@ -56,50 +58,7 @@ class _TableDevice implements TolerantRequestChannel {
   int tableSends = 0;
 
   @override
-  bool get isConnected => true;
-
-  @override
-  int takeTxId() => 0xF700;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => (await requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  )).payload;
-
-  @override
-  Future<PacketResponse> requestWithFlags(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) => requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  );
-
-  @override
-  Future<PacketResponse> requestTolerant(
+  Future<PacketResponse> answer(
     int targetId,
     ServiceType service,
     int functionCid, {

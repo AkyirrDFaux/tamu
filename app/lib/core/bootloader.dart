@@ -46,7 +46,6 @@ class Bootloader {
   static const int nothingWritten = 0xFFFFFFFF;
 
   static const int payloadSize = 32;
-  static const int nameSize = 32; // identify-response name (null-padded)
   static const int headerSize = 6; // start + control + offset
   static const int readRequestSize = 7; // header + end
   static const int dataSize = 39; // header + payload + end
@@ -71,68 +70,54 @@ class Bootloader {
     frame[1] |= parity(frame) << 3;
   }
 
-  static Uint8List encodeWrite(int offset, List<int> payload) {
+  /// A header-only frame (`readRequestSize` bytes): start marker, [offset] slot, end marker, and
+  /// the command with its parity in the control byte. Every header-only command is this frame -
+  /// a write acknowledgement, a read request, an identify request.
+  static Uint8List _headerFrame(int offset, int cmd) {
+    final f = Uint8List(readRequestSize);
+    f[0] = start;
+    f.setRange(2, 6, uint32ToBytes(offset));
+    f[readRequestSize - 1] = end;
+    _writeControl(f, cmd);
+    return f;
+  }
+
+  /// A frame carrying a `payloadSize`-byte body (`dataSize` bytes): the header above plus the
+  /// padded body before the end marker. The identify response's 32-byte name is the same width,
+  /// so it rides here too.
+  static Uint8List _payloadFrame(int offset, List<int> payload, int cmd) {
     final f = Uint8List(dataSize);
     f[0] = start;
     f.setRange(2, 6, uint32ToBytes(offset));
     f.setRange(6, 6 + payloadSize, padPayload(payload));
     f[dataSize - 1] = end;
-    _writeControl(f, cmdWrite);
+    _writeControl(f, cmd);
     return f;
   }
+
+  static Uint8List encodeWrite(int offset, List<int> payload) =>
+      _payloadFrame(offset, payload, cmdWrite);
 
   /// Write acknowledgement: header-only, carrying the offset of the last successfully
   /// written chunk ([nothingWritten] when nothing has been written yet).
-  static Uint8List encodeWriteResponse(int offset) {
-    final f = Uint8List(readRequestSize);
-    f[0] = start;
-    f.setRange(2, 6, uint32ToBytes(offset));
-    f[readRequestSize - 1] = end;
-    _writeControl(f, cmdWriteResponse);
-    return f;
-  }
+  static Uint8List encodeWriteResponse(int offset) =>
+      _headerFrame(offset, cmdWriteResponse);
 
-  static Uint8List encodeReadRequest(int offset) {
-    final f = Uint8List(readRequestSize);
-    f[0] = start;
-    f.setRange(2, 6, uint32ToBytes(offset));
-    f[readRequestSize - 1] = end;
-    _writeControl(f, cmdReadRequest);
-    return f;
-  }
+  static Uint8List encodeReadRequest(int offset) =>
+      _headerFrame(offset, cmdReadRequest);
 
-  static Uint8List encodeReadResponse(int offset, List<int> payload) {
-    final f = Uint8List(dataSize);
-    f[0] = start;
-    f.setRange(2, 6, uint32ToBytes(offset));
-    f.setRange(6, 6 + payloadSize, padPayload(payload));
-    f[dataSize - 1] = end;
-    _writeControl(f, cmdReadResponse);
-    return f;
-  }
+  static Uint8List encodeReadResponse(int offset, List<int> payload) =>
+      _payloadFrame(offset, payload, cmdReadResponse);
 
   /// Identify request: header-only, offset slot zero.
-  static Uint8List encodeIdentifyRequest() {
-    final f = Uint8List(readRequestSize);
-    f[0] = start;
-    // offset slot stays zero.
-    f[readRequestSize - 1] = end;
-    _writeControl(f, cmdIdentifyRequest);
-    return f;
-  }
+  static Uint8List encodeIdentifyRequest() =>
+      _headerFrame(0, cmdIdentifyRequest);
 
   /// Identify response: app-space size (u32) in the offset slot, device name as the 32-byte,
   /// null-padded payload.
-  static Uint8List encodeIdentifyResponse(int appSize, List<int> name) {
-    final f = Uint8List(dataSize);
-    f[0] = start;
-    f.setRange(2, 6, uint32ToBytes(appSize));
-    // padPayload zero-fills the tail, which is exactly the null-padding the name wants.
-    f.setRange(6, 6 + nameSize, padPayload(name));
-    f[dataSize - 1] = end;
-    _writeControl(f, cmdIdentifyResponse);
-    return f;
-  }
+  static Uint8List encodeIdentifyResponse(int appSize, List<int> name) =>
+      // padPayload zero-fills the tail, which is exactly the null-padding the name wants.
+      _payloadFrame(appSize, name, cmdIdentifyResponse);
 
   /// Left-aligns [payload] in a `payloadSize`-byte buffer, truncating any excess and
   /// zero-padding the tail. Shared by the encoders here and by the flashing client, which

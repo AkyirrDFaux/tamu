@@ -207,22 +207,7 @@ class _StoragePageState extends State<StoragePage>
 
   /// Downloads the whole file to a user-chosen location.
   Future<void> _downloadFile(FileRecord file) async {
-    final read = await runBehindWait<FileRead>(
-      context,
-      _readWait,
-      label: 'Downloading ${normalizeFileName(file.name)}',
-      cancelLabel: 'Cancel',
-      task: () => _client.readFileWhole(
-        file.name,
-        size: file.size,
-        onProgress: (received, total) => _readWait.step(
-          completed: received,
-          total: total,
-          note: 'fragment $received of $total',
-        ),
-        isCancelled: () => _readWait.cancelled,
-      ),
-    );
+    final read = await _readBehindWait(file, label: 'Downloading');
     if (!mounted || read.cancelled) return;
     final data = read.value.bytes;
     if (data == null) {
@@ -379,26 +364,33 @@ class _StoragePageState extends State<StoragePage>
   ///
   /// The dialog is the "no blank piece" answer for a read the viewer cannot draw yet: it says what
   /// is being read, shows *fragments received of expected* while the stream lands, and its Cancel
-  /// closes it at once - the page then drops the result and stops the retry policy.
-  Future<FileRead> _readBehindDialog(FileRecord file) async {
-    final read = await runBehindWait<FileRead>(
-      context,
-      _readWait,
-      label: 'Reading ${normalizeFileName(file.name)}',
-      cancelLabel: 'Cancel',
-      task: () => _client.readFileWhole(
-        file.name,
-        size: file.size,
-        onProgress: (received, total) => _readWait.step(
-          completed: received,
-          total: total,
-          note: 'fragment $received of $total',
-        ),
-        isCancelled: () => _readWait.cancelled,
+  /// closes it at once - the page then drops the result and stops the retry policy. Every read on
+  /// this page goes through here ([label] is the one word that differs: "Reading" for a viewer,
+  /// "Downloading" for a save), so the retry policy, the progress note and Cancel cannot drift
+  /// between the three call sites.
+  Future<({FileRead value, bool cancelled})> _readBehindWait(
+    FileRecord file, {
+    required String label,
+  }) => runBehindWait<FileRead>(
+    context,
+    _readWait,
+    label: '$label ${normalizeFileName(file.name)}',
+    cancelLabel: 'Cancel',
+    task: () => _client.readFileWhole(
+      file.name,
+      size: file.size,
+      onProgress: (received, total) => _readWait.step(
+        completed: received,
+        total: total,
+        note: 'fragment $received of $total',
       ),
-    );
-    return read.value;
-  }
+      isCancelled: () => _readWait.cancelled,
+    ),
+  );
+
+  /// The same read, for a caller that only wants the result (the viewer's Try again).
+  Future<FileRead> _readBehindDialog(FileRecord file) async =>
+      (await _readBehindWait(file, label: 'Reading')).value;
 
   /// The file table itself, decoded: one row per file record.
   Future<void> _showTable(FileRecord table) async {
@@ -437,22 +429,7 @@ class _StoragePageState extends State<StoragePage>
   }
 
   Future<void> _showFile(FileRecord file) async {
-    final read = await runBehindWait<FileRead>(
-      context,
-      _readWait,
-      label: 'Reading ${normalizeFileName(file.name)}',
-      cancelLabel: 'Cancel',
-      task: () => _client.readFileWhole(
-        file.name,
-        size: file.size,
-        onProgress: (received, total) => _readWait.step(
-          completed: received,
-          total: total,
-          note: 'fragment $received of $total',
-        ),
-        isCancelled: () => _readWait.cancelled,
-      ),
-    );
+    final read = await _readBehindWait(file, label: 'Reading');
     if (!mounted || read.cancelled) return;
     final fileRead = read.value;
     final data = fileRead.bytes;

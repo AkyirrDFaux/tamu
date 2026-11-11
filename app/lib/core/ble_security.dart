@@ -548,9 +548,12 @@ bool bleLinkWritesSettings({
 
 /// Why a control on the panel cannot work over this link, in one sentence — or null when it can.
 ///
-/// The device refuses every write to this block that did not arrive over USB
-/// (`BleBlockWritable`), so the panel says it before the user fills a form rather than after a
-/// rejected write.
+/// The panel says it before the user fills a form rather than after a rejected write. The rule is
+/// the firmware's `BleWriteAllowed` (`Blocks/BleWritePolicy.h`): USB always, and a BLE frame only
+/// on a secured session — NOT "USB only", which is what this sentence below still says and what
+/// the panel still shows on every Bluetooth link. That copy is user-visible wording, so it is
+/// reported for a card rather than rewritten by a cleanup (see [bleLinkWritesSettings] for the
+/// rule the code actually asks).
 String? bleWriteRestriction({required bool overUsb}) => overUsb
     ? null
     : 'Bluetooth settings can only be changed over a USB link to the device. A phone cannot '

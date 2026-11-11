@@ -1,7 +1,8 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 
 import '../core/register_client.dart';
 import '../core/types.dart';
+import 'widgets.dart';
 
 /// One field read as the device answered it, or null when it did not answer - the shape
 /// [RegisterClient.readBlockField] returns. (`core/ble_security.dart` names the same type
@@ -145,5 +146,48 @@ mixin BlockPanelRefresh<W extends StatefulWidget, S> on State<W> {
   void foldBlockRead(int field, BlockFieldRead read) {
     _reads = {..._reads, field: read};
     _snapshot = snapshotOf(_reads);
+  }
+
+  /// The page this panel draws while it has no reading, or null when [blockSnapshot] holds one
+  /// and the page draws its form.
+  ///
+  /// The THREE outcomes [refreshBlock] can end on are worded here once, because the two panels
+  /// drew the same scaffold separately and the copies drifted:
+  ///
+  ///  - the device does not carry the block: nothing at all ([TamuPage] with an empty body),
+  ///  - a refresh that produced no reading: the reason and a Try again,
+  ///  - a panel that has not read yet: the waiting state, naming what is being read.
+  ///
+  /// [unavailable] is the failure's headline ("WiFi block unavailable"), [reading] the waiting
+  /// line ("Reading WiFi settings") - what the panel calls its block in each case.
+  Widget? blockPanelStatePage({
+    required String title,
+    required String unavailable,
+    required String reading,
+    required Future<void> Function() onRefresh,
+    required List<Widget> actions,
+  }) {
+    if (!blockPresent) return TamuPage(title: title, actions: actions);
+    if (blockSnapshot != null) return null;
+    final error = blockError;
+    if (error != null) {
+      return TamuPage(
+        title: title,
+        actions: actions,
+        state: StateKind.error,
+        stateMessage: unavailable,
+        stateDetails: error,
+        stateAction: OutlinedButton(
+          onPressed: onRefresh,
+          child: const Text('Retry'),
+        ),
+      );
+    }
+    return TamuPage(
+      title: title,
+      actions: actions,
+      state: StateKind.loading,
+      stateMessage: reading,
+    );
   }
 }

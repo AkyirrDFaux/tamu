@@ -3,6 +3,7 @@ import 'package:tamuapp/core/ble_security.dart';
 import 'package:tamuapp/core/block_registry.dart';
 import 'package:tamuapp/core/connection.dart' show LinkTrouble;
 import 'package:tamuapp/core/types.dart';
+import 'support/block_reads.dart';
 
 /// The `Bonds` value the rig answered on 2026-10-29 (`firmware/.pio/probe/bleset6.py`, image
 /// 2026.10.29.3): slot 0 holds this host's controller address with the label the probe wrote, slots
@@ -21,25 +22,10 @@ List<int> hexBytes(String hex) => [
 /// rules, the texts the panel builds (the window countdown and the passkey state) and the guidance
 /// after a failed Bluetooth attempt.
 void main() {
-  ({ValueInfo meta, List<int> value}) read(
-    int type,
-    List<int> value, {
-    int flags = 0,
-    int? size,
-  }) => (
-    meta: ValueInfo(type: type, size: size ?? value.length, flags: flags),
-    value: value,
-  );
-
-  List<int> text(String s, int width) {
-    final bytes = s.codeUnits.toList();
-    if (bytes.length > width) {
-      bytes.length = width;
-    } else {
-      bytes.addAll(List<int>.filled(width - bytes.length, 0));
-    }
-    return bytes;
-  }
+  // One field read and a fixed-width text value: the two fixtures every panel test needs
+  // (`support/block_reads.dart`), under the names this suite reads them by.
+  final read = fieldBytes;
+  final text = paddedText;
 
   /// The six bytes of a printed address.
   List<int> addr(String printed) => [

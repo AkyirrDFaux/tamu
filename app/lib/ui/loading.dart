@@ -93,17 +93,7 @@ class WaitView extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 420),
             child: Padding(
               padding: Insets.page,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  body,
-                  if (cancel != null) ...[
-                    const SizedBox(height: Spacing.md),
-                    Align(alignment: Alignment.centerRight, child: cancel),
-                  ],
-                ],
-              ),
+              child: _bodyAboveCancel(body, cancel),
             ),
           ),
         );
@@ -128,21 +118,25 @@ class WaitView extends StatelessWidget {
         return Dialog(
           child: Padding(
             padding: Insets.page,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                body,
-                if (cancel != null) ...[
-                  const SizedBox(height: Spacing.md),
-                  Align(alignment: Alignment.centerRight, child: cancel),
-                ],
-              ],
-            ),
+            child: _bodyAboveCancel(body, cancel),
           ),
         );
     }
   }
+
+  /// A wait's body with its cancel control under it, right-aligned - the shape the panel and the
+  /// dialog share (the banner puts the control beside the body instead).
+  Widget _bodyAboveCancel(Widget body, Widget? cancel) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      body,
+      if (cancel != null) ...[
+        const SizedBox(height: Spacing.md),
+        Align(alignment: Alignment.centerRight, child: cancel),
+      ],
+    ],
+  );
 }
 
 /// Runs [task] behind a modal [WaitShape.dialog] that names the operation and reports its progress.

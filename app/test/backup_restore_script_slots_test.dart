@@ -10,6 +10,8 @@ import 'package:tamuapp/core/script_client.dart';
 import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_instructions.dart';
 import 'package:tamuapp/core/storage_client.dart';
+
+import 'support/fake_core.dart';
 import 'package:tamuapp/core/types.dart';
 
 /// A core that answers the service requests a restore sends, so `applyRestorePlan` can be driven
@@ -40,9 +42,6 @@ class _FakeCore implements RequestChannel {
   /// Never answer the report record (CID 3), as a device that cannot say what it runs.
   bool statesUnreadable = false;
 
-  /// The slot count the core reports (a v2 core's script table, generously padded).
-  static const slots = 16;
-
   /// Every request, in the order it was sent.
   final sent = <({ServiceType service, int cid, List<int> payload})>[];
 
@@ -57,16 +56,6 @@ class _FakeCore implements RequestChannel {
     success: false,
     fail: true,
   );
-
-  List<int> _slotMap() {
-    final map = List<int>.filled(slots, 0xFFFF);
-    loaded.forEach((slot, fileId) {
-      if (slot < slots) map[slot] = fileId;
-    });
-    return [
-      for (final id in map) ...[id & 0xFF, (id >> 8) & 0xFF],
-    ];
-  }
 
   @override
   bool get isConnected => true;
@@ -90,7 +79,7 @@ class _FakeCore implements RequestChannel {
     sent.add((service: service, cid: functionCid, payload: payload));
     if (service == ServiceType.script && functionCid == 0) {
       if (slotMapTimesOut) throw StateError('no reply');
-      return _slotMap();
+      return scriptSlotMap(loaded);
     }
     if (service == ServiceType.script && functionCid == 3) {
       if (statesUnreadable) throw StateError('no reply');
@@ -108,7 +97,12 @@ class _FakeCore implements RequestChannel {
       // A file read: answer it the way the device does - per-fragment name echoes - or FAIL it
       // when no such file exists, which is what "the device would not return it" looks like.
       final name = StorageClient.unpadName(payload.sublist(0, 8));
-      if (name == '.TABLE') return _tableReply();
+      if (name == '.TABLE') {
+        return tableReply(
+          files.keys.toList()..sort(),
+          (name) => files[name]!.length,
+        );
+      }
       final content = files[name];
       if (content == null) throw StateError('no such file');
       final out = <int>[];
@@ -121,39 +115,6 @@ class _FakeCore implements RequestChannel {
       return out;
     }
     return const [];
-  }
-
-  /// The `.TABLE` reply a device gives for the files it holds: `.TABLE` itself first (record 0),
-  /// then one 16-byte record per file, chunked the way the Storage service fragments a read (an
-  /// 8-byte name echo per 64 content bytes). The file sweep reads this table, so a fake that does
-  /// not answer it looks like a device that would not say what it stores.
-  List<int> _tableReply() {
-    final names = files.keys.toList()..sort();
-    final content = <int>[];
-    void record(String name, int size) {
-      content
-        ..addAll([0x40, 0, 0, 0])
-        ..addAll([
-          size & 0xFF,
-          (size >> 8) & 0xFF,
-          (size >> 16) & 0xFF,
-          (size >> 24) & 0xFF,
-        ])
-        ..addAll(StorageClient.padName(name));
-    }
-
-    record('.TABLE', (names.length + 1) * 16);
-    for (final name in names) {
-      record(name, files[name]!.length);
-    }
-    final out = <int>[];
-    for (var off = 0; off < content.length; off += 64) {
-      final end = off + 64 > content.length ? content.length : off + 64;
-      out
-        ..addAll(StorageClient.padName('.TABLE'))
-        ..addAll(content.sublist(off, end));
-    }
-    return out;
   }
 
   @override

@@ -25,27 +25,8 @@ import 'package:tamuapp/core/backup_format.dart';
 import 'package:tamuapp/core/backup_script.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/backup_page.dart';
-import 'package:tamuapp/ui/theme.dart';
 
-const Size _portrait = Size(360, 640);
-const Size _landscape = Size(800, 360);
-const List<Size> _bothOrientations = [_portrait, _landscape];
-
-String _name(Size size) => '${size.width.toInt()}x${size.height.toInt()}';
-
-void _useWindow(WidgetTester tester, Size size) {
-  tester.view.physicalSize = size;
-  tester.view.devicePixelRatio = 1.0;
-  addTearDown(tester.view.resetPhysicalSize);
-  addTearDown(tester.view.resetDevicePixelRatio);
-}
-
-Future<void> _pump(WidgetTester tester, Size size, Widget child) async {
-  _useWindow(tester, size);
-  await tester.pumpWidget(MaterialApp(theme: buildTheme(), home: child));
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 100));
-}
+import 'support/layout_gate.dart';
 
 void _report(String line) => debugPrint('[restore plan gate] $line');
 
@@ -218,16 +199,16 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('the page in every filter mode', () {
-    for (final size in _bothOrientations) {
-      testWidgets('mounts and switches modes at ${_name(size)}', (
+    for (final size in bothOrientations) {
+      testWidgets('mounts and switches modes at ${sizeName(size)}', (
         tester,
       ) async {
         final plan = _plan();
-        await _pump(tester, size, RestorePlanPage(plan: plan));
+        await pumpAtSize(tester, size, RestorePlanPage(plan: plan));
         expect(
           tester.takeException(),
           isNull,
-          reason: 'the restore plan page overflowed at ${_name(size)}',
+          reason: 'the restore plan page overflowed at ${sizeName(size)}',
         );
         expect(find.byType(RestoreFilterBar), findsOneWidget);
         expect(
@@ -250,7 +231,7 @@ void main() {
           expect(
             tester.takeException(),
             isNull,
-            reason: 'the ${mode.name} view overflowed at ${_name(size)}',
+            reason: 'the ${mode.name} view overflowed at ${sizeName(size)}',
           );
           final bar = tester.getRect(find.byType(RestoreFilterBar));
           for (final chip in find.byType(ChoiceChip).evaluate()) {
@@ -262,7 +243,7 @@ void main() {
             );
           }
           _report(
-            '${_name(size)} ${mode.name}: bar='
+            '${sizeName(size)} ${mode.name}: bar='
             '${bar.width.toStringAsFixed(0)}x${bar.height.toStringAsFixed(0)}',
           );
         }
@@ -273,7 +254,7 @@ void main() {
   testWidgets('the bar wraps instead of overrunning a narrow window', (
     tester,
   ) async {
-    await _pump(tester, _portrait, RestorePlanPage(plan: _plan()));
+    await pumpAtSize(tester, portraitSize, RestorePlanPage(plan: _plan()));
     expect(tester.takeException(), isNull);
 
     final chips = [
@@ -293,7 +274,7 @@ void main() {
     );
     // The structural rule: nothing leaves the window, and the modes that do not fit the first
     // line are moved DOWN rather than out.
-    expect(chips.last.right, lessThanOrEqualTo(_portrait.width));
+    expect(chips.last.right, lessThanOrEqualTo(portraitSize.width));
     expect(rows.length, greaterThan(1));
   });
 
@@ -301,7 +282,7 @@ void main() {
     testWidgets('Diff hides the same rows, and All brings them back', (
       tester,
     ) async {
-      await _pump(tester, _landscape, RestorePlanPage(plan: _plan()));
+      await pumpAtSize(tester, landscapeSize, RestorePlanPage(plan: _plan()));
       expect(tester.takeException(), isNull);
       // Default: diff. The same row is not on the page; the add/replace/delete are.
       expect(find.text('SAME'), findsNothing);
@@ -314,13 +295,13 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
       expect(tester.takeException(), isNull);
       expect(find.text('SAME'), findsWidgets);
-      _report('all view at ${_name(_landscape)}: SAME rows on the page');
+      _report('all view at ${sizeName(landscapeSize)}: SAME rows on the page');
     });
 
     testWidgets('the delete view lists the deletion and its footer count', (
       tester,
     ) async {
-      await _pump(tester, _landscape, RestorePlanPage(plan: _plan()));
+      await pumpAtSize(tester, landscapeSize, RestorePlanPage(plan: _plan()));
       await tester.tap(find.byType(ChoiceChip).at(PlanFilter.remove.index));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
@@ -332,7 +313,7 @@ void main() {
     });
 
     testWidgets('a class toggle unticks exactly that class', (tester) async {
-      await _pump(tester, _landscape, RestorePlanPage(plan: _plan()));
+      await pumpAtSize(tester, landscapeSize, RestorePlanPage(plan: _plan()));
       await tester.tap(find.byType(ChoiceChip).at(PlanFilter.remove.index));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
@@ -385,7 +366,7 @@ void main() {
           ),
         },
       );
-      await _pump(tester, _landscape, RestorePlanPage(plan: plan));
+      await pumpAtSize(tester, landscapeSize, RestorePlanPage(plan: plan));
       expect(tester.takeException(), isNull);
       // The matching device is the second section, below the fold on a 360 px tall window: the
       // list scrolls, which is what reaches it.
@@ -402,7 +383,7 @@ void main() {
     });
 
     testWidgets('a plan with nothing to change offers All', (tester) async {
-      await _pump(tester, _portrait, RestorePlanPage(plan: _matchingPlan()));
+      await pumpAtSize(tester, portraitSize, RestorePlanPage(plan: _matchingPlan()));
       expect(tester.takeException(), isNull);
       expect(find.text('No differences'), findsOneWidget);
       expect(find.text('Show all items'), findsOneWidget);
@@ -423,9 +404,9 @@ void main() {
     ) async {
       // The old shape: the controls in one Row, no wrapping. This is what the gate catches - the
       // Wrap is not a preference, it is the difference between a readable bar and a clipped one.
-      await _pump(
+      await pumpAtSize(
         tester,
-        _portrait,
+        portraitSize,
         Scaffold(
           body: Row(
             children: [
@@ -441,7 +422,7 @@ void main() {
       );
       final error = tester.takeException();
       _report(
-        'probe at ${_name(_portrait)}: ${error is FlutterError ? error.toString().split('\n').first : error}',
+        'probe at ${sizeName(portraitSize)}: ${error is FlutterError ? error.toString().split('\n').first : error}',
       );
       expect(
         error,
@@ -451,9 +432,9 @@ void main() {
     });
 
     testWidgets('the wrapped bar fits the same window', (tester) async {
-      await _pump(
+      await pumpAtSize(
         tester,
-        _portrait,
+        portraitSize,
         Scaffold(
           body: RestoreFilterBar(
             plan: _plan(includeOrphan: false),
@@ -465,7 +446,7 @@ void main() {
       );
       expect(tester.takeException(), isNull);
       expect(find.byType(ChoiceChip), findsNWidgets(PlanFilter.values.length));
-      _report('the same controls fit at ${_name(_portrait)} once wrapped');
+      _report('the same controls fit at ${sizeName(portraitSize)} once wrapped');
     });
   });
 }

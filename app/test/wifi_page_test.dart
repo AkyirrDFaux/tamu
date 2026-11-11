@@ -7,6 +7,7 @@ import 'package:tamuapp/ui/formatters.dart';
 import 'package:tamuapp/ui/theme.dart';
 import 'package:tamuapp/ui/notice_host.dart';
 import 'package:tamuapp/ui/wifi_page.dart';
+import 'support/block_reads.dart';
 
 /// The WiFi panel, served by a fake device so the states are reachable off-rig.
 ///
@@ -89,25 +90,10 @@ class _FakeWifiDevice extends RegisterClient {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  ({ValueInfo meta, List<int> value}) field(
-    int type,
-    List<int> value, {
-    int flags = 0,
-    int? size,
-  }) => (
-    meta: ValueInfo(type: type, size: size ?? value.length, flags: flags),
-    value: value,
-  );
-
-  List<int> text(String s, int width) {
-    final bytes = s.codeUnits.toList();
-    if (bytes.length > width) {
-      bytes.length = width;
-    } else {
-      bytes.addAll(List<int>.filled(width - bytes.length, 0));
-    }
-    return bytes;
-  }
+  // One field read and a fixed-width text value: the two fixtures every panel test needs
+  // (`support/block_reads.dart`), under the names this suite reads them by.
+  final field = fieldBytes;
+  final text = paddedText;
 
   /// The `IP address` field's bytes for an IPv4 address, in the IPv4-mapped form the firmware
   /// reports (`::ffff:a.b.c.d`).

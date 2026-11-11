@@ -19,6 +19,8 @@ import 'package:tamuapp/core/fragment_reassembler.dart';
 import 'package:tamuapp/core/notice.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
+
+import 'support/fake_channel.dart';
 import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/file_viewers.dart';
@@ -29,7 +31,7 @@ import 'package:tamuapp/ui/scripts_page.dart';
 import 'package:tamuapp/ui/theme.dart';
 
 /// A fake device for the Scripts page: the slot map, the file table and the load command.
-class _ScriptDevice implements TolerantRequestChannel {
+class _ScriptDevice extends FakeTolerantChannel {
   _ScriptDevice({required this.slotMap});
 
   /// The CID 0 slot map payload: one uint16 file id per slot, `0xFFFF` = empty.
@@ -47,50 +49,10 @@ class _ScriptDevice implements TolerantRequestChannel {
   List<int> table = const [];
 
   @override
-  bool get isConnected => true;
-
-  @override
   int takeTxId() => 0xF800;
 
   @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => (await requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  )).payload;
-
-  @override
-  Future<PacketResponse> requestWithFlags(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) => requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  );
-
-  @override
-  Future<PacketResponse> requestTolerant(
+  Future<PacketResponse> answer(
     int targetId,
     ServiceType service,
     int functionCid, {
@@ -129,7 +91,7 @@ class _ScriptDevice implements TolerantRequestChannel {
 
 /// A fake device for the Register page's topology: the script slot map, the block type
 /// enumeration and the per-block metadata reads.
-class _TopologyDevice implements TolerantRequestChannel {
+class _TopologyDevice extends FakeTolerantChannel {
   /// False makes the block-type enumeration go unanswered (the first topology read fails).
   bool enumerationAnswers = true;
 
@@ -146,50 +108,10 @@ class _TopologyDevice implements TolerantRequestChannel {
   int enumerateSends = 0;
 
   @override
-  bool get isConnected => true;
-
-  @override
   int takeTxId() => 0xF900;
 
   @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => (await requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  )).payload;
-
-  @override
-  Future<PacketResponse> requestWithFlags(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) => requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  );
-
-  @override
-  Future<PacketResponse> requestTolerant(
+  Future<PacketResponse> answer(
     int targetId,
     ServiceType service,
     int functionCid, {
@@ -258,7 +180,7 @@ enum _DtMode {
 }
 
 /// A fake device that answers the `.DV_` viewer's sibling `.DT_` read from [_DtMode].
-class _SiblingDevice implements TolerantRequestChannel {
+class _SiblingDevice extends FakeTolerantChannel {
   _SiblingDevice(this.mode, this.table);
 
   _DtMode mode;
@@ -266,50 +188,10 @@ class _SiblingDevice implements TolerantRequestChannel {
   int sends = 0;
 
   @override
-  bool get isConnected => true;
-
-  @override
   int takeTxId() => 0xFA00;
 
   @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => (await requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  )).payload;
-
-  @override
-  Future<PacketResponse> requestWithFlags(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) => requestTolerant(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  );
-
-  @override
-  Future<PacketResponse> requestTolerant(
+  Future<PacketResponse> answer(
     int targetId,
     ServiceType service,
     int functionCid, {

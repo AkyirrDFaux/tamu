@@ -739,9 +739,8 @@ class _UiCursor {
   }
 }
 
-/// Parses the whole UI-info blob in a single walk: function name, the four name lists, the
-/// per-input specifications and (v3) the function block.
-({
+/// What a script file's UI-info blob decodes to.
+typedef _UiInfo = ({
   String functionName,
   List<String> inputNames,
   List<String> outputNames,
@@ -751,21 +750,27 @@ class _UiCursor {
   List<ScriptFunction> functions,
   int functionMainLineCount,
   Map<int, int> mainCallTargets,
-})
-_parseUiInfo(List<int> ui, int inputCount) {
-  if (ui.isEmpty) {
-    return (
-      functionName: '',
-      inputNames: const <String>[],
-      outputNames: const <String>[],
-      variableNames: const <String>[],
-      constantNames: const <String>[],
-      inputSpecs: const <ScriptInputSpec>[],
-      functions: const <ScriptFunction>[],
-      functionMainLineCount: 0,
-      mainCallTargets: const <int, int>{},
-    );
-  }
+});
+
+/// The UI-info a file carries when it has none, or when its blob is an older layout the app does
+/// not read: no names, no inputs, no functions. [functionName] is for the one case that can still
+/// be recovered from a pre-versioned blob.
+_UiInfo _emptyUiInfo({String functionName = ''}) => (
+  functionName: functionName,
+  inputNames: const <String>[],
+  outputNames: const <String>[],
+  variableNames: const <String>[],
+  constantNames: const <String>[],
+  inputSpecs: const <ScriptInputSpec>[],
+  functions: const <ScriptFunction>[],
+  functionMainLineCount: 0,
+  mainCallTargets: const <int, int>{},
+);
+
+/// Parses the whole UI-info blob in a single walk: function name, the four name lists, the
+/// per-input specifications and (v3) the function block.
+_UiInfo _parseUiInfo(List<int> ui, int inputCount) {
+  if (ui.isEmpty) return _emptyUiInfo();
   final version = ui[0];
   if (version != scriptUiInfoVersion) {
     // Unknown/older blob (UI info v1 is no longer supported): the first byte was the
@@ -774,17 +779,7 @@ _parseUiInfo(List<int> ui, int inputCount) {
     final name = (1 + n <= ui.length)
         ? String.fromCharCodes(ui.sublist(1, 1 + n))
         : '';
-    return (
-      functionName: name,
-      inputNames: const <String>[],
-      outputNames: const <String>[],
-      variableNames: const <String>[],
-      constantNames: const <String>[],
-      inputSpecs: const <ScriptInputSpec>[],
-      functions: const <ScriptFunction>[],
-      functionMainLineCount: 0,
-      mainCallTargets: const <int, int>{},
-    );
+    return _emptyUiInfo(functionName: name);
   }
 
   final c = _UiCursor(ui)..pos = 1;

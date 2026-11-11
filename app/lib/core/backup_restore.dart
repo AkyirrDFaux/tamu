@@ -593,11 +593,6 @@ class PlanView {
   /// undecodable value).
   int get unavailable => items.where((i) => i.issue != null).length;
 
-  /// The rows of [kind] on screen.
-  int countOf(DiffKind kind) => kind == DiffKind.remove
-      ? removals.length
-      : items.where((i) => i.diff == kind).length;
-
   /// True when nothing is shown.
   bool get isEmpty => shown == 0;
 }

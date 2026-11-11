@@ -26,6 +26,8 @@ import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/render_dict.dart'
     show geometryDictType, textureDictType;
 import 'package:tamuapp/core/request_channel.dart';
+
+import 'support/fake_channel.dart';
 import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/file_viewers.dart';
@@ -115,7 +117,7 @@ PacketResponse _lay1Reply({bool loseTheLast = false}) {
 
 /// A channel with the rig's answers: the file table as a queue of replies (so one run can be
 /// truncated and the next whole, which is what the re-request does), and whole files.
-class _RigChannel implements TolerantRequestChannel {
+class _RigChannel extends FakeTolerantChannel {
   _RigChannel(this.table);
 
   final List<PacketResponse> table;
@@ -126,44 +128,10 @@ class _RigChannel implements TolerantRequestChannel {
   int get tableAsks => _tableAsks;
 
   @override
-  bool get isConnected => true;
-
-  @override
   int takeTxId() => 0xF900;
 
   @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => (await requestWithFlags(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-  )).payload;
-
-  @override
-  Future<PacketResponse> requestWithFlags(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => _answer(functionCid, payload);
-
-  @override
-  Future<PacketResponse> requestTolerant(
+  Future<PacketResponse> answer(
     int targetId,
     ServiceType service,
     int functionCid, {

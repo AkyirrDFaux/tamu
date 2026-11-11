@@ -259,30 +259,16 @@ class _WifiPageState extends State<WifiPage>
     ];
 
     // The block is missing: draw the panel as nothing at all (not an empty card, not an error).
-    if (!blockPresent) return TamuPage(title: 'WiFi', actions: actions);
+    final statePage = blockPanelStatePage(
+      title: 'WiFi',
+      unavailable: 'WiFi block unavailable',
+      reading: 'Reading WiFi settings',
+      onRefresh: _refresh,
+      actions: actions,
+    );
+    if (statePage != null) return statePage;
 
-    final snapshot = blockSnapshot;
-    if (blockError != null && snapshot == null) {
-      return TamuPage(
-        title: 'WiFi',
-        actions: actions,
-        state: StateKind.error,
-        stateMessage: 'WiFi block unavailable',
-        stateDetails: blockError,
-        stateAction: OutlinedButton(
-          onPressed: _refresh,
-          child: const Text('Retry'),
-        ),
-      );
-    }
-    if (snapshot == null) {
-      return TamuPage(
-        title: 'WiFi',
-        actions: actions,
-        state: StateKind.loading,
-        stateMessage: 'Reading WiFi settings',
-      );
-    }
+    final snapshot = blockSnapshot!;
 
     return TamuPage(
       title: 'WiFi',
