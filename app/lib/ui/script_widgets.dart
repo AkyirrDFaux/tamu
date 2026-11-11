@@ -279,14 +279,7 @@ class _ScriptIoSectionState extends State<ScriptIoSection> {
       entry.value,
     );
     if (next == null || !mounted) return;
-    // Declare the actual value length (a shorter String is space-padded by the firmware);
-    // the field's declared Size would make the device copy stale payload bytes.
-    final meta = ValueInfo(
-      type: entry.meta.type,
-      flags: entry.meta.flags,
-      size: next.length,
-      key: entry.meta.key,
-    );
+    final meta = entry.meta.withSize(next.length);
     final ok = await widget.client.writeEntry(
       widget.slot,
       widget.field,

@@ -548,7 +548,7 @@ class BootloaderClient {
             total: total,
           );
         }
-        if (!_sameBytes(data, chunks[i].data)) {
+        if (!sameBytes(data, chunks[i].data)) {
           mistakes.add(chunks[i]);
         }
         onProgress?.call(
@@ -631,13 +631,5 @@ class BootloaderClient {
       chunks.add(_Chunk(offset, data));
     }
     return chunks;
-  }
-
-  static bool _sameBytes(List<int> a, List<int> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
   }
 }

@@ -53,6 +53,16 @@ String decodePaddedString(List<int> bytes) {
 /// Rounds [v] up to the next 4-byte boundary (the wire/backup alignment).
 int align4(int v) => (v + 3) & ~3;
 
+/// Whether two byte lists are identical - the one byte comparison in the tree (a restore's diff
+/// classification, the flashing client's read-back check).
+bool sameBytes(List<int> a, List<int> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
 /// Sign-extends a 32 bit little-endian value (Dart ints are 64 bit, so the
 /// sign bit must be expanded manually).
 int _signExtend32(int raw) => (raw & 0x80000000) != 0 ? raw - 0x100000000 : raw;
@@ -492,6 +502,14 @@ class ValueInfo {
 
   DataType get dataType => DataType.fromValue(type);
   BlockType get blockType => BlockType.fromValue(type);
+
+  /// The same type, flags and key, declaring [size] bytes.
+  ///
+  /// A write declares the value it actually sends, never the field's declared Size: a shorter value
+  /// (a trimmed String) under the field's own Size makes the device copy stale payload bytes, and
+  /// the firmware pads the value itself.
+  ValueInfo withSize(int size) =>
+      ValueInfo(type: type, flags: flags, size: size, key: key);
 
   bool get readOnly => flags & ValueFlags.readOnly != 0;
   bool get persistent => flags & ValueFlags.persistent != 0;

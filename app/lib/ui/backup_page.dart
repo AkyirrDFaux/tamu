@@ -676,29 +676,27 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
     );
   }
 
-  Widget _group(String title, List<RestoreItem> items) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: Spacing.lg),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(
-              top: Spacing.md,
-              bottom: Spacing.hairline,
-            ),
-            child: Text(title, style: Theme.of(context).textTheme.titleSmall),
-          ),
-          for (final item in items) _itemTile(item),
-        ],
-      ),
-    );
-  }
+  Widget _group(String title, List<RestoreItem> items) => _groupFrame(
+    title,
+    rows: [for (final item in items) _itemTile(item)],
+  );
 
   /// The deletion rows of one device, under their own heading and in the failure colour: an
   /// unload or a cancel stops something the rig is doing, so it is never listed among the writes
   /// without a word.
-  Widget _removalGroup(List<RestoreRemoval> removals) {
+  Widget _removalGroup(List<RestoreRemoval> removals) => _groupFrame(
+    'Delete from the device',
+    colour: kError,
+    rows: [for (final removal in removals) _removalTile(removal)],
+  );
+
+  /// One titled group of plan rows: the padding, the heading and the rows. The heading's colour is
+  /// the only thing a caller varies - a deletion group is written in the failure ink.
+  Widget _groupFrame(
+    String title, {
+    Color? colour,
+    required List<Widget> rows,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: Spacing.lg),
       child: Column(
@@ -710,13 +708,13 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
               bottom: Spacing.hairline,
             ),
             child: Text(
-              'Delete from the device',
+              title,
               style: Theme.of(
                 context,
-              ).textTheme.titleSmall?.copyWith(color: kError),
+              ).textTheme.titleSmall?.copyWith(color: colour),
             ),
           ),
-          for (final removal in removals) _removalTile(removal),
+          ...rows,
         ],
       ),
     );

@@ -508,6 +508,33 @@ extension on _RegisterPageState {
     );
   }
 
+  /// The dictionary shape of one dynamic field: the key-0 marker type (0 when the field is not a
+  /// dictionary), the selector byte key 1 carries (the geometry shape or texture effect that picks
+  /// the meaningful keys), and whether this field is a dictionary at all.
+  ///
+  /// Two handlers read this shape - adding a key and re-keying one - and the four steps that build
+  /// it (marker, type, selector, dictionary test) only mean anything together.
+  ({int dictType, bool isDict, int selector}) _dictShape(
+    int blockType,
+    int inst,
+    int fieldIndex,
+  ) {
+    final cache = _fieldCache[(blockType << 8) | inst];
+    final head = cache?[fieldIndex * 256 + 0];
+    final dictType = (head != null && isRenderDictType(head.meta.type))
+        ? head.meta.type
+        : 0;
+    final selectorEntry = cache?[fieldIndex * 256 + 1];
+    final selector = (selectorEntry != null && selectorEntry.value.isNotEmpty)
+        ? selectorEntry.value.first
+        : 0;
+    return (
+      dictType: dictType,
+      isDict: isRenderDictType(dictType),
+      selector: selector,
+    );
+  }
+
   /// Adds a key to a dynamic block's field: asks which key (dict selector + manual
   /// numeric, always), then the type and a value.
   Future<void> _addDynamicEntry(
@@ -518,16 +545,10 @@ extension on _RegisterPageState {
   ) async {
     if (block == null || !mounted) return;
     final keys = _dynamicKeys[inst]?[fieldIndex] ?? <int>[];
-    final cache = _fieldCache[(blockType << 8) | inst];
-    final head = cache?[fieldIndex * 256 + 0];
-    final dictType = (head != null && isRenderDictType(head.meta.type))
-        ? head.meta.type
-        : 0;
-    final isDict = isRenderDictType(dictType);
-    final selectorEntry = cache?[fieldIndex * 256 + 1];
-    final selector = (selectorEntry != null && selectorEntry.value.isNotEmpty)
-        ? selectorEntry.value.first
-        : 0;
+    final shape = _dictShape(blockType, inst, fieldIndex);
+    final dictType = shape.dictType;
+    final isDict = shape.isDict;
+    final selector = shape.selector;
 
     var startKey = 0;
     while (keys.contains(startKey)) {
@@ -615,15 +636,10 @@ extension on _RegisterPageState {
     final entry = cache?[fieldIndex * 256 + key];
     if (entry == null) return;
     final keys = _dynamicKeys[inst]?[fieldIndex] ?? <int>[];
-    final head = cache?[fieldIndex * 256 + 0];
-    final dictType = (head != null && isRenderDictType(head.meta.type))
-        ? head.meta.type
-        : 0;
-    final isDict = isRenderDictType(dictType);
-    final selectorEntry = cache?[fieldIndex * 256 + 1];
-    final selector = (selectorEntry != null && selectorEntry.value.isNotEmpty)
-        ? selectorEntry.value.first
-        : 0;
+    final shape = _dictShape(blockType, inst, fieldIndex);
+    final dictType = shape.dictType;
+    final isDict = shape.isDict;
+    final selector = shape.selector;
 
     final newKey = await _promptKey(
       title: 'Change key (was $key)',

@@ -191,19 +191,25 @@ Future<List<int>?> _editVector(
     ),
     actions: tamuDialogActions(
       onCancel: () => Navigator.pop(context),
-      onConfirm: () {
-        final values = controllers.map((c) => double.tryParse(c.text)).toList();
-        if (values.any((v) => v == null)) {
-          return;
-        }
-        final out = BytesBuilder();
-        for (final v in values) {
-          out.add(numberToBytes(v!));
-        }
-        Navigator.pop(context, out.toBytes());
-      },
+      onConfirm: () => _popNumbers(context, controllers),
     ),
   );
+}
+
+/// Pops the dialog with the edited cells as Number bytes, or stays open when a cell does not parse
+/// (a mistyped cell must not be written as zero, and must not dismiss the editor either).
+void _popNumbers(
+  BuildContext context,
+  List<TextEditingController> controllers, {
+  List<int> header = const [],
+}) {
+  final values = controllers.map((c) => double.tryParse(c.text)).toList();
+  if (values.any((v) => v == null)) return;
+  final out = BytesBuilder()..add(header);
+  for (final v in values) {
+    out.add(numberToBytes(v!));
+  }
+  Navigator.pop(context, out.toBytes());
 }
 
 /// Matrix (Rows x Cols of Number): grid editor with the header (h, w) preserved, and
@@ -301,17 +307,11 @@ Future<List<int>?> _editMatrix(
     ),
     actions: tamuDialogActions(
       onCancel: () => Navigator.pop(context),
-      onConfirm: () {
-        final values = controllers.map((c) => double.tryParse(c.text)).toList();
-        if (values.any((v) => v == null)) {
-          return;
-        }
-        final out = BytesBuilder()..add([h & 0xFF, h >> 8, w & 0xFF, w >> 8]);
-        for (final v in values) {
-          out.add(numberToBytes(v!));
-        }
-        Navigator.pop(context, out.toBytes());
-      },
+      onConfirm: () => _popNumbers(
+        context,
+        controllers,
+        header: [h & 0xFF, h >> 8, w & 0xFF, w >> 8],
+      ),
     ),
   );
 }

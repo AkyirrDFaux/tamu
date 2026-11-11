@@ -2808,16 +2808,6 @@ class ScriptChanges {
       _links[targetId] ?? const {};
 }
 
-/// Whether two byte lists are identical - the comparison [ScriptChanges] and the diff
-/// classification both rest on, so there is one byte comparison in the tree.
-bool sameBytes(List<int> a, List<int> b) {
-  if (a.length != b.length) return false;
-  for (var i = 0; i < a.length; i++) {
-    if (a[i] != b[i]) return false;
-  }
-  return true;
-}
-
 /// Whether two script images are byte-identical.
 bool sameImage(List<int> a, List<int> b) => sameBytes(a, b);
 

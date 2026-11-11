@@ -80,19 +80,7 @@ extension on _RegisterPageState {
   ) {
     final theme = Theme.of(context);
     if (entry == null) {
-      return ListTile(
-        key: cardKey,
-        dense: true,
-        leading: const SizedBox(
-          width: IconSize.sm,
-          height: IconSize.sm,
-          child: CircularProgressIndicator(),
-        ),
-        title: Text(
-          '$name $key',
-          style: theme.textTheme.labelSmall?.copyWith(color: kTextDisabled),
-        ),
-      );
+      return _loadingTile(theme, cardKey: cardKey, label: '$name $key');
     }
     final editable = editableField && !entry.meta.readOnly;
     return ListTile(
@@ -352,19 +340,7 @@ extension on _RegisterPageState {
         for (final k in keys) (k, cache?[fieldIndex * 256 + k]),
       ];
       if (entries.every((e) => e.$2 == null)) {
-        return ListTile(
-          key: cardKey,
-          dense: true,
-          leading: const SizedBox(
-            width: IconSize.sm,
-            height: IconSize.sm,
-            child: CircularProgressIndicator(),
-          ),
-          title: Text(
-            '...',
-            style: theme.textTheme.labelSmall?.copyWith(color: kTextDisabled),
-          ),
-        );
+        return _loadingTile(theme, cardKey: cardKey);
       }
       final head = entries.firstOrNull?.$2;
       final isDict = head != null && isRenderDictType(head.meta.type);
@@ -636,18 +612,7 @@ extension on _RegisterPageState {
     }
 
     if (field == null) {
-      return ListTile(
-        dense: true,
-        leading: const SizedBox(
-          width: IconSize.sm,
-          height: IconSize.sm,
-          child: CircularProgressIndicator(),
-        ),
-        title: Text(
-          '...',
-          style: theme.textTheme.labelSmall?.copyWith(color: kTextDisabled),
-        ),
-      );
+      return _loadingTile(theme);
     }
 
     final primaryFlags = ValueFlags.describe(field.meta.flags);
@@ -784,39 +749,14 @@ extension on _RegisterPageState {
             ),
             trailing: f.meta.readOnly
                 ? null
-                : PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert, size: IconSize.sm),
-                    onSelected: (action) {
-                      if (action == 'edit') {
-                        _editValue(
-                          blockType,
-                          inst,
-                          block,
-                          fieldIndex,
-                          memberKey: key,
-                        );
-                      } else if (action == 'save') {
-                        _saveField(blockType, inst, block, fieldIndex);
-                      } else if (action == 'recall') {
-                        _recallField(blockType, inst, block, fieldIndex);
-                      }
-                    },
-                    itemBuilder: (_) => [
-                      const PopupMenuItem(
-                        value: 'edit',
-                        child: Text('Edit value'),
-                      ),
-                      if (f.meta.persistent) ...[
-                        const PopupMenuItem(
-                          value: 'save',
-                          child: Text('Save to backup'),
-                        ),
-                        const PopupMenuItem(
-                          value: 'recall',
-                          child: Text('Recall from backup'),
-                        ),
-                      ],
-                    ],
+                : _fieldActions(
+                    blockType,
+                    inst,
+                    block,
+                    fieldIndex,
+                    memberKey: key,
+                    persistent: f.meta.persistent,
+                    iconSize: IconSize.sm,
                   ),
           );
         }).toList(),
@@ -874,35 +814,74 @@ extension on _RegisterPageState {
       ),
       trailing: field.meta.readOnly
           ? null
-          : PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert, size: IconSize.md),
+          : _fieldActions(
+              blockType,
+              inst,
+              block,
+              fieldIndex,
+              persistent: field.meta.persistent,
               tooltip: 'Field actions',
-              onSelected: (action) {
-                if (action == 'edit') {
-                  _editValue(blockType, inst, block, fieldIndex);
-                } else if (action == 'save') {
-                  _saveField(blockType, inst, block, fieldIndex);
-                } else if (action == 'recall') {
-                  _recallField(blockType, inst, block, fieldIndex);
-                }
-              },
-              itemBuilder: (_) => [
-                const PopupMenuItem(value: 'edit', child: Text('Edit value')),
-                if (field.meta.persistent) ...[
-                  const PopupMenuItem(
-                    value: 'save',
-                    child: Text('Save to backup'),
-                  ),
-                  const PopupMenuItem(
-                    value: 'recall',
-                    child: Text('Recall from backup'),
-                  ),
-                ],
-              ],
             ),
       onTap: (!field.meta.readOnly)
           ? () => _editValue(blockType, inst, block, fieldIndex)
           : null,
+    );
+  }
+
+  /// The row drawn for a value that has not been read yet: the small spinner and the label, in the
+  /// disabled ink. Three tiles showed this shape by hand (a script entry, a dynamic field, a static
+  /// field) and the label is the only thing that ever differed.
+  Widget _loadingTile(ThemeData theme, {Key? cardKey, String label = '...'}) {
+    return ListTile(
+      key: cardKey,
+      dense: true,
+      leading: const SizedBox(
+        width: IconSize.sm,
+        height: IconSize.sm,
+        child: CircularProgressIndicator(),
+      ),
+      title: Text(
+        label,
+        style: theme.textTheme.labelSmall?.copyWith(color: kTextDisabled),
+      ),
+    );
+  }
+
+  /// The trailing menu of a field row: edit the value, and - for a persistent field - save it to
+  /// the backup or recall it from there.
+  ///
+  /// The two rows that carry it differ in exactly two things, both parameters: the System member
+  /// row addresses its struct member ([memberKey]) and uses the smaller icon, the top-level field
+  /// row carries the tooltip that names the menu.
+  Widget _fieldActions(
+    int blockType,
+    int inst,
+    ({int type, int inst, ValueInfo meta, String name})? block,
+    int fieldIndex, {
+    int? memberKey,
+    required bool persistent,
+    double iconSize = IconSize.md,
+    String? tooltip,
+  }) {
+    return PopupMenuButton<String>(
+      icon: Icon(Icons.more_vert, size: iconSize),
+      tooltip: tooltip,
+      onSelected: (action) {
+        if (action == 'edit') {
+          _editValue(blockType, inst, block, fieldIndex, memberKey: memberKey);
+        } else if (action == 'save') {
+          _saveField(blockType, inst, block, fieldIndex);
+        } else if (action == 'recall') {
+          _recallField(blockType, inst, block, fieldIndex);
+        }
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: 'edit', child: Text('Edit value')),
+        if (persistent) ...[
+          const PopupMenuItem(value: 'save', child: Text('Save to backup')),
+          const PopupMenuItem(value: 'recall', child: Text('Recall from backup')),
+        ],
+      ],
     );
   }
 }

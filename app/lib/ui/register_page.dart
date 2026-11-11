@@ -701,43 +701,54 @@ class _RegisterPageState extends State<RegisterPage>
       }
     }
 
+    /// The (field -> keys) map of one enumeration reply: the device answers one word per row,
+    /// the field in the high byte and the key in the low one. Both keyed branches below read the
+    /// same reply shape.
+    Map<int, List<int>> groupKeysByField(List<int> words) {
+      final byField = <int, List<int>>{};
+      for (final w in words) {
+        final f = w >> 8;
+        (byField[f] ??= <int>[]).add(w & 0xFF);
+      }
+      return byField;
+    }
+
+    /// Reads the pending (field, key) rows of this block into [cache]: a keyed row that no longer
+    /// answers is removed, so the row does not keep a stale value.
+    Future<void> readKeyedRows(List<(int, int)> pending) => readRows(
+      pending,
+      (f, key) => _client.readBlockField(blockType, instance, f, key),
+      (row, entry) {
+        if (entry != null) {
+          cache[row.$1 * 256 + row.$2] = entry;
+        } else {
+          cache.remove(row.$1 * 256 + row.$2);
+        }
+      },
+    );
+
     // Dynamic blocks use the flat Field&Key model: enumerate the distinct fields and
     // read every (field, key) entry (cached as cache[field*256 + key]).
     if (isDynamicType(blockType)) {
       // One enumeration gives EVERY (field, key) row, so the key map is built from it instead
       // of asking the device once per field.
-      final words =
-          await _client.enumerateFieldKeys(blockType, instance & 0x3F) ??
-          const <int>[];
-      final keysByField = <int, List<int>>{};
-      for (final w in words) {
-        final f = w >> 8;
-        (keysByField[f] ??= <int>[]).add(w & 0xFF);
-      }
-      final fieldList = keysByField.keys.toList()..sort();
+      final byField = groupKeysByField(
+        await _client.enumerateFieldKeys(blockType, instance & 0x3F) ??
+            const <int>[],
+      );
+      final fieldList = byField.keys.toList()..sort();
       fields
         ..clear()
         ..addAll(fieldList);
       final keyMap = _dynamicKeys.putIfAbsent(instance, () => {});
       for (final f in fieldList) {
-        keyMap[f] = keysByField[f]!;
+        keyMap[f] = byField[f]!;
       }
-      final pending = <(int, int)>[
+      await readKeyedRows([
         for (final f in fieldList)
-          for (final key in keysByField[f]!)
+          for (final key in byField[f]!)
             if (forceRefresh || !cache.containsKey(f * 256 + key)) (f, key),
-      ];
-      await readRows(
-        pending,
-        (f, key) => _client.readBlockField(blockType, instance, f, key),
-        (row, entry) {
-          if (entry != null) {
-            cache[row.$1 * 256 + row.$2] = entry;
-          } else {
-            cache.remove(row.$1 * 256 + row.$2);
-          }
-        },
-      );
+      ]);
       return;
     }
 
@@ -746,33 +757,18 @@ class _RegisterPageState extends State<RegisterPage>
     // categories are exposed here.
     if (isScriptType(blockType)) {
       final keyMap = _scriptKeys.putIfAbsent(cacheKey, () => {});
-      final words =
-          await _client.enumerateFieldKeys(blockType, instance) ??
-          const <int>[];
-      final keysByField = <int, List<int>>{};
-      for (final w in words) {
-        final f = w >> 8;
-        (keysByField[f] ??= <int>[]).add(w & 0xFF);
-      }
-      for (var f = ScriptField.input; f < block.meta.size; f++) {
-        keyMap[f] = keysByField[f] ?? <int>[];
-      }
-      final pending = <(int, int)>[
-        for (var f = ScriptField.input; f < block.meta.size; f++)
-          for (final key in keysByField[f] ?? const <int>[])
-            if (forceRefresh || !cache.containsKey(f * 256 + key)) (f, key),
-      ];
-      await readRows(
-        pending,
-        (f, key) => _client.readBlockField(blockType, instance, f, key),
-        (row, entry) {
-          if (entry != null) {
-            cache[row.$1 * 256 + row.$2] = entry;
-          } else {
-            cache.remove(row.$1 * 256 + row.$2);
-          }
-        },
+      final byField = groupKeysByField(
+        await _client.enumerateFieldKeys(blockType, instance) ??
+            const <int>[],
       );
+      for (var f = ScriptField.input; f < block.meta.size; f++) {
+        keyMap[f] = byField[f] ?? <int>[];
+      }
+      await readKeyedRows([
+        for (var f = ScriptField.input; f < block.meta.size; f++)
+          for (final key in byField[f] ?? const <int>[])
+            if (forceRefresh || !cache.containsKey(f * 256 + key)) (f, key),
+      ]);
       return;
     }
 
@@ -1165,15 +1161,7 @@ class _RegisterPageState extends State<RegisterPage>
       entry.value,
     );
     if (next == null || !mounted) return;
-    // Declare the actual value length: sending the field's declared Size with a shorter
-    // value (a trimmed String) makes the device copy stale payload bytes. A shorter String
-    // is null-padded by the firmware.
-    final meta = ValueInfo(
-      type: entry.meta.type,
-      flags: entry.meta.flags,
-      size: next.length,
-      key: entry.meta.key,
-    );
+    final meta = entry.meta.withSize(next.length);
     final ok = await _client.writeBlockField(
       blockType,
       inst,
