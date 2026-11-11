@@ -2972,23 +2972,34 @@ class ScriptReloadReport {
 /// so a slot it is about to load is not in the loaded map here and cannot be loaded twice. A target
 /// whose slot map cannot be read is reported as a skipped phase and a failure, never as "nothing
 /// changed".
-Future<({List<ScriptReloadReport> reports, List<RestoreFailure> failures})>
-reloadChangedScripts(RestorePlan plan, ScriptChanges changes) async {
-  final reports = <ScriptReloadReport>[];
-  final failures = <RestoreFailure>[];
-
-  // Per TARGET NODE, as the sweep groups them: slots belong to the node, so two source devices
-  // remapped onto one target share one slot table.
+/// The live targets a restore's script phases work on, grouped per target node.
+///
+/// A slot and a file belong to the NODE, so two archive devices remapped onto one target share
+/// one slot table and one file table, and a phase that walks sources has to union their needs
+/// against that target. A source with no target is not swept at all (the plan already reported
+/// its items as unplaceable), and a target without the script role has no slots or files to
+/// sweep. [reloadChangedScripts], [pruneScriptSlots] and [pruneScriptFiles] all start from this
+/// map, so the grouping (and what it leaves out) is decided in one place.
+({Map<int, List<BackupDevice>> sourcesByTarget, Map<int, LiveDevice> targets})
+scriptTargets(RestorePlan plan) {
   final sourcesByTarget = <int, List<BackupDevice>>{};
   final targets = <int, LiveDevice>{};
   for (final source in plan.devices) {
     final target = plan.deviceTargets[source.id];
     if (target == null) continue;
-    // A device without the script role has no slots to reload.
     if (target.capabilities & Capability.scripts == 0) continue;
     targets[target.id] = target;
     sourcesByTarget.putIfAbsent(target.id, () => []).add(source);
   }
+  return (sourcesByTarget: sourcesByTarget, targets: targets);
+}
+
+Future<({List<ScriptReloadReport> reports, List<RestoreFailure> failures})>
+reloadChangedScripts(RestorePlan plan, ScriptChanges changes) async {
+  final reports = <ScriptReloadReport>[];
+  final failures = <RestoreFailure>[];
+
+  final (:sourcesByTarget, :targets) = scriptTargets(plan);
 
   for (final group in sourcesByTarget.entries) {
     final target = targets[group.key]!;
@@ -3387,18 +3398,7 @@ pruneScriptSlots(RestorePlan plan) async {
     }
   }
 
-  // The live target each source device is restored onto, grouped by that target (see above).
-  final sourcesByTarget = <int, List<BackupDevice>>{};
-  final targets = <int, LiveDevice>{};
-  for (final source in plan.devices) {
-    final target = plan.deviceTargets[source.id];
-    if (target == null) continue;
-    // A device without the script role has no slot table to sweep, and every one of its script
-    // items was already reported as unsupported by the plan.
-    if (target.capabilities & Capability.scripts == 0) continue;
-    targets[target.id] = target;
-    sourcesByTarget.putIfAbsent(target.id, () => []).add(source);
-  }
+  final (:sourcesByTarget, :targets) = scriptTargets(plan);
 
   for (final group in sourcesByTarget.entries) {
     final target = targets[group.key]!;
@@ -3706,19 +3706,7 @@ pruneScriptFiles(RestorePlan plan) async {
   final prunes = <ScriptFilePrune>[];
   final failures = <RestoreFailure>[];
 
-  // The live target each source device is restored onto, grouped by that target: files belong to
-  // the node, so two archive devices on one target share one file table and their needs union.
-  final sourcesByTarget = <int, List<BackupDevice>>{};
-  final targets = <int, LiveDevice>{};
-  for (final source in plan.devices) {
-    final target = plan.deviceTargets[source.id];
-    if (target == null) continue;
-    // A device without the script role has no script files, and its script items were already
-    // reported as unsupported by the plan.
-    if (target.capabilities & Capability.scripts == 0) continue;
-    targets[target.id] = target;
-    sourcesByTarget.putIfAbsent(target.id, () => []).add(source);
-  }
+  final (:sourcesByTarget, :targets) = scriptTargets(plan);
 
   for (final group in sourcesByTarget.entries) {
     final target = targets[group.key]!;
