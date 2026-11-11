@@ -50,6 +50,18 @@ __attribute__((noinline)) void SendResponse(const PacketFrame &Frame, const uint
     BusRepeatNote(Frame, Status, Len, (uint16_t)TimeFromBoot());
 }
 
+// The flags of one FRAG fragment: type+frag always, start on the first, stop on the last.
+// Shared by both fragment senders so a stream cannot be terminated differently depending on
+// whether the request frame is still in hand (SendFragFragment) or only its routing fields are
+// (SendFragTo).
+inline uint8_t FragFlags(uint16_t Frag, uint16_t Frags)
+{
+    uint8_t Flags = FLAG_TYPE | FLAG_FRAG;
+    if (Frag == 0) Flags |= FLAG_START;
+    if (Frag == Frags - 1) Flags |= FLAG_STOP;
+    return Flags;
+}
+
 // Emits one FRAG fragment: the caller has placed `n` content bytes at tx_frame.payload + 4,
 // and the 4-byte frag info is written before the frame is finalized and dispatched. Every
 // streamed reply (enumerate, storage read, subscription tables, SNDB read-all, logs) uses it.
@@ -57,9 +69,7 @@ __attribute__((noinline)) void SendFragFragment(const PacketFrame &Frame, uint16
                                                 uint16_t Frags, uint16_t Len,
                                                 uint8_t Priority = PRIORITY_STREAM)
 {
-    uint8_t Flags = FLAG_TYPE | FLAG_FRAG;
-    if (Frag == 0) Flags |= FLAG_START;
-    if (Frag == Frags - 1) Flags |= FLAG_STOP;
+    const uint8_t Flags = FragFlags(Frag, Frags);
     WriteFragInfo(TxFrame.Payload, Frag, Frags);
     FinalizeReply(TxFrame, Frame, Flags, (uint16_t)(4 + Len), Priority);
     DispatchPacket(TxFrame);
@@ -72,9 +82,7 @@ __attribute__((noinline)) void SendFragTo(uint16_t Tgt, uint16_t Cmd, uint16_t T
                                           uint16_t Frag, uint16_t Frags, uint16_t Len,
                                           uint8_t Priority = PRIORITY_STREAM)
 {
-    uint8_t Flags = FLAG_TYPE | FLAG_FRAG;
-    if (Frag == 0) Flags |= FLAG_START;
-    if (Frag == Frags - 1) Flags |= FLAG_STOP;
+    const uint8_t Flags = FragFlags(Frag, Frags);
     WriteFragInfo(TxFrame.Payload, Frag, Frags);
     FinalizeReplyTo(TxFrame, Tgt, Cmd, Trid, Flags, (uint16_t)(4 + Len), Priority);
     DispatchPacket(TxFrame);
