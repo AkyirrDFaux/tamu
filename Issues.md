@@ -57,6 +57,12 @@ are hardware-only.
   at `0x3DEC`, **13804 B of the 13824 B code space, 20 B spare** (PIO: RAM 100.0 % 2048/2048,
   Flash 96.3 % 13800/14336). The guard cost 260 B and the ms backoff ~30 B, and 12 B came back by
   inlining the guarded-CID predicate; `stack_size` moved 1064 -> 1052 for the record's 10 B.
+  Re-measured 2026-11-11 (clean build, card t_6566051b, HEAD 9584746 + its cleanup commit ecd7e88):
+  the image ends at `0x3DF4`, **13812 B of the 13824 B code space, 12 B spare** (PIO: RAM 100.0 %
+  2048/2048, Flash 96.3 % 13808/14336). The working tree also carries another card's uncommitted
+  bus work; that build is byte-identical to the same build at 9584746 apart from the version
+  constant (`cmp -l`: 1 byte), so neither cost the DAS anything. Treat 12 B as the real headroom:
+  the next DAS feature is a diet first.
   update's payload is the counter alone, with no value bytes behind it). Earlier headroom figures
   counted code only and ignored the 112 B `.data` image, so the real spare was always 112 B less than
   stated - 112 B at that measurement, **524 B since the 2026-10-27 `t_1e134fcc` diet** (image

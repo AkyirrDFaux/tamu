@@ -611,6 +611,29 @@ Open:
       reply larger than the TX ring can complete instead of losing its tail fragments. Builds +
       native gate pass; **needs a rig run to confirm a whole-file read completes over BLE.**
 
+## Firmware cleanup pass 3 (open, from t_6566051b / commit ecd7e88)
+
+Pass 2 shared the tests' CHECK harness and fixture store, merged the script program's two scan
+loops, deleted four dead constants and fixed the stale DAS size comment. What it deliberately left:
+
+- **The Valu↔DAS device parallels** (`Measuring.h`, `MeasuringRun.h`, `Storage.h`, `AppUSB.h`):
+  jscpd still shows 30-59 duplicated lines per pair. The owner's ruling makes them out of scope
+  until the Valu matters; if it ever does, decide them with the same per-pair evidence as the
+  RSBus/Bus/bootloader pairs (which are argued and left parallel in the t_6566051b handoff).
+- **The in-file near-duplicates inside the script VM** (`ScriptExec.h` ×3, `ScriptVm.h`×`ScriptExec.h`,
+  `RegisterEnumerate.h`'s two fragment loops, `ScriptRuntime.h`'s two mask walks): each is a 5-10 line
+  preamble whose extraction needs a new type/member in `Core/Services/Script.h`, and none has a
+  behavioural argument beyond "shorter". Not worth a hot-path change without one.
+- **The `BusRepeat` guard block duplicated in `RegisterDispatch.h` and `Storage.h`, and the E65
+  advertising stop/restart pair in `AppBLE.h`:** both are pinned at each site by `run.sh` source
+  guards that assert the ORDER of the calls inside the named function. Merging them would make the
+  guard grep a helper instead of the function it protects - a worse trade than the duplicate.
+- **Two stale comments in `Devices/Valu_v2.0`** (left untouched on purpose, the board is out of
+  scope): `Bootloader.cpp` calls the byte buffer `s_frame` (it is `FrameBuf`), and its flash section
+  still narrates the SPL `FLASH_ErasePage` path it replaced.
+- `test/native/align_test.cpp` and `numeric_test.cpp` keep their own counters (they print a
+  different summary shape and count only failures in one case); the other 40 use `check.h`.
+
 ## Decisions (locked)
 
 - **Register**: `ValueInfo = Type(16)|Size(8)|Flags(8)` (internal and wire); `BlockInfo =
