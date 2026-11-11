@@ -72,48 +72,53 @@ namespace Bootloader
         Frame[1] |= (uint8_t)(Parity(Frame, Len) << 3);
     }
 
-    inline void EncodeWrite(uint32_t Offset, const uint8_t *Payload, uint8_t *Out)
+    // The two frame layouts every encoder below is built from: [start][control][offset][payload][end]
+    // and its header-only form (no payload). Kept here so the four encoders cannot drift apart in
+    // the bytes they share - each is now only its command plus one of these bodies.
+    inline void EncodeDataBody(uint32_t Offset, const uint8_t *Payload, uint8_t *Out)
     {
         Out[0] = START;
         memcpy(Out + 2, &Offset, 4);
         memcpy(Out + 6, Payload, PAYLOAD_SIZE);
         Out[DATA_SIZE - 1] = END;
+    }
+
+    inline void EncodeHeaderBody(uint32_t Offset, uint8_t *Out)
+    {
+        Out[0] = START;
+        memcpy(Out + 2, &Offset, 4);
+        Out[READ_REQ_SIZE - 1] = END;
+    }
+
+    inline void EncodeWrite(uint32_t Offset, const uint8_t *Payload, uint8_t *Out)
+    {
+        EncodeDataBody(Offset, Payload, Out);
         WriteControl(Out, CMD_WRITE, DATA_SIZE);
     }
 
     // Acknowledges a write: header-only, carrying the offset of the last successfully written chunk.
     inline void EncodeWriteResponse(uint32_t Offset, uint8_t *Out)
     {
-        Out[0] = START;
-        memcpy(Out + 2, &Offset, 4);
-        Out[READ_REQ_SIZE - 1] = END;
+        EncodeHeaderBody(Offset, Out);
         WriteControl(Out, CMD_WRITE_RESP, READ_REQ_SIZE);
     }
 
     inline void EncodeReadRequest(uint32_t Offset, uint8_t *Out)
     {
-        Out[0] = START;
-        memcpy(Out + 2, &Offset, 4);
-        Out[READ_REQ_SIZE - 1] = END;
+        EncodeHeaderBody(Offset, Out);
         WriteControl(Out, CMD_READ_REQ, READ_REQ_SIZE);
     }
 
     inline void EncodeReadResponse(uint32_t Offset, const uint8_t *Payload, uint8_t *Out)
     {
-        Out[0] = START;
-        memcpy(Out + 2, &Offset, 4);
-        memcpy(Out + 6, Payload, PAYLOAD_SIZE);
-        Out[DATA_SIZE - 1] = END;
+        EncodeDataBody(Offset, Payload, Out);
         WriteControl(Out, CMD_READ_RESP, DATA_SIZE);
     }
 
     // Identify request: header-only, offset slot zero.
     inline void EncodeIdentifyRequest(uint8_t *Out)
     {
-        uint32_t Zero = 0;
-        Out[0] = START;
-        memcpy(Out + 2, &Zero, 4);
-        Out[READ_REQ_SIZE - 1] = END;
+        EncodeHeaderBody(0, Out);
         WriteControl(Out, CMD_IDENTIFY_REQ, READ_REQ_SIZE);
     }
 
