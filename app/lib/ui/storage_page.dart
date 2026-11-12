@@ -493,6 +493,11 @@ class FileTableViewPage extends StatelessWidget {
 /// The decoded table: live records first (what is actually stored), then a
 /// collapsible "invalidated" section for old generations so the view agrees
 /// with the file list instead of drowning in stale records.
+///
+/// The decoding itself is [StorageClient.parseFileTable] with `includeInvalidated`, so what
+/// counts as a record - and that an invalidated record is one - is decided in the storage
+/// client, not here. This widget only renders: a superseded record prints as `(invalidated)`
+/// with no offset and no live size.
 class _TableBody extends StatefulWidget {
   final List<int> data;
   final int size;
@@ -503,17 +508,19 @@ class _TableBody extends StatefulWidget {
   State<_TableBody> createState() => _TableBodyState();
 }
 
-/// One decoded file-table record.
+/// One decoded file-table record, formatted for its row.
 class _FileTableRow {
   const _FileTableRow({
-    required this.index,
+    required this.slot,
     required this.name,
     required this.size,
     required this.offset,
     this.invalidated = false,
   });
 
-  final int index;
+  /// The record's 16-byte slot in the table (`FileRecord.slot`), so the numbering shows the
+  /// gap a superseded record left instead of closing up over it.
+  final int slot;
   final String name;
   final String size;
   final String offset;
@@ -528,7 +535,7 @@ class _TableBodyState extends State<_TableBody> {
   List<TamuColumn<_FileTableRow>> get _columns => [
     TamuColumn<_FileTableRow>(
       label: '#',
-      text: (r) => '${r.index}',
+      text: (r) => '${r.slot}',
       mono: true,
       muted: true,
       flex: 1,
@@ -560,33 +567,28 @@ class _TableBodyState extends State<_TableBody> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final data = widget.data;
-    final live = <_FileTableRow>[];
-    final invalidated = <_FileTableRow>[];
-    for (var off = 0; off + 16 <= data.length; off += 16) {
-      final recOffset = uint32FromBytes(data, off);
-      final fileSize = uint32FromBytes(data, off + 4);
-      final unwritten = recOffset == 0xFFFFFFFF && fileSize == 0xFFFFFFFF;
-      // Offset 0 marks a superseded/invalidated record (the device zeroes the 4-byte
-      // offset, leaving the size).
-      final isInvalidated = !unwritten && recOffset == 0;
-      final row = _FileTableRow(
-        index: off ~/ 16,
-        name: isInvalidated
-            ? '(invalidated)'
-            : normalizeFileName(
-                String.fromCharCodes(data.sublist(off + 8, off + 16)),
-              ),
-        size: isInvalidated ? '' : formatFileSize(fileSize),
-        offset: isInvalidated ? '' : hex32(recOffset),
-        invalidated: isInvalidated,
-      );
-      if (isInvalidated) {
-        invalidated.add(row);
-      } else if (!unwritten) {
-        live.add(row);
-      }
-    }
+    final records = StorageClient.parseFileTable(
+      widget.data,
+      includeInvalidated: true,
+    );
+    final rows = [
+      for (final r in records)
+        _FileTableRow(
+          slot: r.slot,
+          name: r.invalidated ? '(invalidated)' : r.name,
+          size: r.invalidated ? '' : formatFileSize(r.size),
+          offset: r.invalidated ? '' : hex32(r.offset),
+          invalidated: r.invalidated,
+        ),
+    ];
+    final live = [
+      for (final r in rows)
+        if (!r.invalidated) r,
+    ];
+    final invalidated = [
+      for (final r in rows)
+        if (r.invalidated) r,
+    ];
     return ListView(
       padding: Insets.page,
       children: [

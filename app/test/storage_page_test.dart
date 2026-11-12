@@ -77,6 +77,35 @@ void main() {
     expect(find.text(hex32(0)), findsNothing);
   });
 
+  testWidgets('row numbers are the table slots, so a superseded record leaves '
+      'its gap', (tester) async {
+    // Slot 0 is the table itself, slot 2 was superseded, slot 3 is live again: the numbering
+    // must keep 0/1/3 rather than closing up over the dropped record.
+    final data = <int>[
+      ...record(0x1000, 16384, '.TABLE'),
+      ...record(0x2000, 2048, 'FOO'),
+      ...record(0, 512, 'OLD'),
+      ...record(0x3000, 4096, 'BAR'),
+      ...record(0xFFFFFFFF, 0xFFFFFFFF, ''),
+    ];
+    await pump(tester, data);
+
+    expect(
+      find.text('File table (${data.length} B) - 3 live, 1 invalidated'),
+      findsOneWidget,
+    );
+    for (final slot in ['0', '1', '3']) {
+      expect(find.text(slot), findsOneWidget, reason: 'slot $slot is listed');
+    }
+    // The superseded slot stays folded away until the section is opened.
+    expect(find.text('2'), findsNothing);
+
+    await tester.tap(find.text('1 invalidated (old) records'));
+    await tester.pump();
+    expect(find.text('2'), findsOneWidget); // ...and numbers as its own slot
+    expect(find.text('(invalidated)'), findsOneWidget);
+  });
+
   test('a file size reads in B, kB or MB', () {
     expect(formatFileSize(512), '512 B');
     expect(formatFileSize(1024), '1.0 kB');

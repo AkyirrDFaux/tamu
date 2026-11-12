@@ -451,6 +451,19 @@ class ValueFlags {
     if (flags & trigger != 0) names.add('TR');
     return names;
   }
+
+  /// The ` · RO · P · TR` suffix a one-line label carries, or an empty string.
+  ///
+  /// Built from [describe], so a surface that has one line for the flags can never show a
+  /// reduced set: `TR` is the flag that explains why a write sometimes behaves differently
+  /// (it fires the field's trigger), so nothing that can show it may hide it. The two call
+  /// sites are both in `register_page_tiles.dart`'s `_fieldTile`: the plain dynamic field's
+  /// subtitle and a dictionary's keyed row's subtitle. Every other surface prints [describe]
+  /// itself, as chips (`_blockCard`) or as a value column (`file_viewers.dart`).
+  static String suffix(int flags) {
+    final names = describe(flags);
+    return names.isEmpty ? '' : ' · ${names.join(' · ')}';
+  }
 }
 
 /// Capability bitfield (matches firmware Enums.h).

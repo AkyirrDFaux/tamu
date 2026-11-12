@@ -369,7 +369,8 @@ extension on _RegisterPageState {
             ],
           ),
           subtitle: Text(
-            dataTypeLabel(head.meta.dataType) + flagsSuffix(head.meta),
+            dataTypeLabel(head.meta.dataType) +
+                ValueFlags.suffix(head.meta.flags),
             style: theme.textTheme.labelSmall,
           ),
           trailing: _editMode
@@ -511,7 +512,8 @@ extension on _RegisterPageState {
                 ],
               ),
               subtitle: Text(
-                dataTypeLabel(ek.e.meta.dataType) + flagsSuffix(ek.e.meta),
+                dataTypeLabel(ek.e.meta.dataType) +
+                    ValueFlags.suffix(ek.e.meta.flags),
                 style: theme.textTheme.labelSmall,
               ),
               trailing: PopupMenuButton<String>(

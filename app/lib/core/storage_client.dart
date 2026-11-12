@@ -30,19 +30,33 @@ String normalizeFileName(String name) {
 
 /// One file table record (FileRecord: Offset u32 | Filesize u32 | Name 8 bytes).
 class FileRecord {
+  /// The record's position among the records the parse RETURNED, so a dropped
+  /// invalidated record does not consume an index and the first returned record is 0.
   final int index;
+
+  /// The record's own 16-byte slot in the table (0 = the table's own entry), which is
+  /// what a table view numbers its rows with. It does NOT renumber when a record is
+  /// dropped, so a listing can show the gap an invalidated record left behind.
+  final int slot;
+
   final int offset;
   final int size;
   final String name;
 
+  /// The table zeroed this record's offset: a rename, delete or table move superseded it.
+  /// Only produced with `includeInvalidated` - see [StorageClient.parseFileTable].
+  final bool invalidated;
+
   FileRecord({
     required this.index,
+    required this.slot,
     required this.offset,
     required this.size,
     required this.name,
+    this.invalidated = false,
   });
 
-  bool get isFiletable => index == 0;
+  bool get isFiletable => slot == 0;
 }
 
 /// One file reply placed by fragment index (see [StorageClient.placeFragments]).
@@ -762,19 +776,33 @@ class StorageClient {
   /// table. A record with offset 0 is a superseded/invalidated entry (rename/delete/table
   /// moves zero the 4-byte offset but leave the size), so it is skipped - on every device,
   /// since all targets run the full multi-file filesystem now.
-  static List<FileRecord> parseFileTable(List<int> contents) {
+  ///
+  /// [includeInvalidated] is the ONE way a caller asks for those superseded records too, and
+  /// it is the only place the rule "is an invalidated record a row?" is decided: the Storage
+  /// view's file-table page asks for them (it folds them away under a collapsible section so
+  /// the view agrees with the file list instead of drowning in stale records), and every other
+  /// caller takes the default and keeps the live rows only. An invalidated record comes back
+  /// with [FileRecord.invalidated] set, `offset` 0, and the size and name bytes the table still
+  /// holds; rendering them as "invalidated" is the page's choice, not this parser's.
+  static List<FileRecord> parseFileTable(
+    List<int> contents, {
+    bool includeInvalidated = false,
+  }) {
     final records = <FileRecord>[];
     for (var offset = 0; offset + 16 <= contents.length; offset += 16) {
       final recOffset = uint32FromBytes(contents, offset);
       final size = uint32FromBytes(contents, offset + 4);
       if (recOffset == 0xFFFFFFFF && size == 0xFFFFFFFF) break;
-      if (recOffset == 0) continue; // invalidated record
+      final invalidated = recOffset == 0;
+      if (invalidated && !includeInvalidated) continue;
       records.add(
         FileRecord(
           index: records.length,
+          slot: offset ~/ 16,
           offset: recOffset,
           size: size,
           name: unpadName(contents.sublist(offset + 8)),
+          invalidated: invalidated,
         ),
       );
     }

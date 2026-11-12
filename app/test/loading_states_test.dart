@@ -32,8 +32,8 @@ import 'package:tamuapp/ui/wait.dart';
 import 'support/fake_core.dart';
 
 final List<int> _table = [
-  // The table's own record is the FIRST live record (`FileRecord.isFiletable` is `index == 0`),
-  // and it holds a real offset like any other file.
+  // The table's own record is the FIRST live record (`FileRecord.isFiletable` is
+  // `slot == 0`), and it holds a real offset like any other file.
   ...fileRecord(0x0100, 16384, '.TABLE'),
   ...fileRecord(0x1000, 64, 'SCR_000'),
 ];

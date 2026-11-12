@@ -47,6 +47,56 @@ void main() {
     test('an empty table parses to no records', () {
       expect(StorageClient.parseFileTable(const []), isEmpty);
     });
+
+    test('includeInvalidated also returns the superseded record', () {
+      final table = StorageClient.parseFileTable(
+        contents,
+        includeInvalidated: true,
+      );
+      expect(table.map((r) => r.name), ['A', 'GONE', 'B']);
+      expect(table.map((r) => r.invalidated), [false, true, false]);
+      // A superseded record keeps the size the table still holds, with no offset.
+      expect(table[1].offset, 0);
+      expect(table[1].size, 40);
+      // Slots are the records' own positions, so the returned record still numbers 1 and a
+      // view that lists them shows the place the superseded record occupies.
+      expect(table.map((r) => r.slot), [0, 1, 2]);
+      // The list position is over the returned records, as in the default parse.
+      expect(table.map((r) => r.index), [0, 1, 2]);
+    });
+
+    test('includeInvalidated leaves every live row exactly as the default', () {
+      final live = StorageClient.parseFileTable(contents);
+      final all = StorageClient.parseFileTable(
+        contents,
+        includeInvalidated: true,
+      );
+      // Same slots, offsets, sizes, names and order - the superseded record is the only
+      // addition, which is the proof that the Storage page's list did not change.
+      expect(
+        [
+          for (final r in all)
+            if (!r.invalidated) (r.slot, r.offset, r.size, r.name),
+        ],
+        [for (final r in live) (r.slot, r.offset, r.size, r.name)],
+      );
+      // `index` is the position among the records a parse RETURNED, so it is 2 for B in the
+      // include-invalidated list; nothing renders it (`slot` numbers the rows).
+      expect(all.map((r) => r.index), [0, 1, 2]);
+    });
+
+    test('the all-0xFF terminator stops an includeInvalidated parse too', () {
+      final withTail = [
+        ...contents,
+        ...record(0, 8, 'TAIL'), // a superseded record after the terminator
+      ];
+      withTail.setAll(contents.length, List<int>.filled(8, 0xFF));
+      final table = StorageClient.parseFileTable(
+        withTail,
+        includeInvalidated: true,
+      );
+      expect(table.map((r) => r.name), ['A', 'GONE', 'B']);
+    });
   });
 
   group('padName', () {

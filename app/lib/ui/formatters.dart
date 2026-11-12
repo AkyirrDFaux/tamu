@@ -244,12 +244,6 @@ String scriptFieldLabel(int field) => switch (field) {
   _ => 'Field $field',
 };
 
-/// The ` · RO · P` suffix a dynamic entry's subtitle carries, or an empty string.
-String flagsSuffix(ValueInfo meta) {
-  final flags = <String>[if (meta.readOnly) 'RO', if (meta.persistent) 'P'];
-  return flags.isEmpty ? '' : ' · ${flags.join(' · ')}';
-}
-
 /// A dynamic (field, key) entry, with a dictionary's key rendering its enum label
 /// where the dictionary specifies one.
 String formatDynamicValue(
