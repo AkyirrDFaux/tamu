@@ -662,6 +662,13 @@ are hardware-only.
   two consecutive reads agree (`te8_das_readback.py`). Both need a node-side or wire-level
   measurement, not another core-side change. Flashing is unaffected: the ascending writer retries a
   refused read-back and wrote all 432 chunks with 0 resyncs.
+  *(2026-11-12, card `t_d9feed1d`, re-measured once read/write worked again: two full image passes of
+  432 writes + 864 reads. `BLPT total req=2684 busy=0 short=0 sendfail=0 sinkbytes=25262 frames=2617
+  bad=8 ok=2617 timeout=67 rawshort=137 rawcoll=20 rawreply=0`. The 67 deadline settles are 2.5 %,
+  still with `sendfail=0`, so this entry stands unchanged: it is the node's silence, not the core's
+  transmit. 24 write chunks (run 2) and ~38 (run 1) had to be re-sent for it, which is exactly the
+  bucket the app's one correction round rewrites; every read-back chunk matched on the first
+  agreeing pair. `bad=8` is the garbled-chunk glitch above, on the same order.)*
 
 - **E82 One RX read still discards what arrives during a transmit, and it is not counted** (card
   `t_049cbe93`, 2026-11-10, static - no rig run). `BusRxDestroyed` is now the complete account of
@@ -669,16 +676,24 @@ are hardware-only.
   branch, monotone, printed as `rxdestroyed=` beside `rxrejects=` in the `BUSGATE` totals line, and
   pinned at that shape by `firmware/test/native/run.sh` (the guard is RED against `e3ea9c1^`, an
   increment moved out of the branch, a reset, a second increment, a widened `rxrejects` and a
-  renamed label). What it does **not** cover is the echo check: `RS485TransmitVerified` and
-  `RS485SendRaw` still call `uart_read_bytes` for one chunk at a time while TX-enable is asserted,
-  and up to a chunk of anything else on the line in that window is consumed by the comparison and
-  never reaches the assembler (`firmware/src/Devices/Tamu_v2.0A/RSBus.h:235,246,354`). It is left
+  renamed label). What it does **not** cover is the echo check: `RS485TransmitVerified` still calls
+  `uart_read_bytes` for one chunk at a time while TX-enable is asserted
+  (`firmware/src/Devices/Tamu_v2.0A/RSBus.h:230,241`), and up to a chunk of anything else on the
+  line in that window is consumed by the comparison and never reaches the assembler. It is left
   uncounted on purpose: on a clean transmit every byte in that window is our own echo, so counting
   the window would make a quiet bus read as lossy, and the only countable bytes are the positions
   that mismatch - a bitwise mixture of two transmitters rather than anybody's byte, in a frame that
   is interleaved and re-sent anyway. Removing the read would mean an echo path that does not consume
   the RX ring, i.e. the transmit-side work (nothing may transmit while a reply is owed, card
   `t_45490cbe`), not the counter. The node-side half of the same class is E59.
+  *(2026-11-12, card `t_d9feed1d`: the RAW path is fixed - `RS485SendRaw` no longer memcmp's a chunk.
+  It reads the echo byte by byte and classifies it (`Bootloader::ClassifyEchoByte`), handing a start
+  marker (0xCA) and everything after it to `BootloaderRxSink` instead of eating it; the three
+  outcomes are counted apart as `rawshort`/`rawcoll`/`rawreply` in the BLPT line. That was the
+  read/write `0x4E` defect: a node in bootloader answers ~704 us after our last byte, inside the
+  last chunk's echo window, so the reply's head was consumed by the comparison and the send was
+  called a collision. The window that remains, and that this entry now describes alone, is the
+  packet path's.)*
 
 - **E83 The bootloader's raw transmit is the only send with no stint deadline** (card `t_45490cbe`,
   2026-11-10, host-measured - no rig run). The packet path (`RS485TransmitVerified`) draws every
