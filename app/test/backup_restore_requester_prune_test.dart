@@ -357,32 +357,35 @@ void main() {
     );
   });
 
-  test('an archive provider address is written with its own net, in decimal', () async {
-    // The archive names an EXACT address on another net (`39.2`, the form a capture of a rig on
-    // net 39 writes). A restore passes an exact address through unchanged, so the bytes the device
-    // receives must carry net 39 - decimal thirty-nine, never 0x39 = 57 (card t_82b4537e: the
-    // pre-fix tool stored 57 on the rig where the archive said 39).
-    device = _FakeTable(const []);
-    installRequestChannel(device);
+  test(
+    'an archive provider address is written with its own net, in decimal',
+    () async {
+      // The archive names an EXACT address on another net (`39.2`, the form a capture of a rig on
+      // net 39 writes). A restore passes an exact address through unchanged, so the bytes the device
+      // receives must carry net 39 - decimal thirty-nine, never 0x39 = 57 (card t_82b4537e: the
+      // pre-fix tool stored 57 on the rig where the archive said 39).
+      device = _FakeTable(const []);
+      installRequestChannel(device);
 
-    final result = await applyRestorePlan(
-      _plan(
-        _archive(count: 1, provider: '39.2'),
-        [_liveRequester(), _liveProvider()],
-      ),
-    );
+      final result = await applyRestorePlan(
+        _plan(_archive(count: 1, provider: '39.2'), [
+          _liveRequester(),
+          _liveProvider(),
+        ]),
+      );
 
-    final written = device.entries.single;
-    print(
-      'PROVIDER ADDR: archive "39.2" -> the device holds '
-      '0x${written.providerAddr.toRadixString(16)} '
-      '(${idToString(written.providerAddr)})',
-    );
-    expect(written.providerAddr, (39 << 10) | 2);
-    expect(written.providerAddr, isNot((0x39 << 10) | 2));
-    expect(idToString(written.providerAddr), '39.2');
-    expect(result.failed, 0, reason: '${result.failures}');
-  });
+      final written = device.entries.single;
+      print(
+        'PROVIDER ADDR: archive "39.2" -> the device holds '
+        '0x${written.providerAddr.toRadixString(16)} '
+        '(${idToString(written.providerAddr)})',
+      );
+      expect(written.providerAddr, (39 << 10) | 2);
+      expect(written.providerAddr, isNot((0x39 << 10) | 2));
+      expect(idToString(written.providerAddr), '39.2');
+      expect(result.failed, 0, reason: '${result.failures}');
+    },
+  );
 
   test('the Save-all is issued after the cancels', () async {
     device = _FakeTable(_sixEntries());
@@ -536,10 +539,7 @@ void main() {
       expect(device.entries, hasLength(6));
       expect(device.cancelTrids, isEmpty);
       expect(device.saves, 0);
-      expect(
-        result.failures.join('\n'),
-        contains('does not resolve'),
-      );
+      expect(result.failures.join('\n'), contains('does not resolve'));
     },
   );
 
@@ -590,10 +590,7 @@ void main() {
             'a prune that could not look is a reported failure: '
             '${result.failures}',
       );
-      expect(
-        result.failures.join('\n'),
-        contains('requester table read'),
-      );
+      expect(result.failures.join('\n'), contains('requester table read'));
     },
   );
 
@@ -621,10 +618,7 @@ void main() {
       expect(device.saves, 0);
       expect(device.entries, hasLength(6));
       expect(result.failed, 1, reason: result.failures.toString());
-      expect(
-        result.failures.join('\n'),
-        contains('requester table read'),
-      );
+      expect(result.failures.join('\n'), contains('requester table read'));
     },
   );
 
@@ -661,10 +655,7 @@ void main() {
             'the table holds four, and the report may not claim it holds none',
       );
       expect(prune.remaining, isEmpty);
-      expect(
-        result.failures.join('\n'),
-        contains('could not be read back'),
-      );
+      expect(result.failures.join('\n'), contains('could not be read back'));
       expect(result.failed, 1, reason: result.failures.toString());
       expect(
         result.failures.where((f) => f.contains('is still in the table')),

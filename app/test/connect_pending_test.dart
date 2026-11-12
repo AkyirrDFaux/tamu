@@ -23,7 +23,6 @@ import 'package:tamuapp/ui/theme.dart';
 Widget _app(Widget home) =>
     MaterialApp(theme: buildTheme(), builder: noticeHostBuilder, home: home);
 
-
 /// Mounts the connection page in the tall window its panel needs, on the [manager] the case built.
 ///
 /// Every case in this group repeats this - the panel's cards are laid out, not scrolled, so the
@@ -89,7 +88,8 @@ void main() {
       expect(
         manager.autoConnectHeldOffUntil,
         isNotNull,
-        reason: 'the refresh timer must not restart what the user just abandoned',
+        reason:
+            'the refresh timer must not restart what the user just abandoned',
       );
 
       // The platform may still finish its connect afterwards; the abandoned attempt must not
@@ -138,7 +138,8 @@ void main() {
       expect(
         manager.autoConnectHeldOffUntil,
         isNotNull,
-        reason: 'otherwise the 1 s refresh restarts the attempt the deadline just ended, '
+        reason:
+            'otherwise the 1 s refresh restarts the attempt the deadline just ended, '
             'so a device that is off is retried and re-reported forever',
       );
     });

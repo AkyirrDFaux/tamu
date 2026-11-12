@@ -82,7 +82,6 @@ class _FakeRegister extends RegisterClient {
         return null;
     }
   }
-
 }
 
 void main() {

@@ -226,7 +226,8 @@ void main() {
         'type': 'Number',
         'size': 4,
       },
-      reason: 'a structural row is identity + type + flags + size, and nothing else',
+      reason:
+          'a structural row is identity + type + flags + size, and nothing else',
     );
     expect(json.containsKey('value'), isFalse);
     // Re-encoding an already-decoded row is stable, so a capture/restore cycle cannot drift.
@@ -273,17 +274,20 @@ void main() {
     expect(restoresEntryValue(placeholder), isFalse);
   });
 
-  test('a structural row is not a restore item: it plans no value write', () async {
-    final plan = await buildRestorePlan([_archive()]);
-    final entries = plan.items.where((i) => i.kind == RestoreKind.entry);
-    expect(
-      entries,
-      hasLength(1),
-      reason: 'only the persistent row (field 4) is a value write',
-    );
-    expect(entries.single.entry!.fieldIndex, 4);
-    expect(plan.items.where((i) => i.entry?.structural == true), isEmpty);
-  });
+  test(
+    'a structural row is not a restore item: it plans no value write',
+    () async {
+      final plan = await buildRestorePlan([_archive()]);
+      final entries = plan.items.where((i) => i.kind == RestoreKind.entry);
+      expect(
+        entries,
+        hasLength(1),
+        reason: 'only the persistent row (field 4) is a value write',
+      );
+      expect(entries.single.entry!.fieldIndex, 4);
+      expect(plan.items.where((i) => i.entry?.structural == true), isEmpty);
+    },
+  );
 
   test('a wiped target resolves a subscription whose target is a structural row', () {
     for (final survives in [true, false]) {
@@ -296,7 +300,11 @@ void main() {
           archiveRefReg(archive, _target),
           makeBlockInfo(dynamicTypeBase, 0, 0, 0),
         );
-        expect(item.issue, isNull, reason: 'archiveRefReg resolves the structural row');
+        expect(
+          item.issue,
+          isNull,
+          reason: 'archiveRefReg resolves the structural row',
+        );
         expect(item.ready, isTrue);
       } else {
         // Control: drop the row and the address is gone - this is the failure the structural row
@@ -307,44 +315,50 @@ void main() {
     }
   });
 
-  test('a restore creates the dynamic rows the archive carries, values default', () async {
-    final previous = requestChannel;
-    final channel = _FakeRegisterChannel();
-    installRequestChannel(channel);
-    addTearDown(() => installRequestChannel(previous));
+  test(
+    'a restore creates the dynamic rows the archive carries, values default',
+    () async {
+      final previous = requestChannel;
+      final channel = _FakeRegisterChannel();
+      installRequestChannel(channel);
+      addTearDown(() => installRequestChannel(previous));
 
-    final archive = _archive();
-    final plan = _plan(archive, _wiped());
-    final created = await prepareDynamicBlocks(plan);
+      final archive = _archive();
+      final plan = _plan(archive, _wiped());
+      final created = await prepareDynamicBlocks(plan);
 
-    expect(created, 5, reason: 'four structural rows and one persistent row');
-    final calls = channel.sent
-        .where((c) => c.service == ServiceType.register)
-        .toList();
-    final creates = calls.where((c) => c.cid == DynamicCid.create).toList();
-    expect(creates, hasLength(1), reason: 'the block itself is created once');
-    expect(creates.single.payload[0] | (creates.single.payload[1] << 8), 0);
+      expect(created, 5, reason: 'four structural rows and one persistent row');
+      final calls = channel.sent
+          .where((c) => c.service == ServiceType.register)
+          .toList();
+      final creates = calls.where((c) => c.cid == DynamicCid.create).toList();
+      expect(creates, hasLength(1), reason: 'the block itself is created once');
+      expect(creates.single.payload[0] | (creates.single.payload[1] << 8), 0);
 
-    final writes = calls.where((c) => c.cid == RegisterCid.write).toList();
-    int fieldOf(List<int> p) =>
-        blockInfoField(p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
-    expect(
-      [for (final w in writes) fieldOf(w.payload)],
-      [0, 1, 2, 3, 4],
-      reason: 'every archived row becomes an entry, in field order',
-    );
-    for (final w in writes) {
-      final meta = ValueInfo.fromBytes(w.payload, 4);
-      expect(meta.size, 4);
+      final writes = calls.where((c) => c.cid == RegisterCid.write).toList();
+      int fieldOf(List<int> p) =>
+          blockInfoField(p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
       expect(
-        w.payload.sublist(8),
-        everyElement(0),
-        reason: 'no archived value is written: the structure lands at its default',
+        [for (final w in writes) fieldOf(w.payload)],
+        [0, 1, 2, 3, 4],
+        reason: 'every archived row becomes an entry, in field order',
       );
-    }
-    // The flags come from the archive, so a row that is Read Only there is Read Only here.
-    expect(ValueInfo.fromBytes(writes.first.payload, 4).flags, 0);
-    expect(ValueInfo.fromBytes(writes.last.payload, 4).flags,
-        flagsFromWords(const ['Persistent']));
-  });
+      for (final w in writes) {
+        final meta = ValueInfo.fromBytes(w.payload, 4);
+        expect(meta.size, 4);
+        expect(
+          w.payload.sublist(8),
+          everyElement(0),
+          reason:
+              'no archived value is written: the structure lands at its default',
+        );
+      }
+      // The flags come from the archive, so a row that is Read Only there is Read Only here.
+      expect(ValueInfo.fromBytes(writes.first.payload, 4).flags, 0);
+      expect(
+        ValueInfo.fromBytes(writes.last.payload, 4).flags,
+        flagsFromWords(const ['Persistent']),
+      );
+    },
+  );
 }

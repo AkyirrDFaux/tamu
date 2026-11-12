@@ -66,12 +66,7 @@ void main() {
     }) async {
       final archive = File('${dir.path}/setup.zip')
         ..writeAsBytesSync(
-          _setupZip(
-            extra: extraBlocks,
-            id: id,
-            name: name,
-            serial: serial,
-          ),
+          _setupZip(extra: extraBlocks, id: id, name: name, serial: serial),
         );
       final out = _Captured();
       final err = _Captured();
@@ -88,28 +83,35 @@ void main() {
       return (code: code, out: out.text, err: err.text);
     }
 
-    test('an enumeration that loses one reply is retried, and the plan matches', () async {
-      final rig = _FakeRig(types: [_button], enumerateFailures: 1);
+    test(
+      'an enumeration that loses one reply is retried, and the plan matches',
+      () async {
+        final rig = _FakeRig(types: [_button], enumerateFailures: 1);
 
-      final result = await run(rig);
+        final result = await run(rig);
 
-      expect(
-        rig.enumerateCalls,
-        greaterThanOrEqualTo(2),
-        reason:
-            'the enumeration that went unanswered was re-sent (the plan walk, before the '
-            'read-back that follows a matched plan): one lost reply must not read as an '
-            'empty block list',
-      );
-      expect(result.out, contains('items=1/1 to write'));
-      expect(
-        result.out,
-        isNot(contains('carries no')),
-        reason: 'the device does carry the block - the read was lost',
-      );
-      expect(result.out, isNot(contains('unread')));
-      expect(result.code, 0, reason: 'the plan matches, so a dry run is clean');
-    });
+        expect(
+          rig.enumerateCalls,
+          greaterThanOrEqualTo(2),
+          reason:
+              'the enumeration that went unanswered was re-sent (the plan walk, before the '
+              'read-back that follows a matched plan): one lost reply must not read as an '
+              'empty block list',
+        );
+        expect(result.out, contains('items=1/1 to write'));
+        expect(
+          result.out,
+          isNot(contains('carries no')),
+          reason: 'the device does carry the block - the read was lost',
+        );
+        expect(result.out, isNot(contains('unread')));
+        expect(
+          result.code,
+          0,
+          reason: 'the plan matches, so a dry run is clean',
+        );
+      },
+    );
 
     test('a block instance read that loses one reply is retried', () async {
       final rig = _FakeRig(types: [_button], metaFailures: {_button: 1});
@@ -139,54 +141,61 @@ void main() {
       expect(result.code, 0);
     });
 
-    test('an enumeration that never answers names the read failure, not the shape', () async {
-      final rig = _FakeRig(
-        types: [_button],
-        enumerateFailures: RegisterClient.snapshotReadAttempts,
-      );
+    test(
+      'an enumeration that never answers names the read failure, not the shape',
+      () async {
+        final rig = _FakeRig(
+          types: [_button],
+          enumerateFailures: RegisterClient.snapshotReadAttempts,
+        );
 
-      final result = await run(rig);
+        final result = await run(rig);
 
-      expect(rig.enumerateCalls, RegisterClient.snapshotReadAttempts);
-      expect(
-        result.out,
-        contains(
-          'REFUSED: the target 0.1 did not answer its block list read '
-          '(${RegisterClient.snapshotReadAttempts} attempts) - unread, not absent',
-        ),
-      );
-      expect(
-        result.out,
-        isNot(contains('carries no')),
-        reason: 'nothing was read, so nothing can be called absent',
-      );
-      expect(
-        result.code,
-        3,
-        reason: 'an incomplete snapshot is still refused to write',
-      );
-    });
+        expect(rig.enumerateCalls, RegisterClient.snapshotReadAttempts);
+        expect(
+          result.out,
+          contains(
+            'REFUSED: the target 0.1 did not answer its block list read '
+            '(${RegisterClient.snapshotReadAttempts} attempts) - unread, not absent',
+          ),
+        );
+        expect(
+          result.out,
+          isNot(contains('carries no')),
+          reason: 'nothing was read, so nothing can be called absent',
+        );
+        expect(
+          result.code,
+          3,
+          reason: 'an incomplete snapshot is still refused to write',
+        );
+      },
+    );
 
-    test('the rig\'s own case: a Button instance read that never answers', () async {
-      final rig = _FakeRig(types: [_button], deadTypes: {_button});
+    test(
+      'the rig\'s own case: a Button instance read that never answers',
+      () async {
+        final rig = _FakeRig(types: [_button], deadTypes: {_button});
 
-      final result = await run(rig);
+        final result = await run(rig);
 
-      expect(rig.metaCalls[_button], RegisterClient.snapshotReadAttempts);
-      expect(
-        result.out,
-        contains(
-          'REFUSED: the target did not answer the Button block read '
-          '(${RegisterClient.snapshotReadAttempts} attempts) - unread, not absent',
-        ),
-      );
-      expect(
-        result.out,
-        isNot(contains('carries no Button block')),
-        reason: 'this is the message the 2026-10-22 run printed for a healthy rig',
-      );
-      expect(result.code, 3);
-    });
+        expect(rig.metaCalls[_button], RegisterClient.snapshotReadAttempts);
+        expect(
+          result.out,
+          contains(
+            'REFUSED: the target did not answer the Button block read '
+            '(${RegisterClient.snapshotReadAttempts} attempts) - unread, not absent',
+          ),
+        );
+        expect(
+          result.out,
+          isNot(contains('carries no Button block')),
+          reason:
+              'this is the message the 2026-10-22 run printed for a healthy rig',
+        );
+        expect(result.code, 3);
+      },
+    );
 
     test('a two-instance type nobody answers is named once, not twice', () async {
       // `akyirr_setup.zip` carries the LED Display at instances 0 AND 1. The unread message is
@@ -200,7 +209,10 @@ void main() {
 
       final result = await run(
         rig,
-        extraBlocks: const [(type: _led, instance: 0), (type: _led, instance: 1)],
+        extraBlocks: const [
+          (type: _led, instance: 0),
+          (type: _led, instance: 1),
+        ],
       );
 
       expect(
@@ -226,40 +238,47 @@ void main() {
 
       final result = await run(
         rig,
-        extraBlocks: const [(type: _led, instance: 0), (type: _led, instance: 1)],
+        extraBlocks: const [
+          (type: _led, instance: 0),
+          (type: _led, instance: 1),
+        ],
       );
 
       expect(
         result.out,
         contains('REFUSED: the target carries no LED Display block'),
-        reason: 'AC 1\'s message, unchanged for a type carried in several instances',
+        reason:
+            'AC 1\'s message, unchanged for a type carried in several instances',
       );
       expect(result.out, isNot(contains('LED Display, LED Display')));
       expect(result.out, isNot(contains('unread')));
       expect(result.code, 3);
     });
 
-    test('a device that really lacks the block type is refused as before', () async {
-      // The device answers everything; it simply carries PWM and no Button block.
-      final rig = _FakeRig(types: [_pwm]);
+    test(
+      'a device that really lacks the block type is refused as before',
+      () async {
+        // The device answers everything; it simply carries PWM and no Button block.
+        final rig = _FakeRig(types: [_pwm]);
 
-      final result = await run(rig);
+        final result = await run(rig);
 
-      expect(
-        result.out,
-        contains('REFUSED: the target carries no Button block'),
-        reason: 'a wrong-device-type refusal must keep today\'s message',
-      );
-      expect(
-        result.out,
-        isNot(contains('not ready:')),
-        reason:
-            'a refused device is not reported as one about to be written: the refusal ends '
-            'the per-device report, as it always did',
-      );
-      expect(result.out, isNot(contains('unread')));
-      expect(result.code, 3, reason: 'and today\'s exit code');
-    });
+        expect(
+          result.out,
+          contains('REFUSED: the target carries no Button block'),
+          reason: 'a wrong-device-type refusal must keep today\'s message',
+        );
+        expect(
+          result.out,
+          isNot(contains('not ready:')),
+          reason:
+              'a refused device is not reported as one about to be written: the refusal ends '
+              'the per-device report, as it always did',
+        );
+        expect(result.out, isNot(contains('unread')));
+        expect(result.code, 3, reason: 'and today\'s exit code');
+      },
+    );
 
     test('a device re-addressed since the capture is still the node that failed', () async {
       // The archive names the device at 0.2; the node it belongs to answered its identity at 0.1
@@ -291,7 +310,8 @@ void main() {
       expect(
         result.err,
         contains('are not restorable'),
-        reason: 'the write is refused for the failed read, not for a missing target',
+        reason:
+            'the write is refused for the failed read, not for a missing target',
       );
       expect(
         result.err,
@@ -301,39 +321,42 @@ void main() {
       expect(result.code, 3);
     });
 
-    test('a serial identifies the unread node under another address and name', () async {
-      // The same case with the archive device renamed as well: the serial is the only thing that
-      // says the two names are one device, and it is the strongest identity an archive carries.
-      const serialBytes = [
-        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, //
-        0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE,
-      ];
-      final serial = serialNumberToHex(serialBytes);
-      final rig = _FakeRig(
-        types: [_button],
-        serial: serialBytes,
-        enumerateFailures: RegisterClient.snapshotReadAttempts,
-      );
+    test(
+      'a serial identifies the unread node under another address and name',
+      () async {
+        // The same case with the archive device renamed as well: the serial is the only thing that
+        // says the two names are one device, and it is the strongest identity an archive carries.
+        const serialBytes = [
+          0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, //
+          0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE,
+        ];
+        final serial = serialNumberToHex(serialBytes);
+        final rig = _FakeRig(
+          types: [_button],
+          serial: serialBytes,
+          enumerateFailures: RegisterClient.snapshotReadAttempts,
+        );
 
-      final result = await run(
-        rig,
-        id: _otherNode,
-        name: 'Door node',
-        serial: serial,
-        write: true,
-      );
+        final result = await run(
+          rig,
+          id: _otherNode,
+          name: 'Door node',
+          serial: serial,
+          write: true,
+        );
 
-      expect(
-        result.out,
-        contains(
-          'REFUSED: the target 0.1 did not answer its block list read '
-          '(${RegisterClient.snapshotReadAttempts} attempts) - unread, not absent',
-        ),
-      );
-      expect(result.out, isNot(contains('carries no')));
-      expect(result.err, contains('are not restorable'));
-      expect(result.code, 3);
-    });
+        expect(
+          result.out,
+          contains(
+            'REFUSED: the target 0.1 did not answer its block list read '
+            '(${RegisterClient.snapshotReadAttempts} attempts) - unread, not absent',
+          ),
+        );
+        expect(result.out, isNot(contains('carries no')));
+        expect(result.err, contains('are not restorable'));
+        expect(result.code, 3);
+      },
+    );
 
     test('a device nothing answers is still NO TARGET, refused as one', () async {
       // The control: the rig answers nothing at all - the ping included - so no node can be this
@@ -353,12 +376,14 @@ void main() {
       expect(
         result.out,
         isNot(contains('unread')),
-        reason: 'no node answered that device, so there is no failed read to report',
+        reason:
+            'no node answered that device, so there is no failed read to report',
       );
       expect(
         result.err,
         contains('refusing to write: no live target for Door node.'),
-        reason: 'today\'s gate and message for a device that is genuinely absent',
+        reason:
+            'today\'s gate and message for a device that is genuinely absent',
       );
       expect(result.code, 3);
     });
@@ -561,7 +586,6 @@ class _FakeRig extends ScriptedRigLink {
     }
     return blockReply(DataType.number.value, value.length, value);
   }
-
 }
 
 /// Captures the CLI's stdout/stderr, so a test asserts on the text a run really prints.

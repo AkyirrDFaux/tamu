@@ -414,13 +414,14 @@ void _install(_DynamicDevice device) {
   addTearDown(() => installRequestChannel(null));
 }
 
-
 /// The register WRITES the run sent, in order.
 ///
 /// A write's payload is the address, the `ValueInfo` the run declared and the value bytes, which
 /// is what a repair case asserts on - so six cases asked the same question of the same log.
 List<BusRequest> _writes(_DynamicDevice device) => device.sent
-    .where((c) => c.service == ServiceType.register && c.cid == RegisterCid.write)
+    .where(
+      (c) => c.service == ServiceType.register && c.cid == RegisterCid.write,
+    )
     .toList();
 
 /// One dynamic `Subscriptions` row as an archive carries it: the address the rig's emote selector
@@ -604,10 +605,10 @@ void main() {
     () async {
       // `Dynamic[0]` field 4 key 0 on the rig: a Number stored at size 1 where a Number is 4, and
       // the emote selector's read of it lands as SCRIPT_ERR_TYPE.
-      final archive = _subsArchive(
-        _subsEntry('Number', value: 0.25, size: 4),
-      );
-      final liveBlock = _subsLive([_subsRow(DataType.number.value, 1, const [0x01])]);
+      final archive = _subsArchive(_subsEntry('Number', value: 0.25, size: 4));
+      final liveBlock = _subsLive([
+        _subsRow(DataType.number.value, 1, const [0x01]),
+      ]);
       final plan = _plan(
         archive: archive,
         live: _live(blocks: [liveBlock]),
@@ -720,77 +721,79 @@ void main() {
     },
   );
 
-  test(
-    'a structural row the archive has no value for is not reported as empty',
-    () async {
-      // A dynamic field added from the app is written with `size: seed.length` and flags that
-      // default to volatile, so the capture archives it as a STRUCTURAL row that DECLARES a length
-      // (`backupBlockFromVisited`: identity, type, flags and size, no value). The archive carries
-      // no value for it - but the device's row holds one, and the report used to tell the reader
-      // the opposite ("the device carries the row, which holds no value of its own").
-      final archive = _subsArchive(
-        _subsEntry(
-          'Number',
-          flags: const ['Volatile'],
-          structural: true,
-          size: 4,
-        ),
-      );
-      final live = _live(
-        blocks: [
-          _subsLive([
-            _subsRow(DataType.number.value, 4, const [1, 2, 3, 4], flags: 0),
-          ]),
-        ],
-      );
-      final device = _DynamicDevice();
-      device.rows['0:4:0'] = (
-        type: DataType.number.value,
-        value: const [1, 2, 3, 4],
-        flags: 0,
-      );
-      _install(device);
+  test('a structural row the archive has no value for is not reported as empty', () async {
+    // A dynamic field added from the app is written with `size: seed.length` and flags that
+    // default to volatile, so the capture archives it as a STRUCTURAL row that DECLARES a length
+    // (`backupBlockFromVisited`: identity, type, flags and size, no value). The archive carries
+    // no value for it - but the device's row holds one, and the report used to tell the reader
+    // the opposite ("the device carries the row, which holds no value of its own").
+    final archive = _subsArchive(
+      _subsEntry(
+        'Number',
+        flags: const ['Volatile'],
+        structural: true,
+        size: 4,
+      ),
+    );
+    final live = _live(
+      blocks: [
+        _subsLive([
+          _subsRow(DataType.number.value, 4, const [1, 2, 3, 4], flags: 0),
+        ]),
+      ],
+    );
+    final device = _DynamicDevice();
+    device.rows['0:4:0'] = (
+      type: DataType.number.value,
+      value: const [1, 2, 3, 4],
+      flags: 0,
+    );
+    _install(device);
 
-      final plan = _plan(archive: archive, live: live);
-      // Structure, not a value item: the run never plans a write for it.
-      expect(plan.items, isEmpty);
-      final skip = structuralSkips(plan).single;
-      // WHY the archive has no value (volatile, runtime state) ...
-      expect(skip.reason, contains('volatile'));
-      expect(skip.reason, contains('the archive carries no value for it'));
-      // ... and what the device holds, which is NOT "no value of its own".
-      expect(
-        skip.reason,
-        contains('the device carries the row and keeps the value it already holds'),
-      );
-      expect(skip.reason, isNot(contains('holds no value of its own')));
-      expect(skip.reason, isNot(contains('cannot be created')));
+    final plan = _plan(archive: archive, live: live);
+    // Structure, not a value item: the run never plans a write for it.
+    expect(plan.items, isEmpty);
+    final skip = structuralSkips(plan).single;
+    // WHY the archive has no value (volatile, runtime state) ...
+    expect(skip.reason, contains('volatile'));
+    expect(skip.reason, contains('the archive carries no value for it'));
+    // ... and what the device holds, which is NOT "no value of its own".
+    expect(
+      skip.reason,
+      contains(
+        'the device carries the row and keeps the value it already holds',
+      ),
+    );
+    expect(skip.reason, isNot(contains('holds no value of its own')));
+    expect(skip.reason, isNot(contains('cannot be created')));
 
-      final report = await applyRestorePlan(plan);
-      expect(report.failed, 0, reason: report.text);
-      expect(report.counts, '0 written · 1 skipped (structural) · 0 failed');
-      expect(report.skipped.single.reason, skip.reason);
-      expect(report.text, contains('Skipped as structural (1)'));
-      // The row still holds what it held: nothing was written to it.
-      expect(device.rows['0:4:0']!.value, [1, 2, 3, 4]);
-      expect(device.zeroLengthValueWrites, 0);
-      expect(_writes(device), isEmpty);
+    final report = await applyRestorePlan(plan);
+    expect(report.failed, 0, reason: report.text);
+    expect(report.counts, '0 written · 1 skipped (structural) · 0 failed');
+    expect(report.skipped.single.reason, skip.reason);
+    expect(report.text, contains('Skipped as structural (1)'));
+    // The row still holds what it held: nothing was written to it.
+    expect(device.rows['0:4:0']!.value, [1, 2, 3, 4]);
+    expect(device.zeroLengthValueWrites, 0);
+    expect(_writes(device), isEmpty);
 
-      // The same structural row on a device that does NOT carry it IS creatable - the structure
-      // phase builds it zero-filled from the declared type and size - so its reason must not say
-      // it cannot be created (the old text said so for every structural row).
-      final absent = structuralSkips(
-        _plan(archive: archive, live: _live(blocks: [_subsLive(const [])])),
-      ).single;
-      expect(absent.reason, contains('zero-filled'));
-      expect(absent.reason, isNot(contains('cannot be created')));
-      expect(
-        absent.reason,
-        isNot(contains('the device carries the row')),
-        reason: 'the device does not carry it',
-      );
-    },
-  );
+    // The same structural row on a device that does NOT carry it IS creatable - the structure
+    // phase builds it zero-filled from the declared type and size - so its reason must not say
+    // it cannot be created (the old text said so for every structural row).
+    final absent = structuralSkips(
+      _plan(
+        archive: archive,
+        live: _live(blocks: [_subsLive(const [])]),
+      ),
+    ).single;
+    expect(absent.reason, contains('zero-filled'));
+    expect(absent.reason, isNot(contains('cannot be created')));
+    expect(
+      absent.reason,
+      isNot(contains('the device carries the row')),
+      reason: 'the device does not carry it',
+    );
+  });
 
   // Card t_e3c0cb84: the structural-skip reason must not credit the device with a value it never
   // had. `applyRestorePlan` collects the skips AFTER `prepareDynamicBlocks`, which re-reads the
@@ -820,16 +823,12 @@ void main() {
     ],
   );
 
-
   test(
     'a structural row the run created is reported as created, not as a value kept',
     () async {
       final archive = volatileRowArchive();
       // The device carries the block but NOT the row: the structure phase creates it zero-filled.
-      final plan = _plan(
-        archive: archive,
-        liveBlocks: [_subsLive(const [])],
-      );
+      final plan = _plan(archive: archive, liveBlocks: [_subsLive(const [])]);
       // Before the run the reason is the absent-row one, and it already says what will happen.
       expect(
         structuralSkips(plan).single.reason,
@@ -895,10 +894,10 @@ void main() {
     // selector's register read of it lands as SCRIPT_ERR_TYPE. A dynamic row carries its own type
     // and length, so the shape is device state a restore has to correct - not a constraint it
     // reads back.
-    final archive = _subsArchive(
-      _subsEntry('Bool', value: true, size: 1),
-    );
-    final liveBlock = _subsLive([_subsRow(DataType.number.value, 1, const [1])]);
+    final archive = _subsArchive(_subsEntry('Bool', value: true, size: 1));
+    final liveBlock = _subsLive([
+      _subsRow(DataType.number.value, 1, const [1]),
+    ]);
     final plan = _plan(
       archive: archive,
       live: _live(blocks: [liveBlock]),
@@ -946,9 +945,7 @@ void main() {
   test(
     'a declared Bool row the device lacks is created as a Bool, and reported',
     () async {
-      final archive = _subsArchive(
-        _subsEntry('Bool', value: true, size: 1),
-      );
+      final archive = _subsArchive(_subsEntry('Bool', value: true, size: 1));
       // The device carries the block but no rows at all.
       final liveBlock = _subsLive(const []);
       final plan = _plan(
@@ -1038,10 +1035,10 @@ void main() {
     // read before something else wrote it. The structure phase then has nothing to re-create,
     // so the value write is the only thing that can repair the row: it must carry the archive's
     // declared type, or it writes the damage back and the row stays unconvertible.
-    final archive = _subsArchive(
-      _subsEntry('Bool', value: true, size: 1),
-    );
-    final liveBlock = _subsLive([_subsRow(DataType.bool_.value, 1, const [0])]);
+    final archive = _subsArchive(_subsEntry('Bool', value: true, size: 1));
+    final liveBlock = _subsLive([
+      _subsRow(DataType.bool_.value, 1, const [0]),
+    ]);
     final plan = _plan(
       archive: archive,
       live: _live(blocks: [liveBlock]),
