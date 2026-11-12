@@ -1,22 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/storage_client.dart';
-import 'package:tamuapp/core/types.dart';
+import 'support/fake_core.dart';
 
 /// Host coverage for the Storage file-table policy: the offset-0 invalidation rule (a record
 /// with offset 0 is a superseded/invalidated entry, skipped on every target now that all
 /// devices run the full multi-file filesystem) and the all-0xFF terminator.
 void main() {
-  List<int> record(int offset, int size, String name) => [
-    ...uint32ToBytes(offset),
-    ...uint32ToBytes(size),
-    ...StorageClient.padName(name),
-  ];
-
   group('parseFileTable', () {
     final contents = [
-      ...record(0x100, 16, 'A'),
-      ...record(0, 40, 'GONE'), // invalidated: offset zeroed, size left
-      ...record(0x200, 8, 'B'),
+      ...fileRecord(0x100, 16, 'A'),
+      ...fileRecord(0, 40, 'GONE'), // invalidated: offset zeroed, size left
+      ...fileRecord(0x200, 8, 'B'),
     ];
 
     test('drops the offset-0 (invalidated) record', () {
@@ -28,7 +22,7 @@ void main() {
     });
 
     test('an all-0xFF entry terminates the table', () {
-      final withTail = [...contents, ...record(0x300, 1, 'C')];
+      final withTail = [...contents, ...fileRecord(0x300, 1, 'C')];
       // Overwrite the tail record's first word-pair with the unwritten marker.
       withTail.setAll(contents.length, [
         0xFF,
@@ -88,7 +82,7 @@ void main() {
     test('the all-0xFF terminator stops an includeInvalidated parse too', () {
       final withTail = [
         ...contents,
-        ...record(0, 8, 'TAIL'), // a superseded record after the terminator
+        ...fileRecord(0, 8, 'TAIL'), // a superseded record after the terminator
       ];
       withTail.setAll(contents.length, List<int>.filled(8, 0xFF));
       final table = StorageClient.parseFileTable(

@@ -4,26 +4,14 @@ import 'package:tamuapp/ui/formatters.dart';
 import 'package:tamuapp/ui/storage_page.dart';
 import 'package:tamuapp/ui/theme.dart';
 
+import 'support/fake_core.dart';
+
 /// Covers the Storage view's file-table page, which now renders through the
 /// toolkit's table shell (`viewer_kit.dart`) instead of a hand-built `ListTile`
 /// list: the live records print as columns, the superseded ones stay behind a
 /// collapsible section, and unwritten slots are hidden.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-
-  List<int> u32(int v) => [
-    v & 0xFF,
-    (v >> 8) & 0xFF,
-    (v >> 16) & 0xFF,
-    (v >> 24) & 0xFF,
-  ];
-
-  /// One 16-byte file record: u32 offset, u32 size, 8-byte name.
-  List<int> record(int offset, int size, String name) => [
-    ...u32(offset),
-    ...u32(size),
-    ...name.padRight(8).codeUnits,
-  ];
 
   Future<void> pump(WidgetTester tester, List<int> data) async {
     await tester.pumpWidget(
@@ -42,9 +30,9 @@ void main() {
     // A live file at offset 0x100 (1024 B), a superseded one (offset 0), and an
     // unwritten slot.
     final data = <int>[
-      ...record(0x100, 1024, 'FOO'),
-      ...record(0, 512, 'OLD'),
-      ...record(0xFFFFFFFF, 0xFFFFFFFF, ''),
+      ...fileRecord(0x100, 1024, 'FOO'),
+      ...fileRecord(0, 512, 'OLD'),
+      ...fileRecord(0xFFFFFFFF, 0xFFFFFFFF, ''),
     ];
     await pump(tester, data);
 
@@ -65,8 +53,8 @@ void main() {
     tester,
   ) async {
     await pump(tester, [
-      ...record(0x100, 1024, 'FOO'),
-      ...record(0, 512, 'OLD'),
+      ...fileRecord(0x100, 1024, 'FOO'),
+      ...fileRecord(0, 512, 'OLD'),
     ]);
 
     await tester.tap(find.text('1 invalidated (old) records'));
@@ -82,11 +70,11 @@ void main() {
     // Slot 0 is the table itself, slot 2 was superseded, slot 3 is live again: the numbering
     // must keep 0/1/3 rather than closing up over the dropped record.
     final data = <int>[
-      ...record(0x1000, 16384, '.TABLE'),
-      ...record(0x2000, 2048, 'FOO'),
-      ...record(0, 512, 'OLD'),
-      ...record(0x3000, 4096, 'BAR'),
-      ...record(0xFFFFFFFF, 0xFFFFFFFF, ''),
+      ...fileRecord(0x1000, 16384, '.TABLE'),
+      ...fileRecord(0x2000, 2048, 'FOO'),
+      ...fileRecord(0, 512, 'OLD'),
+      ...fileRecord(0x3000, 4096, 'BAR'),
+      ...fileRecord(0xFFFFFFFF, 0xFFFFFFFF, ''),
     ];
     await pump(tester, data);
 

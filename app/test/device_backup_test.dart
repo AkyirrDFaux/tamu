@@ -2,17 +2,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/device_backup.dart';
 import 'package:tamuapp/core/types.dart';
 
+import 'support/byte_fixtures.dart';
+
 /// The device backup decoders, against synthetic bytes matching the firmware layouts
 /// (the static `.SV` space, `Subscriptions.h` SUBREQ, `Memory.h` .DT_/.DV_).
 void main() {
-  List<int> u16(int v) => [v & 0xFF, (v >> 8) & 0xFF];
-  List<int> u32(int v) => [
-    v & 0xFF,
-    (v >> 8) & 0xFF,
-    (v >> 16) & 0xFF,
-    (v >> 24) & 0xFF,
-  ];
-
   /// The static blocks' persistent fields (the values the device reports via CID 1/2).
   final staticFields = <int, List<({int field, int size, int type})>>{
     0x04: [(field: 0, size: 4, type: DataType.uint32.value)],
@@ -38,30 +32,6 @@ void main() {
   /// .DT_ table: Name (16 chars, space-padded), u16 entry_count, u16 reserved, then
   /// 8 B per entry (Field&Key, MemoryOffset, ValueInfo). The offset is the entry's position
   /// in its (compacted) value space.
-  List<int> dynamicTable(String name, List<(int, int, int, int)> entries) {
-    final nameBytes = name.codeUnits.take(16).toList();
-    while (nameBytes.length < 16) {
-      nameBytes.add(0x00);
-    }
-    final out = <int>[
-      ...nameBytes,
-      ...u16(entries.length),
-      0, 0, // reserved padding
-    ];
-    var po = 0, vo = 0;
-    for (final e in entries) {
-      final type = e.$2, size = e.$3, flags = e.$4;
-      final persistent = flags & ValueFlags.persistent != 0;
-      final offset = persistent ? po : vo;
-      if (persistent) {
-        po += size;
-      } else {
-        vo += size;
-      }
-      out.addAll([...u16(e.$1), ...u16(offset), ...u16(type), size, flags]);
-    }
-    return out;
-  }
 
   group('.SV', () {
     // One Vysi1 display (0x06) and one ResistiveMeasure (0x08), ascending - the space is stacked

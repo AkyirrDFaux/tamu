@@ -5,6 +5,7 @@ import 'package:tamuapp/ui/file_viewers.dart';
 import 'package:tamuapp/ui/theme.dart';
 import 'package:tamuapp/ui/formatters.dart';
 
+import 'support/byte_fixtures.dart';
 import 'support/viewer_pump.dart';
 
 /// Renders the `.SV` / SUBREQ decoders against synthetic bytes matching the
@@ -12,15 +13,6 @@ import 'support/viewer_pump.dart';
 /// system-block capability decoding.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-
-  List<int> u16(int v) => [v & 0xFF, (v >> 8) & 0xFF];
-
-  List<int> u32(int v) => [
-    v & 0xFF,
-    (v >> 8) & 0xFF,
-    (v >> 16) & 0xFF,
-    (v >> 24) & 0xFF,
-  ];
 
   testWidgets('.SV decodes a node System segment + static fields', (
     tester,
@@ -236,18 +228,11 @@ void main() {
 
   testWidgets('.DT_ dynamic block table renders', (tester) async {
     // Name (16 chars, NUL-padded), u16 entry_count, u16 reserved, then
-    // (fieldKey, type, size, flags) per entry.
-    final data = <int>[
-      ...'Box'.codeUnits, ...List.filled(13, 0), // 16-byte name
-      ...u16(2),
-      0, 0, // reserved padding
-      ...u16((0 << 8) | 0), ...u16(0),
-      ...u16(DataType.number.value),
-      4, ValueFlags.persistent,
-      ...u16((1 << 8) | 0), ...u16(0),
-      ...u16(DataType.text.value),
-      5, 0,
-    ];
+    // (fieldKey, offset, type, size, flags) per entry.
+    final data = dynamicTable('Box', [
+      (0, DataType.number.value, 4, ValueFlags.persistent),
+      (1 << 8, DataType.text.value, 5, 0),
+    ]);
     await pumpMemoryBackup(tester, '.DT_00  ', data);
     expect(find.textContaining('Box'), findsWidgets);
     expect(find.textContaining('Number'), findsWidgets);
