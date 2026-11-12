@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/register_page.dart';
 import 'package:tamuapp/ui/theme.dart';
+
+import 'support/block_reads.dart';
+import 'support/single_block_client.dart';
 
 /// The Register page's live rows for the ResistiveMeasure rail flags (fields 5/6, firmware
 /// Core/Devices/Measuring.h): the two flags must be named and shown as a Bool with no edit
@@ -12,61 +14,51 @@ import 'package:tamuapp/ui/theme.dart';
 ///
 /// Served by a fake client so the page renders off-device; the metas mirror the firmware's
 /// ResistiveMeasEntries table (Bool + ReadOnly for fields 5/6, Number + ReadOnly for 3/4).
-class _RailFlagRegisterClient extends RegisterClient {
+class _RailFlagRegisterClient extends SingleBlockRegisterClient {
   _RailFlagRegisterClient({required super.deviceId});
 
-  static const int _persistent = ValueFlags.persistent;
-  static const int _readOnly = ValueFlags.readOnly;
+  @override
+  int get blockType => BlockType.resistiveMeasure.value;
 
   @override
-  Future<BlocksRead?> readBlocks({List<int>? scriptSlots}) async => (
-    blocks: <ReportedBlock>[
-      (
-        type: BlockType.resistiveMeasure.value,
-        inst: 0,
-        meta: ValueInfo(type: BlockType.resistiveMeasure.value, size: 7),
-        name: 'Meas',
-      ),
-    ],
-    unreadTypes: const <int>{},
-  );
-
-  /// Only the Backup view needs the persistent layout; the Current view renders live reads.
-  @override
-  Future<StaticFieldLayout> readStaticFieldLayout() async => const {};
+  String get blockName => 'Meas';
 
   @override
-  Future<({ValueInfo meta, List<int> value})?> readBlockField(
+  int get fieldCount => 7;
+
+  @override
+  Future<BlockRead?> readBlockField(
     int blockType,
     int instance,
     int field,
     int key,
   ) async {
-    ValueInfo info(int type, int size, int flags) =>
-        ValueInfo(type: type, size: size, flags: flags);
+    const persistent = ValueFlags.persistent;
+    const readOnly = ValueFlags.readOnly;
     return switch (field) {
-      0 => (
-        meta: info(DataType.number.value, 4, _persistent),
-        value: numberToBytes(100),
+      0 => fieldBytes(
+        DataType.number.value,
+        numberToBytes(100),
+        flags: persistent,
       ),
-      1 => (
-        meta: info(DataType.enum_.value, 1, _persistent),
-        value: const [3], // LDR 10K
+      1 => fieldBytes(DataType.enum_.value, const [3], flags: persistent),
+      2 => fieldBytes(
+        DataType.number.value,
+        numberToBytes(0.5),
+        flags: persistent,
       ),
-      2 => (
-        meta: info(DataType.number.value, 4, _persistent),
-        value: numberToBytes(0.5),
+      3 => fieldBytes(
+        DataType.number.value,
+        numberToBytes(1500),
+        flags: readOnly,
       ),
-      3 => (
-        meta: info(DataType.number.value, 4, _readOnly),
-        value: numberToBytes(1500),
+      4 => fieldBytes(
+        DataType.number.value,
+        numberToBytes(330),
+        flags: readOnly,
       ),
-      4 => (
-        meta: info(DataType.number.value, 4, _readOnly),
-        value: numberToBytes(330),
-      ),
-      5 => (meta: info(DataType.bool_.value, 1, _readOnly), value: const [1]),
-      6 => (meta: info(DataType.bool_.value, 1, _readOnly), value: const [0]),
+      5 => fieldBytes(DataType.bool_.value, const [1], flags: readOnly),
+      6 => fieldBytes(DataType.bool_.value, const [0], flags: readOnly),
       _ => null,
     };
   }

@@ -1,73 +1,61 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/core/wifi_settings.dart';
 import 'package:tamuapp/ui/formatters.dart';
 import 'package:tamuapp/ui/register_page.dart';
 import 'package:tamuapp/ui/theme.dart';
 
+import 'support/block_reads.dart';
+import 'support/single_block_client.dart';
+
 /// The WiFi Settings block on the generic Register view: the registry's names replace
 /// "Field N", `State` prints its own label rather than an enum index, and the password row
 /// masks the value on the one surface that renders every block's values.
-class _WifiRegisterClient extends RegisterClient {
+class _WifiRegisterClient extends SingleBlockRegisterClient {
   _WifiRegisterClient({required super.deviceId});
 
-  static const int _persistent = ValueFlags.persistent;
-  static const int _readOnly = ValueFlags.readOnly;
+  @override
+  int get blockType => wifiSettingsBlockTypeValue;
 
   @override
-  Future<BlocksRead?> readBlocks({List<int>? scriptSlots}) async => (
-    blocks: <ReportedBlock>[
-      (
-        type: wifiSettingsBlockTypeValue,
-        inst: 0,
-        meta: ValueInfo(type: wifiSettingsBlockTypeValue, size: wifiFieldCount),
-        name: 'WiFi',
-      ),
-    ],
-    unreadTypes: const <int>{},
-  );
+  String get blockName => 'WiFi';
 
   @override
-  Future<StaticFieldLayout> readStaticFieldLayout() async => const {};
+  int get fieldCount => wifiFieldCount;
 
   @override
-  Future<({ValueInfo meta, List<int> value})?> readBlockField(
+  Future<BlockRead?> readBlockField(
     int blockType,
     int instance,
     int field,
     int key,
   ) async {
-    ValueInfo info(int type, int size, int flags) =>
-        ValueInfo(type: type, size: size, flags: flags);
-    List<int> text(String s, int width) {
-      final bytes = s.codeUnits.toList();
-      bytes.addAll(List<int>.filled(width - bytes.length, 0));
-      return bytes;
-    }
+    const persistent = ValueFlags.persistent;
+    const readOnly = ValueFlags.readOnly;
 
     return switch (field) {
-      wifiFieldEnabled => (
-        meta: info(DataType.bool_.value, 1, _persistent),
-        value: const [1],
+      wifiFieldEnabled => fieldBytes(DataType.bool_.value, const [
+        1,
+      ], flags: persistent),
+      wifiFieldSsid => fieldBytes(
+        DataType.text.value,
+        paddedText('TamuNet', 32),
+        flags: persistent,
       ),
-      wifiFieldSsid => (
-        meta: info(DataType.text.value, 32, _persistent),
-        value: text('TamuNet', 32),
+      wifiFieldPassword => fieldBytes(
+        DataType.text.value,
+        paddedText('hunter2', 32),
+        flags: persistent,
       ),
-      wifiFieldPassword => (
-        meta: info(DataType.text.value, 32, _persistent),
-        value: text('hunter2', 32),
-      ),
-      wifiFieldState => (
-        meta: info(DataType.enum_.value, 1, _readOnly),
-        value: const [2], // Connected
-      ),
-      wifiFieldIp => (
+      wifiFieldState => fieldBytes(DataType.enum_.value, const [
+        2,
+      ], flags: readOnly), // Connected
+      wifiFieldIp => fieldBytes(
         // The address is 16 raw Undefined bytes in network order, IPv4-mapped.
-        meta: info(DataType.undefined.value, 16, _readOnly),
-        value: [for (var i = 0; i < 10; i++) 0, 0xFF, 0xFF, 192, 168, 0, 9],
+        DataType.undefined.value,
+        [for (var i = 0; i < 10; i++) 0, 0xFF, 0xFF, 192, 168, 0, 9],
+        flags: readOnly,
       ),
       _ => null,
     };
