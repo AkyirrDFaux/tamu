@@ -423,6 +423,89 @@ List<BusRequest> _writes(_DynamicDevice device) => device.sent
     .where((c) => c.service == ServiceType.register && c.cid == RegisterCid.write)
     .toList();
 
+/// One dynamic `Subscriptions` row as an archive carries it: the address the rig's emote selector
+/// reads (`Dynamic[0]` field 4 key 0), declared with [type] at [size] bytes.
+///
+/// Seven cases below restore that one row in a different declared shape, and each spelled the whole
+/// `BackupEntry` - field name, key name, flags list, declared size - out by hand.
+BackupEntry _subsEntry(
+  String type, {
+  int field = 4,
+  int key = 0,
+  List<String> flags = const ['Persistent'],
+  Object? value,
+  bool structural = false,
+  required int size,
+}) => BackupEntry(
+  field: 'Field $field',
+  fieldIndex: field,
+  key: 'Key $key',
+  keyIndex: key,
+  type: type,
+  flags: flags,
+  value: value,
+  structural: structural,
+  size: size,
+);
+
+/// [_subsEntry] inside the one-block archive a repair case restores.
+BackupDevice _subsArchive(BackupEntry entry) => _archive(
+  blocks: [
+    BackupBlock(
+      type: 'Dynamic',
+      typeIndex: dynamicTypeBase,
+      instance: 0,
+      name: 'Subscriptions',
+      isDynamic: true,
+      entries: [entry],
+    ),
+  ],
+);
+
+/// The `Subscriptions` block as the device holds it, with [entries] rows.
+LiveBlock _subsLive(List<LiveEntry> entries) => LiveBlock(
+  type: dynamicTypeBase,
+  instance: 0,
+  name: 'Subscriptions',
+  isDynamic: true,
+  entries: entries,
+);
+
+/// One row of [_subsLive].
+LiveEntry _subsRow(
+  int type,
+  int size,
+  List<int> value, {
+  int field = 4,
+  int key = 0,
+  int flags = ValueFlags.persistent,
+}) => LiveEntry(
+  field: field,
+  key: key,
+  fieldName: 'Field $field',
+  keyName: 'Key $key',
+  meta: ValueInfo(type: type, size: size, flags: flags),
+  value: value,
+);
+
+/// Puts both eyes' rows into [device] the way the rig holds them: each key-0 marker empty, and
+/// every other row holding [valueOf]'s bytes for it.
+void _seedEyes(
+  _DynamicDevice device,
+  List<int> Function(int eye, BackupEntry row) valueOf,
+) {
+  for (final eye in [1, 2]) {
+    final name = eye == 1 ? 'Left Eye' : 'Right Eye';
+    for (final row in _eye(name, eye).entries) {
+      device.rows['$eye:${row.fieldIndex}:${row.keyIndex}'] = (
+        type: dataTypeFromWord(row.type)!.value,
+        value: row.keyIndex == 0 ? const <int>[] : valueOf(eye, row),
+        flags: ValueFlags.persistent,
+      );
+    }
+  }
+}
+
 void main() {
   tearDown(RestoreSession.clear);
 
@@ -431,33 +514,16 @@ void main() {
     // The device holds both eyes exactly as the rig does, with ONE value row that differs - so
     // the run still has a write to make next to the markers a restore must not touch.
     final live = _live(matrix: List<int>.filled(28, 0));
-    for (final eye in [1, 2]) {
-      for (final row in _eye(
-        eye == 1 ? 'Left Eye' : 'Right Eye',
-        eye,
-      ).entries) {
-        if (row.keyIndex == 0) {
-          // The marker: a zero-length row, present and persistent, as measured on the rig.
-          device.rows['$eye:${row.fieldIndex}:0'] = (
-            type: dataTypeFromWord(row.type)!.value,
-            value: const <int>[],
-            flags: ValueFlags.persistent,
-          );
-        } else {
-          device.rows['$eye:${row.fieldIndex}:${row.keyIndex}'] = (
-            type: dataTypeFromWord(row.type)!.value,
-            value: live.blocks
-                .firstWhere((b) => b.instance == eye)
-                .entries
-                .firstWhere(
-                  (e) => e.field == row.fieldIndex && e.key == row.keyIndex,
-                )
-                .value,
-            flags: ValueFlags.persistent,
-          );
-        }
-      }
-    }
+    // The markers are zero-length rows, present and persistent, as measured on the rig; every other
+    // row holds what the live device holds for it.
+    _seedEyes(
+      device,
+      (eye, row) => live.blocks
+          .firstWhere((b) => b.instance == eye)
+          .entries
+          .firstWhere((e) => e.field == row.fieldIndex && e.key == row.keyIndex)
+          .value,
+    );
     _install(device);
 
     final report = await applyRestorePlan(_plan(live: live));
@@ -511,22 +577,12 @@ void main() {
   test('a genuine refusal still fails with its code, and is not a skip', () async {
     final device = _DynamicDevice();
     final live = _live(matrix: List<int>.filled(28, 0));
-    for (final eye in [1, 2]) {
-      for (final row in _eye(
-        eye == 1 ? 'Left Eye' : 'Right Eye',
-        eye,
-      ).entries) {
-        device.rows['$eye:${row.fieldIndex}:${row.keyIndex}'] = (
-          type: dataTypeFromWord(row.type)!.value,
-          value: row.keyIndex == 0
-              ? const <int>[]
-              : row.size == 28
-              ? List<int>.filled(28, 0)
-              : const [0],
-          flags: ValueFlags.persistent,
-        );
-      }
-    }
+    // The device's rows differ from the archive only in the Matrix (28 zero bytes) and the Enum
+    // values, so exactly one value write is refused.
+    _seedEyes(
+      device,
+      (eye, row) => row.size == 28 ? List<int>.filled(28, 0) : const [0],
+    );
     // The device refuses the one value write - FLAG_FAIL, no payload, as this firmware answers.
     device.refuse.add('1:4:3');
     _install(device);
@@ -548,49 +604,10 @@ void main() {
     () async {
       // `Dynamic[0]` field 4 key 0 on the rig: a Number stored at size 1 where a Number is 4, and
       // the emote selector's read of it lands as SCRIPT_ERR_TYPE.
-      final archive = _archive(
-        blocks: [
-          BackupBlock(
-            type: 'Dynamic',
-            typeIndex: dynamicTypeBase,
-            instance: 0,
-            name: 'Subscriptions',
-            isDynamic: true,
-            entries: [
-              BackupEntry(
-                field: 'Field 4',
-                fieldIndex: 4,
-                key: 'Key 0',
-                keyIndex: 0,
-                type: 'Number',
-                flags: const ['Persistent'],
-                value: 0.25,
-                size: 4,
-              ),
-            ],
-          ),
-        ],
+      final archive = _subsArchive(
+        _subsEntry('Number', value: 0.25, size: 4),
       );
-      final liveBlock = LiveBlock(
-        type: dynamicTypeBase,
-        instance: 0,
-        name: 'Subscriptions',
-        isDynamic: true,
-        entries: [
-          LiveEntry(
-            field: 4,
-            key: 0,
-            fieldName: 'Field 4',
-            keyName: 'Key 0',
-            meta: ValueInfo(
-              type: DataType.number.value,
-              size: 1,
-              flags: ValueFlags.persistent,
-            ),
-            value: const [0x01],
-          ),
-        ],
-      );
+      final liveBlock = _subsLive([_subsRow(DataType.number.value, 1, const [0x01])]);
       final plan = _plan(
         archive: archive,
         live: _live(blocks: [liveBlock]),
@@ -697,13 +714,7 @@ void main() {
         ),
         isEmpty,
       );
-      expect(
-        device.sent.where(
-          (c) =>
-              c.service == ServiceType.register && c.cid == RegisterCid.write,
-        ),
-        isEmpty,
-      );
+      expect(_writes(device), isEmpty);
       expect(client.trace.fault!.kind, RequestFaultKind.notSent);
       expect(client.trace.fault!.detail, contains('dictionary markers'));
     },
@@ -717,48 +728,18 @@ void main() {
       // (`backupBlockFromVisited`: identity, type, flags and size, no value). The archive carries
       // no value for it - but the device's row holds one, and the report used to tell the reader
       // the opposite ("the device carries the row, which holds no value of its own").
-      final archive = _archive(
-        blocks: [
-          BackupBlock(
-            type: 'Dynamic',
-            typeIndex: dynamicTypeBase,
-            instance: 0,
-            name: 'Subscriptions',
-            isDynamic: true,
-            entries: [
-              BackupEntry(
-                field: 'Field 4',
-                fieldIndex: 4,
-                key: 'Key 0',
-                keyIndex: 0,
-                type: 'Number',
-                flags: const ['Volatile'],
-                value: null,
-                structural: true,
-                size: 4,
-              ),
-            ],
-          ),
-        ],
-      );
-      LiveBlock blockWith(List<LiveEntry> entries) => LiveBlock(
-        type: dynamicTypeBase,
-        instance: 0,
-        name: 'Subscriptions',
-        isDynamic: true,
-        entries: entries,
+      final archive = _subsArchive(
+        _subsEntry(
+          'Number',
+          flags: const ['Volatile'],
+          structural: true,
+          size: 4,
+        ),
       );
       final live = _live(
         blocks: [
-          blockWith([
-            LiveEntry(
-              field: 4,
-              key: 0,
-              fieldName: 'Field 4',
-              keyName: 'Key 0',
-              meta: ValueInfo(type: DataType.number.value, size: 4),
-              value: const [1, 2, 3, 4],
-            ),
+          _subsLive([
+            _subsRow(DataType.number.value, 4, const [1, 2, 3, 4], flags: 0),
           ]),
         ],
       );
@@ -793,19 +774,13 @@ void main() {
       // The row still holds what it held: nothing was written to it.
       expect(device.rows['0:4:0']!.value, [1, 2, 3, 4]);
       expect(device.zeroLengthValueWrites, 0);
-      expect(
-        device.sent.where(
-          (c) =>
-              c.service == ServiceType.register && c.cid == RegisterCid.write,
-        ),
-        isEmpty,
-      );
+      expect(_writes(device), isEmpty);
 
       // The same structural row on a device that does NOT carry it IS creatable - the structure
       // phase builds it zero-filled from the declared type and size - so its reason must not say
       // it cannot be created (the old text said so for every structural row).
       final absent = structuralSkips(
-        _plan(archive: archive, live: _live(blocks: [blockWith(const [])])),
+        _plan(archive: archive, live: _live(blocks: [_subsLive(const [])])),
       ).single;
       expect(absent.reason, contains('zero-filled'));
       expect(absent.reason, isNot(contains('cannot be created')));
@@ -834,14 +809,9 @@ void main() {
         name: 'Subscriptions',
         isDynamic: true,
         entries: [
-          BackupEntry(
-            field: 'Field 4',
-            fieldIndex: 4,
-            key: 'Key 0',
-            keyIndex: 0,
-            type: 'Number',
+          _subsEntry(
+            'Number',
             flags: const ['Volatile'],
-            value: null,
             structural: true,
             size: 4,
           ),
@@ -850,13 +820,6 @@ void main() {
     ],
   );
 
-  LiveBlock subscriptionsBlock(List<LiveEntry> entries) => LiveBlock(
-    type: dynamicTypeBase,
-    instance: 0,
-    name: 'Subscriptions',
-    isDynamic: true,
-    entries: entries,
-  );
 
   test(
     'a structural row the run created is reported as created, not as a value kept',
@@ -865,7 +828,7 @@ void main() {
       // The device carries the block but NOT the row: the structure phase creates it zero-filled.
       final plan = _plan(
         archive: archive,
-        liveBlocks: [subscriptionsBlock(const [])],
+        liveBlocks: [_subsLive(const [])],
       );
       // Before the run the reason is the absent-row one, and it already says what will happen.
       expect(
@@ -932,49 +895,10 @@ void main() {
     // selector's register read of it lands as SCRIPT_ERR_TYPE. A dynamic row carries its own type
     // and length, so the shape is device state a restore has to correct - not a constraint it
     // reads back.
-    final archive = _archive(
-      blocks: [
-        BackupBlock(
-          type: 'Dynamic',
-          typeIndex: dynamicTypeBase,
-          instance: 0,
-          name: 'Subscriptions',
-          isDynamic: true,
-          entries: [
-            BackupEntry(
-              field: 'Field 4',
-              fieldIndex: 4,
-              key: 'Key 0',
-              keyIndex: 0,
-              type: 'Bool',
-              flags: const ['Persistent'],
-              value: true,
-              size: 1,
-            ),
-          ],
-        ),
-      ],
+    final archive = _subsArchive(
+      _subsEntry('Bool', value: true, size: 1),
     );
-    final liveBlock = LiveBlock(
-      type: dynamicTypeBase,
-      instance: 0,
-      name: 'Subscriptions',
-      isDynamic: true,
-      entries: [
-        LiveEntry(
-          field: 4,
-          key: 0,
-          fieldName: 'Field 4',
-          keyName: 'Key 0',
-          meta: ValueInfo(
-            type: DataType.number.value,
-            size: 1,
-            flags: ValueFlags.persistent,
-          ),
-          value: const [1],
-        ),
-      ],
-    );
+    final liveBlock = _subsLive([_subsRow(DataType.number.value, 1, const [1])]);
     final plan = _plan(
       archive: archive,
       live: _live(blocks: [liveBlock]),
@@ -1022,37 +946,11 @@ void main() {
   test(
     'a declared Bool row the device lacks is created as a Bool, and reported',
     () async {
-      final archive = _archive(
-        blocks: [
-          BackupBlock(
-            type: 'Dynamic',
-            typeIndex: dynamicTypeBase,
-            instance: 0,
-            name: 'Subscriptions',
-            isDynamic: true,
-            entries: [
-              BackupEntry(
-                field: 'Field 4',
-                fieldIndex: 4,
-                key: 'Key 0',
-                keyIndex: 0,
-                type: 'Bool',
-                flags: const ['Persistent'],
-                value: true,
-                size: 1,
-              ),
-            ],
-          ),
-        ],
+      final archive = _subsArchive(
+        _subsEntry('Bool', value: true, size: 1),
       );
       // The device carries the block but no rows at all.
-      final liveBlock = LiveBlock(
-        type: dynamicTypeBase,
-        instance: 0,
-        name: 'Subscriptions',
-        isDynamic: true,
-        entries: const [],
-      );
+      final liveBlock = _subsLive(const []);
       final plan = _plan(
         archive: archive,
         live: _live(blocks: [liveBlock]),
@@ -1097,37 +995,15 @@ void main() {
   test(
     'a structural Bool row the device lacks is created as a Bool and named as created',
     () async {
-      final archive = _archive(
-        blocks: [
-          BackupBlock(
-            type: 'Dynamic',
-            typeIndex: dynamicTypeBase,
-            instance: 0,
-            name: 'Subscriptions',
-            isDynamic: true,
-            entries: [
-              BackupEntry(
-                field: 'Field 4',
-                fieldIndex: 4,
-                key: 'Key 0',
-                keyIndex: 0,
-                type: 'Bool',
-                flags: const ['Volatile'],
-                value: null,
-                structural: true,
-                size: 1,
-              ),
-            ],
-          ),
-        ],
+      final archive = _subsArchive(
+        _subsEntry(
+          'Bool',
+          flags: const ['Volatile'],
+          structural: true,
+          size: 1,
+        ),
       );
-      final liveBlock = LiveBlock(
-        type: dynamicTypeBase,
-        instance: 0,
-        name: 'Subscriptions',
-        isDynamic: true,
-        entries: const [],
-      );
+      final liveBlock = _subsLive(const []);
       final plan = _plan(
         archive: archive,
         live: _live(blocks: [liveBlock]),
@@ -1162,49 +1038,10 @@ void main() {
     // read before something else wrote it. The structure phase then has nothing to re-create,
     // so the value write is the only thing that can repair the row: it must carry the archive's
     // declared type, or it writes the damage back and the row stays unconvertible.
-    final archive = _archive(
-      blocks: [
-        BackupBlock(
-          type: 'Dynamic',
-          typeIndex: dynamicTypeBase,
-          instance: 0,
-          name: 'Subscriptions',
-          isDynamic: true,
-          entries: [
-            BackupEntry(
-              field: 'Field 4',
-              fieldIndex: 4,
-              key: 'Key 0',
-              keyIndex: 0,
-              type: 'Bool',
-              flags: const ['Persistent'],
-              value: true,
-              size: 1,
-            ),
-          ],
-        ),
-      ],
+    final archive = _subsArchive(
+      _subsEntry('Bool', value: true, size: 1),
     );
-    final liveBlock = LiveBlock(
-      type: dynamicTypeBase,
-      instance: 0,
-      name: 'Subscriptions',
-      isDynamic: true,
-      entries: [
-        LiveEntry(
-          field: 4,
-          key: 0,
-          fieldName: 'Field 4',
-          keyName: 'Key 0',
-          meta: ValueInfo(
-            type: DataType.bool_.value,
-            size: 1,
-            flags: ValueFlags.persistent,
-          ),
-          value: const [0],
-        ),
-      ],
-    );
+    final liveBlock = _subsLive([_subsRow(DataType.bool_.value, 1, const [0])]);
     final plan = _plan(
       archive: archive,
       live: _live(blocks: [liveBlock]),
@@ -1242,15 +1079,8 @@ void main() {
       final archive = volatileRowArchive();
       final live = _live(
         blocks: [
-          subscriptionsBlock([
-            LiveEntry(
-              field: 4,
-              key: 0,
-              fieldName: 'Field 4',
-              keyName: 'Key 0',
-              meta: ValueInfo(type: DataType.number.value, size: 4),
-              value: const [1, 2, 3, 4],
-            ),
+          _subsLive([
+            _subsRow(DataType.number.value, 4, const [1, 2, 3, 4], flags: 0),
           ]),
         ],
       );
@@ -1279,13 +1109,7 @@ void main() {
       );
       expect(skip.reason, isNot(contains('created it zero-filled this run')));
       // Nothing was written: no create, no value write.
-      expect(
-        device.sent.where(
-          (c) =>
-              c.service == ServiceType.register && c.cid == RegisterCid.write,
-        ),
-        isEmpty,
-      );
+      expect(_writes(device), isEmpty);
       expect(device.rows['0:4:0']!.value, [1, 2, 3, 4]);
     },
   );
@@ -1499,36 +1323,10 @@ void main() {
       // A row that declares no length but is NOT a dictionary type has no create the firmware would
       // accept, so it must never reach the bus - not from the structure phase and not from the
       // client, which refuses it either way.
-      final archive = _archive(
-        blocks: [
-          BackupBlock(
-            type: 'Dynamic',
-            typeIndex: dynamicTypeBase,
-            instance: 0,
-            name: 'Subscriptions',
-            isDynamic: true,
-            entries: [
-              BackupEntry(
-                field: 'Field 4',
-                fieldIndex: 4,
-                key: 'Key 0',
-                keyIndex: 0,
-                type: 'Text',
-                flags: const ['Persistent'],
-                value: const <Object>[],
-                size: 0,
-              ),
-            ],
-          ),
-        ],
+      final archive = _subsArchive(
+        _subsEntry('Text', value: const <Object>[], size: 0),
       );
-      final liveBlock = LiveBlock(
-        type: dynamicTypeBase,
-        instance: 0,
-        name: 'Subscriptions',
-        isDynamic: true,
-        entries: const [],
-      );
+      final liveBlock = _subsLive(const []);
       final device = _DynamicDevice();
       _install(device);
 
@@ -1548,13 +1346,7 @@ void main() {
       );
       expect(device.markerCreates, isEmpty);
       expect(device.zeroLengthValueWrites, 0);
-      expect(
-        device.sent.where(
-          (c) =>
-              c.service == ServiceType.register && c.cid == RegisterCid.write,
-        ),
-        isEmpty,
-      );
+      expect(_writes(device), isEmpty);
 
       // The client refuses the same empty write asked for directly, and refuses a marker create
       // asked for with a type that is not a dictionary.
@@ -1585,14 +1377,7 @@ void main() {
       expect(notADictionary, isNull);
       expect(client.trace.fault!.kind, RequestFaultKind.notSent);
       expect(client.trace.fault!.detail, contains('not one'));
-      expect(
-        device.sent.where(
-          (c) =>
-              c.service == ServiceType.register && c.cid == RegisterCid.write,
-        ),
-        isEmpty,
-        reason: 'neither attempt was sent',
-      );
+      expect(_writes(device), isEmpty, reason: 'neither attempt was sent');
     },
   );
 }
