@@ -21,7 +21,7 @@
 class CoreTimeSyncService
 {
 public:
-    static const uint32_t DISCOVER_INTERVAL_MS = 150000; // ~2.5 min (docs "2-3 minutes")
+    static const uint32_t DISCOVER_INTERVAL_MS = 150000; // 150 s, Docs/Devices.md:42
     static const uint32_t DISCOVER_WINDOW_MS   = 500;    // docs: responses within 500 ms
 
     // Scheduling jitter: +/-10% around the nominal interval, so synchronised cores do not

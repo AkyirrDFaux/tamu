@@ -28,8 +28,8 @@ void ProcessBus();
 // Time offset in ms applied by a node after a Device service CID 3 (TimeSync) exchange,
 // plus the raw time it was measured at and the offset drift (Q16.16 ms of offset per raw
 // ms). Between syncs the offset is extrapolated with the drift so the clock tracks the
-// peer's RATE: a node's own oscillator drifts ~1%, so a step-only correction would be
-// seconds off again before the next 2-3 minute sync.
+// peer's RATE: a node's own oscillator drifts ~1%, so a step-only correction would be stale
+// again before the next sync (60-75 s on a DAS, 150 s +/-10% between cores; Docs/Devices.md).
 extern int32_t TimeOffsetMs;
 extern uint32_t TimeOffsetRefRaw;
 extern int32_t TimeDrift;

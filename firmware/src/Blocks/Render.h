@@ -27,7 +27,7 @@ enum class GeometryKey : uint8_t
 
 // Geometry shapes (docs order). ShapeAlpha covers every entry EXCEPT Mesh (12), which has no
 // case there and falls through to its default mask of 0 - see ShapeAlpha's switch in
-// Vysi1Render.h.
+// GeometryMath.h (Vysi1Render.h only calls it).
 enum class Geometries : uint8_t
 {
     None = 0,

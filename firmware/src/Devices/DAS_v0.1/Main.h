@@ -29,9 +29,9 @@ static_assert(DAS_RST_PIN == RCC_PINRSTF && DAS_RST_POR == RCC_PORRSTF &&
 
 #define CHIP_ID_ADDR  0x1FFFF7E8 // Fixed memory-mapped location of the chip's unique ID
 
-// Node time-sync interval. The docs say "repeated at random within the next 2-3 minutes";
-// the 60-75 s cadence (after the 30 s warm-up) keeps the holdover within the required
-// <10 ms. The DAS's internal RC oscillator drifts ~1% (see Core/Functions/SysFunctions.h);
+// Node time-sync interval. Docs/Devices.md:70 specifies 60 s (+0-15 s jitter) for this
+// device; the 60-75 s cadence (after the 30 s warm-up) keeps the holdover within the
+// required <10 ms. The DAS's internal RC oscillator drifts ~1% (see Core/Functions/SysFunctions.h);
 // the two-point drift estimate cancels that first-order term, leaving the residual change in
 // the drift rate (~0.02% across the interval, i.e. ~10 ms per 60 s).
 #define NODE_TIME_SYNC_INTERVAL_MS 60000u
@@ -209,9 +209,11 @@ int main(void)
 
     // TimeSync is synchronized-device initiated: this node syncs ITSELF to the core by
     // sending Device service CID 3 and computing the offset locally from the reply. Repeated
-    // every 60 s plus up to 15 s of jitter (NODE_TIME_SYNC_INTERVAL_MS, below) - not the docs'
-    // "next 2-3 minutes", which the 30 s warm-up plus this cadence is what the code settled on.
-    // (Docs/Services/System Block and Device Commands.md)
+    // every 60 s plus 0-15 s of jitter, the cadence Docs/Devices.md:70 specifies for this
+    // device ("Clock re-sync interval: 60 s (+0-15 s jitter)"); the generic rule is
+    // Docs/Services/System Block and Device Commands.md:46 ("a device-specific interval (see
+    // [[Devices]])"). The base is NODE_TIME_SYNC_INTERVAL_MS, defined above; the jitter is
+    // the RawRand() term in the re-sync branch below.
     auto SendTimeSync = []() {
         // NTP-like: send the SYNCHRONIZED local time (Now()), so the reply's offset is a
         // correction (delta) to add to TimeOffsetMs, not an absolute value to overwrite.
@@ -233,7 +235,7 @@ int main(void)
     // changes DeviceStatus.UptimeMs, and measuring against it would let the correction
     // itself satisfy the interval (a TimeSync storm).
     uint32_t LastSyncMs = TimeFromBoot();
-    // Warm-up first (seed the drift estimate), then the documented 2-3 minute cadence.
+    // Warm-up first (seed the drift estimate), then the 60-75 s jittered cadence.
     uint32_t NextSyncMs = NODE_TIME_SYNC_WARMUP_MS;
 
     uint32_t LastSampleMs[2] = {0, 0};
