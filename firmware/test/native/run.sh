@@ -1857,11 +1857,14 @@ if [ "$(grep -c 'AppLinkFrameNeedsBus(Frame)) break' "$BG_DISPATCH")" != 0 ]; th
     echo "FAIL $BG_DISPATCH: the RX loop leaves on a blocked head again (the head-of-line block)"
     bg_fail=1
 fi
-if [ "$(grep -c 'AppBusForwardSawReply(Frame.Trid, Frame.Cmd);' "$BG_DISPATCH")" != 1 ] ||
+if [ "$(grep -c 'AppBusForwardSawReply(Frame.Trid, Frame.Cmd, Frame.IdSrc, PayloadBytes(Frame));' "$BG_DISPATCH")" != 1 ] ||
    grep -q 'if ((Frame.Flags & FLAG_TYPE) && Frame.IdSrc != DeviceStatus.ShortAddress)' "$BG_DISPATCH"; then
     echo "FAIL $BG_DISPATCH: any frame from another device matching the open TRID releases the slot (a value update's confirmation is not FLAG_TYPE)"
     bg_fail=1
 fi
+# The call also carries the frame's source and payload length: those are what the gate ring's
+# `stray` trace records when a window expired with frames on the wire that were NOT the answer
+# (card t_82c3dc59). The release itself is still decided by TRID + CMD alone.
 # ... and the release matches the CMD as well as the TRID: a provider's value update carries the
 # subscription TRID of a Change that is still owed its answer (BusGateIsAnswer in BusGate.h).
 if ! grep -q 'AppInterface.BusPendingCmd == Cmd' "$BG_IFACE"; then
@@ -1927,6 +1930,12 @@ echo
 echo "### source guard: a lost core-origin request is counted, beside AppBusSendFails, and printed"
 if ! bash "$ROOT/test/native/bus_core_lost_guard.sh" "$BG_IFACE" "$BG_DISPATCH" \
      "$ROOT/src/Devices/Tamu_v2.0A/RSBus.h"; then
+    fail=$((fail + 1))
+fi
+echo
+
+echo "### source guard: a forwarded Register write lost on the wire is sent again, with the app's TRID"
+if ! bash "$ROOT/test/native/bus_retry_guard.sh" "$BG_IFACE"; then
     fail=$((fail + 1))
 fi
 echo

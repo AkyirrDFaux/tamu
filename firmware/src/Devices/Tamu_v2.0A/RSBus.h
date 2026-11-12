@@ -64,9 +64,13 @@ void SetupRS485()
 // reply died: the core decided to send while the answer was still on the wire, drained the answer
 // while waiting for silence, and then reported the node as silent. Nothing counted it.
 //
-// Now the bytes go into a keep ring that ReceivePacket()'s byte source drains FIRST (its bytes are
+// The bytes go into a keep ring that ReceivePacket()'s byte source drains FIRST (its bytes are
 // older than anything the driver still holds, so frame order is preserved). A whole longest frame
 // is 129 bytes with its sync byte; 160 holds that plus the head of the next.
+//
+// (Sizing this ring to the driver's own 1024-byte buffer is the E82/BusRxKeepRing question, not
+// card t_82c3dc59's: measured here on 2026-11-12, `rxdestroyed=0` in every session - 100-attempt
+// write bursts and five full restores - so a refused byte was never what made a write unanswered.)
 #define RS485_RX_KEEP_BYTES 160
 // A whole longest frame (12 header + 116 payload + the 0xAA sync byte = 129) must fit, or the ring
 // could refuse the very reply it exists to keep.
@@ -110,6 +114,7 @@ static bool RS485KeepBufferedRx()
         if (Got <= 0)
             return Active;
         Active = true;
+        AppBusRxBytes += (uint32_t)Got; // BUSGATE per-transaction received-byte delta
         for (int i = 0; i < Got; i++)
         {
             if (!RxKeep.Push(Buf[i]))
@@ -381,6 +386,7 @@ int ReceivePacket(PacketFrame *Data)
         for (;;) {
             if (!RxKeep.Pop(Byte) && uart_read_bytes(UART_NUM_1, &Byte, 1, 0) != 1)
                 return false;
+            AppBusRxBytes++; // BUSGATE per-transaction received-byte delta
             if (BootloaderRxSink && BootloaderRxSink(Byte))
                 continue; // consumed by the bootloader passthrough
             return true;

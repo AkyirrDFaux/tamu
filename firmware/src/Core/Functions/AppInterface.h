@@ -27,6 +27,7 @@ typedef int portMUX_TYPE;
 #endif
 #include "Core/Functions/Packet.h"
 #include "Core/Functions/BusGate.h" // the gate's decisions (host-tested)
+#include "Core/Functions/BusDiag.h" // frames the RX CRC refused, printed with the gate ring
 #include "Core/Functions/AppConsole.h" // AppConsoleBusy: the gate's ring is re-emitted when idle
 
 // Defined in the device AppUSB.h (included after this header); used by the TX
@@ -219,13 +220,37 @@ enum : uint8_t
     ABG_LATE = 0x02,    // the reply turned up AFTER the window had already released the gate
     ABG_CLASH = 0x04,   // a core-origin frame went onto the bus while this gate was owed an answer
     ABG_LOST = 0x08,    // the forward never reached the wire (SendAndVerifyPacket exhausted)
+    ABG_CORE = 0x10,    // the core's own request, not an app forward (so its window is 250 ms)
 };
 
+// Every byte of bus traffic the core received since boot (free-running).
+//
+// Recorded per transaction as a delta, because it is what separates the two ways a forwarded
+// request can end in silence: a line that stayed QUIET while the window was open (the node never
+// answered) and a line that CARRIED BYTES inside the window (the node did answer, and the answer
+// either failed the CRC - `BusRxCrcRejects` - or was never assembled at all). Without it the gate
+// ring can only say "no reply arrived", which is the one thing the app already knows.
+// Written from the core's RSBus.h (the only place bytes come off the UART).
+uint32_t AppBusRxBytes = 0;
+
+// What became of one gated transaction.
+//
+// `At`/`Cmd`/`Hold`/`Rx`/`Rej` exist for one question the old record could not answer: a write
+// that expires at its window looks identical to a write whose reply arrived corrupted, and the
+// saturated `Hold` (uint8, capped at 255) could not even tell a 600 ms app window from a 250 ms
+// core one. The card that added them (t_82c3dc59) needed exactly that separation.
 struct AppBusGateEntry
 {
+    uint32_t At;   // UptimeMs when the transaction was opened (the send)
     uint16_t Tgt;
     uint16_t Trid;
-    uint8_t Hold;  // ms from send to release, saturated at 255
+    uint16_t Cmd;  // service|CID of the request: names the item, and tells Save All (0x0C05)
+    uint16_t Hold; // ms from send to release - the real figure, not saturated
+    uint16_t Rx;   // bus bytes received while the gate was open (saturated at 65535)
+    uint8_t Rej;   // RX CRC rejects that landed inside the window
+    uint8_t AsmStage; // the assembler's stage when the window closed (0 = between frames)
+    uint16_t AsmGot;  // bytes of the frame it was holding
+    uint16_t AsmNeed; // bytes that frame claimed it needed
     uint8_t Flags; // ABG_* above
 };
 
@@ -248,7 +273,11 @@ uint16_t AppBusGateWorst = 0;   // longest hold that WAS answered (ms)
 uint8_t AppBusGateOpen = 0;     // ring slot of the transaction the gate is waiting on
 bool AppBusGateIsOpen = false;
 uint16_t AppBusGateOpenTgt = 0;
+uint16_t AppBusGateOpenCmd = 0;      // the open request's service|CID (written into its record)
+bool AppBusGateOpenCore = false;     // the open transaction is the core's own (250 ms window)
 uint32_t AppBusGateOpenAt = 0;
+uint32_t AppBusGateOpenRx = 0;       // AppBusRxBytes when the transaction opened
+uint32_t AppBusGateOpenRejects = 0;  // BusRxCrcRejects when the transaction opened
 // The last few windows that closed unanswered, so a reply that arrives after one of them can be
 // named as late. That is what tells "the node answered too slowly for the window" from "the node
 // never answered at all" - and one slot could not: a restore has dozens of expiries in a row, and
@@ -264,6 +293,64 @@ struct AppBusGateLateSlot
 };
 AppBusGateLateSlot AppBusGateLate[APP_BUS_GATE_LATE_SLOTS];
 uint8_t AppBusGateLateNext = 0;
+
+// --- the retry for an app-forwarded `Register` write (card t_82c3dc59) ------------------------
+//
+// Measured on the rig 2026-11-12 (core 2026.11.12 iter 2 = the delivered RX path + this gate's
+// diagnostics, DAS 2026.11.10 iter 8, .pio/probe/e79_cause.py): a one-at-a-time `Register` CID 3
+// write to a DAS that CHANGES a value is answered in 13-14 ms (median 13, p90 14, max 75 over 400+
+// attempts), and 3-13 % of them are answered by nothing at all for 3.02-3.05 s. Each of those
+// windows is recorded by the gate ring as
+//
+//     cmd=0x0103 hold=602..605ms rx=106..140 rej=0 asm=0/0/0 EXPIRED      (6 of 6 in one run)
+//
+// i.e. 106-140 bytes of OTHER nodes' traffic arrived inside the window, no CRC reject, no partial
+// frame in the assembler, nothing destroyed (`rxdestroyed=0`), no late answer (`late=0`) - and the
+// field still held its old value when read back afterwards (6 of 6 STALE, 0 executed). So the
+// node never ran the write: the REQUEST was lost before it could act, the node therefore had
+// nothing to answer and nothing to retransmit, and its silence is indistinguishable from a dead
+// bus to the app. The other candidates were excluded by measurement, not by argument: the window
+// is 40x the measured answer and a late reply is still forwarded (a 615 ms answer reached the app),
+// a read-only probe with no app, no read-back and no flash write loses the same share (5/120), and
+// writes sent immediately after a node's `Save All` lose LESS (1/57) than the baseline.
+//
+// The app cannot retry a write by itself ("a re-sent write is not a safe thing to guess at",
+// app/lib/core/register_client.dart), but the relay can, for the one kind whose execution is a
+// set-to-value: `Register` CID 3. A duplicate execution writes the same value again, so a retry
+// costs nothing when the first one did land, and it is the difference between a write that is
+// confirmed and one the app reports as failed while the node never saw it.
+//
+// TWO more sends, not one: a single loss is 1-2 % inside a restore (measured: 2 of 131 writes,
+// and 1-2 of 131 over the runs in E79) but a burst of value-changing writes measured up to 13 %,
+// and one re-send at that rate would still leave (0.13)^2 = 1.7 % of writes unrepaired - about two
+// per restore, i.e. the same red lines. Two re-sends put it at 2x10^-3 of a write before the app's
+// own 3 s timeout has to report a real failure, which is what a repair must never hide.
+#define APP_BUS_WRITE_RETRIES 2
+PacketFrame AppBusRetryFrame;
+bool AppBusRetryArmed = false;    // the open transaction is a retryable app write
+bool AppBusRetryDue = false;      // ... and its window closed unanswered: send it again
+bool AppBusRetrying = false;      // the frame being forwarded IS that retry (never re-arm)
+AppLinkSource AppBusRetryFrom = AppLinkSource::None;
+uint8_t AppBusRetryLeft = 0;      // sends still allowed for this write (APP_BUS_WRITE_RETRIES)
+uint32_t AppBusRetryTotal = 0; // retries actually put on the wire (`retries=` in the totals line)
+
+// Frames that arrived from another device while a transaction was owed an answer and were NOT
+// that answer. A window that expires with bytes on the wire (a record's `rx=`) is the one shape
+// the totals cannot explain: the line spoke, and what it said was not the reply. These keep the
+// last few so the dump can name them (source, TRID, CMD, length) instead of leaving "84 bytes
+// arrived" as a mystery. `AppBusGateStrayTotal` counts them all, ring or not.
+#define APP_BUS_GATE_STRAY_SLOTS 8
+struct AppBusGateStraySlot
+{
+    uint32_t At;
+    uint16_t Src;
+    uint16_t Trid;
+    uint16_t Cmd;
+    uint16_t Len;
+};
+AppBusGateStraySlot AppBusGateStray[APP_BUS_GATE_STRAY_SLOTS];
+uint8_t AppBusGateStrayNext = 0;
+uint32_t AppBusGateStrayTotal = 0;
 
 // The app link's own loss paths, so a request that never became a transaction can be told apart
 // from one whose answer went missing. Written by the USB/BLE readers (AppUSB.h/AppBLE.h), per
@@ -338,12 +425,17 @@ inline void DeviceLog(const char *Tag, const char *Fmt, ...); // Core/Functions/
 
 // Records one transaction. The open transaction's slot is filled in when it is released, so a
 // CLASH can be marked on it while it is still owed an answer.
-inline void AppBusGateRecord(uint16_t Tgt, uint16_t Trid, uint32_t HoldMs, uint8_t Flags)
+inline void AppBusGateRecord(uint16_t Tgt, uint16_t Trid, uint16_t Cmd, uint32_t At,
+                            uint32_t HoldMs, uint32_t RxBytes, uint32_t Rejects, uint8_t Flags)
 {
     AppBusGateEntry &Entry = AppBusGateRing[AppBusGateWrites % APP_BUS_GATE_RING];
+    Entry.At = At;
     Entry.Tgt = Tgt;
     Entry.Trid = Trid;
-    Entry.Hold = (uint8_t)(HoldMs > 255 ? 255 : HoldMs);
+    Entry.Cmd = Cmd;
+    Entry.Hold = (uint16_t)(HoldMs > 65535 ? 65535 : HoldMs);
+    Entry.Rx = (uint16_t)(RxBytes > 65535 ? 65535 : RxBytes);
+    Entry.Rej = (uint8_t)(Rejects > 255 ? 255 : Rejects);
     Entry.Flags = Flags;
     AppBusGateWrites++;
 }
@@ -377,11 +469,15 @@ inline void AppBusGateDrain()
         const AppBusGateEntry &Entry = AppBusGateRing[AppBusGateDumped % APP_BUS_GATE_RING];
         if (!APP_BUS_GATE_DUMP_ALL && Entry.Flags == ABG_REPLY)
             continue; // a clean transaction: the totals line already counts it
-        DeviceLog("BUSGATE", "tgt=%u trid=0x%04X hold=%ums%s%s%s",
-                  (unsigned)Entry.Tgt, (unsigned)Entry.Trid, (unsigned)Entry.Hold,
+        DeviceLog("BUSGATE", "tgt=%u trid=0x%04X cmd=0x%04X at=%lums hold=%ums rx=%u rej=%u asm=%u/%u/%u%s%s%s%s",
+                  (unsigned)Entry.Tgt, (unsigned)Entry.Trid, (unsigned)Entry.Cmd,
+                  (unsigned long)Entry.At, (unsigned)Entry.Hold, (unsigned)Entry.Rx,
+                  (unsigned)Entry.Rej, (unsigned)Entry.AsmStage, (unsigned)Entry.AsmGot,
+                  (unsigned)Entry.AsmNeed,
                   (Entry.Flags & ABG_EXPIRED) ? " EXPIRED" : "",
                   (Entry.Flags & ABG_LATE) ? " LATE" : "",
-                  (Entry.Flags & ABG_CLASH) ? " CLASH" : "");
+                  (Entry.Flags & ABG_CLASH) ? " CLASH" : "",
+                  (Entry.Flags & ABG_CORE) ? " CORE" : "");
     }
     if (AppBusGateDumped == AppBusGateWrites)
     {
@@ -404,10 +500,34 @@ inline void AppBusGateDrain()
         DeviceLog("BUSGATE", "link usb rejects=%lu drops=%lu | ble rejects=%lu drops=%lu",
                   (unsigned long)AppLinkFrameRejectsUsb, (unsigned long)AppLinkEnqueueDropsUsb,
                   (unsigned long)AppLinkFrameRejectsBle, (unsigned long)AppLinkEnqueueDropsBle);
-        DeviceLog("BUSGATE", "bus sendfails=%lu rxrejects=%lu rxdestroyed=%lu txstint=%lums corelost=%lu repeats=%lu",
+        DeviceLog("BUSGATE", "bus sendfails=%lu rxrejects=%lu rxdestroyed=%lu txstint=%lums corelost=%lu repeats=%lu retries=%lu strays=%lu",
                   (unsigned long)AppBusSendFails, (unsigned long)BusRxCrcRejects,
                   (unsigned long)BusRxDestroyed, (unsigned long)RS485TxStintWorstMs,
-                  (unsigned long)AppBusCoreRequestLost, (unsigned long)AppBusRepeatsAnswered);
+                  (unsigned long)AppBusCoreRequestLost, (unsigned long)AppBusRepeatsAnswered,
+                  (unsigned long)AppBusRetryTotal, (unsigned long)AppBusGateStrayTotal);
+        // Every frame that took the wire while a transaction was owed an answer, newest last.
+        for (uint8_t n = 0; n < APP_BUS_GATE_STRAY_SLOTS; n++)
+        {
+            const AppBusGateStraySlot &Stray =
+                AppBusGateStray[(uint8_t)((AppBusGateStrayNext + n) % APP_BUS_GATE_STRAY_SLOTS)];
+            if (Stray.Cmd == 0)
+                continue;
+            DeviceLog("BUSGATE", "stray at=%lums src=%u trid=0x%04X cmd=0x%04X len=%u",
+                      (unsigned long)Stray.At, (unsigned)Stray.Src, (unsigned)Stray.Trid,
+                      (unsigned)Stray.Cmd, (unsigned)Stray.Len);
+        }
+        // Frames the RX CRC refused (Core/Functions/BusDiag.h), oldest first: a record's
+        // `rej=1` is one of these, and its TRID says which request it was answering.
+        for (uint8_t n = 0; n < BUS_RX_REJECT_SLOTS; n++)
+        {
+            const BusRxRejectRecord &Reject =
+                BusRxRejectRing[(uint8_t)((BusRxRejectNext + n) % BUS_RX_REJECT_SLOTS)];
+            if (Reject.Cmd == 0 && Reject.Src == 0)
+                continue;
+            DeviceLog("BUSGATE", "rxreject src=%u trid=0x%04X cmd=0x%04X len=%u (of %lu)",
+                      (unsigned)Reject.Src, (unsigned)Reject.Trid, (unsigned)Reject.Cmd,
+                      (unsigned)Reject.Len, (unsigned long)BusRxRejectTotal);
+        }
     }
 }
 #endif
@@ -415,7 +535,7 @@ inline void AppBusGateDrain()
 // Opens the transaction a frame that expects an answer creates on the medium. `WindowMs` comes
 // from BusGateWindowMs for the request kind, so the slot is held exactly as long as that kind's
 // legitimate answer can take (Core/Functions/BusGate.h).
-inline void AppBusForwardStart(const PacketFrame &Frame, uint16_t WindowMs)
+inline void AppBusForwardStart(const PacketFrame &Frame, uint16_t WindowMs, bool CoreOrigin)
 {
     AppInterface.BusPendingTrid = Frame.Trid;
     AppInterface.BusPendingCmd = Frame.Cmd;
@@ -425,11 +545,28 @@ inline void AppBusForwardStart(const PacketFrame &Frame, uint16_t WindowMs)
 #ifdef TYPE_CORE
     AppBusGateForwards++;
     AppBusGateOpenTgt = Frame.IdTgt;
+    AppBusGateOpenCmd = Frame.Cmd;
+    AppBusGateOpenCore = CoreOrigin;
     AppBusGateOpenAt = AppInterface.BusPendingSince;
+    AppBusGateOpenRx = AppBusRxBytes;
+    AppBusGateOpenRejects = BusRxCrcRejects;
     AppBusGateOpen = (uint8_t)(AppBusGateWrites % APP_BUS_GATE_RING);
     AppBusGateIsOpen = true;
     AppBusGateLastFrame = DeviceStatus.UptimeMs;
-    AppBusGateRecord(Frame.IdTgt, Frame.Trid, 0, ABG_REPLY); // filled in when it is released
+    // Filled in when it is released (AppBusGateClose) or expires.
+    AppBusGateRecord(Frame.IdTgt, Frame.Trid, Frame.Cmd, AppInterface.BusPendingSince, 0, 0, 0,
+                     (uint8_t)(ABG_REPLY | (CoreOrigin ? ABG_CORE : 0)));
+    // A write the app forwarded becomes the candidate for the retries (AppBusRetry* above) - never
+    // the retry itself, and never the core's own traffic (nothing waits for that answer but us).
+    if (!CoreOrigin && !AppBusRetrying &&
+        GetServiceType(Frame.Cmd) == ServiceType::Register && GetServiceCID(Frame.Cmd) == 3)
+    {
+        AppBusRetryFrame = Frame;
+        AppBusRetryFrom = AppFrameSource;
+        AppBusRetryArmed = true;
+        AppBusRetryLeft = APP_BUS_WRITE_RETRIES;
+        AppBusRetryDue = false; // this newer write owns the slot; a pending send was for the older one
+    }
 #endif
 }
 
@@ -444,6 +581,11 @@ inline void AppBusForwardSent()
     AppInterface.BusPendingSince = DeviceStatus.UptimeMs;
 #ifdef TYPE_CORE
     AppBusGateOpenAt = DeviceStatus.UptimeMs;
+    // The core's own transmission (and its echo read back) is not traffic the node produced:
+    // re-baseline the received-byte/reject counters here, so a record's rx= is the bytes that
+    // arrived AFTER the request left - the answer's bytes, or none.
+    AppBusGateOpenRx = AppBusRxBytes;
+    AppBusGateOpenRejects = BusRxCrcRejects;
 #endif
 }
 
@@ -456,8 +598,19 @@ inline void AppBusGateClose(uint8_t Flags)
     AppBusGateIsOpen = false;
     uint32_t Hold = (uint32_t)(DeviceStatus.UptimeMs - AppBusGateOpenAt);
     AppBusGateEntry &Entry = AppBusGateRing[AppBusGateOpen % APP_BUS_GATE_RING];
-    Entry.Hold = (uint8_t)(Hold > 255 ? 255 : Hold);
-    Entry.Flags = (uint8_t)(Flags | (Entry.Flags & ABG_CLASH)); // keep a clash noted while open
+    Entry.Hold = (uint16_t)(Hold > 65535 ? 65535 : Hold);
+    Entry.Rx = (uint16_t)((AppBusRxBytes - AppBusGateOpenRx) > 65535
+                              ? 65535
+                              : (AppBusRxBytes - AppBusGateOpenRx));
+    Entry.Rej = (uint8_t)((BusRxCrcRejects - AppBusGateOpenRejects) > 255
+                              ? 255
+                              : (BusRxCrcRejects - AppBusGateOpenRejects));
+    // An expired window that carried bytes and no reject is a frame that never completed: the
+    // assembler's own state says whether its head is still held (Core/Functions/BusDiag.h).
+    Entry.AsmStage = (uint8_t)((Flags & ABG_EXPIRED) ? BusRxAsmStage : 0);
+    Entry.AsmGot = (uint16_t)((Flags & ABG_EXPIRED) ? BusRxAsmGot : 0);
+    Entry.AsmNeed = (uint16_t)((Flags & ABG_EXPIRED) ? BusRxAsmNeed : 0);
+    Entry.Flags = (uint8_t)(Flags | (Entry.Flags & (ABG_CLASH | ABG_CORE))); // keep what was noted while open
     if (!(Flags & ABG_EXPIRED))
     {
         AppBusGateReplies++;
@@ -494,6 +647,15 @@ inline bool AppBusForwardPending()
         AppInterface.BusPending = false;
 #ifdef TYPE_CORE
         AppBusGateClose(ABG_EXPIRED);
+        // A forwarded `Register` write that got no answer becomes due for its next send from the
+        // pump (AppBusRetry* above): a lost request must not reach the app as a failed write while
+        // the node either never saw it or already holds the value.
+        if (AppBusRetryArmed)
+        {
+            AppBusRetryArmed = false;
+            if (AppBusRetryLeft > 0)
+                AppBusRetryDue = true;
+        }
         // Remember the window that closed unanswered: a reply that turns up afterwards is what
         // separates "the node answered too late for the window" from "the node never answered".
         AppBusGateLate[AppBusGateLateNext].Tgt = AppBusGateOpenTgt;
@@ -515,7 +677,7 @@ inline bool AppBusForwardPending()
 // real answer. What answers a 040x/1 is the provider's reply with Cmd = Change (the current value,
 // or FLAG_SUCCESS for a cancel); a confirm-required value update is answered by the requester's
 // confirmation with Cmd = ValueUpdate, the Cmd of the update it answers.
-inline void AppBusForwardSawReply(uint16_t Trid, uint16_t Cmd)
+inline void AppBusForwardSawReply(uint16_t Trid, uint16_t Cmd, uint16_t Src, uint16_t Len)
 {
     if (AppInterface.BusPending && AppInterface.BusPendingTrid == Trid &&
         AppInterface.BusPendingCmd == Cmd)
@@ -524,6 +686,7 @@ inline void AppBusForwardSawReply(uint16_t Trid, uint16_t Cmd)
 #ifdef TYPE_CORE
         AppBusGateClose(ABG_REPLY);
         AppBusGateLastFrame = DeviceStatus.UptimeMs;
+        AppBusRetryArmed = false; // answered: nothing to retry
 #endif
         return;
     }
@@ -536,11 +699,25 @@ inline void AppBusForwardSawReply(uint16_t Trid, uint16_t Cmd)
         if (!Slot.Used && Slot.Trid == Trid && Slot.Cmd == Cmd)
         {
             Slot.Used = true;
-            AppBusGateRecord(Slot.Tgt, Trid, (uint32_t)(DeviceStatus.UptimeMs - Slot.At), ABG_LATE);
-            break;
+            AppBusGateRecord(Slot.Tgt, Trid, Cmd, Slot.At,
+                             (uint32_t)(DeviceStatus.UptimeMs - Slot.At), 0, 0, ABG_LATE);
+            return;
         }
     }
+    // Neither the answer nor a late one: a frame that took the wire while a transaction was owed
+    // an answer. Named so a window that expired with bytes on the line can be explained.
+    if (!AppInterface.BusPending)
+        return; // nothing was owed: an ordinary frame, not a stray
+    AppBusGateStrayTotal++;
+    AppBusGateStraySlot &Stray = AppBusGateStray[AppBusGateStrayNext];
+    Stray.At = DeviceStatus.UptimeMs;
+    Stray.Src = Src;
+    Stray.Trid = Trid;
+    Stray.Cmd = Cmd;
+    Stray.Len = Len;
+    AppBusGateStrayNext = (uint8_t)((AppBusGateStrayNext + 1) % APP_BUS_GATE_STRAY_SLOTS);
 #endif
+    return;
 }
 
 #ifdef TYPE_CORE
@@ -589,7 +766,8 @@ inline bool AppBusGateOffer(const PacketFrame &Frame)
     }
     if (BusGateNeedsAnswer(Frame.IdTgt, Frame.Flags, Frame.Cmd))
         AppBusForwardStart(Frame,
-                           BusGateWindowMs(Frame.Cmd, AppFrameSource == AppLinkSource::None));
+                           BusGateWindowMs(Frame.Cmd, AppFrameSource == AppLinkSource::None),
+                           AppFrameSource == AppLinkSource::None);
     return true;
 }
 #endif
@@ -893,6 +1071,26 @@ void AppInterfaceService::Pump()
     TxFlush();
 
 #ifdef TYPE_CORE
+    // A forwarded `Register` write whose answer never came goes out again - up to
+    // APP_BUS_WRITE_RETRIES sends in total - now that its window has released the medium
+    // (AppBusRetry* above). The same TRID: the app is still waiting on it, so the answer to the
+    // retry is the answer the app accepts.
+    if (AppBusRetryDue && !AppBusForwardPending())
+    {
+        AppBusRetryDue = false;
+        AppBusRetryTotal++;
+        AppBusRetryLeft--;
+        AppBusRetrying = true;
+        const AppLinkSource Saved = AppFrameSource;
+        AppFrameSource = AppBusRetryFrom; // the app's window (600 ms), not the core's 250
+        DispatchPacket(AppBusRetryFrame);
+        AppFrameSource = Saved;
+        AppBusRetrying = false;
+        // The retry is on the wire and its own window is now open: if THAT expires unanswered and
+        // the budget still allows a send, arm it again (the expiry is what turns armed into due).
+        if (AppBusRetryLeft > 0)
+            AppBusRetryArmed = true;
+    }
     // Re-emit the forward gate's per-frame records once the link is idle (AppBusGateDrain).
     AppBusGateDrain();
     // Frames the core held back while an app transaction was owed an answer go out now that the

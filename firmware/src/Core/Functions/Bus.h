@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Functions/Packet.h"
+#include "Core/Functions/BusDiag.h" // rejected-frame records, shared with the BUSGATE dump
 #include "Core/Types/Number.h" // RawRand() for CSMA backoff
 
 // Shared RS-485 bus receive assembler (Core/Functions/Bus.h).
@@ -280,6 +281,11 @@ inline int RxValidateFrame(PacketFrame *Data)
     {
 #ifdef TYPE_CORE
         BusRxCrcRejects = BusRxCrcRejects + 1;
+        // Name the frame the CRC refused: a window that expired with `rej=1` can then be matched
+        // by TRID to the request it was answering (Core/Functions/BusDiag.h).
+        BusRxRejectNote(Data->IdSrc, Data->Trid, Data->Cmd, (uint16_t)PayloadBytes(*Data));
+#else
+        (void)Data;
 #endif
         return 0; // corrupted: keep scanning for the next 0xAA
     }
@@ -346,7 +352,13 @@ int ReceivePacketFrame(PacketFrame *Data, ReadByte ReadByteCb)
                 // Zero-payload frames finish here.
                 Stage = RX_SYNC;
                 int Total = RxValidateFrame(Data);
-                if (Total > 0) return Total;
+                if (Total > 0)
+                {
+#ifdef TYPE_CORE
+                    BusRxAsmNote(0, 0, 0);
+#endif
+                    return Total;
+                }
             }
             break;
 
@@ -357,10 +369,21 @@ int ReceivePacketFrame(PacketFrame *Data, ReadByte ReadByteCb)
                 Stage = RX_SYNC;
                 Got = 0;
                 int Total = RxValidateFrame(Data);
-                if (Total > 0) return Total;
+                if (Total > 0)
+                {
+#ifdef TYPE_CORE
+                    BusRxAsmNote(0, 0, 0);
+#endif
+                    return Total;
+                }
             }
             break;
         }
     }
+#ifdef TYPE_CORE
+    // Publish the assembler's state (BusDiag.h): a window that expires while this is holding a
+    // frame's head is a truncated answer, not silence.
+    BusRxAsmNote(Stage, Got, (Stage == RX_PAYLOAD) ? PayloadBytes(*Data) : 0);
+#endif
     return 0; // incomplete: more bytes may arrive later
 }
