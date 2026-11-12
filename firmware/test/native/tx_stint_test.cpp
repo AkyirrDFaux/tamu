@@ -287,6 +287,74 @@ static void TestStintWorstCaseKeepsTheLinkServed()
     CHECK_LE(WorstGapUs, 50u * 1000u); // the card's 50 ms bound
 }
 
+// The RAW (bootloader passthrough) send, the one transmit that had no deadline before card
+// t_5eb19a27/E83: the same structure - attempts drawn from ONE RS485_TX_STINT_MS deadline, the
+// silence window clipped to what is left - but its frame is a 39-byte write request at most, i.e.
+// THREE 16-byte chunks, so an attempt spends three echo windows. Its release-to-RX step used to be
+// `while (txfifo_cnt || st_utx_out) {}`, which spins forever if the FIFO never drains; here it is
+// bounded by RS485_TX_DONE_TIMEOUT_MS and ticks the link while it waits. Two facts: the send cannot
+// outlive the deadline plus one attempt (383 ms, Bus.h's static_assert), and the longest unserved
+// stretch is the three back-to-back echo windows - 30 ms, still inside the card's 50 ms.
+static void TestRawStintWorstCaseKeepsTheLinkServed()
+{
+    const uint32_t RawEchoWindows = 3; // 39-byte write request / 16-byte chunks
+    const uint32_t StintLimitMs = RS485_TX_STINT_MS + RawEchoWindows * RS485_ECHO_TIMEOUT_MS +
+                                  RS485_TX_DONE_TIMEOUT_MS + RS485_BACKOFF_MAX_MS;
+    // The three echo windows plus the first status poll of the drain (the tick after them), which is
+    // what the device's `while (esp_timer_get_time() < DrainDeadline)` loop spends before it ticks.
+    const uint32_t UnservedLimitUs = RawEchoWindows * RS485_ECHO_TIMEOUT_MS * 1000u + 1000u;
+
+    // A line that never goes quiet, so every attempt spends its clipped silence window; the echo
+    // never comes either, and the drain spin runs to its bound every time.
+    WaitProbe P;
+    const uint32_t StintStart = P.NowUs;
+    for (int Attempt = 0; Attempt < RS485_RETRIES; Attempt++)
+    {
+        const uint32_t SpentMs = (P.NowUs - StintStart) / 1000u;
+        if (SpentMs >= RS485_TX_STINT_MS)
+            break;
+        const uint32_t LeftMs = RS485_TX_STINT_MS - SpentMs;
+        const uint32_t CapMs =
+            LeftMs < RS485_SILENCE_TIMEOUT_MS ? LeftMs : RS485_SILENCE_TIMEOUT_MS;
+
+        RS485WaitForSilence(0,
+                            [](void) -> bool { return true; },
+                            [&P](void) -> uint32_t { return P.NowUs; },
+                            [&P](void) {
+                                P.NowUs += 1000u;
+                                P.Tick();
+                            },
+                            CapMs);
+
+        for (uint32_t Chunk = 0; Chunk < RawEchoWindows; Chunk++)
+            P.Block(RS485_ECHO_TIMEOUT_MS); // that chunk's echo never arrives
+
+        // The bounded drain: the same shape as the device's spin (poll the status, tick the link).
+        const uint32_t DrainStart = P.NowUs;
+        while ((P.NowUs - DrainStart) < RS485_TX_DONE_TIMEOUT_MS * 1000u)
+        {
+            P.NowUs += 50u; // one UART status poll
+            P.Tick();
+        }
+
+        RS485SleepTicking(
+            [&P](void) -> uint32_t { return P.NowUs; },
+            [&P](void) { P.Tick(); },
+            [&P](uint32_t Ms) { P.NowUs += Ms * 1000u; },
+            RS485_BACKOFF_MAX_MS);
+    }
+
+    const uint32_t TotalMs = (P.NowUs - StintStart) / 1000u;
+    std::printf("txstint: raw send (3 chunks) -> %u ms, %u link ticks, longest unserved %u us\n",
+                (unsigned)TotalMs, (unsigned)P.Ticks, (unsigned)P.MaxGapUs);
+
+    CHECK(P.Ticks > 0);
+    CHECK_LE(P.MaxGapUs, UnservedLimitUs); // the three echo windows, back to back
+    CHECK_LE(TotalMs, StintLimitMs);       // the deadline plus one attempt's non-wait work
+    CHECK_LE(TotalMs, 400u);               // the card's ceiling, against the old ~460 ms
+    CHECK_EQ(StintLimitMs, 383u);          // the figure Bus.h's static_assert pins
+}
+
 int main()
 {
     TestSilenceWaitTicksWhileTheBusIsBusy();
@@ -294,6 +362,7 @@ int main()
     TestTxDoneWaitIsBoundedAndTicked();
     TestBackoffSleepIsSlicedAndTheBudgetMatchesTheDraw();
     TestStintWorstCaseKeepsTheLinkServed();
+    TestRawStintWorstCaseKeepsTheLinkServed();
 
     std::printf("%s: %d checks, %d failure(s)\n", failures ? "FAIL" : "PASS", checks, failures);
     return failures ? 1 : 0;

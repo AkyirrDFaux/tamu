@@ -131,6 +131,15 @@ static_assert(RS485_TX_STINT_MS + 2 * RS485_ECHO_TIMEOUT_MS + RS485_TX_DONE_TIME
                       RS485_BACKOFF_MAX_MS <=
                   400,
               "the transmit stint's worst case outgrew the budget (see Issues E78/E81 neighbours)");
+// The RAW (bootloader passthrough) send is bounded by the same deadline (card t_5eb19a27, E83). Its
+// frame is shorter than a packet - the longest is a 39-byte write request = 3 chunks of 16 - so its
+// attempt spends three echo windows instead of two, and the tx-done wait is a bounded spin on the
+// UART status (RS485RawTxStalls counts one that never drains). Same ceiling, one window more:
+// 300 + 3 x 10 + 20 + 33 = 383 ms.
+static_assert(RS485_TX_STINT_MS + 3 * RS485_ECHO_TIMEOUT_MS + RS485_TX_DONE_TIMEOUT_MS +
+                      RS485_BACKOFF_MAX_MS <=
+                  400,
+              "the raw send's stint (three echo windows) must stay inside the 400 ms budget too");
 
 // Waits for the line to be silent for 8 bytes + Priority/8 + random 0-3 bytes, bounded by `CapMs`
 // (RS485_SILENCE_TIMEOUT_MS unless the caller is inside a stint that has already spent part of its
@@ -217,6 +226,17 @@ static void RS485SleepTicking(NowUs NowUsCb, TickFn TickCb, SleepMsFn SleepMsCb,
     }
 }
 
+// How much a keep ring must hold (card t_5eb19a27, E82).
+//
+// Across ONE transmit the protocol's worst case is TWO whole frames, not one: a bootloader
+// passthrough request carries no address (Docs/Services/Bootloader.md), so it is a BROADCAST and
+// every node in bootloader mode on the segment answers it - two answers can be on the wire before
+// the caller drains this ring. Each answer is a longest frame with its sync byte:
+// 1 + 12 + MAX_PAYLOAD_SIZE = 129 B, so the requirement is 2 x 129 = 258 B. The old one-frame
+// figure (129) let the second answer's head be refused, and a refused byte was an answer the
+// assembler could never complete.
+#define RS485_RX_KEEP_REQUIRED (2 * (1 + 12 + MAX_PAYLOAD_SIZE))
+
 // Bytes taken off the UART while a transmitter is waiting for the line, kept for the assembler.
 //
 // A silence wait has to READ the UART: its job is to know whether bytes are still arriving, and
@@ -273,6 +293,12 @@ uint32_t BusRxCrcRejects = 0;
 // before this counter existed the silence wait drained replies into a 32-byte scratch array and
 // nothing anywhere recorded it. It is reported in the BUSGATE totals line beside rxrejects.
 uint32_t BusRxDestroyed = 0;
+// Every byte the keep ring ACCEPTED (card t_5eb19a27, E82). The pair is what makes the drop
+// readable rather than inferred: `kept` says the transmit window really did carry bytes that would
+// have been binned, `rxdestroyed` says how many it could not hold, and their sum is what the core
+// took off the line while a send blocked. One increment, in the keep ring's acceptance branch - the
+// byte at that site is the one that survived.
+uint32_t BusRxKept = 0;
 #endif
 
 inline int RxValidateFrame(PacketFrame *Data)

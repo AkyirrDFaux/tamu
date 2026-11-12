@@ -31,11 +31,16 @@
 
 #include "check.h"
 
-// The device's ring holds one whole longest frame (12 + 116 header/payload + the 0xAA sync byte =
-// 129) plus the head of the next; 160 is that with slack. Pinned here so a device that shrinks its
+// The device's ring is sized to the protocol's worst case across one transmit (card t_5eb19a27,
+// E82): TWO whole longest frames, because a bootloader passthrough request is a broadcast and two
+// nodes can both answer it. Each frame is 12 + 116 header/payload plus the 0xAA sync byte = 129, so
+// the requirement is 258 and the device's ring is 260. Pinned here so a device that shrinks its
 // ring has to change this test too.
-static constexpr uint16_t KeepBytes = 160;
+static constexpr uint16_t KeepBytes = 260;
 static constexpr uint16_t MaxWire = 1 + 12 + MAX_PAYLOAD_SIZE;
+static_assert(KeepBytes >= RS485_RX_KEEP_REQUIRED, "the test's ring is smaller than the device's");
+static_assert(RS485_RX_KEEP_REQUIRED == 2 * MaxWire,
+              "the requirement is the two whole frames one broadcast can provoke");
 
 static PacketFrame MakeFrame(uint16_t PayloadLen, uint8_t Seed)
 {
@@ -281,6 +286,47 @@ static void TestDrainingLosesTheFrame()
     CHECK(Out.PayloadLen != 20);
 }
 
+// Case 7 (card t_5eb19a27, E82): the worst case the protocol allows across ONE transmit is TWO whole
+// answers - a bootloader passthrough request carries no address, so it is a broadcast and two nodes
+// in bootloader mode both answer it. With a one-frame ring the second answer's head was refused and
+// that answer could never be assembled; here both must come out, in order, from the ring alone.
+static void TestTwoAnswersFitAndAssemble()
+{
+    const PacketFrame First = MakeFrame(MAX_PAYLOAD_SIZE, 0x11);
+    const PacketFrame Second = MakeFrame(MAX_PAYLOAD_SIZE, 0x99);
+    uint8_t WireA[MaxWire];
+    uint8_t WireB[MaxWire];
+    const uint16_t LenA = MakeWire(First, WireA);
+    const uint16_t LenB = MakeWire(Second, WireB);
+    CHECK(LenA == MaxWire);
+    CHECK_EQ((uint16_t)(LenA + LenB), (uint16_t)RS485_RX_KEEP_REQUIRED); // the requirement, measured
+
+    Sources Src;
+    for (uint16_t i = 0; i < LenA; i++)
+        CHECK(Src.Ring.Push(WireA[i]));
+    for (uint16_t i = 0; i < LenB; i++)
+        CHECK(Src.Ring.Push(WireB[i])); // a one-frame ring refuses this one - that was the defect
+    CHECK_EQ(Src.Ring.Count(), (uint16_t)RS485_RX_KEEP_REQUIRED);
+
+    PacketFrame Out;
+    std::memset(&Out, 0, sizeof(Out));
+    CHECK_EQ(ReceivePacketFrame(&Out, [&Src](uint8_t &B) { return Src.Next(B); }), LenA);
+    CHECK(std::memcmp(&Out, &First, PacketWireSize(&First)) == 0);
+    std::memset(&Out, 0, sizeof(Out));
+    CHECK_EQ(ReceivePacketFrame(&Out, [&Src](uint8_t &B) { return Src.Next(B); }), LenB);
+    CHECK(std::memcmp(&Out, &Second, PacketWireSize(&Second)) == 0);
+    CHECK_EQ(Src.Ring.Count(), 0);
+
+    // The headroom the device's 260 leaves: fill from empty and the ring takes exactly KeepBytes,
+    // then refuses the next byte - which is the one the device adds to BusRxDestroyed.
+    uint16_t Filled = 0;
+    while (Src.Ring.Push(0x00))
+        Filled++;
+    CHECK_EQ(Filled, KeepBytes);
+    CHECK_EQ(Src.Ring.Count(), KeepBytes);
+    CHECK(!Src.Ring.Push(0xAA));
+}
+
 int main()
 {
     TestRingBasics();
@@ -290,6 +336,7 @@ int main()
     TestFullRingKeepsTheOlderFrame();
     TestFrameAcrossTwoPasses();
     TestDrainingLosesTheFrame();
+    TestTwoAnswersFitAndAssemble();
 
     std::printf("%s: %d checks, %d failure(s)\n", failures ? "FAIL" : "PASS", checks, failures);
     return failures ? 1 : 0;

@@ -1848,6 +1848,85 @@ fi
 fail=$((fail + rxdestroyed_fail))
 echo
 
+# t_5eb19a27 (E82/E83). Two things the host cannot link (they pull the UART driver and esp_timer),
+# so they are asserted on the source, and both were real defects on the rig before:
+#   - the keep ring was sized for ONE whole frame (129 B) while the worst case the protocol allows
+#     across one transmit is TWO answers (the passthrough request is a broadcast), so the second
+#     answer's head was a byte the ring refused - a silent drop in the one path that exists to stop
+#     silent drops. The requirement is now arithmetic in Bus.h and the device ring is sized from it;
+#   - the raw send had no deadline at all, and its release-to-RX step was an unbounded spin on the
+#     UART status. It is now one RS485_TX_STINT_MS for the whole send, a bounded drain, and two
+#     counters that tell a SEND timeout apart from a node that stayed silent.
+echo "### source guard: the keep ring holds two answers, and the raw send has a stint deadline"
+TAMU_RSBUS=${TAMU_RSBUS:-$ROOT/src/Devices/Tamu_v2.0A/RSBus.h}
+BUS_H=${BUS_H:-$ROOT/src/Core/Functions/Bus.h}
+DEVSVC=${DEVSVC:-$ROOT/src/Core/Services/Device.h}
+e82_fail=0
+# (1) the requirement is two frames, expressed once, in the host-visible header.
+if ! grep -q 'define RS485_RX_KEEP_REQUIRED (2 \* (1 + 12 + MAX_PAYLOAD_SIZE))' "$BUS_H"; then
+    echo "FAIL $BUS_H: the keep ring's requirement must be TWO whole frames (2 * (1 + 12 + MAX_PAYLOAD_SIZE))"
+    e82_fail=1
+fi
+# (2) the device ring is at least that, and an assert ties the two together, so a shrink is a
+# compile error rather than a rig mystery.
+KEEP_BYTES=$(grep -o 'define RS485_RX_KEEP_BYTES [0-9]\+' "$TAMU_RSBUS" | awk '{ print $3 }')
+if [ -z "$KEEP_BYTES" ] || [ "$KEEP_BYTES" -lt 258 ]; then
+    echo "FAIL $TAMU_RSBUS: RS485_RX_KEEP_BYTES must hold two whole frames (258 B), found '${KEEP_BYTES:-none}'"
+    e82_fail=1
+fi
+if ! grep -q 'static_assert(RS485_RX_KEEP_BYTES >= RS485_RX_KEEP_REQUIRED,' "$TAMU_RSBUS"; then
+    echo "FAIL $TAMU_RSBUS: the ring's size must be pinned by static_assert against RS485_RX_KEEP_REQUIRED"
+    e82_fail=1
+fi
+# (3) the kept counter: one increment, and it is the byte the ring ACCEPTED - the refusal branch
+# keeps BusRxDestroyed (pinned above), this one the `else` of the same test, so the two cannot swap.
+KEPT_SITES=$(grep -rc 'BusRxKept = BusRxKept + 1;' "$SRC_ROOT" | awk -F: '{ Total += $2 } END { print Total + 0 }')
+KEPT_BLOCK=$(awk '/if \(!RxKeep\.Push\(Buf\[i\]\)\)/ { f=1; Depth=0; Bodies=0 }
+    f { print; Op=gsub(/\{/, "{"); Cl=gsub(/\}/, "}"); Depth += Op - Cl;
+        if (Depth == 0 && (Op + Cl) > 0) { Bodies++; if (Bodies == 2) exit } }' "$TAMU_RSBUS")
+KEPT_ELSE=$(printf '%s\n' "$KEPT_BLOCK" | sed -n '/^[ \t]*else[ \t]*$/,$p')
+if [ "$KEPT_SITES" != 1 ] || ! printf '%s\n' "$KEPT_ELSE" | grep -q 'BusRxKept = BusRxKept + 1;'; then
+    echo "FAIL: BusRxKept must have exactly one increment site (found $KEPT_SITES) and it must sit in the keep ring's ACCEPTANCE branch (the else of the refusal test)"
+    e82_fail=1
+fi
+if [ "$(grep -c 'uint32_t BusRxKept = 0;' "$BUS_H")" != 1 ] ||
+   ! grep -q 'extern uint32_t BusRxKept;' "$APP_IFACE"; then
+    echo "FAIL: BusRxKept must be defined in Bus.h and declared beside the other RX counters in AppInterface.h"
+    e82_fail=1
+fi
+# (4) the raw send: the deadline, the clipped silence window, the stall counter, and no unbounded spin.
+RAWSEND=$(sed -n '/^bool RS485SendRaw(const uint8_t \*Data, size_t Len)$/,/^}$/p' "$TAMU_RSBUS")
+if [ -z "$RAWSEND" ]; then
+    echo "FAIL $TAMU_RSBUS: RS485SendRaw was not found - this guard cannot see the raw send"
+    e82_fail=1
+fi
+for NEEDLE in 'RS485_TX_STINT_MS' 'RS485RawStintCuts = RS485RawStintCuts + 1;' \
+              'RS485_TX_DONE_TIMEOUT_MS' 'RS485RawTxStalls = RS485RawTxStalls + 1;' \
+              'RS485AppLinkTick()'; do
+    if ! printf '%s\n' "$RAWSEND" | grep -qF "$NEEDLE"; then
+        echo "FAIL $TAMU_RSBUS: the raw send is missing '$NEEDLE' (its stint, its stall counter or its link tick)"
+        e82_fail=1
+    fi
+done
+if printf '%s\n' "$RAWSEND" | grep -q 'while (UART1.status.txfifo_cnt != 0'; then
+    echo "FAIL $TAMU_RSBUS: the unbounded release-to-RX spin is back - a FIFO that never drains would hold the line"
+    e82_fail=1
+fi
+# (5) and both counter sets are readable without a console: the passthrough's own totals line (on the
+# port the rig reads when the link is quiet) and the BUSGATE dump.
+if ! grep -q 'kept=%lu drop=%lu rawstint=%lu rawstall=%lu' "$DEVSVC" ||
+   ! grep -q 'nocid i/r/w/d=%u/%u/%u/%u' "$DEVSVC"; then
+    echo "FAIL $DEVSVC: the BLPT totals must report kept/drop, rawstint/rawstall and the per-command timeouts"
+    e82_fail=1
+fi
+if ! grep -q 'kept=%lu dropped=%lu received=%lu' "$APP_IFACE"; then
+    echo "FAIL $APP_IFACE: the BUSGATE dump must report the keep ring's kept/dropped/received"
+    e82_fail=1
+fi
+[ $e82_fail = 0 ] && echo "PASS: the keep ring holds the two answers a broadcast can provoke, and the raw send is bounded by one deadline with its timeouts counted apart from a silent node"
+fail=$((fail + e82_fail))
+echo
+
 # t_e5f46574. The bus transaction gate's decisions (Core/Functions/BusGate.h) run here: which
 # frames are transactions at all, the window per request kind, the wrap-safe expiry, and which
 # queued frame the pump may dispatch. The device half - the slot, the deferral ring, the

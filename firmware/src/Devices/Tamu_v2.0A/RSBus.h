@@ -66,17 +66,15 @@ void SetupRS485()
 // while waiting for silence, and then reported the node as silent. Nothing counted it.
 //
 // The bytes go into a keep ring that ReceivePacket()'s byte source drains FIRST (its bytes are
-// older than anything the driver still holds, so frame order is preserved). A whole longest frame
-// is 129 bytes with its sync byte; 160 holds that plus the head of the next.
-//
-// (Sizing this ring to the driver's own 1024-byte buffer is the E82/BusRxKeepRing question, not
-// card t_82c3dc59's: measured here on 2026-11-12, `rxdestroyed=0` in every session - 100-attempt
-// write bursts and five full restores - so a refused byte was never what made a write unanswered.)
-#define RS485_RX_KEEP_BYTES 160
-// A whole longest frame (12 header + 116 payload + the 0xAA sync byte = 129) must fit, or the ring
-// could refuse the very reply it exists to keep.
-static_assert(RS485_RX_KEEP_BYTES >= 1 + 12 + MAX_PAYLOAD_SIZE,
-              "the keep ring must hold one whole frame");
+// older than anything the driver still holds, so frame order is preserved). Sizing is
+// RS485_RX_KEEP_REQUIRED in Bus.h: the worst case across one transmit is TWO whole frames, because
+// this send is a broadcast and two nodes in bootloader mode can both answer it (card t_5eb19a27,
+// E82). 260 = 2 x 129 + 2 spacer bytes, so a second answer's head is never the byte that is lost.
+#define RS485_RX_KEEP_BYTES 260
+// A whole longest frame is 12 header + 116 payload + the 0xAA sync byte = 129, so TWO of them are
+// the requirement above (258). The assert pins the arithmetic, not the number.
+static_assert(RS485_RX_KEEP_BYTES >= RS485_RX_KEEP_REQUIRED,
+              "the keep ring must hold the two whole frames one broadcast can provoke");
 static BusRxKeepRing<RS485_RX_KEEP_BYTES> RxKeep;
 
 // Longest single bus send since boot, ms (BUSGATE totals line prints it as txstint=).
@@ -122,6 +120,12 @@ static bool RS485KeepBufferedRx()
             {
 #ifdef TYPE_CORE
                 BusRxDestroyed = BusRxDestroyed + 1; // the only way this path loses a byte
+#endif
+            }
+            else
+            {
+#ifdef TYPE_CORE
+                BusRxKept = BusRxKept + 1; // the byte that survived the transmit window
 #endif
             }
         }
@@ -351,11 +355,25 @@ bool (*BootloaderRxSink)(uint8_t Byte) = nullptr;
 uint32_t RS485RawShortEcho = 0;
 uint32_t RS485RawCollisions = 0;
 uint32_t RS485RawEarlyReplies = 0;
+// A raw send whose ATTEMPT did not survive its bounds (card t_5eb19a27, E83). These are the
+// timeouts, and they are counted apart from "the node stayed silent" (Device.h `timeout=`, a
+// request that left the core and got no reply): a send that never got its own frame out is NOT a
+// node that failed to answer, and before this the two were the same FAIL to the app.
+//   RawStintCuts  an attempt was refused because the send's one deadline (RS485_TX_STINT_MS) was
+//                 already spent - a continuously busy or shorted line;
+//   RawTxStalls   the last byte never left the UART inside RS485_TX_DONE_TIMEOUT_MS - the FIFO
+//                 stopped draining, which used to spin here forever and hold the line.
+uint32_t RS485RawStintCuts = 0;
+uint32_t RS485RawTxStalls = 0;
 
 // Raw bootloader send (Docs/Services/Bootloader.md): the frame is NOT a PacketFrame and
 // carries no 0xAA sync, so normal nodes (which wait for 0xAA) ignore it while a bootloader
-// waiting for 0xCA receives it. Same CSMA discipline as SendAndVerifyPacket, and the same rule
-// about received bytes: they are kept, never flushed.
+// waiting for 0xCA receives it. Same CSMA discipline as SendAndVerifyPacket, the same rule
+// about received bytes: they are kept, never flushed - and now the same ONE deadline for the
+// whole send (RS485_TX_STINT_MS, card t_5eb19a27/E83): every attempt is drawn from it, its silence
+// window is clipped to what is left, and the release-to-RX spin is bounded by
+// RS485_TX_DONE_TIMEOUT_MS instead of spinning until the FIFO drains. Worst case 383 ms
+// (Bus.h's static_assert), against the ~460 ms of three unbounded attempt chains.
 //
 // The echo is read ONE BYTE AT A TIME and classified (Bootloader::ClassifyEchoByte), because a
 // chunk-wide read cannot tell our echo from the reply that legitimately begins inside the same
@@ -367,8 +385,24 @@ bool RS485SendRaw(const uint8_t *Data, size_t Len)
     const size_t CHUNK = 16; // ~1.4 ms of line time per chunk
     uint8_t RxByte;
 
+    // One deadline for the whole raw send, exactly like the packet path (Bus.h): the passthrough's
+    // own 1 s reply deadline is the app's bound, and three full attempt chains (~460 ms) were the
+    // one send left on this bus that could outlast the stint without saying why.
+    const int64_t StintStart = esp_timer_get_time();
+
     for (int Attempt = 0; Attempt < RS485_RETRIES; Attempt++) {
-        RS485WaitForSilence(0, RS485_SILENCE_TIMEOUT_MS); // bootloader traffic is the highest priority
+        // An attempt that would start after the deadline never runs, and the silence window is
+        // clipped to what is left of it, so a busy or shorted line costs the stint, not three
+        // attempts on top of it.
+        const int64_t SpentMs = (esp_timer_get_time() - StintStart) / 1000;
+        if (SpentMs >= RS485_TX_STINT_MS) {
+            RS485RawStintCuts = RS485RawStintCuts + 1;
+            break;
+        }
+        const uint32_t LeftMs = (uint32_t)(RS485_TX_STINT_MS - SpentMs);
+
+        RS485WaitForSilence(0,
+                           LeftMs < RS485_SILENCE_TIMEOUT_MS ? LeftMs : RS485_SILENCE_TIMEOUT_MS);
         (void)RS485KeepBufferedRx();
         gpio_set_level(RS485_EN_PIN, 1);
 
@@ -416,9 +450,26 @@ bool RS485SendRaw(const uint8_t *Data, size_t Len)
         // Release TX-enable as soon as the last bit is out. uart_wait_tx_done() wakes on a
         // FreeRTOS notification (~a tick of latency), and the bootloader replies fast enough
         // to collide with the line while we would still be driving it; poll the UART status
-        // directly so the standard silence window is enough.
-        while (UART1.status.txfifo_cnt != 0 || UART1.fsm_status.st_utx_out != 0) {}
+        // directly so the standard silence window is enough - but BOUNDED (card t_5eb19a27): a FIFO
+        // that never drains used to spin here forever, holding the line and the main task with it.
+        // The spin ticks the app link, like every other blocking stretch of a send.
+        bool Drained = false;
+        const int64_t DrainDeadline =
+            esp_timer_get_time() + (int64_t)RS485_TX_DONE_TIMEOUT_MS * 1000;
+        while (esp_timer_get_time() < DrainDeadline) {
+            if (UART1.status.txfifo_cnt == 0 && UART1.fsm_status.st_utx_out == 0) {
+                Drained = true;
+                break;
+            }
+            RS485AppLinkTick();
+        }
         gpio_set_level(RS485_EN_PIN, 0);
+        if (!Drained) {
+            // The frame's tail never left: this attempt is dead whatever the node did, and it is a
+            // timeout of the SEND, not a node that stayed silent.
+            RS485RawTxStalls = RS485RawTxStalls + 1;
+            Collided = true;
+        }
 
         // An early reply is a SUCCESS, not a collision: the node answered a frame it accepted
         // (a corrupted one is discarded by its own decoder and never answered). The reply itself

@@ -372,6 +372,7 @@ uint32_t AppBusCoreRequestLost = 0;
 uint32_t AppBusRepeatsAnswered = 0;
 extern uint32_t BusRxCrcRejects;  // defined in Core/Functions/Bus.h (the RX assembler's owner)
 extern uint32_t BusRxDestroyed;   // defined in Core/Functions/Bus.h (bytes the RX path had to drop)
+extern uint32_t BusRxKept;        // defined in Core/Functions/Bus.h (bytes the keep ring accepted)
 extern uint32_t RS485TxStintWorstMs; // defined in Devices/Tamu_v2.0A/RSBus.h (longest send, ms)
 
 // Frames that are due for the bus while another transaction is still owed an answer. They are
@@ -505,6 +506,16 @@ inline void AppBusGateDrain()
                   (unsigned long)BusRxDestroyed, (unsigned long)RS485TxStintWorstMs,
                   (unsigned long)AppBusCoreRequestLost, (unsigned long)AppBusRepeatsAnswered,
                   (unsigned long)AppBusRetryTotal, (unsigned long)AppBusGateStrayTotal);
+        // The keep ring's own account (card t_5eb19a27, E82), on its own line because the one above
+        // is already near the console's 128-byte format buffer: bytes ACCEPTED while a transmit
+        // blocked (that is what keeps an answer alive), bytes REFUSED because the ring was full
+        // (rxdestroyed above), and every byte received, so the three can be reconciled. The ring's
+        // own size is not named here: this header is parsed BEFORE Bus.h/RSBus.h in every TU (the
+        // reason Core/Functions/BusDiag.h exists), so the constants are not visible - the
+        // static_assert pins them and run.sh's guard reads them back.
+        DeviceLog("BUSGATE", "keep kept=%lu dropped=%lu received=%lu",
+                  (unsigned long)BusRxKept, (unsigned long)BusRxDestroyed,
+                  (unsigned long)AppBusRxBytes);
         // Every frame that took the wire while a transaction was owed an answer, newest last.
         for (uint8_t n = 0; n < APP_BUS_GATE_STRAY_SLOTS; n++)
         {

@@ -84,6 +84,12 @@ private:
     uint16_t PtSinkBad     = 0; // 0xCA frames that failed the size/parity check
     uint16_t PtOkCount     = 0; // settled with a reply
     uint16_t PtTimeouts    = 0; // settled on the deadline (no reply)
+    // The same deadline settles counted PER PASSTHROUGH COMMAND (index = CID - 0x20, so
+    // 0 identify / 1 write / 2 read / 3 digest). The card that added them (t_5eb19a27) measures a
+    // 200-cycle run per command, and "the node answered 199 of 200 identifies and 196 of 200 reads"
+    // is a different finding from a total. A silent request has to be attributable per command, and
+    // this is the device's own answer to that - the probe's table is the app's side of it.
+    uint16_t PtTimeoutById[4] = {0, 0, 0, 0};
     uint32_t PtLastMs      = 0; // UptimeMs of the last request handled
     uint32_t PtDumpedAt    = 0; // UptimeMs of the last totals line
     uint16_t PtDumpedReq   = 0; // PtReqCount at that dump: nothing new, nothing printed
@@ -422,6 +428,22 @@ inline void DeviceService::PollBootloaderPassthrough()
                       (unsigned)PtSinkBad, (unsigned)PtOkCount, (unsigned)PtTimeouts,
                       (unsigned long)RS485RawShortEcho, (unsigned long)RS485RawCollisions,
                       (unsigned long)RS485RawEarlyReplies);
+            // The second line is the card t_5eb19a27 attribution set, kept separate because the
+            // line above is already at the console's 128-byte format buffer:
+            //   kept/drop     bytes the keep ring accepted / refused (Bus.h BusRxKept,
+            //                 BusRxDestroyed) - "the answer arrived while a send blocked" vs "the
+            //                 ring could not hold it", which used to be one silence;
+            //   rawstint      attempts the raw send's one deadline refused to start;
+            //   rawstall      a raw send whose last byte never left the UART in
+            //                 RS485_TX_DONE_TIMEOUT_MS - a SEND timeout, not a node's silence;
+            //   nocid i/r/w/d deadline settles per passthrough command (identify/write/read/digest).
+            DeviceLog("BLPT",
+                      "counters kept=%lu drop=%lu rawstint=%lu rawstall=%lu "
+                      "nocid i/r/w/d=%u/%u/%u/%u",
+                      (unsigned long)BusRxKept, (unsigned long)BusRxDestroyed,
+                      (unsigned long)RS485RawStintCuts, (unsigned long)RS485RawTxStalls,
+                      (unsigned)PtTimeoutById[0], (unsigned)PtTimeoutById[1],
+                      (unsigned)PtTimeoutById[2], (unsigned)PtTimeoutById[3]);
         }
         return; // not expecting a reply: one bool test, no bus access
     }
@@ -487,6 +509,8 @@ inline void DeviceService::PollBootloaderPassthrough()
     {
         PtPending = false;
         PtTimeouts = (uint16_t)(PtTimeouts + 1);
+        if (PtCid >= 0x20 && PtCid <= 0x23)
+            PtTimeoutById[PtCid - 0x20] = (uint16_t)(PtTimeoutById[PtCid - 0x20] + 1);
         BootloaderRxSink = nullptr;
         PacketConstruct(&TxFrame, PtSrc, PtCmd, PtTrid,
                         FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
