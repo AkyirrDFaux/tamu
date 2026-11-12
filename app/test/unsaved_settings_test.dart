@@ -107,6 +107,36 @@ void main() {
       ]);
     });
 
+    test('one field written under another key is still one entry', () {
+      final store = UnsavedSettings.forTest();
+      store.mark(pending(1, [0]));
+      // The register editor addresses a static field with the field's own key (`0xFF`) while a
+      // settings panel uses the device's primary key; both change the one value the device holds,
+      // so the newer write replaces the older instead of queueing a second entry for it.
+      store.mark(
+        PendingSetting(
+          deviceId: 1,
+          blockName: 'Bluetooth',
+          blockType: 0x0B,
+          inst: 0,
+          field: 1,
+          fieldName: 'Display name',
+          meta: const ValueInfo(
+            type: 0x03,
+            size: 1,
+            flags: ValueFlags.persistent,
+            key: 0xFF,
+          ),
+          bytes: const [7],
+        ),
+      );
+
+      expect(store.of(1).length, 1);
+      expect(store.describe(1), 'Display name');
+      expect(store.of(1).single.bytes, [7]);
+      expect(store.of(1).single.meta.key, 0xFF);
+    });
+
     test('two blocks with one field name are told apart', () {
       final store = UnsavedSettings.forTest();
       store.mark(pending(0, [0]));

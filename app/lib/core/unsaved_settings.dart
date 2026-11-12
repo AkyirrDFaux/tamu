@@ -104,11 +104,25 @@ class UnsavedSettings extends ChangeNotifier {
   ///
   /// A replacement keeps the entry's place: the list stays in the order the user made the changes,
   /// so "Display name and Enabled" does not shuffle when a field is corrected.
+  ///
+  /// The entry is per FIELD, whatever key addressed it. The settings panels write a field with the
+  /// device's primary key while the register editor writes a static field with the field's own key
+  /// (`0xFF`), and both change the one value the device holds - so an entry under another key for
+  /// the same field is dropped here. Keeping both would let a Save all re-apply the older of the
+  /// two values over the newer one and report the field twice in one sentence.
   void mark(PendingSetting setting) {
-    _byDevice.putIfAbsent(
+    final device = _byDevice.putIfAbsent(
       setting.deviceId,
       () => <String, PendingSetting>{},
-    )[setting.id] = setting;
+    );
+    device.removeWhere(
+      (_, entry) =>
+          entry.blockType == setting.blockType &&
+          entry.inst == setting.inst &&
+          entry.field == setting.field &&
+          entry.id != setting.id,
+    );
+    device[setting.id] = setting;
     notifyListeners();
   }
 

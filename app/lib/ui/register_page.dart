@@ -27,6 +27,7 @@ import 'formatters.dart';
 import 'loading.dart';
 import 'register_backup_view.dart';
 import 'theme.dart';
+import 'unsaved_settings_panel.dart';
 import 'value_editor.dart' show showValueEditor;
 import 'viewer_kit.dart';
 import 'wait.dart';
@@ -55,12 +56,17 @@ class RegisterPage extends StatefulWidget {
   /// Test seam: how the page builds its register client. Defaults to a real [RegisterClient].
   final RegisterClient Function(int deviceId)? clientFactory;
 
+  /// Test seam: the store the page records an unsaved `Persistent` write in. Defaults to the
+  /// app's ([UnsavedSettings.instance]), whose state belongs to the device and not to this page.
+  final UnsavedSettings? unsaved;
+
   const RegisterPage({
     super.key,
     required this.deviceId,
     this.hasDynamicMemory = true,
     this.isConnected,
     this.clientFactory,
+    this.unsaved,
   });
 
   @override
@@ -68,7 +74,10 @@ class RegisterPage extends StatefulWidget {
 }
 
 class _RegisterPageState extends State<RegisterPage>
-    with AutoRefreshMixin<RegisterPage> {
+    with
+        AutoRefreshMixin<RegisterPage>,
+        WidgetsBindingObserver,
+        UnsavedSettingsPanel<RegisterPage> {
   late final RegisterClient _client =
       (widget.clientFactory ?? (int id) => RegisterClient(deviceId: id))(
         widget.deviceId,
@@ -99,6 +108,35 @@ class _RegisterPageState extends State<RegisterPage>
   bool _busy = false;
   bool _editMode = false;
 
+  // The unsaved-writes half ([UnsavedSettingsPanel]). A `Persistent` write this page makes lands
+  // in the device's RAM like a settings panel's does, so it is recorded in the device's store and
+  // spoken for the same ways: the strip above the list, the leave prompt, the save action.
+
+  @override
+  UnsavedSettings get unsavedStore =>
+      widget.unsaved ?? UnsavedSettings.instance;
+
+  @override
+  int get unsavedDeviceId => widget.deviceId;
+
+  @override
+  RegisterClient get unsavedClient => _client;
+
+  @override
+  bool get unsavedConnected => _connected;
+
+  /// The app's connection, or null when the page was given its own link state: a test that
+  /// supplies [RegisterPage.isConnected] also keeps its fake request channel, because touching the
+  /// singleton would install the real connection over it.
+  ConnectionManager? get _appLink =>
+      widget.isConnected == null ? ConnectionManager.instance : null;
+
+  @override
+  Listenable? get unsavedLink => _appLink;
+
+  @override
+  void unsavedLinkRestored() => unawaited(_refreshAll());
+
   /// Docs/App/Service views/Register.md: a Current/Backup view toggle in the appbar.
   /// Current shows the live RAM values; Backup shows what a Save persisted (decoded from
   /// the device's `.SV` / .DT_ / .DV_ files).
@@ -117,6 +155,7 @@ class _RegisterPageState extends State<RegisterPage>
 
   @override
   void dispose() {
+    unsavedDispose();
     _wait.dispose();
     super.dispose();
   }
@@ -145,6 +184,7 @@ class _RegisterPageState extends State<RegisterPage>
   @override
   void initState() {
     super.initState();
+    unsavedInit();
     _refreshAll();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // Docs/App/Service views/Register.md: the memory view auto-refreshes at 0.5 s.
@@ -621,12 +661,7 @@ class _RegisterPageState extends State<RegisterPage>
   Future<bool> _saveAll() => _client.saveAll();
 
   /// The entries the settings panels hold for this device, named, or null when there are none.
-  String? get _unsavedFields {
-    final store = UnsavedSettings.instance;
-    return store.isDirty(widget.deviceId)
-        ? store.describe(widget.deviceId)
-        : null;
-  }
+  String? get _unsavedFields => unsavedDirty ? unsavedDescription : null;
 
   /// Save All, then the panels' half of it: `Enabled`, `Display name` and `SSID` written from a
   /// settings panel are held in `core/unsaved_settings.dart` until a Save All confirms them, and
@@ -637,6 +672,7 @@ class _RegisterPageState extends State<RegisterPage>
     final outcome = await confirmPendingSettings(
       _client,
       deviceId: widget.deviceId,
+      store: unsavedStore,
     );
     if (!outcome.clean) {
       showNotice(outcome.message, tone: NoticeTone.warning);
@@ -655,7 +691,7 @@ class _RegisterPageState extends State<RegisterPage>
   Future<bool> _recallAllWithDiscard() async {
     final discarded = _unsavedFields;
     if (!await _recallAll()) return false;
-    UnsavedSettings.instance.clearDevice(widget.deviceId);
+    unsavedStore.clearDevice(widget.deviceId);
     if (discarded != null) {
       showNotice(
         'Recalled the saved values: the unsaved change to $discarded is gone, because the device '
@@ -669,12 +705,54 @@ class _RegisterPageState extends State<RegisterPage>
   /// The record of an unsaved write ends where the app itself writes the field into `.SV` or reads
   /// `.SV` back over it: both change what the device holds for that field.
   void _forgetUnsavedField(int blockType, int inst, int field) =>
-      UnsavedSettings.instance.resolveField(
+      unsavedStore.resolveField(
         widget.deviceId,
         blockType: blockType,
         inst: inst,
         field: field,
       );
+
+  /// Whether a register-editor write to this field is one Save All could make durable.
+  ///
+  /// Only a `Persistent` field is mirrored into the device's backup, so only that write is a
+  /// change a reset would revert and a Save All would keep - the state this page records.
+  ///
+  /// Two write paths are deliberately outside it. A dynamic row is one of many keys of one field
+  /// and the store clears an entry by field (`resolveField`, which this page's own per-row Save
+  /// uses), so saving one key would clear another's; a dynamic row's durable form is its `.DV_`
+  /// file, written by that row's Save. A script entry is the running script's own register, saved
+  /// with the script and never by CID 5 - an entry there could not be cleared by any save action.
+  bool _persistsWithSaveAll(int blockType, ValueInfo meta) =>
+      meta.persistent && !isDynamicType(blockType) && !isScriptType(blockType);
+
+  /// Records a register-editor write of a `Persistent` static field: the value is in the device's
+  /// RAM and only Save All writes `.SV` (E71), exactly like a settings panel's write.
+  ///
+  /// [fieldName] is the name this page prints on the row, so the strip and the leave dialog say
+  /// what the user is looking at ("Display name", not "field 1").
+  void _markUnsavedField({
+    required int blockType,
+    required int inst,
+    required int field,
+    required int key,
+    required ValueInfo meta,
+    required List<int> bytes,
+    required String blockName,
+    required String fieldName,
+  }) {
+    unsavedMark(
+      PendingSetting(
+        deviceId: widget.deviceId,
+        blockName: blockName,
+        blockType: blockType,
+        inst: inst,
+        field: field,
+        fieldName: fieldName,
+        meta: meta,
+        bytes: List<int>.unmodifiable(bytes),
+      ),
+    );
+  }
 
   /// Saves one persistent field to its backup (the docs' per-value Save). The wire only
   /// carries `Save All`, so this is the app-side half: see [_writeFieldToBackup].
@@ -885,8 +963,13 @@ class _RegisterPageState extends State<RegisterPage>
     );
   }
 
+  /// The page, with the pop guarded: leaving while the device holds a `Persistent` write this app
+  /// made and has not saved asks the same question a settings panel asks, with the same dialog
+  /// ([showUnsavedLeaveDialog]), because the answer is about the device's RAM, not this page.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => _leaveGuard(_buildPage());
+
+  Widget _buildPage() {
     return TamuPage(
       title: 'Register - ${idToString(widget.deviceId)}',
       actions: [
@@ -955,6 +1038,19 @@ class _RegisterPageState extends State<RegisterPage>
       child: _buildBody(),
     );
   }
+
+  /// Blocks the pop while the device holds a write this app made and has not saved, and asks about
+  /// it: save, or leave knowing a reset brings the old value back (the entry stays in the store, so
+  /// the next visit names it again).
+  Widget _leaveGuard(Widget page) => PopScope(
+    canPop: !unsavedDirty,
+    onPopInvokedWithResult: (didPop, _) async {
+      if (didPop) return;
+      final leave = await unsavedConfirmLeave();
+      if (leave && mounted) Navigator.of(context).pop();
+    },
+    child: page,
+  );
 
   /// The tree on screen was read before the last topology refresh failed: say when it was read
   /// and why the refresh failed, with the retry that re-reads it. Without this the previous tree
@@ -1034,9 +1130,22 @@ class _RegisterPageState extends State<RegisterPage>
       // A backup still being read gets the same kind of panel as the tree, naming the file it is
       // on and the fragments of that file.
       final body = _backupBody(blocks);
-      return _wrapWithWait(body, banner: _backup != null);
+      return _withStrip(_wrapWithWait(body, banner: _backup != null));
     }
-    return _wrapWithWait(_liveBody(blocks), banner: true);
+    return _withStrip(_wrapWithWait(_liveBody(blocks), banner: true));
+  }
+
+  /// The unsaved strip above the body, never inside the scroll view: a warning that scrolls away
+  /// with the rows it talks about is the same as no warning.
+  Widget _withStrip(Widget body) {
+    final strip = unsavedStrip();
+    if (strip == null) return body;
+    return Column(
+      children: [
+        strip,
+        Expanded(child: body),
+      ],
+    );
   }
 
   /// Puts the wait above content that is already on screen (a band) - or leaves the panel inside

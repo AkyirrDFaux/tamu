@@ -339,6 +339,23 @@ extension on _RegisterPageState {
     );
     _snack(confirmed != null ? 'Value written' : 'Write failed');
     if (confirmed != null) {
+      // E71: a `Persistent` static field lands in the device's RAM and only Save all writes `.SV`,
+      // so the write is recorded in the device's store and the strip above the tree names it -
+      // leaving the page then asks about it instead of letting a reset revert it in silence.
+      if (_persistsWithSaveAll(blockType, entry.meta)) {
+        _markUnsavedField(
+          blockType: blockType,
+          inst: inst,
+          field: fieldIndex,
+          key: key,
+          meta: meta,
+          bytes: newValue,
+          blockName: block.name,
+          fieldName: isSystemField
+              ? systemFieldName(fieldIndex)
+              : (fieldInfo?.name ?? 'Field $fieldIndex'),
+        );
+      }
       // The System struct fields are read whole and sliced by member; everything else is a
       // plain (field, key) read.
       final fresh = isSystemField
