@@ -616,12 +616,15 @@ Open:
 Pass 3 read the files pass 2 had only scanned - every file under `Blocks/`, `Bootloader/`, `Core/`,
 `Devices/{Tamu_v2.0A,DAS_v0.1,Valu_v2.0}` plus `Main.cpp` and `Test/` (142 files at HEAD) - line by
 line, and deleted the one dead definition the scan had found: `BootloaderHost::HostLoop` (nothing
-called it) together with `ReceiveFrame`, its only callee. The dead-symbol scan now reports 0 of 503
-definitions.
+called it) together with `ReceiveFrame`, its only callee. The dead-symbol scan now reports 0 of 502
+definitions on the committed tree (503 in the shared working tree, which also carries another card's
+uncommitted `Core/` edits).
 
 Fixed (comment-only unless noted - no behaviour, protocol or size change):
 
-- `Blocks/Render.h`: "ShapeAlpha implements every entry" - it has no `Mesh` case (falls to 0).
+- `Blocks/Render.h`: "ShapeAlpha implements every entry" - it has no `Mesh` case (falls to 0); the
+  pointer now names `Blocks/GeometryMath.h` (where the switch is), not `Vysi1Render.h` (which only
+  calls it).
 - `Core/Functions/Crc8.h`: dropped the citation of `TODO A9`, which no longer exists.
 - `Core/Services/ScriptProgram.h`: the v1 UI-info note contradicted the next line's "v1 is no longer
   supported".
@@ -630,7 +633,13 @@ Fixed (comment-only unless noted - no behaviour, protocol or size change):
 - `Core/Services/Device.h`: the service does not carry Type/SN/Version/Capability/Name/Uptime - those
   are System-block fields read through Register. The CIDs are Discover/Ping/Identify/TimeSync/0x10/
   SNDB, plus the 0x20-0x22 passthrough the CID table files under Bootloader.
-- `Devices/DAS_v0.1/Main.h`: TimeSync repeats at 60 s + up to 15 s of jitter, not "every 2-3 min".
+- `Devices/DAS_v0.1/Main.h`: the TimeSync cadence is 60 s + 0-15 s jitter, which is what
+  `Docs/Devices.md:70` specifies for the DAS; the three comments claiming the docs say "2-3 minutes"
+  (the `#define` block, `SendTimeSync`, the warm-up line) were wrong, and `:212` pointed at the
+  `#define` "below" when it sits above. The same false attribution was fixed in
+  `Core/Functions/TimeSync.h` (the core's 150 s, `Docs/Devices.md:42`) and
+  `Core/Functions/SysFunctions.h` (the drift-extrapolation note, which now quotes the per-device
+  cadences instead of a doc number).
 - `Devices/Tamu_v2.0A/Storage.h`: an orphan "returns the size of the storage partition" comment
   above `Read`.
 - `Devices/Tamu_v2.0A/AppBLE.h`: a "Comm LED is a per-burst pulse" note for LED code the file does
