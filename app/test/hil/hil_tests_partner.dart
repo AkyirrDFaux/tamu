@@ -118,6 +118,43 @@ Future<void> _restoreRequesterTable(
 /// scenario's blocks (0-2).
 const int _scrSubTgt = 32;
 
+/// The core as requester, its provider node, and the clients both cross-device
+/// flows drive: the core's register, the node's register and the core's
+/// subscription table.
+({
+  HilDevice core,
+  HilDevice node,
+  RegisterClient reg,
+  RegisterClient dasReg,
+  SubscriptionClient client,
+})
+_requesterFlow(HilContext ctx) {
+  final core = ctx.device(_coreRequester);
+  final node = ctx.rig.partnerFor(_nodeProvider, exclude: core);
+  if (node == null) fail('the runner guaranteed a provider partner');
+  ctx.note('requester ${core.label} <- provider ${node.label}');
+  return (
+    core: core,
+    node: node,
+    reg: RegisterClient(deviceId: core.id),
+    dasReg: RegisterClient(deviceId: node.id),
+    client: SubscriptionClient(deviceId: core.id),
+  );
+}
+
+/// The core, one node on the bus and the device database, after a fresh
+/// discovery sweep - the shape the network-wide cases start from.
+Future<({HilDevice core, HilDevice node, DeviceDatabase db})> _discoveredPair(
+  HilContext ctx,
+) async {
+  final core = ctx.device(_coreWithNode);
+  final node = ctx.rig.partnerFor(_node, exclude: core);
+  if (node == null) fail('the runner guaranteed a node partner');
+  final db = DeviceDatabase.instance;
+  await db.refreshNetwork();
+  return (core: core, node: node, db: db);
+}
+
 final List<HilTest> partnerTests = <HilTest>[
   HilTest(
     'subscription: node Measured Value reaches a core target',
@@ -125,14 +162,11 @@ final List<HilTest> partnerTests = <HilTest>[
     runClass: HilRunClass.coupled,
     prereq: _coreRequester,
     body: (ctx) async {
-      final core = ctx.device(_coreRequester);
-      final node = ctx.rig.partnerFor(_nodeProvider, exclude: core);
-      if (node == null) fail('the runner guaranteed a provider partner');
-      ctx.note('requester ${core.label} <- provider ${node.label}');
-
-      final reg = RegisterClient(deviceId: core.id);
-      final dasReg = RegisterClient(deviceId: node.id);
-      final client = SubscriptionClient(deviceId: core.id);
+      final flow = _requesterFlow(ctx);
+      final node = flow.node;
+      final reg = flow.reg;
+      final dasReg = flow.dasReg;
+      final client = flow.client;
       DynBlock? target;
       List<RequesterSubscription>? saved;
       try {
@@ -210,14 +244,11 @@ final List<HilTest> partnerTests = <HilTest>[
     runClass: HilRunClass.coupled,
     prereq: _coreRequester,
     body: (ctx) async {
-      final core = ctx.device(_coreRequester);
-      final node = ctx.rig.partnerFor(_nodeProvider, exclude: core);
-      if (node == null) fail('the runner guaranteed a provider partner');
-      ctx.note('requester ${core.label} <- provider ${node.label}');
-
-      final reg = RegisterClient(deviceId: core.id);
-      final dasReg = RegisterClient(deviceId: node.id);
-      final client = SubscriptionClient(deviceId: core.id);
+      final flow = _requesterFlow(ctx);
+      final node = flow.node;
+      final reg = flow.reg;
+      final dasReg = flow.dasReg;
+      final client = flow.client;
       DynBlock? target;
       ValueInfo? srcMeta;
       List<int>? coeffBefore;
@@ -359,16 +390,13 @@ final List<HilTest> partnerTests = <HilTest>[
     runClass: HilRunClass.coupled,
     prereq: _coreWithNode,
     body: (ctx) async {
-      final core = ctx.device(_coreWithNode);
-      final node = ctx.rig.partnerFor(_node, exclude: core);
-      if (node == null) fail('the runner guaranteed a node partner');
+      final pair = await _discoveredPair(ctx);
+      final node = pair.node;
 
       // A node broadcasts Device Discover until the core assigns it an address;
       // the core then reaches it over the bus. A full sweep must therefore leave
       // every listed device reachable (not stale) and the node on the local net.
-      final db = DeviceDatabase.instance;
-      await db.refreshNetwork();
-      final devices = db.all;
+      final devices = pair.db.all;
       ctx.note(
         'bus lists ${devices.length} device(s): '
         '${devices.map((d) => idToString(d.id)).join(', ')}',
@@ -395,12 +423,11 @@ final List<HilTest> partnerTests = <HilTest>[
     runClass: HilRunClass.coupled,
     prereq: _coreWithNode,
     body: (ctx) async {
-      final core = ctx.device(_coreWithNode);
-      final node = ctx.rig.partnerFor(_node, exclude: core);
-      if (node == null) fail('the runner guaranteed a node partner');
+      final pair = await _discoveredPair(ctx);
+      final core = pair.core;
+      final node = pair.node;
 
-      final db = DeviceDatabase.instance;
-      await db.refreshNetwork();
+      final db = pair.db;
       final coreEntry = db.byId(core.id);
       expect(coreEntry, isNotNull);
       expect(coreEntry!.capabilities & Capability.core, isNot(0));

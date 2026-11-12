@@ -57,6 +57,22 @@ Future<Uint8List?> _readImage(BootloaderClient boot, int appSize) async {
   return out.toBytes();
 }
 
+/// Identifies the device in bootloader mode and enforces the whole-image limit.
+/// Null means the test must stop: identify did not answer (already asserted), or
+/// the app space is too large, in which case the test is skipped.
+Future<BootloaderIdentity?> _wholeImageDevice(BootloaderClient boot) async {
+  final id = await boot.identify();
+  expect(id, isNotNull, reason: 'the device did not answer identify');
+  if (id == null) return null;
+  if (id.appSize > _wholeImageLimit) {
+    markTestSkipped(
+      'the device app space ${id.appSize} B exceeds the whole-image limit',
+    );
+    return null;
+  }
+  return id;
+}
+
 final List<HilTest> bootloaderTests = <HilTest>[
   HilTest(
     'bootloader identifies its device',
@@ -96,15 +112,8 @@ final List<HilTest> bootloaderTests = <HilTest>[
     body: (ctx) async {
       final boot = BootloaderClient(coreId: _relayCoreId(ctx));
       for (final _ in ctx.devices(_inBootloader)) {
-        final id = await boot.identify();
-        expect(id, isNotNull, reason: 'the device did not answer identify');
+        final id = await _wholeImageDevice(boot);
         if (id == null) return;
-        if (id.appSize > _wholeImageLimit) {
-          markTestSkipped(
-            'the device app space ${id.appSize} B exceeds the whole-image limit',
-          );
-          return;
-        }
         final image = await _readImage(boot, id.appSize);
         expect(
           image,
@@ -138,15 +147,8 @@ final List<HilTest> bootloaderTests = <HilTest>[
     body: (ctx) async {
       final boot = BootloaderClient(coreId: _relayCoreId(ctx));
       for (final _ in ctx.devices(_inBootloader)) {
-        final id = await boot.identify();
-        expect(id, isNotNull, reason: 'the device did not answer identify');
+        final id = await _wholeImageDevice(boot);
         if (id == null) return;
-        if (id.appSize > _wholeImageLimit) {
-          markTestSkipped(
-            'the device app space ${id.appSize} B exceeds the whole-image limit',
-          );
-          return;
-        }
         // Read the device's own image first: the round trip only ever writes
         // back the bytes the device already holds, so it cannot swap in a
         // different binary. A partial read aborts before any write.

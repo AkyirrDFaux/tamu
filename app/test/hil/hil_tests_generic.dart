@@ -19,6 +19,22 @@ const HilPrereq _core = HilPrereq(
   capabilities: [Capability.appInterface],
 );
 
+/// One System-block field read: fails the test when the device does not answer,
+/// so every field case asserts the same thing once ([what] names the field in the
+/// failure). [client] lets a case that reads two fields reuse one client.
+Future<({ValueInfo meta, List<int> value})> _systemField(
+  HilDevice d,
+  int field,
+  int key,
+  String what, {
+  RegisterClient? client,
+}) async {
+  final reg = client ?? RegisterClient(deviceId: d.id);
+  final read = await reg.readField(field, key);
+  expect(read, isNotNull, reason: 'device ${d.id} $what');
+  return read!;
+}
+
 final List<HilTest> genericTests = [
   HilTest(
     'core answers a ping',
@@ -89,10 +105,9 @@ final List<HilTest> genericTests = [
     prereq: _any,
     body: (ctx) async {
       for (final d in ctx.devices(_any)) {
-        final read = await RegisterClient(deviceId: d.id).readField(0, 2);
-        expect(read, isNotNull, reason: 'device ${d.id} software version');
+        final read = await _systemField(d, 0, 2, 'software version');
         expect(
-          read!.value.length,
+          read.value.length,
           greaterThanOrEqualTo(4),
           reason: 'device ${d.id} version is 32bit (YY:MM:DD:II)',
         );
@@ -108,10 +123,9 @@ final List<HilTest> genericTests = [
     prereq: _any,
     body: (ctx) async {
       for (final d in ctx.devices(_any)) {
-        final sn = await RegisterClient(deviceId: d.id).readField(1, 0xFF);
-        expect(sn, isNotNull, reason: 'device ${d.id} serial number');
+        final sn = await _systemField(d, 1, 0xFF, 'serial number');
         expect(
-          sn!.value.length,
+          sn.value.length,
           greaterThanOrEqualTo(14),
           reason: 'device ${d.id} serial number length',
         );
@@ -124,9 +138,8 @@ final List<HilTest> genericTests = [
     prereq: _any,
     body: (ctx) async {
       for (final d in ctx.devices(_any)) {
-        final read = await RegisterClient(deviceId: d.id).readField(0, 1);
-        expect(read, isNotNull, reason: 'device ${d.id} capability');
-        final bits = uint32FromBytes(read!.value);
+        final read = await _systemField(d, 0, 1, 'capability');
+        final bits = uint32FromBytes(read.value);
         ctx.note('${d.label}: capability 0x${bits.toRadixString(16)}');
         expect(bits, isNot(0), reason: 'device ${d.id} capability is non-zero');
         if (d.isCore) {
@@ -151,10 +164,9 @@ final List<HilTest> genericTests = [
     prereq: _any,
     body: (ctx) async {
       for (final d in ctx.devices(_any)) {
-        final read = await RegisterClient(deviceId: d.id).readField(0, 0);
-        expect(read, isNotNull, reason: 'device ${d.id} device type');
+        final read = await _systemField(d, 0, 0, 'device type');
         expect(
-          uint32FromBytes(read!.value),
+          uint32FromBytes(read.value),
           d.type.value,
           reason: 'device ${d.id} type agrees with discovery',
         );
@@ -167,10 +179,9 @@ final List<HilTest> genericTests = [
     prereq: _any,
     body: (ctx) async {
       for (final d in ctx.devices(_any)) {
-        final read = await RegisterClient(deviceId: d.id).readField(6, 0xFF);
-        expect(read, isNotNull, reason: 'device ${d.id} name');
+        final read = await _systemField(d, 6, 0xFF, 'name');
         expect(
-          read!.value,
+          read.value,
           isNotEmpty,
           reason: 'device ${d.id} name is non-empty',
         );
@@ -189,12 +200,10 @@ final List<HilTest> genericTests = [
     body: (ctx) async {
       for (final d in ctx.devices(_any)) {
         final reg = RegisterClient(deviceId: d.id);
-        final used = await reg.readField(4, 0);
-        final total = await reg.readField(4, 1);
-        expect(used, isNotNull, reason: 'device ${d.id} used RAM');
-        expect(total, isNotNull, reason: 'device ${d.id} total RAM');
-        final u = uint32FromBytes(used!.value);
-        final t = uint32FromBytes(total!.value);
+        final used = await _systemField(d, 4, 0, 'used RAM', client: reg);
+        final total = await _systemField(d, 4, 1, 'total RAM', client: reg);
+        final u = uint32FromBytes(used.value);
+        final t = uint32FromBytes(total.value);
         ctx.note('${d.label}: RAM $u/$t bytes');
         expect(
           t,
@@ -215,14 +224,11 @@ final List<HilTest> genericTests = [
     prereq: _any,
     body: (ctx) async {
       for (final d in ctx.devices(_any)) {
-        final reg = RegisterClient(deviceId: d.id);
-        final first = await reg.readField(3, 0);
-        expect(first, isNotNull, reason: 'device ${d.id} uptime');
+        final first = await _systemField(d, 3, 0, 'uptime');
         await Future<void>.delayed(const Duration(milliseconds: 200));
-        final second = await reg.readField(3, 0);
-        expect(second, isNotNull, reason: 'device ${d.id} uptime');
-        final a = uint32FromBytes(first!.value);
-        final b = uint32FromBytes(second!.value);
+        final second = await _systemField(d, 3, 0, 'uptime');
+        final a = uint32FromBytes(first.value);
+        final b = uint32FromBytes(second.value);
         ctx.note('${d.label}: uptime $a -> $b ms');
         expect(
           b,
@@ -249,9 +255,8 @@ final List<HilTest> genericTests = [
     prereq: _core,
     body: (ctx) async {
       for (final d in ctx.devices(_core)) {
-        final read = await RegisterClient(deviceId: d.id).readField(7, 0);
-        expect(read, isNotNull, reason: 'device ${d.id} NetID');
-        expect(read!.value, isNotEmpty, reason: 'device ${d.id} NetID is set');
+        final read = await _systemField(d, 7, 0, 'NetID');
+        expect(read.value, isNotEmpty, reason: 'device ${d.id} NetID is set');
         // NetID is documented uint8 (Docs/Services/System Block and Device Commands.md).
         expect(
           read.value.length,

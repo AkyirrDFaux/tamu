@@ -112,6 +112,49 @@ Future<Set<String>> _fileNames(StorageClient st) async {
   return table.map((f) => normalizeFileName(f.name)).toSet();
 }
 
+/// Cleans a scratch script slot and its file, so a stale image cannot mask the
+/// case, and hands back the clients and the identity the case drives.
+Future<({ScriptClient c, StorageClient st, String name, int slot})>
+_cleanScript(HilDevice d, int slot) async {
+  final c = ScriptClient(deviceId: d.id);
+  final st = StorageClient(deviceId: d.id);
+  final name = scriptFileName(slot);
+  if (await c.readState(slot) != null) await c.unload(slot);
+  await st.deleteFile(name);
+  return (c: c, st: st, name: name, slot: slot);
+}
+
+/// Runs [body] on one scratch script slot of [d], unloading the slot and
+/// deleting its file whatever happened. The body uploads through
+/// [_uploadScript], which cleans the slot itself.
+Future<void> _withScript(
+  HilDevice d,
+  int slot,
+  Future<void> Function(ScriptClient c, StorageClient st, int slot) body,
+) async {
+  final c = ScriptClient(deviceId: d.id);
+  final st = StorageClient(deviceId: d.id);
+  try {
+    await body(c, st, slot);
+  } finally {
+    await _removeScript(c, st, slot);
+  }
+}
+
+/// Uploads [draft] into [slot], runs it and waits until it reaches [want].
+Future<void> _runScript(
+  ScriptClient c,
+  StorageClient st,
+  int slot,
+  ScriptDraft draft,
+  int want, {
+  required String reason,
+}) async {
+  expect(await _uploadScript(c, st, slot, draft), isTrue, reason: reason);
+  await c.setState(slot, ScriptState.running);
+  expect(await _waitState(c, slot, want), want);
+}
+
 final List<HilTest> serviceTests = <HilTest>[
   // ---------------------------------------------------------------- Register
   HilTest(
@@ -700,17 +743,10 @@ final List<HilTest> serviceTests = <HilTest>[
     prereq: _script,
     body: (ctx) async {
       for (final d in ctx.devices(_script)) {
-        final c = ScriptClient(deviceId: d.id);
-        final st = StorageClient(deviceId: d.id);
+        final (:c, :st, :name, :slot) = await _cleanScript(d, _scrSlotBase);
         final reg = RegisterClient(deviceId: d.id);
-        final slot = _scrSlotBase;
-        final name = scriptFileName(slot);
         var done = false;
         try {
-          // Clean scratch slot only (the deployed scenario owns slots 0-4).
-          if (await c.readState(slot) != null) await c.unload(slot);
-          await st.deleteFile(name);
-
           final image = ScriptFileBuilder(
             properties: ScriptProperties.loadOnBoot,
             inputs: [ValueInfo(type: DataType.number.value, size: 4)],
@@ -914,15 +950,9 @@ final List<HilTest> serviceTests = <HilTest>[
     prereq: _script,
     body: (ctx) async {
       for (final d in ctx.devices(_script)) {
-        final c = ScriptClient(deviceId: d.id);
-        final st = StorageClient(deviceId: d.id);
-        final slot = _scrSlotBase + 1;
-        final name = scriptFileName(slot);
+        final (:c, :st, :name, :slot) = await _cleanScript(d, _scrSlotBase + 1);
         var done = false;
         try {
-          if (await c.readState(slot) != null) await c.unload(slot);
-          await st.deleteFile(name);
-
           final image = ScriptFileBuilder(functionName: 'Empty').build();
           expect(
             await st.writeFile(name, image),
@@ -959,15 +989,9 @@ final List<HilTest> serviceTests = <HilTest>[
     prereq: _script,
     body: (ctx) async {
       for (final d in ctx.devices(_script)) {
-        final c = ScriptClient(deviceId: d.id);
-        final st = StorageClient(deviceId: d.id);
-        final slot = _scrSlotBase + 2;
-        final name = scriptFileName(slot);
+        final (:c, :st, :name, :slot) = await _cleanScript(d, _scrSlotBase + 2);
         var done = false;
         try {
-          if (await c.readState(slot) != null) await c.unload(slot);
-          await st.deleteFile(name);
-
           // Build an edited draft through the same model the editor uses.
           final draft =
               ScriptDraft(
@@ -1064,15 +1088,9 @@ final List<HilTest> serviceTests = <HilTest>[
     prereq: _script,
     body: (ctx) async {
       for (final d in ctx.devices(_script)) {
-        final c = ScriptClient(deviceId: d.id);
-        final st = StorageClient(deviceId: d.id);
-        final slot = _scrSlotBase + 3;
-        final name = scriptFileName(slot);
+        final (:c, :st, :name, :slot) = await _cleanScript(d, _scrSlotBase + 3);
         var done = false;
         try {
-          if (await c.readState(slot) != null) await c.unload(slot);
-          await st.deleteFile(name);
-
           // One 16-byte String input.
           final draft = ScriptDraft(functionName: 'Pad')
             ..inputs.add(
@@ -1137,10 +1155,7 @@ final List<HilTest> serviceTests = <HilTest>[
     prereq: _script,
     body: (ctx) async {
       for (final d in ctx.devices(_script)) {
-        final c = ScriptClient(deviceId: d.id);
-        final st = StorageClient(deviceId: d.id);
-        final slot = _scrSlotBase + 8;
-        try {
+        await _withScript(d, _scrSlotBase + 8, (c, st, slot) async {
           // A = 2; B = A + A; Out = B; halt
           final draft = ScriptDraft(functionName: 'Arith')
             ..outputs.add(
@@ -1189,15 +1204,13 @@ final List<HilTest> serviceTests = <HilTest>[
               ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)),
             );
 
-          expect(
-            await _uploadScript(c, st, slot, draft),
-            isTrue,
-            reason: 'upload + load the arithmetic script',
-          );
-          await c.setState(slot, ScriptState.running);
-          expect(
-            await _waitState(c, slot, ScriptState.finished),
+          await _runScript(
+            c,
+            st,
+            slot,
+            draft,
             ScriptState.finished,
+            reason: 'upload + load the arithmetic script',
           );
 
           final out = await c.readEntry(slot, ScriptField.output, 0);
@@ -1208,9 +1221,7 @@ final List<HilTest> serviceTests = <HilTest>[
           final ram = (await c.readInternalState(slot))!.variables;
           expect(numberFromBytes(ram, 0), closeTo(2.0, 0.001));
           expect(numberFromBytes(ram, 4), closeTo(4.0, 0.001));
-        } finally {
-          await _removeScript(c, st, slot);
-        }
+        });
       }
     },
   ),
@@ -1221,10 +1232,7 @@ final List<HilTest> serviceTests = <HilTest>[
     prereq: _script,
     body: (ctx) async {
       for (final d in ctx.devices(_script)) {
-        final c = ScriptClient(deviceId: d.id);
-        final st = StorageClient(deviceId: d.id);
-        final slot = _scrSlotBase + 9;
-        try {
+        await _withScript(d, _scrSlotBase + 9, (c, st, slot) async {
           // A=0; While A < 3 { A = A + 1 }; halt -> A == 3.
           final draft = ScriptDraft(functionName: 'Loop')
             ..variables.add(
@@ -1279,9 +1287,7 @@ final List<HilTest> serviceTests = <HilTest>[
           );
           final ram = (await c.readInternalState(slot))!.variables;
           expect(numberFromBytes(ram, 0), closeTo(3.0, 0.001));
-        } finally {
-          await _removeScript(c, st, slot);
-        }
+        });
       }
     },
   ),
@@ -1292,10 +1298,7 @@ final List<HilTest> serviceTests = <HilTest>[
     prereq: _script,
     body: (ctx) async {
       for (final d in ctx.devices(_script)) {
-        final c = ScriptClient(deviceId: d.id);
-        final st = StorageClient(deviceId: d.id);
-        final slot = _scrSlotBase + 10;
-        try {
+        await _withScript(d, _scrSlotBase + 10, (c, st, slot) async {
           // Modulo(Out, Vec, 1): a Vector operand is not a scalar -> operand error.
           final draft = ScriptDraft(functionName: 'Bad')
             ..outputs.add(
@@ -1323,15 +1326,13 @@ final List<HilTest> serviceTests = <HilTest>[
               ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)),
             );
 
-          expect(
-            await _uploadScript(c, st, slot, draft),
-            isTrue,
-            reason: 'upload + load the faulty script',
-          );
-          await c.setState(slot, ScriptState.running);
-          expect(
-            await _waitState(c, slot, ScriptState.error),
+          await _runScript(
+            c,
+            st,
+            slot,
+            draft,
             ScriptState.error,
+            reason: 'upload + load the faulty script',
           );
           // The report record names the offending instruction - the Modulo (catMath, op 5) - and
           // carries an instruction-specific error code; the code catalogue is undecided, so the
@@ -1349,9 +1350,7 @@ final List<HilTest> serviceTests = <HilTest>[
             (catMath, 5),
             reason: 'the offending instruction is the Modulo',
           );
-        } finally {
-          await _removeScript(c, st, slot);
-        }
+        });
       }
     },
   ),
@@ -1362,10 +1361,7 @@ final List<HilTest> serviceTests = <HilTest>[
     prereq: _script,
     body: (ctx) async {
       for (final d in ctx.devices(_script)) {
-        final c = ScriptClient(deviceId: d.id);
-        final st = StorageClient(deviceId: d.id);
-        final slot = _scrSlotBase + 11;
-        try {
+        await _withScript(d, _scrSlotBase + 11, (c, st, slot) async {
           final draft = ScriptDraft(functionName: 'Log')
             ..constants.add(
               ScriptDraftValue(
@@ -1388,24 +1384,20 @@ final List<HilTest> serviceTests = <HilTest>[
               ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)),
             ); // Halt
 
-          expect(
-            await _uploadScript(c, st, slot, draft),
-            isTrue,
-            reason: 'upload + load the log script',
-          );
-          await c.setState(slot, ScriptState.running);
-          expect(
-            await _waitState(c, slot, ScriptState.finished),
+          await _runScript(
+            c,
+            st,
+            slot,
+            draft,
             ScriptState.finished,
+            reason: 'upload + load the log script',
           );
           expect(
             (await c.readState(slot))?.error,
             0,
             reason: 'the Log/Nop path does not fault',
           );
-        } finally {
-          await _removeScript(c, st, slot);
-        }
+        });
       }
     },
   ),
@@ -1416,17 +1408,10 @@ final List<HilTest> serviceTests = <HilTest>[
     prereq: _script,
     body: (ctx) async {
       for (final d in ctx.devices(_script)) {
-        final c = ScriptClient(deviceId: d.id);
-        final st = StorageClient(deviceId: d.id);
-        final slot = _scrSlotBase + 4;
-        final fileId = slot; // _uploadScript loads with load(slot, slot).
-        final emptySlot =
-            _scrSlotBase + 5; // no deployed-scenario or scratch script here.
-        final name = scriptFileName(fileId);
-        try {
-          // Clean the scratch slot only (the deployed scenario owns slots 0-4).
-          if (await c.readState(slot) != null) await c.unload(slot);
-          await st.deleteFile(name);
+        await _withScript(d, _scrSlotBase + 4, (c, st, slot) async {
+          final fileId = slot; // _uploadScript loads with load(slot, slot).
+          final emptySlot =
+              _scrSlotBase + 5; // no deployed-scenario or scratch script here.
 
           // Two 4-byte variables, so CID 5's variable RAM is a known 8 bytes, and a
           // Halt so the script is a valid image.
@@ -1507,9 +1492,7 @@ final List<HilTest> serviceTests = <HilTest>[
             8,
             reason: 'the two 4-byte variables follow the fixed-size stack',
           );
-        } finally {
-          await _removeScript(c, st, slot);
-        }
+        });
       }
     },
   ),
@@ -1520,10 +1503,7 @@ final List<HilTest> serviceTests = <HilTest>[
     prereq: _script,
     body: (ctx) async {
       for (final d in ctx.devices(_script)) {
-        final c = ScriptClient(deviceId: d.id);
-        final st = StorageClient(deviceId: d.id);
-        final slot = _scrSlotBase + 12;
-        try {
+        await _withScript(d, _scrSlotBase + 12, (c, st, slot) async {
           // The main body calls a local function once; the body writes a variable and an
           // output, then Returns. Assembly lays the body out after the main program and each
           // use site's Call becomes the body's absolute line index (Docs/Services/Script.md
@@ -1594,9 +1574,7 @@ final List<HilTest> serviceTests = <HilTest>[
             0,
             reason: 'Return popped the call frame',
           );
-        } finally {
-          await _removeScript(c, st, slot);
-        }
+        });
       }
     },
   ),
@@ -1607,10 +1585,7 @@ final List<HilTest> serviceTests = <HilTest>[
     prereq: _script,
     body: (ctx) async {
       for (final d in ctx.devices(_script)) {
-        final c = ScriptClient(deviceId: d.id);
-        final st = StorageClient(deviceId: d.id);
-        final slot = _scrSlotBase + 13;
-        try {
+        await _withScript(d, _scrSlotBase + 13, (c, st, slot) async {
           // Report info is a log-only action (Docs/Services/Script.md Service op 14): it must not
           // halt or fault. A Set AFTER it proves execution carried past it.
           final draft = ScriptDraft(functionName: 'ReportInfo')
@@ -1631,15 +1606,13 @@ final List<HilTest> serviceTests = <HilTest>[
               ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)),
             ); // Halt
 
-          expect(
-            await _uploadScript(c, st, slot, draft),
-            isTrue,
-            reason: 'upload + load the Report info script',
-          );
-          await c.setState(slot, ScriptState.running);
-          expect(
-            await _waitState(c, slot, ScriptState.finished),
+          await _runScript(
+            c,
+            st,
+            slot,
+            draft,
             ScriptState.finished,
+            reason: 'upload + load the Report info script',
           );
           expect(
             (await c.readState(slot))?.error,
@@ -1652,9 +1625,7 @@ final List<HilTest> serviceTests = <HilTest>[
             closeTo(5.0, 0.001),
             reason: 'execution carried on past Report info',
           );
-        } finally {
-          await _removeScript(c, st, slot);
-        }
+        });
       }
     },
   ),
@@ -1665,10 +1636,7 @@ final List<HilTest> serviceTests = <HilTest>[
     prereq: _script,
     body: (ctx) async {
       for (final d in ctx.devices(_script)) {
-        final c = ScriptClient(deviceId: d.id);
-        final st = StorageClient(deviceId: d.id);
-        final slot = _scrSlotBase + 14;
-        try {
+        await _withScript(d, _scrSlotBase + 14, (c, st, slot) async {
           // Error is a custom throw (Docs/Services/Script.md Service op 13): it logs and halts,
           // carrying a script-defined code. The code is the script's own operand value - NOT a
           // catalogue code (that catalogue is undecided), so the test uses a distinctive literal.
@@ -1684,15 +1652,13 @@ final List<HilTest> serviceTests = <HilTest>[
               ScriptLine(instruction: ScriptSymbol.instruction(catFlow, 6)),
             ); // Halt (never reached)
 
-          expect(
-            await _uploadScript(c, st, slot, draft),
-            isTrue,
-            reason: 'upload + load the Error script',
-          );
-          await c.setState(slot, ScriptState.running);
-          expect(
-            await _waitState(c, slot, ScriptState.error),
+          await _runScript(
+            c,
+            st,
+            slot,
+            draft,
             ScriptState.error,
+            reason: 'upload + load the Error script',
           );
 
           final report = await c.readState(slot);
@@ -1708,9 +1674,7 @@ final List<HilTest> serviceTests = <HilTest>[
             (catService, 13),
             reason: 'the offending instruction is the Service Error op',
           );
-        } finally {
-          await _removeScript(c, st, slot);
-        }
+        });
       }
     },
   ),
@@ -1821,14 +1785,12 @@ final List<HilTest> serviceTests = <HilTest>[
     prereq: _script,
     body: (ctx) async {
       for (final d in ctx.devices(_script)) {
-        final c = ScriptClient(deviceId: d.id);
-        final st = StorageClient(deviceId: d.id);
-        final slot = _scrSlotBase + 18;
-        final name = scriptFileName(slot);
+        final (:c, :st, :name, :slot) = await _cleanScript(
+          d,
+          _scrSlotBase + 18,
+        );
         try {
-          // Clean the scratch slot and guarantee the referenced library is absent.
-          if (await c.readState(slot) != null) await c.unload(slot);
-          await st.deleteFile(name);
+          // The referenced function library must be absent.
           const missingLib =
               0xFFF; // a function-library file id that is not present
           await st.deleteFile(scriptFileName(missingLib));
@@ -1917,17 +1879,14 @@ final List<HilTest> serviceTests = <HilTest>[
     prereq: _script,
     body: (ctx) async {
       for (final d in ctx.devices(_script)) {
-        final c = ScriptClient(deviceId: d.id);
-        final st = StorageClient(deviceId: d.id);
-        final slot =
-            _scrSlotBase +
-            19; // clear of the deployed scenario (0-4) and the others.
-        final name = scriptFileName(slot);
+        final (:c, :st, :name, :slot) = await _cleanScript(
+          d,
+          _scrSlotBase + 19, // clear of the deployed scenario and the others.
+        );
         final libName = scriptFileName(_scrLibFileId);
         try {
-          // Clean the scratch slot and the scratch library so a stale file cannot mask the link.
-          if (await c.readState(slot) != null) await c.unload(slot);
-          await st.deleteFile(name);
+          // The scratch library must be absent too, so a stale file cannot mask
+          // the link.
           await st.deleteFile(libName);
 
           // The function library: the script file format with the Function-library Properties flag.
