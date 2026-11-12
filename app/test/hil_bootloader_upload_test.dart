@@ -85,7 +85,7 @@ void main() {
 
     // ignore: avoid_print
     print(
-      'RESULT verified by ${result.method.label} (digest=${result.digest}) '
+      'RESULT verified by ${result.outcome.label} (digest=${result.verify.digest}) '
       'writes=${result.writes} reads=${result.reads} - ${result.note}',
     );
   }, timeout: Timeout.none);

@@ -2031,9 +2031,10 @@ places:
   compares it. `Docs/Command ID Table.md:11` still gives the range as `0x0020-0x0022`.
 
 The prose that says "Final verification of the image remains the app's responsibility, via read
-requests" (`Docs/Services/Bootloader.md:7`) is still true in spirit - the app verifies, and the core
-interprets nothing - but the read-back is no longer how it verifies: one digest request replaces 432
-read-backs, and the read command is kept only to name the first differing offset after a mismatch.
+requests" (`Docs/Services/Bootloader.md:7`) is still true - the app verifies, and the core interprets
+nothing - but verification is now two measures: one digest request over the padded range compared
+with the manifest's `crc32_padded`, then the full read-back pass, because that is the only check that
+does not depend on the node's own CRC being right.
 
 ## The bootloader read path returns a wrong payload on a few chunks out of 432 (2026-11-12, card t_5e16d932)
 
@@ -2055,7 +2056,9 @@ with the host's `zlib.crc32` of the padded image (`0xB674DAED`) both before and 
 a "wrong" chunk is not reproducible at that offset. It happens with the pre-digest bootloader
 (1940 B, commit `1efe3b7`) as well as the digest one (1984 B), so it is not new; the read path itself
 (`Devices/DAS_v0.1/Bootloader.cpp: HandleRead`, `Core/Services/Device.h` read branch, the raw-send
-echo window in `RSBus.h`) is untouched by the digest work. **Why it matters:** the read-back is no
-longer the verifier (a false difference on a correct image is exactly what it used to produce), but
-it is still the locator after a digest mismatch, so a shifted payload there can name the wrong
-offset. A follow-up card should chase the frame alignment on the half-duplex read path.
+echo window in `RSBus.h`) is untouched by the digest work. **Why it matters:** the read-back pass is
+the second of the two verification measures (it is the only check that does not depend on the node's
+own CRC), so on a *correct* image it can produce a false difference - measured: one run named `0x20`
+when the real difference was at `0x200`, and the same sweep reported 1, 2, 3 and 7 differing chunks
+on images whose digest matched. A follow-up card should chase the frame alignment on the half-duplex
+read path.

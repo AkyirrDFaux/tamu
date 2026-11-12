@@ -36,6 +36,14 @@ class FakeBootloaderTransport implements BootloaderTransport {
   /// True to corrupt every chunk's stored bytes, so the whole image is wrong on the device.
   bool corruptAll = false;
 
+  /// True when [corruptAll] / [corrupt] only hit a chunk's FIRST write, so one correction round can
+  /// fix it. False (the default) keeps corrupting every write: a flash that will not hold the data.
+  bool corruptFirstWriteOnly = false;
+
+  /// True to make every read flip a byte after the fact: the stored bytes and the digest are right,
+  /// the read path is not - the node's own CRC and its own bytes disagree.
+  bool readBackLies = false;
+
   bool alwaysNullRead = false;
 
   /// True to refuse every write the way a node that has left bootloader mode does: a FAIL with a
@@ -52,6 +60,9 @@ class FakeBootloaderTransport implements BootloaderTransport {
 
   /// Digest requests issued (the client sends one, and retries a miss).
   int digests = 0;
+
+  /// Offsets that have been programmed at least once (for [corruptFirstWriteOnly]).
+  final Set<int> _programmed = {};
 
   BootloaderIdentity? identity;
   int writes = 0, reads = 0;
@@ -82,8 +93,12 @@ class FakeBootloaderTransport implements BootloaderTransport {
           : WriteAck(false, lastWrittenOffset: _last);
     }
     final stored = Uint8List.fromList(data);
-    if (corruptAll || corrupt.contains(offset)) stored[0] = stored[0] ^ 0xFF;
+    final corruptThis =
+        (corruptAll || corrupt.contains(offset)) &&
+        (!corruptFirstWriteOnly || !_programmed.contains(offset));
+    if (corruptThis) stored[0] = stored[0] ^ 0xFF;
     flash[offset] = stored;
+    _programmed.add(offset);
     _last = offset;
     return nullOffsetAcks
         ? const WriteAck(true)
@@ -103,7 +118,9 @@ class FakeBootloaderTransport implements BootloaderTransport {
       throw const TransportException('timeout');
     }
     if (alwaysNullRead) return null;
-    return Uint8List.fromList(_held(offset));
+    final data = Uint8List.fromList(_held(offset));
+    if (readBackLies) data[0] = data[0] ^ 0xFF;
+    return data;
   }
 
   @override

@@ -86,6 +86,8 @@ void main() {
   testWidgets(
     'a write that does not match is named, with the first differing offset',
     (tester) async {
+      // The device loses every chunk and keeps losing the correction: both measures name the
+      // image wrong, one correction round runs, and the run stops with the offset.
       final t = FakeBootloaderTransport()..corruptAll = true;
       await _runUpdate(tester, t);
 
@@ -94,14 +96,14 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.textContaining('first differing chunk: 0x0'),
+        find.textContaining('still does not read back'),
         findsOneWidget,
-        reason: 'the report names the offset the digest could not',
+        reason: 'the offset and the count are named',
       );
       expect(
-        find.textContaining('!= expected'),
+        find.textContaining('digest '),
         findsOneWidget,
-        reason: 'the digest pair is named first',
+        reason: 'both measures are reported, the digest first',
       );
       expect(
         find.textContaining('Power-cycle the node:'),

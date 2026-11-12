@@ -176,7 +176,7 @@ final List<HilTest> bootloaderTests = <HilTest>[
         expect(phases.last, FlashPhase.done);
         ctx.note(
           'the device: rewrote ${image.length} bytes, '
-          'verified by ${result.method.label} '
+          'verified by ${result.outcome.label} '
           'writes=${result.writes} reads=${result.reads} - ${result.note}',
         );
       }

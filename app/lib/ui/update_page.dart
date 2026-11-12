@@ -243,7 +243,8 @@ class _UpdatePageState extends State<UpdatePage> {
 
   String _phaseLabel(FlashProgress p) => switch (p.phase) {
     FlashPhase.writing => 'Writing',
-    FlashPhase.verifying => 'Verifying (digest)',
+    FlashPhase.verifying => 'Verifying (digest + read-back)',
+    FlashPhase.correcting => 'Correcting',
     FlashPhase.done => 'Done',
   };
 
