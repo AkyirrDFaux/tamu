@@ -151,6 +151,17 @@ class FlashVerifyResult {
 
   /// `1` on the digest path, `0` when the node had no digest.
   int get digests => method == FlashVerify.digest ? 1 : 0;
+
+  /// One line stating how the image was checked, for a log, a page or a rig run.
+  String get note => switch (method) {
+    FlashVerify.digest => clean
+        ? 'confirmed by one digest over the padded image (${_hex32(expectedDigest)})'
+        : 'the digest ${_hex32(digest ?? 0)} does not match '
+              '${_hex32(expectedDigest)}',
+    FlashVerify.readBackNoDigest =>
+      'the node answered no digest - its bootloader predates the digest command - '
+          'so the image was checked by one read-back pass ($reads chunks)',
+  };
 }
 
 String _hex32(int value) =>

@@ -2012,3 +2012,50 @@ resize 92 B + in-place write       ok, append 3 -> 4 (+1)   content: CORRUPT fir
 
 Nothing else in `Docs/App/Update.md` moved: the phase row (`Writing / Verifying / Correcting / Done`) and the "verified/corrections result" are still what the page shows. `Docs/Services/Bootloader.md:7` ("Final verification of the image remains the app's responsibility, via read requests") is unchanged and still true.
 
+
+## Docs: the digest command and its passthrough CID are not in the specification (2026-11-12, card t_5e16d932)
+
+**A doc/code conflict, reported not edited.** The bootloader grew the digest command (`0b110` request
+/ `0b111` response, CRC-32/ISO-HDLC over a range of the app region) in card `t_c7e71d8d`, and this
+card added its core passthrough CID, so the code and `Docs/Services/Bootloader.md` differ in two
+places:
+
+- The command table (`Docs/Services/Bootloader.md:12-20`) lists six commands, `0b000`-`0b101`. The
+  digest request is 9 bytes (`start | control | offset | length(u16) | end`) and the response 11
+  (`start | control | offset | crc32 | end`); the offset is the header's own slot, so no existing row
+  changes, but the table needs the two rows and a note that bytes past the end of the app region read
+  as `0xFF` (which is what makes a padded length match a correct image).
+- The passthrough table (`Docs/Services/Bootloader.md:99-104`) lists IDs 0, 1 and 2 for
+  identification, write and read. The core now answers `0x0023` - request `offset(u32) + length(u16)`,
+  response the node's 11-byte digest frame **verbatim**, framing included, so the app decodes and
+  compares it. `Docs/Command ID Table.md:11` still gives the range as `0x0020-0x0022`.
+
+The prose that says "Final verification of the image remains the app's responsibility, via read
+requests" (`Docs/Services/Bootloader.md:7`) is still true in spirit - the app verifies, and the core
+interprets nothing - but the read-back is no longer how it verifies: one digest request replaces 432
+read-backs, and the read command is kept only to name the first differing offset after a mismatch.
+
+## The bootloader read path returns a wrong payload on a few chunks out of 432 (2026-11-12, card t_5e16d932)
+
+**Measured on the rig, not fixed here.** A read sweep of the whole 13812 B image (432 chunks of 32 B
+over the core's `0x22` passthrough) returns 1-7 chunks whose payload is not the image's, and the
+wrong payload always begins with `0xBC` (the bootloader frame's end marker) and then carries image
+bytes from a few positions **earlier** in the same chunk - i.e. the reply frame was assembled with its
+start a few bytes late, so the 32-byte payload window is shifted. Repeated sweeps differ in which
+chunks and how many:
+
+```
+432 reads in 5.86 s (13.6 ms each), 2 differ   @0x1760, @0x1FE0
+432 reads in 5.88 s (13.6 ms each), 7 differ
+432 reads in 5.92 s (13.7 ms each), 3 differ   @0x05E0, @0x0A00, @0x1800
+```
+
+The flash content is right in every one of those runs: the digest command over the same range agrees
+with the host's `zlib.crc32` of the padded image (`0xB674DAED`) both before and after, and re-reading
+a "wrong" chunk is not reproducible at that offset. It happens with the pre-digest bootloader
+(1940 B, commit `1efe3b7`) as well as the digest one (1984 B), so it is not new; the read path itself
+(`Devices/DAS_v0.1/Bootloader.cpp: HandleRead`, `Core/Services/Device.h` read branch, the raw-send
+echo window in `RSBus.h`) is untouched by the digest work. **Why it matters:** the read-back is no
+longer the verifier (a false difference on a correct image is exactly what it used to produce), but
+it is still the locator after a digest mismatch, so a shifted payload there can name the wrong
+offset. A follow-up card should chase the frame alignment on the half-duplex read path.
