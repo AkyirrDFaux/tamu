@@ -378,17 +378,17 @@ extension on _RegisterPageState {
                   icon: const Icon(Icons.more_vert, size: IconSize.sm),
                   onSelected: (action) {
                     if (action == 'edit' && !head.meta.readOnly) {
-                      _editDynamicEntry(blockType, inst, block, fieldIndex, 0);
+                      _editDynamicEntry(block, fieldIndex, 0);
                     } else if (action == 'type' && !head.meta.readOnly) {
-                      _changeDynamicType(blockType, inst, block, fieldIndex, 0);
+                      _changeDynamicType(block, fieldIndex, 0);
                     } else if (action == 'fidx' && !head.meta.readOnly) {
                       _changeFieldIndex(blockType, inst, block, fieldIndex);
                     } else if (action == 'flags') {
-                      _editEntryFlags(blockType, inst, block, fieldIndex, 0);
+                      _editEntryFlags(block, fieldIndex, 0);
                     } else if (action == 'delete') {
                       _deleteField(blockType, inst, block, fieldIndex);
                     } else if (action == 'addkey' && !head.meta.readOnly) {
-                      _addDynamicEntry(blockType, inst, block, fieldIndex);
+                      _addDynamicEntry(block, fieldIndex);
                     }
                   },
                   itemBuilder: (_) => [
@@ -422,7 +422,7 @@ extension on _RegisterPageState {
                 )
               : null,
           onTap: !head.meta.readOnly
-              ? () => _editDynamicEntry(blockType, inst, block, fieldIndex, 0)
+              ? () => _editDynamicEntry(block, fieldIndex, 0)
               : null,
         );
       }
@@ -449,15 +449,14 @@ extension on _RegisterPageState {
               IconButton(
                 tooltip: 'Add key to field $fieldIndex',
                 icon: const Icon(Icons.add, size: IconSize.md),
-                onPressed: () =>
-                    _addDynamicEntry(blockType, inst, block, fieldIndex),
+                onPressed: () => _addDynamicEntry(block, fieldIndex),
               ),
               PopupMenuButton<String>(
                 tooltip: 'Field actions',
                 icon: const Icon(Icons.more_vert, size: IconSize.sm),
                 onSelected: (action) {
                   if (action == 'type' && head != null && !head.meta.readOnly) {
-                    _changeDynamicType(blockType, inst, block, fieldIndex, 0);
+                    _changeDynamicType(block, fieldIndex, 0);
                   } else if (action == 'fidx') {
                     _changeFieldIndex(blockType, inst, block, fieldIndex);
                   } else if (action == 'delete') {
@@ -520,31 +519,13 @@ extension on _RegisterPageState {
                 icon: const Icon(Icons.more_vert, size: IconSize.sm),
                 onSelected: (action) {
                   if (action == 'edit' && !ek.e.meta.readOnly) {
-                    _editDynamicEntry(
-                      blockType,
-                      inst,
-                      block,
-                      fieldIndex,
-                      ek.key,
-                    );
+                    _editDynamicEntry(block, fieldIndex, ek.key);
                   } else if (action == 'type' && !ek.e.meta.readOnly) {
-                    _changeDynamicType(
-                      blockType,
-                      inst,
-                      block,
-                      fieldIndex,
-                      ek.key,
-                    );
+                    _changeDynamicType(block, fieldIndex, ek.key);
                   } else if (action == 'key' && !ek.e.meta.readOnly) {
-                    _changeDynamicKey(
-                      blockType,
-                      inst,
-                      block,
-                      fieldIndex,
-                      ek.key,
-                    );
+                    _changeDynamicKey(block, fieldIndex, ek.key);
                   } else if (action == 'flags') {
-                    _editEntryFlags(blockType, inst, block, fieldIndex, ek.key);
+                    _editEntryFlags(block, fieldIndex, ek.key);
                   } else if (action == 'delete' && !ek.e.meta.readOnly) {
                     _deleteDynamicEntry(
                       blockType,
@@ -585,13 +566,7 @@ extension on _RegisterPageState {
                 ],
               ),
               onTap: !ek.e.meta.readOnly
-                  ? () => _editDynamicEntry(
-                      blockType,
-                      inst,
-                      block,
-                      fieldIndex,
-                      ek.key,
-                    )
+                  ? () => _editDynamicEntry(block, fieldIndex, ek.key)
                   : null,
             ),
         ],

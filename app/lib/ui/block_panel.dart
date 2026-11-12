@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../core/connection.dart';
 import '../core/register_client.dart';
+import '../core/transport.dart' show UsbTransport;
 import '../core/types.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -36,6 +38,61 @@ List<Widget> linkNotice(
   ),
 ];
 
+/// Whether the panel's page is on a live link, answered the one way both panels must answer it: a
+/// test's `isConnected` seam when the page was given one, and the app's own [ConnectionManager]
+/// only when it was not.
+///
+/// Reading the singleton anyway is a real defect, not a style point: `ConnectionManager` installs
+/// itself as the app's request channel the first time it is touched, so a page that ignored its own
+/// test seam would send its reads to a live manager that is not connected instead of to the fake the
+/// test installed.
+bool blockPanelConnected(bool Function()? isConnected) =>
+    (isConnected ?? (() => ConnectionManager.instance.isConnected))();
+
+/// Whether this app's own link to the device is USB, resolved through the page's `isUsbLink` seam
+/// the same way [blockPanelConnected] resolves the live-link one.
+///
+/// A panel names its link with this; whether that link may WRITE its block is the block's own rule
+/// and is never this bit (`bleWriteRestriction` for `BLE Settings`, the USB-only gate for
+/// `WiFi Settings`).
+bool blockPanelOverUsb(bool Function()? isUsbLink) =>
+    (isUsbLink ?? () => ConnectionManager.instance.transport is UsbTransport)();
+
+/// The inset a block panel's field rows use inside an [InfoCard] - the one piece of row styling the
+/// two panels share. The words, the controls and when a control may be tapped stay with the panel.
+const EdgeInsets kBlockPanelRowPadding = EdgeInsets.symmetric(
+  horizontal: Spacing.xl,
+);
+
+/// One field row of a block panel: dense, at the card's inset, with the panel's own read-out under
+/// the field's name and the panel's own controls at the end.
+ListTile blockPanelRow({
+  required String title,
+  required String subtitle,
+  Widget? trailing,
+}) => ListTile(
+  dense: true,
+  contentPadding: kBlockPanelRowPadding,
+  title: Text(title),
+  subtitle: Text(subtitle),
+  trailing: trailing,
+);
+
+/// The switch row of a block panel, in the same chrome as [blockPanelRow].
+SwitchListTile blockPanelSwitch({
+  required String title,
+  required String subtitle,
+  required bool value,
+  required ValueChanged<bool>? onChanged,
+}) => SwitchListTile(
+  dense: true,
+  contentPadding: kBlockPanelRowPadding,
+  title: Text(title),
+  subtitle: Text(subtitle),
+  value: value,
+  onChanged: onChanged,
+);
+
 /// The refresh of a settings panel built on ONE device block, and the state behind it.
 ///
 /// Both block panels in the app (`BLE Settings`, `WiFi Settings`) drew their own copy of this
@@ -55,7 +112,8 @@ List<Widget> linkNotice(
 ///    draws nothing at all,
 ///  - a block that is there and answers no field is a failure again: the device claims a block it
 ///    will not let anyone read.
-mixin BlockPanelRefresh<W extends StatefulWidget, S> on State<W> {
+mixin BlockPanelRefresh<W extends StatefulWidget, S>
+    on State<W>, AutoRefreshControl {
   /// The client this panel asks.
   RegisterClient get blockClient;
 
@@ -175,8 +233,21 @@ mixin BlockPanelRefresh<W extends StatefulWidget, S> on State<W> {
     _snapshot = snapshotOf(_reads);
   }
 
+  /// The title-bar action row a block panel shows: one auto-refresh control bound to this panel's
+  /// own [refreshBlock]. Both panels built it identically, and it is chrome over the refresh, so it
+  /// belongs beside the refresh rather than in each `build`.
+  List<Widget> get blockActions => [
+    PageActions.autoRefresh(
+      control: this,
+      onRefresh: refreshBlock,
+      refreshing: blockRefreshing,
+      error: blockError != null,
+    ),
+  ];
+
   /// The page this panel draws while it has no reading, or null when [blockSnapshot] holds one
-  /// and the page draws its form.
+  /// and the page draws its form - the panel's `build` starts here, then draws its cards into
+  /// [TamuPage] with the same [blockActions].
   ///
   /// The THREE outcomes [refreshBlock] can end on are worded here once, because the two panels
   /// drew the same scaffold separately and the copies drifted:
@@ -187,32 +258,30 @@ mixin BlockPanelRefresh<W extends StatefulWidget, S> on State<W> {
   ///
   /// [unavailable] is the failure's headline ("WiFi block unavailable"), [reading] the waiting
   /// line ("Reading WiFi settings") - what the panel calls its block in each case.
-  Widget? blockPanelStatePage({
+  Widget? blockPage({
     required String title,
     required String unavailable,
     required String reading,
-    required Future<void> Function() onRefresh,
-    required List<Widget> actions,
   }) {
-    if (!blockPresent) return TamuPage(title: title, actions: actions);
+    if (!blockPresent) return TamuPage(title: title, actions: blockActions);
     if (blockSnapshot != null) return null;
     final error = blockError;
     if (error != null) {
       return TamuPage(
         title: title,
-        actions: actions,
+        actions: blockActions,
         state: StateKind.error,
         stateMessage: unavailable,
         stateDetails: error,
         stateAction: OutlinedButton(
-          onPressed: onRefresh,
+          onPressed: refreshBlock,
           child: const Text('Retry'),
         ),
       );
     }
     return TamuPage(
       title: title,
-      actions: actions,
+      actions: blockActions,
       state: StateKind.loading,
       stateMessage: reading,
     );

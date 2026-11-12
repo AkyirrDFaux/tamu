@@ -4,9 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FilteringTextInputFormatter;
 
 import '../core/ble_security.dart';
-import '../core/connection.dart';
 import '../core/register_client.dart';
-import '../core/transport.dart' show UsbTransport;
 import '../core/types.dart';
 import '../core/notice.dart';
 import 'block_panel.dart';
@@ -99,17 +97,14 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   /// to keep it honest.
   Timer? _windowTimer;
 
-  bool get _connected =>
-      (widget.isConnected ?? (() => ConnectionManager.instance.isConnected))();
+  bool get _connected => blockPanelConnected(widget.isConnected);
 
   /// True when this app talks to the device over USB - the link the panel's copy names.
   ///
   /// It is NOT the write rule: a secured Bluetooth session writes this block too
   /// (`Blocks/BleWritePolicy.h`; `bleLinkWritesSettings`), which is why the refusal path below
   /// asks [bleWriteRefusal] rather than this flag.
-  bool get _overUsb =>
-      (widget.isUsbLink ??
-      () => ConnectionManager.instance.transport is UsbTransport)();
+  bool get _overUsb => blockPanelOverUsb(widget.isUsbLink);
 
   /// Whether this app's link is a secured Bluetooth session - the second half of the firmware's
   /// write gate, beside [bleLinkWritesSettings]'s own default for the same reason.
@@ -522,22 +517,11 @@ class _BleSecurityPageState extends State<BleSecurityPage>
 
   @override
   Widget build(BuildContext context) {
-    final actions = [
-      PageActions.autoRefresh(
-        control: this,
-        onRefresh: _refresh,
-        refreshing: blockRefreshing,
-        error: blockError != null,
-      ),
-    ];
-
     // The block is missing: draw the panel as nothing at all (not an empty card, not an error).
-    final statePage = blockPanelStatePage(
+    final statePage = blockPage(
       title: 'Bluetooth',
       unavailable: 'Bluetooth block unavailable',
       reading: 'Reading Bluetooth settings',
-      onRefresh: _refresh,
-      actions: actions,
     );
     if (statePage != null) return statePage;
 
@@ -546,7 +530,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
     final bondsAnswered = snapshot.answeredField(bleFieldBonds);
     return TamuPage(
       title: 'Bluetooth',
-      actions: actions,
+      actions: blockActions,
       child: ListView(
         padding: Insets.page,
         children: [
@@ -557,13 +541,9 @@ class _BleSecurityPageState extends State<BleSecurityPage>
             title: 'Pairing',
             children: [
               InfoRow('Mode', _modeText(snapshot), labelWidth: 120),
-              ListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: Spacing.xl,
-                ),
-                title: const Text('Passkey'),
-                subtitle: Text(_passkeyText(snapshot)),
+              blockPanelRow(
+                title: 'Passkey',
+                subtitle: _passkeyText(snapshot),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -600,13 +580,9 @@ class _BleSecurityPageState extends State<BleSecurityPage>
               ),
               // `Window` is a command and a read-out at once: the row shows the countdown the
               // device reports, and the editor writes it (0 closes).
-              ListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: Spacing.xl,
-                ),
-                title: const Text('Pairing window'),
-                subtitle: Text(_windowSubtitle(snapshot)),
+              blockPanelRow(
+                title: 'Pairing window',
+                subtitle: _windowSubtitle(snapshot),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -669,38 +645,26 @@ class _BleSecurityPageState extends State<BleSecurityPage>
           InfoCard(
             title: 'Radio',
             children: [
-              SwitchListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: Spacing.xl,
-                ),
-                title: const Text('Enabled'),
-                subtitle: Text(
-                  !snapshot.answeredField(bleFieldEnabled)
-                      ? '-'
-                      : snapshot.enabled
-                      ? 'The device uses its radio'
-                      : 'The radio is off: nothing is advertised and nobody can connect',
-                ),
+              blockPanelSwitch(
+                title: 'Enabled',
+                subtitle: !snapshot.answeredField(bleFieldEnabled)
+                    ? '-'
+                    : snapshot.enabled
+                    ? 'The device uses its radio'
+                    : 'The radio is off: nothing is advertised and nobody can connect',
                 value: snapshot.enabled,
                 onChanged: _busy ? null : _setEnabled,
               ),
               // Display name IS the advertised name: there is no second read-out any more, and a
               // write re-advertises in the same loop pass, so the row says "now" and not "at the
               // next advertising start".
-              ListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: Spacing.xl,
-                ),
-                title: const Text('Display name'),
-                subtitle: Text(
-                  !snapshot.answeredField(bleFieldDisplayName)
-                      ? '-'
-                      : snapshot.displayName.isEmpty
-                      ? 'not set - the device advertises its own name'
-                      : '${snapshot.displayName} - on the air now',
-                ),
+              blockPanelRow(
+                title: 'Display name',
+                subtitle: !snapshot.answeredField(bleFieldDisplayName)
+                    ? '-'
+                    : snapshot.displayName.isEmpty
+                    ? 'not set - the device advertises its own name'
+                    : '${snapshot.displayName} - on the air now',
                 trailing: IconButton(
                   tooltip: 'Set the display name',
                   icon: const Icon(Icons.edit_outlined, size: IconSize.sm),

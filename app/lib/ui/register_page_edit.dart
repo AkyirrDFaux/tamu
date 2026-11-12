@@ -46,10 +46,88 @@ extension on _RegisterPageState {
     int key,
   ) => _fieldCache[(blockType << 8) | inst]?[fieldIndex * 256 + key];
 
-  Future<void> _editBlock(
-    int blockIndex,
-    ({int type, int inst, ValueInfo meta, String name})? block,
-  ) async {
+  /// The frame every dynamic-entry editor starts in: the page is still there, the block is one of
+  /// the page's own, and the page holds a reading of that (field, key) to edit. Null means the
+  /// editor has nothing to run its body on and returns.
+  ///
+  /// What is deliberately NOT in the frame: whether a READ-ONLY row may be edited. Only the value
+  /// editor refuses one - changing a row's flags, its type or its key is exactly how a read-only
+  /// row is changed - so that rule stays a line of [_editDynamicEntry]'s own body instead of a flag
+  /// passed in here.
+  ({ReportedBlock block, ({ValueInfo meta, List<int> value}) entry})?
+  _entryEditorArgs(ReportedBlock? block, int fieldIndex, int key) {
+    if (block == null || !mounted) return null;
+    final entry = _dynamicEntryAt(block.type, block.inst, fieldIndex, key);
+    if (entry == null) return null;
+    return (block: block, entry: entry);
+  }
+
+  /// The frame's tail for an editor that writes a value into one (field, key): the block and the
+  /// field are addressed the same way every time, so they are built here once. Returns whether the
+  /// device confirmed the write; the sentence reported for it stays the editor's own.
+  ///
+  /// [newType] is part of the WRITE (a re-type sends the type it is re-typed to) and not a rule
+  /// about what may be written - a null keeps the entry's declared type, as a plain value write
+  /// does.
+  Future<bool> _writeEntryValue(
+    ({ReportedBlock block, ({ValueInfo meta, List<int> value}) entry}) args, {
+    required int fieldIndex,
+    required int key,
+    required List<int> bytes,
+    DataType? newType,
+  }) async {
+    final dynBlock = DynBlock(
+      index: args.block.inst,
+      meta: args.block.meta,
+      name: args.block.name,
+    );
+    final dynField = DynField(
+      index: fieldIndex,
+      meta: args.entry.meta,
+      value: args.entry.value,
+    );
+    final confirmed = await _client.writeDynamicField(
+      dynBlock,
+      dynField,
+      bytes,
+      newType: newType,
+      key: key,
+    );
+    return confirmed != null;
+  }
+
+  /// The frame's "a new value" prompt: the type first, then a seed of that type. Both entry
+  /// creators ask in that order, and neither lets a dismissal half-write anything.
+  Future<({DataType type, List<int> seed})?> _promptNewValue({
+    DataType? selected,
+  }) async {
+    final dataType = await _pickDataType(selected: selected);
+    if (dataType == null || !mounted) return null;
+    final seed = await showValueEditor(context, dataType, []);
+    if (seed == null) return null;
+    return (type: dataType, seed: seed);
+  }
+
+  /// The frame's key prompt for one field: what the prompt offers is the field's dictionary shape
+  /// (or its absence), and the three steps that read that shape only mean anything together.
+  Future<int?> _promptFieldKey({
+    required String title,
+    required int startKey,
+    required int blockType,
+    required int inst,
+    required int fieldIndex,
+  }) {
+    final shape = _dictShape(blockType, inst, fieldIndex);
+    return _promptKey(
+      title: title,
+      startKey: startKey,
+      isDict: shape.isDict,
+      dictType: shape.dictType,
+      selector: shape.selector,
+    );
+  }
+
+  Future<void> _editBlock(int blockIndex, ReportedBlock? block) async {
     if (block == null || !mounted) return;
     if (!isDynamicType(block.type)) {
       _snack('Only dynamic blocks can be renamed');
@@ -87,10 +165,7 @@ extension on _RegisterPageState {
     await _refreshAll();
   }
 
-  Future<void> _deleteBlock(
-    int blockIndex,
-    ({int type, int inst, ValueInfo meta, String name})? block,
-  ) async {
+  Future<void> _deleteBlock(int blockIndex, ReportedBlock? block) async {
     if (block == null || !mounted) return;
 
     final ok = await _client.deleteDynamic(block: block.inst);
@@ -98,10 +173,7 @@ extension on _RegisterPageState {
     await _refreshAll();
   }
 
-  Future<void> _addEntry(
-    int blockIndex,
-    ({int type, int inst, ValueInfo meta, String name})? block,
-  ) async {
+  Future<void> _addEntry(int blockIndex, ReportedBlock? block) async {
     if (block == null || !mounted) return;
     final fields = _dynamicFields[block.inst] ?? <int>[];
     var firstFree = 0;
@@ -213,7 +285,7 @@ extension on _RegisterPageState {
   Future<void> _editValue(
     int blockType,
     int inst,
-    ({int type, int inst, ValueInfo meta, String name})? block,
+    ReportedBlock? block,
     int fieldIndex, {
     int? memberKey,
   }) async {
@@ -288,16 +360,19 @@ extension on _RegisterPageState {
 
   /// Edits one (field, key) entry of a dynamic block.
   Future<void> _editDynamicEntry(
-    int blockType,
-    int inst,
-    ({int type, int inst, ValueInfo meta, String name})? block,
+    ReportedBlock? block,
     int fieldIndex,
     int key,
   ) async {
-    if (block == null || !mounted) return;
-    final entry = _dynamicEntryAt(blockType, inst, fieldIndex, key);
-    if (entry == null || entry.meta.readOnly) return;
-    final head = _fieldCache[(blockType << 8) | inst]?[fieldIndex * 256];
+    final args = _entryEditorArgs(block, fieldIndex, key);
+    if (args == null) return;
+    final entry = args.entry;
+    // This editor's own rule: a read-only row is not a value edit. Flags, type and key remain
+    // editable on such a row, which is why the check is here and not in the frame.
+    if (entry.meta.readOnly) return;
+    final head =
+        _fieldCache[(args.block.type << 8) | args.block.inst]?[fieldIndex *
+            256];
     final dictType = (head != null && isRenderDictType(head.meta.type))
         ? head.meta.type
         : entry.meta.type;
@@ -311,19 +386,13 @@ extension on _RegisterPageState {
       info: info,
     );
     if (newValue == null) return;
-    final dynBlock = DynBlock(index: inst, meta: block.meta, name: block.name);
-    final dynField = DynField(
-      index: fieldIndex,
-      meta: entry.meta,
-      value: entry.value,
-    );
-    final confirmed = await _client.writeDynamicField(
-      dynBlock,
-      dynField,
-      newValue,
+    final ok = await _writeEntryValue(
+      args,
+      fieldIndex: fieldIndex,
       key: key,
+      bytes: newValue,
     );
-    _snack(confirmed != null ? 'Value written' : 'Write failed');
+    _snack(ok ? 'Value written' : 'Write failed');
     await _refreshAll();
   }
 
@@ -331,7 +400,7 @@ extension on _RegisterPageState {
   Future<void> _deleteDynamicEntry(
     int blockType,
     int inst,
-    ({int type, int inst, ValueInfo meta, String name})? block,
+    ReportedBlock? block,
     int fieldIndex,
     int key,
   ) async {
@@ -349,7 +418,7 @@ extension on _RegisterPageState {
   Future<void> _deleteField(
     int blockType,
     int inst,
-    ({int type, int inst, ValueInfo meta, String name})? block,
+    ReportedBlock? block,
     int fieldIndex,
   ) async {
     if (block == null || !mounted) return;
@@ -362,7 +431,7 @@ extension on _RegisterPageState {
   Future<void> _changeFieldIndex(
     int blockType,
     int inst,
-    ({int type, int inst, ValueInfo meta, String name})? block,
+    ReportedBlock? block,
     int fieldIndex,
   ) async {
     if (block == null || !mounted) return;
@@ -390,15 +459,13 @@ extension on _RegisterPageState {
 
   /// Edits the Read-only / Persistent flags of one (field, key) entry.
   Future<void> _editEntryFlags(
-    int blockType,
-    int inst,
-    ({int type, int inst, ValueInfo meta, String name})? block,
+    ReportedBlock? block,
     int fieldIndex,
     int key,
   ) async {
-    if (block == null || !mounted) return;
-    final entry = _dynamicEntryAt(blockType, inst, fieldIndex, key);
-    if (entry == null) return;
+    final args = _entryEditorArgs(block, fieldIndex, key);
+    if (args == null) return;
+    final entry = args.entry;
     var ro = entry.meta.readOnly;
     var per = entry.meta.persistent;
     final result = await showTamuDialog<List<bool>>(
@@ -431,7 +498,11 @@ extension on _RegisterPageState {
       ),
     );
     if (result == null || !mounted) return;
-    final dynBlock = DynBlock(index: inst, meta: block.meta, name: block.name);
+    final dynBlock = DynBlock(
+      index: args.block.inst,
+      meta: args.block.meta,
+      name: args.block.name,
+    );
     final ok = await _client.setDynamicEntryFlags(
       dynBlock,
       fieldIndex,
@@ -548,30 +619,21 @@ extension on _RegisterPageState {
 
   /// Adds a key to a dynamic block's field: asks which key (dict selector + manual
   /// numeric, always), then the type and a value.
-  Future<void> _addDynamicEntry(
-    int blockType,
-    int inst,
-    ({int type, int inst, ValueInfo meta, String name})? block,
-    int fieldIndex,
-  ) async {
+  Future<void> _addDynamicEntry(ReportedBlock? block, int fieldIndex) async {
     if (block == null || !mounted) return;
-    final keys = _dynamicKeys[inst]?[fieldIndex] ?? <int>[];
-    final shape = _dictShape(blockType, inst, fieldIndex);
-    final dictType = shape.dictType;
-    final isDict = shape.isDict;
-    final selector = shape.selector;
+    final keys = _dynamicKeys[block.inst]?[fieldIndex] ?? <int>[];
 
     var startKey = 0;
     while (keys.contains(startKey)) {
       startKey++;
     }
 
-    final newKey = await _promptKey(
+    final newKey = await _promptFieldKey(
       title: 'Add key to field $fieldIndex',
       startKey: startKey,
-      isDict: isDict,
-      dictType: dictType,
-      selector: selector,
+      blockType: block.type,
+      inst: block.inst,
+      fieldIndex: fieldIndex,
     );
     if (newKey == null || !mounted) return;
     if (keys.contains(newKey)) {
@@ -579,11 +641,15 @@ extension on _RegisterPageState {
       return;
     }
 
-    final dataType = await _pickDataType(selected: DataType.number);
-    if (dataType == null || !mounted) return;
-    final seed = await showValueEditor(context, dataType, []);
-    if (seed == null || !mounted) return;
-    final dynBlock = DynBlock(index: inst, meta: block.meta, name: block.name);
+    final chosen = await _promptNewValue(selected: DataType.number);
+    if (chosen == null || !mounted) return;
+    final dataType = chosen.type;
+    final seed = chosen.seed;
+    final dynBlock = DynBlock(
+      index: block.inst,
+      meta: block.meta,
+      name: block.name,
+    );
     final meta = ValueInfo(
       type: dataType.value,
       key: newKey,
@@ -602,60 +668,42 @@ extension on _RegisterPageState {
 
   /// Changes one entry's data type (writes a fresh value of the new type).
   Future<void> _changeDynamicType(
-    int blockType,
-    int inst,
-    ({int type, int inst, ValueInfo meta, String name})? block,
+    ReportedBlock? block,
     int fieldIndex,
     int key,
   ) async {
-    if (block == null || !mounted) return;
-    final entry = _dynamicEntryAt(blockType, inst, fieldIndex, key);
-    if (entry == null) return;
-    final dataType = await _pickDataType(selected: entry.meta.dataType);
-    if (dataType == null || !mounted) return;
-    final seed = await showValueEditor(context, dataType, []);
-    if (seed == null || !mounted) return;
-    final dynBlock = DynBlock(index: inst, meta: block.meta, name: block.name);
-    final dynField = DynField(
-      index: fieldIndex,
-      meta: entry.meta,
-      value: entry.value,
-    );
-    final confirmed = await _client.writeDynamicField(
-      dynBlock,
-      dynField,
-      seed,
-      newType: dataType,
+    final args = _entryEditorArgs(block, fieldIndex, key);
+    if (args == null) return;
+    final chosen = await _promptNewValue(selected: args.entry.meta.dataType);
+    if (chosen == null) return;
+    final ok = await _writeEntryValue(
+      args,
+      fieldIndex: fieldIndex,
       key: key,
+      bytes: chosen.seed,
+      newType: chosen.type,
     );
-    _snack(confirmed != null ? 'Type changed' : 'Change failed');
+    _snack(ok ? 'Type changed' : 'Change failed');
     await _refreshAll();
   }
 
   /// Re-keys one entry (moves it to a different key byte within the field). Uses the
   /// dict-aware key selector + always allows manual numeric input.
   Future<void> _changeDynamicKey(
-    int blockType,
-    int inst,
-    ({int type, int inst, ValueInfo meta, String name})? block,
+    ReportedBlock? block,
     int fieldIndex,
     int key,
   ) async {
-    if (block == null || !mounted) return;
-    final entry = _dynamicEntryAt(blockType, inst, fieldIndex, key);
-    if (entry == null) return;
-    final keys = _dynamicKeys[inst]?[fieldIndex] ?? <int>[];
-    final shape = _dictShape(blockType, inst, fieldIndex);
-    final dictType = shape.dictType;
-    final isDict = shape.isDict;
-    final selector = shape.selector;
+    final args = _entryEditorArgs(block, fieldIndex, key);
+    if (args == null) return;
+    final keys = _dynamicKeys[args.block.inst]?[fieldIndex] ?? <int>[];
 
-    final newKey = await _promptKey(
+    final newKey = await _promptFieldKey(
       title: 'Change key (was $key)',
       startKey: key,
-      isDict: isDict,
-      dictType: dictType,
-      selector: selector,
+      blockType: args.block.type,
+      inst: args.block.inst,
+      fieldIndex: fieldIndex,
     );
     if (newKey == null || newKey == key) return;
     if (newKey < 0 || newKey > 255) return;
@@ -663,20 +711,17 @@ extension on _RegisterPageState {
       _snack('Key $newKey already exists in this field');
       return;
     }
-    final dynBlock = DynBlock(index: inst, meta: block.meta, name: block.name);
-    final written = await _client.writeDynamicEntry(
-      dynBlock,
-      fieldIndex,
-      newKey,
-      entry.meta,
-      entry.value,
+    var ok = await _writeEntryValue(
+      args,
+      fieldIndex: fieldIndex,
+      key: newKey,
+      bytes: args.entry.value,
     );
-    var ok = written != null;
     if (ok) {
       // Only report success when the old key was actually removed, otherwise the move
       // leaves a duplicate behind.
       final deleted = await _client.deleteDynamic(
-        block: inst,
+        block: args.block.inst,
         field: fieldIndex,
         key: key,
       );

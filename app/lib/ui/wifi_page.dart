@@ -2,9 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../core/connection.dart';
 import '../core/register_client.dart';
-import '../core/transport.dart' show UsbTransport;
 import '../core/types.dart';
 import '../core/wifi_settings.dart';
 import '../core/notice.dart';
@@ -60,14 +58,11 @@ class _WifiPageState extends State<WifiPage>
   bool _busy = false;
   bool _revealPassword = false;
 
-  bool get _connected =>
-      (widget.isConnected ?? (() => ConnectionManager.instance.isConnected))();
+  bool get _connected => blockPanelConnected(widget.isConnected);
 
   /// True when this app talks to the device over USB, which is the only link the block accepts
   /// a write on.
-  bool get _overUsb =>
-      (widget.isUsbLink ??
-      () => ConnectionManager.instance.transport is UsbTransport)();
+  bool get _overUsb => blockPanelOverUsb(widget.isUsbLink);
 
   // What this panel is, for the shared refresh ([BlockPanelRefresh]): the `WiFi Settings` block,
   // five fields, and a reading built from the fields the device answered.
@@ -249,22 +244,11 @@ class _WifiPageState extends State<WifiPage>
 
   @override
   Widget build(BuildContext context) {
-    final actions = [
-      PageActions.autoRefresh(
-        control: this,
-        onRefresh: _refresh,
-        refreshing: blockRefreshing,
-        error: blockError != null,
-      ),
-    ];
-
     // The block is missing: draw the panel as nothing at all (not an empty card, not an error).
-    final statePage = blockPanelStatePage(
+    final statePage = blockPage(
       title: 'WiFi',
       unavailable: 'WiFi block unavailable',
       reading: 'Reading WiFi settings',
-      onRefresh: _refresh,
-      actions: actions,
     );
     if (statePage != null) return statePage;
 
@@ -272,7 +256,7 @@ class _WifiPageState extends State<WifiPage>
 
     return TamuPage(
       title: 'WiFi',
-      actions: actions,
+      actions: blockActions,
       child: ListView(
         padding: Insets.page,
         children: [
@@ -289,40 +273,26 @@ class _WifiPageState extends State<WifiPage>
           InfoCard(
             title: 'WiFi Settings',
             children: [
-              SwitchListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: Spacing.xl,
-                ),
-                title: const Text('Enabled'),
-                subtitle: Text(
-                  snapshot.enabled ? 'The radio is used' : 'The radio is off',
-                ),
+              blockPanelSwitch(
+                title: 'Enabled',
+                subtitle: snapshot.enabled
+                    ? 'The radio is used'
+                    : 'The radio is off',
                 value: snapshot.enabled,
                 onChanged: _busy ? null : _setEnabled,
               ),
-              ListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: Spacing.xl,
-                ),
-                title: const Text('SSID'),
-                subtitle: Text(
-                  snapshot.ssid.isEmpty ? 'not set' : snapshot.ssid,
-                ),
+              blockPanelRow(
+                title: 'SSID',
+                subtitle: snapshot.ssid.isEmpty ? 'not set' : snapshot.ssid,
                 trailing: IconButton(
                   tooltip: 'Set the SSID',
                   icon: const Icon(Icons.edit_outlined, size: IconSize.sm),
                   onPressed: _busy ? null : () => _editSsid(snapshot.ssid),
                 ),
               ),
-              ListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: Spacing.xl,
-                ),
-                title: const Text('Password'),
-                subtitle: Text(_passwordText(snapshot)),
+              blockPanelRow(
+                title: 'Password',
+                subtitle: _passwordText(snapshot),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
