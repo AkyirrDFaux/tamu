@@ -36,8 +36,8 @@ A BLE link is *secured* when it is encrypted and bonded, and — while a passkey
 | Passkey | 0 | `Text` (6 digits) | W | read and write; `000000` disables it and pairing falls back to Just Works. Stored in NVS outside the register file; writes follow the block's rule (USB, or a secured BLE link) |
 | Mode | 0 | `Enum` | RO | Just Works or Passkey, derived from the passkey so the two cannot disagree |
 | Display name | 0 | `Text` (16) | P, W | the name advertised over BLE; a write re-advertises at once; empty means the System `Name` |
-| Bonds | 0 | `Undefined` (3 × 22 B) | TR, W | the bond store as three 22-byte entries (6-byte address + 16-byte name), oldest first; an all-zero address is empty. Zeroing an address forgets that bond and a name may be edited; a non-zero address in an empty slot is refused — pairing remains the only way to add a peer. USB only |
-| Window | 0 | `Uint32` | TR, W | milliseconds left in the connectable window; a write opens it for that many ms, 0 closes it. USB only |
+| Bonds | 0 | `Undefined` (3 × 22 B) | TR, W | the bond store as three 22-byte entries (6-byte address + 16-byte name), oldest first; an all-zero address is empty. Zeroing an address forgets that bond and a name may be edited; a non-zero address in an empty slot is refused — pairing remains the only way to add a peer |
+| Window | 0 | `Uint32` | TR, W | milliseconds left in the connectable window; a write opens it for that many ms, 0 closes it |
 
 - It advertises whenever no device is connected over BLE; connecting is limited to bonded peers, and a new device can pair only while a window is open (or while no bond is stored).
 - Characteristics require an encrypted link; with a passkey set they also require an authenticated (MITM-protected) one.
