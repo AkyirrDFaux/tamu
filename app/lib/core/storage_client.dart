@@ -811,9 +811,11 @@ class StorageClient {
   ///
   /// This is the ONE whole-file read every page goes through. A file is only usable when EVERY
   /// byte arrived: unlike a short status reply, a layout or a script file with a hole in the middle
-  /// cannot be decoded. A reply that lost a fragment, lost its STOP frame or came up short of
-  /// [size] therefore fails that attempt, and the whole file is requested again ([readAttempts]
-  /// sends, [readRetryBackoff] apart). The result keeps the three cases apart - whole bytes, an
+  /// cannot be decoded. Which case the attempt ended in then decides what happens next (see
+  /// [_readWhole]): a reply that lost a fragment, lost its STOP frame or came up short of [size]
+  /// arrived INCOMPLETE and is reported after ONE send, while an attempt that produced nothing
+  /// usable (the request threw, the reply carried no file bytes) is re-sent, [readAttempts] sends
+  /// in all, [readRetryBackoff] apart. The result keeps the three cases apart - whole bytes, an
   /// ABSENT file (the device answered FAIL: a legitimate empty result), or a failed/partial read
   /// with the reason in [FileRead.detail] - and a partial body is never returned as data.
   Future<FileRead> readFileWhole(

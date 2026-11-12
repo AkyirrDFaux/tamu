@@ -360,7 +360,6 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isEdit = widget.existing != null;
 
     return PickerShell(
       title: isEdit ? 'Edit Subscription' : 'Add Subscription',
@@ -622,9 +621,8 @@ class SubscriptionDialogState extends State<SubscriptionDialog> {
         Navigator.pop(context);
       }
     } else {
-      // NOTE: the client reports success when a reply arrives, but a FLAG_FAIL reply also
-      // carries a payload (Issues.md "App (subscriptions)"); true failure needs the core
-      // request() to surface the response flags.
+      // The client reads the packet flags (`reply?.ok`), so this is a refusal or a lost
+      // reply, not a save that silently did not land.
       if (mounted) showNotice('Failed to save subscription');
     }
   }

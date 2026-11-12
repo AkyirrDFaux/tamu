@@ -341,6 +341,28 @@ class _BackupPageState extends State<BackupPage> {
   }
 }
 
+/// The icon of a diff class: a plus, a swap, a tick or a bin. Null (a row with no class)
+/// gets the question mark.
+///
+/// The page's rows and its filter bar draw the same four marks in the same inks, so the two
+/// live here once instead of one switch per class.
+IconData _diffIcon(DiffKind? kind) => switch (kind) {
+  DiffKind.add => Icons.add_circle_outline,
+  DiffKind.change => Icons.sync_alt,
+  DiffKind.same => Icons.check_circle_outline,
+  DiffKind.remove => Icons.delete_outline,
+  null => Icons.help_outline,
+};
+
+/// The ink of a diff class, from the status tokens.
+Color _diffInk(DiffKind? kind) => switch (kind) {
+  DiffKind.add => kSuccess,
+  DiffKind.change => kWarning,
+  DiffKind.same => kTextMuted,
+  DiffKind.remove => kError,
+  null => kTextDisabled,
+};
+
 /// Per-part restore: pick which items to write and (optionally) remap a source
 /// device/block to a different live one when compatible.
 class RestorePlanPage extends StatefulWidget {
@@ -834,23 +856,11 @@ class _RestorePlanPageState extends State<RestorePlanPage> {
     );
   }
 
-  /// The icon of a class: a plus, a swap, a tick or a bin.
-  IconData _classIcon(DiffKind? kind) => switch (kind) {
-    DiffKind.add => Icons.add_circle_outline,
-    DiffKind.change => Icons.sync_alt,
-    DiffKind.same => Icons.check_circle_outline,
-    DiffKind.remove => Icons.delete_outline,
-    null => Icons.help_outline,
-  };
+  /// The icon and ink of a class, from the one pair of helpers the filter bar also uses.
+  IconData _classIcon(DiffKind? kind) => _diffIcon(kind);
 
   /// The ink of a class, from the status tokens.
-  Color _classInk(DiffKind? kind) => switch (kind) {
-    DiffKind.add => kSuccess,
-    DiffKind.change => kWarning,
-    DiffKind.same => kTextMuted,
-    DiffKind.remove => kError,
-    null => kTextDisabled,
-  };
+  Color _classInk(DiffKind? kind) => _diffInk(kind);
 
   /// The chip tone of a class: success, warning, subtle or error - the tones [TamuChip] already
   /// carries and the contrast audit already measures.
@@ -1016,17 +1026,7 @@ class RestoreFilterBar extends StatelessWidget {
     );
   }
 
-  static IconData _icon(DiffKind kind) => switch (kind) {
-    DiffKind.add => Icons.add_circle_outline,
-    DiffKind.change => Icons.sync_alt,
-    DiffKind.remove => Icons.delete_outline,
-    DiffKind.same => Icons.check_circle_outline,
-  };
+  static IconData _icon(DiffKind kind) => _diffIcon(kind);
 
-  static Color _ink(DiffKind kind) => switch (kind) {
-    DiffKind.add => kSuccess,
-    DiffKind.change => kWarning,
-    DiffKind.remove => kError,
-    DiffKind.same => kTextMuted,
-  };
+  static Color _ink(DiffKind kind) => _diffInk(kind);
 }

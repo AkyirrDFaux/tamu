@@ -422,7 +422,7 @@ class _RegisterPageState extends State<RegisterPage>
       }
       // `.SV` is a raw mirror of the static persistent space, so the registry must be the same
       // ordered list the layout is computed from: every non-System block, in page order.
-      final registry = staticRegistryOf(_blockMetas);
+      final registry = _staticRegistry;
       final dynamic = <int, ({List<int> table, List<int> values})>{
         for (final slot in tables.keys)
           slot: (table: tables[slot]!, values: values[slot] ?? const []),
