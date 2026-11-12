@@ -7,6 +7,7 @@ import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/script_client.dart';
 
 import 'support/restore_core.dart';
+import 'support/restore_script_fixtures.dart';
 import 'package:tamuapp/core/types.dart';
 
 /// The device model: `RestoreCore` at its shallowest, which is what this suite's restore touches -
@@ -15,35 +16,15 @@ import 'package:tamuapp/core/types.dart';
 /// function library is written as a file and never loaded, and a device that answered more would
 /// move the commands under the assertions.
 
-BackupDevice _device() => BackupDevice(
-  type: 'Tamu v2.0A',
-  typeId: 1,
-  id: idFromString('39.1')!,
-  name: 'Tamu',
-  blocks: const [],
-);
+BackupDevice _device() => scriptArchive(id: idFromString('39.1')!);
 
-LiveDevice _live({int id = 0x2711}) => LiveDevice(
-  id: id,
-  name: 'Tamu',
-  capabilities: Capability.scripts,
-  blocks: const [],
-);
+LiveDevice _live({int id = 0x2711}) => scriptTarget(id: id);
 
 BackupScript _script(
   int slot,
   String name, {
   List<String> properties = const [],
-}) => BackupScript(
-  slot: slot,
-  functionName: name,
-  properties: properties,
-  inputs: const [],
-  outputs: const [],
-  variables: const [],
-  constants: const [],
-  lines: const [],
-);
+}) => bareScript(slot, name, properties: properties);
 
 RestorePlan _plan(List<RestoreItem> items, LiveDevice live) {
   final device = _device();

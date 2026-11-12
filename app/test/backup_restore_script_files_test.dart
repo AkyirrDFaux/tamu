@@ -7,6 +7,7 @@ import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_instructions.dart';
 
 import 'support/restore_core.dart';
+import 'support/restore_script_fixtures.dart';
 import 'package:tamuapp/core/types.dart';
 
 /// The shared restore device (see `support/restore_core.dart`) with the file TABLE modelled: this
@@ -21,32 +22,12 @@ class _FakeCore extends RestoreCore {
       );
 }
 
-BackupDevice _device(List<BackupScript> scripts) => BackupDevice(
-  type: 'Tamu v2.0A',
-  typeId: 1,
-  id: 1,
-  name: 'Tamu',
-  blocks: const [],
-  scripts: scripts,
-);
+BackupDevice _device(List<BackupScript> scripts) =>
+    scriptArchive(id: 1, scripts: scripts);
 
-LiveDevice _live() => LiveDevice(
-  id: 1,
-  name: 'Tamu',
-  capabilities: Capability.scripts,
-  blocks: const [],
-);
+LiveDevice _live() => scriptTarget(id: 1);
 
-BackupScript _script(int slot, String name) => BackupScript(
-  slot: slot,
-  functionName: name,
-  properties: const [],
-  inputs: const [],
-  outputs: const [],
-  variables: const [],
-  constants: const [],
-  lines: const [],
-);
+BackupScript _script(int slot, String name) => bareScript(slot, name);
 
 /// A script that CALLS a global function living in [library], so its image references that
 /// library file - the file a restore must never delete.

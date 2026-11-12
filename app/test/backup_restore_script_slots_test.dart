@@ -10,6 +10,7 @@ import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_instructions.dart';
 
 import 'support/restore_core.dart';
+import 'support/restore_script_fixtures.dart';
 import 'package:tamuapp/core/types.dart';
 
 /// The shared restore device (see `support/restore_core.dart`), with the reads THIS suite measures
@@ -23,37 +24,15 @@ class _FakeCore extends RestoreCore {
 BackupDevice _device(
   List<BackupScript> scripts, {
   List<BackupFile> files = const [],
-}) => BackupDevice(
-  type: 'Tamu v2.0A',
-  typeId: 1,
-  id: idFromString('39.1')!,
-  name: 'Tamu',
-  blocks: const [],
-  scripts: scripts,
-  files: files,
-);
+}) => scriptArchive(id: idFromString('39.1')!, scripts: scripts, files: files);
 
-LiveDevice _live({int id = 0x2711}) => LiveDevice(
-  id: id,
-  name: 'Tamu',
-  capabilities: Capability.scripts,
-  blocks: const [],
-);
+LiveDevice _live({int id = 0x2711}) => scriptTarget(id: id);
 
 BackupScript _script(
   int slot,
   String name, {
   List<String> properties = const [],
-}) => BackupScript(
-  slot: slot,
-  functionName: name,
-  properties: properties,
-  inputs: const [],
-  outputs: const [],
-  variables: const [],
-  constants: const [],
-  lines: const [],
-);
+}) => bareScript(slot, name, properties: properties);
 
 /// A script whose one constant is a raw hex value: `Undefined` is the hex-carrying type, so the
 /// archive's own text decides the bytes (`12345` -> `0x12 0x34`, one digit dropped).
