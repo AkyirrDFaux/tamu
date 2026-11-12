@@ -333,8 +333,9 @@ mixin UnsavedSettingsPanel<W extends StatefulWidget> on State<W>
     if (!unsavedDirty) return;
     if (!unsavedConnected) {
       // Nothing can be sent: say what that means instead of reporting a save that never ran.
-      if (mounted)
+      if (mounted) {
         setState(() => saveReport = unsavedOfflineMessage(unsavedLabels));
+      }
       return;
     }
     if (unsavedLabels.isEmpty) return;

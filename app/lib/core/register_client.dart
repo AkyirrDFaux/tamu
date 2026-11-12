@@ -1071,7 +1071,7 @@ class RegisterClient {
     return true;
   }
 
-  /// Saves the whole device to its backup (CID 4 "Save All"): the System block's persistent
+  /// Saves the whole device to its backup (CID 5 "Save All"): the System block's persistent
   /// fields, every static block, and every dynamic block's .DT_/.DV_ files. Per
   /// Docs/Services/Register.md the command carries no BlockInfo; a single field is saved by
   /// rewriting the backup file the app holds (`device_backup.dart` `svSaveField`/`dvSaveField`)
@@ -1082,7 +1082,7 @@ class RegisterClient {
     return _requestOk(RegisterCid.saveAll, payload: const [], timeout: timeout);
   }
 
-  /// Recalls the whole device from its backup (CID 3 "Recall All"), the counterpart of
+  /// Recalls the whole device from its backup (CID 4 "Recall All"), the counterpart of
   /// [saveAll]. Partial recall is the app's job (register writes of the stored values).
   Future<bool> recallAll() async {
     return _requestOk(
