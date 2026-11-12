@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/ble_security.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/types.dart';
+import 'package:tamuapp/core/unsaved_settings.dart';
 import 'package:tamuapp/ui/ble_security_page.dart';
 import 'package:tamuapp/ui/notice_host.dart';
 import 'package:tamuapp/ui/theme.dart';
@@ -41,6 +42,17 @@ class _FakeBleDevice extends RegisterClient {
   /// How many times the page asked the device to persist (Save All).
   int saves = 0;
 
+  /// What Save All answers. A device that refuses the command, or never answers it, reports
+  /// `false` - and that is not a save (`core/unsaved_settings.dart`).
+  bool saveAllAnswers = true;
+
+  /// Fields whose answer to a READ is dropped, the way the bus drops a frame. The read-back after
+  /// Save All is the app's only check, so a silent one must not pass for a confirmation.
+  final Set<int> silentReads = {};
+
+  /// Fields a write is accepted for but does not change - a write that did not land.
+  final Set<int> ignoredWrites = {};
+
   @override
   Future<List<({int type, int maxInstance})>?> enumerateBlockTypes() async => [
     (type: BlockType.button.value, maxInstance: 0),
@@ -53,7 +65,7 @@ class _FakeBleDevice extends RegisterClient {
     int instance,
     int field,
     int key,
-  ) async => fields[(field, key)];
+  ) async => silentReads.contains(field) ? null : fields[(field, key)];
 
   @override
   Future<List<int>?> writeBlockField(
@@ -66,6 +78,7 @@ class _FakeBleDevice extends RegisterClient {
   ) async {
     if (refuseWrites) return null;
     writes.add((field: field, key: key, type: meta.type, bytes: value));
+    if (ignoredWrites.contains(field)) return const [1];
     final current = fields[(field, key)];
     fields[(field, key)] = (
       meta: ValueInfo(
@@ -81,7 +94,7 @@ class _FakeBleDevice extends RegisterClient {
   @override
   Future<bool> saveAll({Duration timeout = const Duration(seconds: 25)}) async {
     saves++;
-    return true;
+    return saveAllAnswers;
   }
 }
 
@@ -167,6 +180,9 @@ void main() {
     bool overUsb = true,
     bool secured = true,
     bool refuseWrites = false,
+    UnsavedSettings? store,
+    Listenable? linkChanges,
+    bool Function()? isConnected,
     Size size = const Size(900, 1600),
   }) async {
     // A tall portrait window so every card is reachable without scrolling: the assertions below
@@ -188,7 +204,11 @@ void main() {
         builder: noticeHostBuilder,
         home: BleSecurityPage(
           deviceId: 1,
-          isConnected: () => true,
+          isConnected: isConnected ?? () => true,
+          linkChanges: linkChanges,
+          // A store of its own per mount: the app's is shared, so one case's write would show
+          // up as another case's unsaved change.
+          unsaved: store ?? UnsavedSettings.forTest(),
           isUsbLink: () => overUsb,
           isSecuredLink: () => secured,
           clientFactory: (_) => device,
@@ -560,10 +580,11 @@ void main() {
   });
 
   group('the radio and the name', () {
-    testWidgets('the enable switch writes the Bool and saves it', (
+    testWidgets('a persistent write is unsaved, and the strip names it', (
       tester,
     ) async {
-      final device = await pump(tester);
+      final store = UnsavedSettings.forTest();
+      final device = await pump(tester, store: store);
 
       await tester.tap(find.text('Enabled'));
       await tester.pumpAndSettle();
@@ -572,15 +593,23 @@ void main() {
       expect(write.field, bleFieldEnabled);
       expect(write.type, DataType.bool_.value);
       expect(write.bytes, [0]);
-      // A persistent field: mirrored into the device's `.SV` only by a Save All.
-      expect(device.saves, 1);
-      expect(find.text('Radio switched off'), findsOneWidget);
+      // E71: the write is in the device's RAM. Only Save All writes `.SV`, so the panel does not
+      // claim the change is set - it says so and holds the state.
+      expect(device.saves, 0);
+      expect(store.isDirty(1), isTrue);
+      expect(store.describe(1), 'Enabled');
+      expect(find.text('Not saved: Enabled.'), findsOneWidget);
+      expect(
+        find.textContaining('the device holds it in RAM only'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('the display name is written at the field\'s own width', (
       tester,
     ) async {
-      final device = await pump(tester);
+      final store = UnsavedSettings.forTest();
+      final device = await pump(tester, store: store);
 
       await tester.tap(find.byTooltip('Set the display name'));
       await tester.pumpAndSettle();
@@ -592,11 +621,293 @@ void main() {
       expect(write.field, bleFieldDisplayName);
       expect(write.bytes, text('Bench', bleDisplayNameWidth));
       expect(write.bytes.length, bleDisplayNameWidth);
-      expect(device.saves, 1);
+      // The name is one of the two `Persistent` fields, so the write is not durable yet.
+      expect(device.saves, 0);
+      expect(store.describe(1), 'Display name');
+      expect(find.text('Not saved: Display name.'), findsOneWidget);
+    });
+  });
+
+  group('saving what the device holds', () {
+    /// Writes `Enabled = false` and leaves the panel holding it: the shape every case below
+    /// starts from.
+    Future<({_FakeBleDevice device, UnsavedSettings store})> switchOff(
+      WidgetTester tester, {
+      void Function(_FakeBleDevice device)? arrange,
+    }) async {
+      final store = UnsavedSettings.forTest();
+      final device = await pump(tester, store: store);
+      arrange?.call(device);
+      await tester.tap(find.text('Enabled'));
+      await tester.pumpAndSettle();
+      return (device: device, store: store);
+    }
+
+    testWidgets('a clean Save all re-applies the write and clears the state', (
+      tester,
+    ) async {
+      final run = await switchOff(tester);
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Save all'));
+      await tester.pumpAndSettle();
+
+      // The write goes out again (the device may have reset), then Save All, then the read-back
+      // that decides the flag.
+      expect(run.device.writes, hasLength(2));
+      expect(run.device.saves, 1);
+      expect(run.store.isDirty(1), isFalse);
+      expect(find.text('Not saved: Enabled.'), findsNothing);
+      expect(find.text('Saved: Enabled.'), findsOneWidget);
+    });
+
+    testWidgets('a refused Save all keeps the change and names the field', (
+      tester,
+    ) async {
+      final run = await switchOff(
+        tester,
+        arrange: (device) => device.saveAllAnswers = false,
+      );
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Save all'));
+      await tester.pumpAndSettle();
+
+      expect(run.store.isDirty(1), isTrue);
       expect(
-        find.text('Display name set - the device advertises it now'),
+        find.textContaining('Not saved: Enabled - the device did not answer'),
         findsOneWidget,
       );
+      expect(find.text('Not saved: Enabled.'), findsOneWidget);
+    });
+
+    testWidgets('a read-back that does not answer is not a confirmation', (
+      tester,
+    ) async {
+      final run = await switchOff(
+        tester,
+        arrange: (device) => device.silentReads.add(bleFieldEnabled),
+      );
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Save all'));
+      await tester.pumpAndSettle();
+
+      expect(run.store.isDirty(1), isTrue);
+      expect(
+        find.textContaining('Not confirmed: Enabled - Save all answered'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a value the device still reads as the old one stays unsaved', (
+      tester,
+    ) async {
+      // The write is accepted but does not land: the read-back is what notices.
+      final run = await switchOff(
+        tester,
+        arrange: (device) => device.ignoredWrites.add(bleFieldEnabled),
+      );
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Save all'));
+      await tester.pumpAndSettle();
+
+      expect(run.store.isDirty(1), isTrue);
+      expect(
+        find.textContaining('the device reads back a different value'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('two fields behind one Save all are both named', (
+      tester,
+    ) async {
+      final store = UnsavedSettings.forTest();
+      final device = await pump(tester, store: store);
+
+      await tester.tap(find.text('Enabled'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Set the display name'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'Bench');
+      await tester.tap(find.widgetWithText(FilledButton, 'Set name'));
+      await tester.pumpAndSettle();
+
+      expect(store.describe(1), 'Enabled and Display name');
+      device.saveAllAnswers = false;
+      await tester.tap(find.widgetWithText(FilledButton, 'Save all'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining(
+          'Not saved: Enabled and Display name - the device did not answer',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the app saves what it holds when it goes to the background', (
+      tester,
+    ) async {
+      final run = await switchOff(tester);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pumpAndSettle();
+
+      // Nobody can answer a dialog in the background, so the panel saves instead of asking; the
+      // state clears only because the save and its read-back landed.
+      expect(run.device.saves, 1);
+      expect(run.store.isDirty(1), isFalse);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+    });
+  });
+
+  group('leaving and reconnecting with unsaved writes', () {
+    /// Pushes the panel over a first page, so a pop is a real navigation and can be intercepted.
+    Future<({_FakeBleDevice device, UnsavedSettings store})> pushPanel(
+      WidgetTester tester,
+    ) async {
+      tester.view.physicalSize = const Size(900, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final store = UnsavedSettings.forTest();
+      final device = _FakeBleDevice(
+        deviceId: 1,
+        present: true,
+        fields: defaultBlock(),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildTheme(),
+          builder: noticeHostBuilder,
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: FilledButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => BleSecurityPage(
+                        deviceId: 1,
+                        isConnected: () => true,
+                        unsaved: store,
+                        clientFactory: (_) => device,
+                      ),
+                    ),
+                  ),
+                  child: const Text('Open the panel'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open the panel'));
+      await tester.pumpAndSettle();
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox());
+      });
+      return (device: device, store: store);
+    }
+
+    testWidgets('leaving asks, and the state survives the visit', (
+      tester,
+    ) async {
+      final run = await pushPanel(tester);
+      await tester.tap(find.text('Enabled'));
+      await tester.pumpAndSettle();
+
+      // The pop is blocked while the change is unsaved.
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('Unsaved changes'), findsOneWidget);
+      expect(
+        find.textContaining('holds changes that are not saved: Enabled.'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Leave without saving'));
+      await tester.pumpAndSettle();
+      // The page is gone and the device still holds the change in RAM: the state is the device's,
+      // not the page's.
+      expect(find.text('Open the panel'), findsOneWidget);
+      expect(run.store.isDirty(1), isTrue);
+    });
+
+    testWidgets('coming back to the panel still reports the change', (
+      tester,
+    ) async {
+      final run = await pushPanel(tester);
+      await tester.tap(find.text('Enabled'));
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Leave without saving'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Open the panel'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Not saved: Enabled.'), findsOneWidget);
+      expect(run.store.isDirty(1), isTrue);
+    });
+
+    testWidgets('a link that drops says the save can no longer be sent', (
+      tester,
+    ) async {
+      final link = ChangeNotifier();
+      var up = true;
+      final store = UnsavedSettings.forTest();
+      await pump(
+        tester,
+        store: store,
+        linkChanges: link,
+        isConnected: () => up,
+      );
+      await tester.tap(find.text('Enabled'));
+      await tester.pumpAndSettle();
+
+      up = false;
+      link.notifyListeners();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Not saved - no link'), findsOneWidget);
+      expect(
+        find.textContaining('The link dropped with unsaved changes: Enabled.'),
+        findsOneWidget,
+      );
+      expect(store.isDirty(1), isTrue);
+    });
+
+    testWidgets('a link that comes back offers the writes back', (
+      tester,
+    ) async {
+      final link = ChangeNotifier();
+      var up = true;
+      final store = UnsavedSettings.forTest();
+      final device = await pump(
+        tester,
+        store: store,
+        linkChanges: link,
+        isConnected: () => up,
+      );
+      await tester.tap(find.text('Enabled'));
+      await tester.pumpAndSettle();
+      up = false;
+      link.notifyListeners();
+      await tester.pumpAndSettle();
+
+      up = true;
+      link.notifyListeners();
+      await tester.pumpAndSettle();
+
+      expect(find.text('The link is back'), findsOneWidget);
+      expect(find.textContaining('never saved: Enabled'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Re-apply and save'));
+      await tester.pumpAndSettle();
+
+      // Re-applied (the second write is the re-apply), saved, read back, cleared.
+      expect(device.writes, hasLength(2));
+      expect(device.saves, 1);
+      expect(store.isDirty(1), isFalse);
     });
   });
 

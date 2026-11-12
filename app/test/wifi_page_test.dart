@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/types.dart';
+import 'package:tamuapp/core/unsaved_settings.dart';
 import 'package:tamuapp/core/wifi_settings.dart';
 import 'package:tamuapp/ui/formatters.dart';
 import 'package:tamuapp/ui/theme.dart';
@@ -38,6 +39,9 @@ class _FakeWifiDevice extends RegisterClient {
 
   /// How many times the page asked the device to persist (Save All).
   int saves = 0;
+
+  /// What Save All answers: a device that refuses, or never answers, reports `false`.
+  bool saveAllAnswers = true;
 
   @override
   Future<List<({int type, int maxInstance})>?> enumerateBlockTypes() async => [
@@ -83,7 +87,7 @@ class _FakeWifiDevice extends RegisterClient {
   @override
   Future<bool> saveAll({Duration timeout = const Duration(seconds: 25)}) async {
     saves++;
-    return true;
+    return saveAllAnswers;
   }
 }
 
@@ -154,6 +158,7 @@ void main() {
     Map<int, ({ValueInfo meta, List<int> value})>? fields,
     bool overUsb = true,
     bool refuseWrites = false,
+    UnsavedSettings? store,
   }) async {
     final device = _FakeWifiDevice(
       deviceId: 1,
@@ -169,6 +174,9 @@ void main() {
         home: WifiPage(
           deviceId: 1,
           isConnected: () => true,
+          // A store of its own per mount: the app's is shared, so one case's write would show up
+          // as another case's unsaved change.
+          unsaved: store ?? UnsavedSettings.forTest(),
           isUsbLink: () => overUsb,
           clientFactory: (_) => device,
         ),
@@ -318,26 +326,93 @@ void main() {
   });
 
   group('writing to the block', () {
-    testWidgets('enabling WiFi writes the field and saves the device', (
+    testWidgets('enabling WiFi leaves the setting unsaved, and says so', (
       tester,
     ) async {
-      final device = await pump(tester, present: true, fields: emptyBlock());
+      final store = UnsavedSettings.forTest();
+      final device = await pump(
+        tester,
+        present: true,
+        fields: emptyBlock(),
+        store: store,
+      );
 
       await tester.tap(find.byType(Switch));
       await tester.pumpAndSettle();
 
       expect(device.writes.single.field, wifiFieldEnabled);
       expect(device.writes.single.bytes, [1]);
-      expect(device.saves, 1);
+      // E71: `Enabled` is Persistent, so the write is in the device's RAM and only Save All
+      // writes `.SV`. The panel does not claim it is durable.
+      expect(device.saves, 0);
+      expect(store.describe(1), 'Enabled');
+      expect(find.text('Not saved: Enabled.'), findsOneWidget);
       // The panel shows the device's answer after the write, not the switch's own state.
       expect(find.text('The radio is used'), findsOneWidget);
       expect(find.text('No network configured'), findsOneWidget);
     });
 
+    testWidgets('Save all writes both settings and clears the state', (
+      tester,
+    ) async {
+      final store = UnsavedSettings.forTest();
+      final device = await pump(
+        tester,
+        present: true,
+        fields: emptyBlock(),
+        store: store,
+      );
+
+      await tester.tap(find.byType(Switch));
+      await tester.pumpAndSettle();
+      await _enterInDialog(tester, 'Set the SSID', 'TamuNet');
+      expect(store.describe(1), 'Enabled and SSID');
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Save all'));
+      await tester.pumpAndSettle();
+
+      expect(device.saves, 1);
+      expect(store.isDirty(1), isFalse);
+      expect(find.text('Saved: Enabled and SSID.'), findsOneWidget);
+      expect(find.textContaining('Not saved:'), findsNothing);
+    });
+
+    testWidgets('a Save all the device refuses keeps both fields named', (
+      tester,
+    ) async {
+      final store = UnsavedSettings.forTest();
+      final device = await pump(
+        tester,
+        present: true,
+        fields: emptyBlock(),
+        store: store,
+      );
+
+      await tester.tap(find.byType(Switch));
+      await tester.pumpAndSettle();
+      device.saveAllAnswers = false;
+      await tester.tap(find.widgetWithText(FilledButton, 'Save all'));
+      await tester.pumpAndSettle();
+
+      expect(store.isDirty(1), isTrue);
+      expect(
+        find.textContaining(
+          'Not saved: Enabled - the device did not answer Save all',
+        ),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('setting the SSID sends it at the width the block declared', (
       tester,
     ) async {
-      final device = await pump(tester, present: true, fields: emptyBlock());
+      final store = UnsavedSettings.forTest();
+      final device = await pump(
+        tester,
+        present: true,
+        fields: emptyBlock(),
+        store: store,
+      );
 
       await _enterInDialog(tester, 'Set the SSID', 'TamuNet');
 
@@ -346,7 +421,10 @@ void main() {
       expect(write.bytes.length, 32, reason: 'the field is 32 bytes wide');
       expect(String.fromCharCodes(write.bytes.sublist(0, 7)), 'TamuNet');
       expect(write.bytes.skip(7).every((b) => b == 0), isTrue);
-      expect(device.saves, 1);
+      // Persistent, so the write is RAM-only until Save all.
+      expect(device.saves, 0);
+      expect(store.describe(1), 'SSID');
+      expect(find.text('Not saved: SSID.'), findsOneWidget);
       expect(find.text('TamuNet'), findsOneWidget);
     });
 

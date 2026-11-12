@@ -21,6 +21,7 @@ import '../core/storage_client.dart'
 import '../core/types.dart';
 import '../core/script_client.dart';
 import '../core/notice.dart';
+import '../core/unsaved_settings.dart';
 import 'dialogs.dart';
 import 'formatters.dart';
 import 'loading.dart';
@@ -456,6 +457,7 @@ class _RegisterPageState extends State<RegisterPage>
     final ok = await _withBusy(
       () => _writeStoredFieldToRam(blockType, inst, field, key),
     );
+    if (ok) _forgetUnsavedField(blockType, inst, field);
     _snack(ok ? 'Recalled' : 'Recall failed');
     if (ok && mounted) {
       // The live cache no longer matches RAM; drop the recalled entry (dynamic entries are
@@ -614,12 +616,65 @@ class _RegisterPageState extends State<RegisterPage>
         null;
   }
 
-  /// Persists the whole device to its backup (CID 4 "Save All", docs Register.md): the System
+  /// Persists the whole device to its backup (CID 5 "Save All", docs Register.md): the System
   /// block's persistent fields, every static block, and every dynamic block's .DT_/.DV_ files.
   Future<bool> _saveAll() => _client.saveAll();
 
-  /// Recalls the whole device from its backup (CID 3 "Recall All").
+  /// The entries the settings panels hold for this device, named, or null when there are none.
+  String? get _unsavedFields {
+    final store = UnsavedSettings.instance;
+    return store.isDirty(widget.deviceId)
+        ? store.describe(widget.deviceId)
+        : null;
+  }
+
+  /// Save All, then the panels' half of it: `Enabled`, `Display name` and `SSID` written from a
+  /// settings panel are held in `core/unsaved_settings.dart` until a Save All confirms them, and
+  /// this button sends the same CID 5. So the entries are read back here rather than assumed
+  /// saved - the same confirmation a panel's own Save all ends on.
+  Future<bool> _saveAllWithConfirm() async {
+    if (!await _saveAll()) return false;
+    final outcome = await confirmPendingSettings(
+      _client,
+      deviceId: widget.deviceId,
+    );
+    if (!outcome.clean) {
+      showNotice(outcome.message, tone: NoticeTone.warning);
+    }
+    return true;
+  }
+
+  /// Recalls the whole device from its backup (CID 4 "Recall All").
   Future<bool> _recallAll() => _client.recallAll();
+
+  /// Recall All loads `.SV` over the RAM copy, so it discards exactly the writes the settings
+  /// panels still hold: their records go with the values, and the user is told which ones.
+  ///
+  /// This is why nothing else in the app sends CID 4 (`core/unsaved_settings.dart`): a reload must
+  /// not be fired between a write and its save behind the user's back.
+  Future<bool> _recallAllWithDiscard() async {
+    final discarded = _unsavedFields;
+    if (!await _recallAll()) return false;
+    UnsavedSettings.instance.clearDevice(widget.deviceId);
+    if (discarded != null) {
+      showNotice(
+        'Recalled the saved values: the unsaved change to $discarded is gone, because the device '
+        'loaded its backup over it.',
+        tone: NoticeTone.warning,
+      );
+    }
+    return true;
+  }
+
+  /// The record of an unsaved write ends where the app itself writes the field into `.SV` or reads
+  /// `.SV` back over it: both change what the device holds for that field.
+  void _forgetUnsavedField(int blockType, int inst, int field) =>
+      UnsavedSettings.instance.resolveField(
+        widget.deviceId,
+        blockType: blockType,
+        inst: inst,
+        field: field,
+      );
 
   /// Saves one persistent field to its backup (the docs' per-value Save). The wire only
   /// carries `Save All`, so this is the app-side half: see [_writeFieldToBackup].
@@ -632,6 +687,9 @@ class _RegisterPageState extends State<RegisterPage>
     final ok = await _withBusy(
       () => _writeFieldToBackup(blockType, inst, fieldIndex, 0),
     );
+    // The app wrote the live value into `.SV` itself, so a settings-panel record of that field is
+    // durable now.
+    if (ok) _forgetUnsavedField(blockType, inst, fieldIndex);
     _snack(ok ? 'Saved' : 'Save failed');
   }
 
@@ -645,6 +703,9 @@ class _RegisterPageState extends State<RegisterPage>
     final ok = await _withBusy(
       () => _writeStoredFieldToRam(blockType, inst, fieldIndex, 0),
     );
+    // A recall loads the stored value over the RAM copy: whatever was unsaved for this field is
+    // gone, so the record of it goes too.
+    if (ok) _forgetUnsavedField(blockType, inst, fieldIndex);
     _snack(ok ? 'Recalled' : 'Recall failed');
     if (ok) {
       await _loadBlockFields(blockType, inst, block, forceRefresh: true);
@@ -853,7 +914,7 @@ class _RegisterPageState extends State<RegisterPage>
             tooltip: 'Save all to backup',
             icon: const Icon(Icons.save),
             onPressed: () async {
-              final ok = await _withBusy(_saveAll);
+              final ok = await _withBusy(_saveAllWithConfirm);
               _snack(ok ? 'Saved' : 'Save failed');
             },
           )
@@ -862,7 +923,7 @@ class _RegisterPageState extends State<RegisterPage>
             tooltip: 'Recall all from backup',
             icon: const Icon(Icons.restore),
             onPressed: () async {
-              final ok = await _withBusy(_recallAll);
+              final ok = await _withBusy(_recallAllWithDiscard);
               _snack(ok ? 'Recalled' : 'Recall failed');
               if (ok) await _loadBackup();
             },

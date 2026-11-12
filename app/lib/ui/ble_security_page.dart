@@ -4,12 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FilteringTextInputFormatter;
 
 import '../core/ble_security.dart';
+import '../core/connection.dart' show ConnectionManager;
 import '../core/register_client.dart';
 import '../core/types.dart';
 import '../core/notice.dart';
+import '../core/unsaved_settings.dart';
 import 'block_panel.dart';
 import 'formatters.dart' show kSecretMask;
 import 'theme.dart';
+import 'unsaved_settings_panel.dart';
 import 'widgets.dart';
 
 /// The Bluetooth panel: the `BLE Settings` block (BlockType `0x0B`) read and written through the
@@ -41,11 +44,25 @@ import 'widgets.dart';
 /// the bond store and the pairing window decide which links become a session instead. The block is
 /// compiled into the core only, so like the WiFi panel this page is reached only for a device whose
 /// own block enumeration carries it, and it renders nothing when it does not.
+///
+/// Two of the six fields (`Enabled`, `Display name`) are `Persistent`, which means a write lands in
+/// the device's RAM and only Save All writes it to the device's backup (E71, owner ruling of
+/// 2026-11-12). The panel therefore records such a write as unsaved
+/// (`core/unsaved_settings.dart`) instead of claiming it is set, keeps saying so across a visit to
+/// another page, and clears the state only after Save All read back the value.
 class BleSecurityPage extends StatefulWidget {
   final int deviceId;
 
   /// Test seam: the refresh paths only run on a live link, which a widget test cannot fake.
   final bool Function()? isConnected;
+
+  /// Notifies when the link comes up or goes away; defaults to the app's connection manager. A
+  /// panel that holds unsaved writes must say so when the link drops, and offer them back when it
+  /// returns - which needs the transition, not just the current state.
+  final Listenable? linkChanges;
+
+  /// Test seam: the store the page records unsaved writes into. Defaults to the app's own.
+  final UnsavedSettings? unsaved;
 
   /// Test seam: whether this app's own link to the device is USB.
   ///
@@ -72,6 +89,8 @@ class BleSecurityPage extends StatefulWidget {
     super.key,
     required this.deviceId,
     this.isConnected,
+    this.linkChanges,
+    this.unsaved,
     this.isUsbLink,
     this.isSecuredLink,
     this.clientFactory,
@@ -84,7 +103,9 @@ class BleSecurityPage extends StatefulWidget {
 class _BleSecurityPageState extends State<BleSecurityPage>
     with
         AutoRefreshMixin<BleSecurityPage>,
-        BlockPanelRefresh<BleSecurityPage, BleSecuritySnapshot> {
+        BlockPanelRefresh<BleSecurityPage, BleSecuritySnapshot>,
+        WidgetsBindingObserver,
+        UnsavedSettingsPanel<BleSecurityPage> {
   late final RegisterClient _client =
       (widget.clientFactory ?? (int id) => RegisterClient(deviceId: id))(
         widget.deviceId,
@@ -98,6 +119,36 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   Timer? _windowTimer;
 
   bool get _connected => blockPanelConnected(widget.isConnected);
+
+  /// The app's connection, or null when the page was given its own link state: a test that
+  /// supplies [BleSecurityPage.isConnected] also keeps its fake request channel, because touching
+  /// the singleton would install the real connection over it.
+  ConnectionManager? get _appLink =>
+      widget.isConnected == null ? ConnectionManager.instance : null;
+
+  // The unsaved-writes half ([UnsavedSettingsPanel]): what this panel is, and the three things a
+  // save needs from it.
+
+  @override
+  UnsavedSettings get unsavedStore =>
+      widget.unsaved ?? UnsavedSettings.instance;
+
+  @override
+  int get unsavedDeviceId => widget.deviceId;
+
+  @override
+  RegisterClient get unsavedClient => _client;
+
+  @override
+  bool get unsavedConnected => _connected;
+
+  @override
+  Listenable? get unsavedLink => widget.linkChanges ?? _appLink;
+
+  /// A link that came back with nothing pending re-reads the block, so the panel is never showing
+  /// a reading from before the drop.
+  @override
+  void unsavedLinkRestored() => unawaited(_refresh());
 
   /// True when this app talks to the device over USB - the link the panel's copy names.
   ///
@@ -153,12 +204,14 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   @override
   void initState() {
     super.initState();
+    unsavedInit();
     _refresh();
   }
 
   @override
   void dispose() {
     _windowTimer?.cancel();
+    unsavedDispose();
     super.dispose();
   }
 
@@ -220,9 +273,10 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   /// Sends one write and reports the outcome in plain words. A refusal is a normal `FLAG_FAIL`
   /// reply (`null` from the client), so it is surfaced — never silently dropped.
   ///
-  /// [persist] saves the persistent space afterwards: `Enabled` and `Display name` are mirrored
-  /// into the device's `.SV` by a Save All, while the passkey (NVS) and the `Window`/`Bonds`
-  /// triggers are applied by the device itself and need no save.
+  /// [persist] marks the write as unsaved instead of saving it: `Enabled` and `Display name` are
+  /// mirrored into the device's `.SV` by Save All and by nothing else (E71), so the write lands in
+  /// RAM and the panel says so until [saveUnsaved] confirms it. The passkey (NVS) and the
+  /// `Window`/`Bonds` triggers are applied by the device itself and need no save at all.
   Future<void> _writeField(
     int field, {
     required int type,
@@ -230,42 +284,55 @@ class _BleSecurityPageState extends State<BleSecurityPage>
     required String done,
     bool persistent = false,
     bool persist = false,
+    String? pendingName,
     String? valueHint,
   }) async {
     if (_busy) return;
     setState(() => _busy = true);
+    final meta = ValueInfo(
+      type: type,
+      size: bytes.length,
+      flags: _writeFlags(field, persistent: persistent),
+    );
     final reply = await _client.writeBlockField(
       bleSettingsBlockTypeValue,
       0,
       field,
       0,
-      ValueInfo(
-        type: type,
-        size: bytes.length,
-        flags: _writeFlags(field, persistent: persistent),
-      ),
+      meta,
       bytes,
     );
     final wrote = reply != null;
-    final saved = wrote && persist && await _client.saveAll();
     if (!mounted) return;
     setState(() {
       _busy = false;
       _revealPasskey = false;
     });
-    showNotice(
-      !wrote
-          ? bleWriteRefusal(
-              overUsb: _overUsb,
-              bleLinkSecured: _linkSecured,
-              valueHint: valueHint,
-            )
-          : !persist
-          ? done
-          : saved
-          ? done
-          : '$done - but the device did not save it',
-    );
+    if (wrote && persist && pendingName != null) {
+      unsavedMark(
+        PendingSetting(
+          deviceId: widget.deviceId,
+          blockName: blockName,
+          blockType: bleSettingsBlockTypeValue,
+          inst: 0,
+          field: field,
+          fieldName: pendingName,
+          meta: meta,
+          bytes: List<int>.unmodifiable(bytes),
+        ),
+      );
+      showNotice(unsavedWriteNotice(pendingName), tone: NoticeTone.warning);
+    } else {
+      showNotice(
+        !wrote
+            ? bleWriteRefusal(
+                overUsb: _overUsb,
+                bleLinkSecured: _linkSecured,
+                valueHint: valueHint,
+              )
+            : done,
+      );
+    }
     await _refresh();
   }
 
@@ -275,12 +342,14 @@ class _BleSecurityPageState extends State<BleSecurityPage>
     bytes: [enabled ? 1 : 0],
     persistent: true,
     persist: true,
+    pendingName: 'Enabled',
     done: enabled ? 'Radio switched on' : 'Radio switched off',
   );
 
   Future<void> _setDisplayName(String name) {
     final bytes = name.codeUnits.toList();
-    final width = blockReads[bleFieldDisplayName]?.meta.size ?? bleDisplayNameWidth;
+    final width =
+        blockReads[bleFieldDisplayName]?.meta.size ?? bleDisplayNameWidth;
     if (bytes.length >= width) {
       bytes.length = width;
     } else {
@@ -292,6 +361,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
       bytes: bytes,
       persistent: true,
       persist: true,
+      pendingName: 'Display name',
       done: name.isEmpty
           ? 'Display name cleared - the device advertises its own name'
           : 'Display name set - the device advertises it now',
@@ -516,6 +586,19 @@ class _BleSecurityPageState extends State<BleSecurityPage>
     await _renameBond(slot, name);
   }
 
+  /// Blocks the pop while the device holds writes it has not saved, and asks about them: save, or
+  /// leave knowing a reset brings the old values back (the writes stay recorded, so the next visit
+  /// says so again).
+  Widget _leaveGuard(Widget page) => PopScope(
+    canPop: !unsavedDirty,
+    onPopInvokedWithResult: (didPop, _) async {
+      if (didPop) return;
+      final leave = await unsavedConfirmLeave();
+      if (leave && mounted) Navigator.of(context).pop();
+    },
+    child: page,
+  );
+
   @override
   Widget build(BuildContext context) {
     // The block is missing: draw the panel as nothing at all (not an empty card, not an error).
@@ -524,178 +607,190 @@ class _BleSecurityPageState extends State<BleSecurityPage>
       unavailable: 'Bluetooth block unavailable',
       reading: 'Reading Bluetooth settings',
     );
-    if (statePage != null) return statePage;
+    if (statePage != null) return _leaveGuard(statePage);
 
     final snapshot = blockSnapshot!;
 
     final bondsAnswered = snapshot.answeredField(bleFieldBonds);
-    return TamuPage(
-      title: 'Bluetooth',
-      actions: blockActions,
-      child: ListView(
-        padding: Insets.page,
-        children: [
-          _BleConditionBanner(snapshot: snapshot),
-          if (!_overUsb) ..._overBleNotice(context),
-          const SizedBox(height: Spacing.lg),
-          InfoCard(
-            title: 'Pairing',
-            children: [
-              InfoRow('Mode', _modeText(snapshot), labelWidth: 120),
-              blockPanelRow(
-                title: 'Passkey',
-                subtitle: _passkeyText(snapshot),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (snapshot.passkeySet)
-                      IconButton(
-                        tooltip: _revealPasskey ? 'Hide' : 'Show the code',
-                        icon: Icon(
-                          _revealPasskey
-                              ? Icons.visibility_off_outlined
-                              : Icons.visibility_outlined,
-                          size: IconSize.sm,
-                        ),
-                        onPressed: () =>
-                            setState(() => _revealPasskey = !_revealPasskey),
-                      ),
+    final strip = unsavedStrip();
+    final list = ListView(
+      padding: Insets.page,
+      children: [
+        _BleConditionBanner(snapshot: snapshot),
+        if (!_overUsb) ..._overBleNotice(context),
+        const SizedBox(height: Spacing.lg),
+        InfoCard(
+          title: 'Pairing',
+          children: [
+            InfoRow('Mode', _modeText(snapshot), labelWidth: 120),
+            blockPanelRow(
+              title: 'Passkey',
+              subtitle: _passkeyText(snapshot),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (snapshot.passkeySet)
                     IconButton(
-                      tooltip: 'Set the passkey',
-                      icon: const Icon(Icons.key_outlined, size: IconSize.sm),
-                      onPressed: _busy
-                          ? null
-                          : () => _askPasskey(currentSet: snapshot.passkeySet),
+                      tooltip: _revealPasskey ? 'Hide' : 'Show the code',
+                      icon: Icon(
+                        _revealPasskey
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        size: IconSize.sm,
+                      ),
+                      onPressed: () =>
+                          setState(() => _revealPasskey = !_revealPasskey),
                     ),
-                    if (snapshot.passkeySet)
-                      IconButton(
-                        tooltip: 'Clear the passkey',
-                        icon: const Icon(
-                          Icons.key_off_outlined,
-                          size: IconSize.sm,
-                        ),
-                        onPressed: _busy ? null : _clearPasskey,
-                      ),
-                  ],
-                ),
-              ),
-              // `Window` is a command and a read-out at once: the row shows the countdown the
-              // device reports, and the editor writes it (0 closes).
-              blockPanelRow(
-                title: 'Pairing window',
-                subtitle: _windowSubtitle(snapshot),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (snapshot.answeredField(bleFieldWindow) &&
-                        snapshot.windowOpen)
-                      IconButton(
-                        tooltip: 'Close the pairing window',
-                        icon: const Icon(
-                          Icons.wifi_tethering_off,
-                          size: IconSize.sm,
-                        ),
-                        onPressed: _busy ? null : () => _setWindow(0),
-                      ),
+                  IconButton(
+                    tooltip: 'Set the passkey',
+                    icon: const Icon(Icons.key_outlined, size: IconSize.sm),
+                    onPressed: _busy
+                        ? null
+                        : () => _askPasskey(currentSet: snapshot.passkeySet),
+                  ),
+                  if (snapshot.passkeySet)
                     IconButton(
-                      tooltip: 'Set the pairing window',
-                      icon: const Icon(Icons.timer_outlined, size: IconSize.sm),
-                      onPressed: _busy
-                          ? null
-                          : () => _askWindow(snapshot.windowMs),
+                      tooltip: 'Clear the passkey',
+                      icon: const Icon(
+                        Icons.key_off_outlined,
+                        size: IconSize.sm,
+                      ),
+                      onPressed: _busy ? null : _clearPasskey,
                     ),
-                  ],
+                ],
+              ),
+            ),
+            // `Window` is a command and a read-out at once: the row shows the countdown the
+            // device reports, and the editor writes it (0 closes).
+            blockPanelRow(
+              title: 'Pairing window',
+              subtitle: _windowSubtitle(snapshot),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (snapshot.answeredField(bleFieldWindow) &&
+                      snapshot.windowOpen)
+                    IconButton(
+                      tooltip: 'Close the pairing window',
+                      icon: const Icon(
+                        Icons.wifi_tethering_off,
+                        size: IconSize.sm,
+                      ),
+                      onPressed: _busy ? null : () => _setWindow(0),
+                    ),
+                  IconButton(
+                    tooltip: 'Set the pairing window',
+                    icon: const Icon(Icons.timer_outlined, size: IconSize.sm),
+                    onPressed: _busy
+                        ? null
+                        : () => _askWindow(snapshot.windowMs),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: Spacing.lg),
+        // The bond list: one row per slot of the `Bonds` array. A row's label can be changed and
+        // its address cleared (which deletes the bond); a peer is only ever ADDED by pairing,
+        // which is what an empty slot says.
+        InfoCard(
+          title: 'Bonds',
+          children: [
+            if (!bondsAnswered)
+              InfoRow('Bond list', '-', labelWidth: 120)
+            else
+              for (var slot = 0; slot < snapshot.bonds.length; slot++)
+                _BondRow(
+                  bond: snapshot.bonds[slot],
+                  busy: _busy,
+                  onRename: () => _askBondName(slot, snapshot.bonds[slot].name),
+                  onDelete: () => _clearBond(snapshot.bonds[slot]),
+                ),
+            if (bleBondsDetail(snapshot) != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  Spacing.xl,
+                  Spacing.sm,
+                  Spacing.xl,
+                  Spacing.md,
+                ),
+                child: Text(
+                  bleBondsDetail(snapshot)!,
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: Spacing.lg),
-          // The bond list: one row per slot of the `Bonds` array. A row's label can be changed and
-          // its address cleared (which deletes the bond); a peer is only ever ADDED by pairing,
-          // which is what an empty slot says.
-          InfoCard(
-            title: 'Bonds',
-            children: [
-              if (!bondsAnswered)
-                InfoRow('Bond list', '-', labelWidth: 120)
-              else
-                for (var slot = 0; slot < snapshot.bonds.length; slot++)
-                  _BondRow(
-                    bond: snapshot.bonds[slot],
-                    busy: _busy,
-                    onRename: () =>
-                        _askBondName(slot, snapshot.bonds[slot].name),
-                    onDelete: () => _clearBond(snapshot.bonds[slot]),
-                  ),
-              if (bleBondsDetail(snapshot) != null)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    Spacing.xl,
-                    Spacing.sm,
-                    Spacing.xl,
-                    Spacing.md,
-                  ),
-                  child: Text(
-                    bleBondsDetail(snapshot)!,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: Spacing.lg),
-          InfoCard(
-            title: 'Radio',
-            children: [
-              blockPanelSwitch(
-                title: 'Enabled',
-                subtitle: !snapshot.answeredField(bleFieldEnabled)
-                    ? '-'
-                    : snapshot.enabled
-                    ? 'The device uses its radio'
-                    : 'The radio is off: nothing is advertised and nobody can connect',
-                value: snapshot.enabled,
-                onChanged: _busy ? null : _setEnabled,
+          ],
+        ),
+        const SizedBox(height: Spacing.lg),
+        InfoCard(
+          title: 'Radio',
+          children: [
+            blockPanelSwitch(
+              title: 'Enabled',
+              subtitle: !snapshot.answeredField(bleFieldEnabled)
+                  ? '-'
+                  : snapshot.enabled
+                  ? 'The device uses its radio'
+                  : 'The radio is off: nothing is advertised and nobody can connect',
+              value: snapshot.enabled,
+              onChanged: _busy ? null : _setEnabled,
+            ),
+            // Display name IS the advertised name: there is no second read-out any more, and a
+            // write re-advertises in the same loop pass, so the row says "now" and not "at the
+            // next advertising start".
+            blockPanelRow(
+              title: 'Display name',
+              subtitle: !snapshot.answeredField(bleFieldDisplayName)
+                  ? '-'
+                  : snapshot.displayName.isEmpty
+                  ? 'not set - the device advertises its own name'
+                  : '${snapshot.displayName} - on the air now',
+              trailing: IconButton(
+                tooltip: 'Set the display name',
+                icon: const Icon(Icons.edit_outlined, size: IconSize.sm),
+                onPressed: _busy
+                    ? null
+                    : () => _askDisplayName(snapshot.displayName),
               ),
-              // Display name IS the advertised name: there is no second read-out any more, and a
-              // write re-advertises in the same loop pass, so the row says "now" and not "at the
-              // next advertising start".
-              blockPanelRow(
-                title: 'Display name',
-                subtitle: !snapshot.answeredField(bleFieldDisplayName)
-                    ? '-'
-                    : snapshot.displayName.isEmpty
-                    ? 'not set - the device advertises its own name'
-                    : '${snapshot.displayName} - on the air now',
-                trailing: IconButton(
-                  tooltip: 'Set the display name',
-                  icon: const Icon(Icons.edit_outlined, size: IconSize.sm),
-                  onPressed: _busy
-                      ? null
-                      : () => _askDisplayName(snapshot.displayName),
-                ),
+            ),
+          ],
+        ),
+        const SizedBox(height: Spacing.lg),
+        Text(
+          'Everything above is the block\'s own: the mode, the bond list, the window and the '
+          'name are computed and reported by the device. The passkey is stored on the device '
+          'itself and survives a firmware update; the bonds are kept in its bond store, so they '
+          'are cleared by deleting an entry or by changing the passkey.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: Spacing.md),
+        // The stale-bond story, in the place the user is already looking when a phone will not
+        // connect: it is the normal outcome of a firmware update, not a broken device - and
+        // pairing again is a new pairing, so it needs a window (E64 ruling C).
+        Text(
+          'If this phone stops connecting: the device may no longer hold a bond for it, and a '
+          'device that holds bonds ignores phones it has no bond for. Forget the device in '
+          "your phone's Bluetooth settings, then pair again from a pairing window - open one "
+          'here, over USB or from a secured Bluetooth link.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ],
+    );
+    // The strip sits above the scroll view, not inside it: a warning that scrolls off the top is
+    // the same as no warning.
+    return _leaveGuard(
+      TamuPage(
+        title: 'Bluetooth',
+        actions: blockActions,
+        child: strip == null
+            ? list
+            : Column(
+                children: [
+                  strip,
+                  Expanded(child: list),
+                ],
               ),
-            ],
-          ),
-          const SizedBox(height: Spacing.lg),
-          Text(
-            'Everything above is the block\'s own: the mode, the bond list, the window and the '
-            'name are computed and reported by the device. The passkey is stored on the device '
-            'itself and survives a firmware update; the bonds are kept in its bond store, so they '
-            'are cleared by deleting an entry or by changing the passkey.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: Spacing.md),
-          // The stale-bond story, in the place the user is already looking when a phone will not
-          // connect: it is the normal outcome of a firmware update, not a broken device - and
-          // pairing again is a new pairing, so it needs a window (E64 ruling C).
-          Text(
-            'If this phone stops connecting: the device may no longer hold a bond for it, and a '
-            'device that holds bonds ignores phones it has no bond for. Forget the device in '
-            "your phone's Bluetooth settings, then pair again from a pairing window - open one "
-            'here, over USB or from a secured Bluetooth link.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ],
       ),
     );
   }
@@ -991,7 +1086,7 @@ class _WindowDialogState extends State<_WindowDialog> {
               style: theme.textTheme.bodySmall?.copyWith(color: kWarning),
             ),
           ],
-                ],
+        ],
       ),
       actions: [
         TextButton(
@@ -1181,7 +1276,7 @@ class _PasskeyDialogState extends State<_PasskeyDialog> {
               hintText: '123456',
             ),
           ),
-                ],
+        ],
       ),
       actions: [
         TextButton(

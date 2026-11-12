@@ -9,6 +9,7 @@ import 'ui/devices_page.dart';
 import 'ui/notice_host.dart';
 import 'ui/settings_page.dart';
 import 'ui/theme.dart';
+import 'ui/unsaved_settings_watcher.dart';
 import 'ui/update_page.dart';
 import 'ui/widgets.dart';
 
@@ -133,54 +134,59 @@ class _ShellPageState extends State<ShellPage> {
       // for its five labelled destinations) gets the drawer; otherwise the rail
       // stays visible.
       drawer: compact ? _buildDrawer() : null,
-      body: compact
-          ? SafeArea(child: content)
-          : Row(
-              children: [
-                ListenableBuilder(
-                  listenable: ConnectionManager.instance,
-                  builder: (context, _) => NavigationRail(
-                    selectedIndex: _index,
-                    onDestinationSelected: (i) {
-                      setState(() {
-                        _index = i;
-                        _visited.add(i);
-                      });
-                      ShellTabs.instance.update(i);
-                    },
-                    labelType: NavigationRailLabelType.all,
-                    leading: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      child: _linkBadge(withLabel: true),
+      // The watcher is a pass-through: it raises the app-wide notices about unsaved
+      // device settings (which outlive the panel that made them) and draws the shell
+      // unchanged (ui/unsaved_settings_watcher.dart).
+      body: UnsavedSettingsWatcher(
+        child: compact
+            ? SafeArea(child: content)
+            : Row(
+                children: [
+                  ListenableBuilder(
+                    listenable: ConnectionManager.instance,
+                    builder: (context, _) => NavigationRail(
+                      selectedIndex: _index,
+                      onDestinationSelected: (i) {
+                        setState(() {
+                          _index = i;
+                          _visited.add(i);
+                        });
+                        ShellTabs.instance.update(i);
+                      },
+                      labelType: NavigationRailLabelType.all,
+                      leading: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child: _linkBadge(withLabel: true),
+                      ),
+                      destinations: const [
+                        NavigationRailDestination(
+                          icon: Icon(Icons.link),
+                          label: Text('Connection'),
+                        ),
+                        NavigationRailDestination(
+                          icon: Icon(Icons.device_hub),
+                          label: Text('Devices'),
+                        ),
+                        NavigationRailDestination(
+                          icon: Icon(Icons.system_update_alt),
+                          label: Text('Update'),
+                        ),
+                        NavigationRailDestination(
+                          icon: Icon(Icons.settings_backup_restore),
+                          label: Text('Backup'),
+                        ),
+                        NavigationRailDestination(
+                          icon: Icon(Icons.settings),
+                          label: Text('Settings'),
+                        ),
+                      ],
                     ),
-                    destinations: const [
-                      NavigationRailDestination(
-                        icon: Icon(Icons.link),
-                        label: Text('Connection'),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.device_hub),
-                        label: Text('Devices'),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.system_update_alt),
-                        label: Text('Update'),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.settings_backup_restore),
-                        label: Text('Backup'),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.settings),
-                        label: Text('Settings'),
-                      ),
-                    ],
                   ),
-                ),
-                const VerticalDivider(width: 1),
-                Expanded(child: content),
-              ],
-            ),
+                  const VerticalDivider(width: 1),
+                  Expanded(child: content),
+                ],
+              ),
+      ),
     );
   }
 

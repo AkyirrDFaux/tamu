@@ -2,13 +2,16 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/connection.dart' show ConnectionManager;
 import '../core/register_client.dart';
 import '../core/types.dart';
+import '../core/unsaved_settings.dart';
 import '../core/wifi_settings.dart';
 import '../core/notice.dart';
 import 'block_panel.dart';
 import 'formatters.dart' show kSecretMask;
 import 'theme.dart';
+import 'unsaved_settings_panel.dart';
 import 'widgets.dart';
 
 /// The WiFi panel: the `WiFi Settings` block (BlockType `0x0C`) read and written through the
@@ -20,11 +23,24 @@ import 'widgets.dart';
 /// enumeration ([hasWifiSettingsBlock]), and when it is not there this page renders nothing at
 /// all - no empty card, no "unavailable" message. [WifiPage] is only reached from a device view
 /// that made the same check, so the blank case is the block disappearing under an open page.
+///
+/// `Enabled` and `SSID` are `Persistent`, so a write lands in the device's RAM and only Save All
+/// writes it to the device's backup (E71): the panel records such a write as unsaved
+/// (`core/unsaved_settings.dart`) and clears it only after a Save All that read the value back.
+/// The password lives in NVS and is durable as soon as its trigger has run.
 class WifiPage extends StatefulWidget {
   final int deviceId;
 
   /// Test seam: the refresh paths only run on a live link, which a widget test cannot fake.
   final bool Function()? isConnected;
+
+  /// Notifies when the link comes up or goes away; defaults to the app's connection manager. The
+  /// panel needs the transition to say when a save can no longer be sent, and to offer the
+  /// pending writes back when the link returns.
+  final Listenable? linkChanges;
+
+  /// Test seam: the store the page records unsaved writes into. Defaults to the app's own.
+  final UnsavedSettings? unsaved;
 
   /// Test seam: whether this app's own link to the device is USB. The block refuses a write
   /// that arrived over BLE (firmware `WifiSettingsGlue.h`), so the panel says so up front
@@ -38,6 +54,8 @@ class WifiPage extends StatefulWidget {
     super.key,
     required this.deviceId,
     this.isConnected,
+    this.linkChanges,
+    this.unsaved,
     this.isUsbLink,
     this.clientFactory,
   });
@@ -49,7 +67,9 @@ class WifiPage extends StatefulWidget {
 class _WifiPageState extends State<WifiPage>
     with
         AutoRefreshMixin<WifiPage>,
-        BlockPanelRefresh<WifiPage, WifiSnapshot> {
+        BlockPanelRefresh<WifiPage, WifiSnapshot>,
+        WidgetsBindingObserver,
+        UnsavedSettingsPanel<WifiPage> {
   late final RegisterClient _client =
       (widget.clientFactory ?? (int id) => RegisterClient(deviceId: id))(
         widget.deviceId,
@@ -59,6 +79,33 @@ class _WifiPageState extends State<WifiPage>
   bool _revealPassword = false;
 
   bool get _connected => blockPanelConnected(widget.isConnected);
+
+  /// The app's connection, or null when the page was given its own link state: a test that
+  /// supplies [WifiPage.isConnected] also keeps its fake request channel, because touching the
+  /// singleton would install the real connection over it.
+  ConnectionManager? get _appLink =>
+      widget.isConnected == null ? ConnectionManager.instance : null;
+
+  // The unsaved-writes half ([UnsavedSettingsPanel]).
+
+  @override
+  UnsavedSettings get unsavedStore =>
+      widget.unsaved ?? UnsavedSettings.instance;
+
+  @override
+  int get unsavedDeviceId => widget.deviceId;
+
+  @override
+  RegisterClient get unsavedClient => _client;
+
+  @override
+  bool get unsavedConnected => _connected;
+
+  @override
+  Listenable? get unsavedLink => widget.linkChanges ?? _appLink;
+
+  @override
+  void unsavedLinkRestored() => unawaited(_refresh());
 
   /// True when this app talks to the device over USB, which is the only link the block accepts
   /// a write on.
@@ -96,7 +143,14 @@ class _WifiPageState extends State<WifiPage>
   @override
   void initState() {
     super.initState();
+    unsavedInit();
     _refresh();
+  }
+
+  @override
+  void dispose() {
+    unsavedDispose();
+    super.dispose();
   }
 
   @override
@@ -126,34 +180,33 @@ class _WifiPageState extends State<WifiPage>
     return bytes;
   }
 
-  /// Writes one field and then persists it where the device mirrors it: Enabled and SSID are
-  /// Persistent fields, which the device copies into `.SV` on a Save All (the same button the
-  /// register view uses). The password lives in NVS and is durable as soon as its trigger has
-  /// run.
+  /// Writes one field and reports the outcome in plain words. `Enabled` and `SSID` are
+  /// `Persistent`, which on this firmware means the write lands in RAM and only Save All writes it
+  /// to the device's backup (E71): the panel records it as unsaved and says so. The password lives
+  /// in NVS and is durable as soon as its trigger has run.
   Future<void> _write(int field, List<int> bytes) async {
     if (_busy) return;
     setState(() => _busy = true);
+    final meta = ValueInfo(
+      type: _writeType(field),
+      size: bytes.length,
+      // The field's own flags where the device just reported them (Enabled is Trigger +
+      // Persistent, SSID Persistent), so the write describes the field the way the device's
+      // table does.
+      flags: blockReads[field]?.meta.flags ?? ValueFlags.persistent,
+    );
     final reply = await _client.writeBlockField(
       wifiSettingsBlockTypeValue,
       0,
       field,
       0,
-      ValueInfo(
-        type: _writeType(field),
-        size: bytes.length,
-        // The field's own flags where the device just reported them (Enabled is Trigger +
-        // Persistent, SSID Persistent), so the write describes the field the way the device's
-        // table does.
-        flags: blockReads[field]?.meta.flags ?? ValueFlags.persistent,
-      ),
+      meta,
       bytes,
     );
     final wrote = reply != null;
     // Only a PERSISTENT field is mirrored into `.SV` by a Save All; the password lives in NVS
-    // and is durable as soon as its trigger has run, so a save after it would report a step that
-    // does nothing for this field.
+    // and is durable as soon as its trigger has run.
     final persists = field != wifiFieldPassword;
-    final saved = wrote && persists && await _client.saveAll();
     if (!mounted) return;
     // A typed secret is dropped from the screen the moment it is written; whether the app may
     // show it again is decided by the next read, not by what was typed here.
@@ -161,17 +214,30 @@ class _WifiPageState extends State<WifiPage>
       _busy = false;
       _revealPassword = false;
     });
-    showNotice(
-      !wrote
-          ? (_overUsb
-                ? 'The device refused the write'
-                : 'The device refused the write - WiFi settings can only be changed over USB')
-          : !persists
-          ? 'Password stored on the device'
-          : saved
-          ? 'Saved to the device'
-          : 'Written, but the device did not save it',
-    );
+    if (wrote && persists) {
+      final name = field == wifiFieldEnabled ? 'Enabled' : 'SSID';
+      unsavedMark(
+        PendingSetting(
+          deviceId: widget.deviceId,
+          blockName: blockName,
+          blockType: wifiSettingsBlockTypeValue,
+          inst: 0,
+          field: field,
+          fieldName: name,
+          meta: meta,
+          bytes: List<int>.unmodifiable(bytes),
+        ),
+      );
+      showNotice(unsavedWriteNotice(name), tone: NoticeTone.warning);
+    } else {
+      showNotice(
+        !wrote
+            ? (_overUsb
+                  ? 'The device refused the write'
+                  : 'The device refused the write - WiFi settings can only be changed over USB')
+            : 'Password stored on the device',
+      );
+    }
     await _refresh();
   }
 
@@ -242,6 +308,19 @@ class _WifiPageState extends State<WifiPage>
     return _revealPassword ? snapshot.password : kSecretMask;
   }
 
+  /// Blocks the pop while the device holds writes it has not saved, and asks about them: save, or
+  /// leave knowing a reset brings the old values back (the writes stay recorded, so the next visit
+  /// says so again).
+  Widget _leaveGuard(Widget page) => PopScope(
+    canPop: !unsavedDirty,
+    onPopInvokedWithResult: (didPop, _) async {
+      if (didPop) return;
+      final leave = await unsavedConfirmLeave();
+      if (leave && mounted) Navigator.of(context).pop();
+    },
+    child: page,
+  );
+
   @override
   Widget build(BuildContext context) {
     // The block is missing: draw the panel as nothing at all (not an empty card, not an error).
@@ -250,88 +329,100 @@ class _WifiPageState extends State<WifiPage>
       unavailable: 'WiFi block unavailable',
       reading: 'Reading WiFi settings',
     );
-    if (statePage != null) return statePage;
+    if (statePage != null) return _leaveGuard(statePage);
 
     final snapshot = blockSnapshot!;
 
-    return TamuPage(
-      title: 'WiFi',
-      actions: blockActions,
-      child: ListView(
-        padding: Insets.page,
-        children: [
-          _WifiConditionBanner(snapshot: snapshot),
-          // The device refuses a write that arrived over BLE (firmware WifiSettingsGlue.h), so
-          // say it before the form is filled rather than after a rejected write.
-          if (!_overUsb)
-            ...linkNotice(
-              context,
-              'Changing these settings needs a USB link to the device; over any other link the '
-              'device refuses the write.',
+    final strip = unsavedStrip();
+    final list = ListView(
+      padding: Insets.page,
+      children: [
+        _WifiConditionBanner(snapshot: snapshot),
+        // The device refuses a write that arrived over BLE (firmware WifiSettingsGlue.h), so
+        // say it before the form is filled rather than after a rejected write.
+        if (!_overUsb)
+          ...linkNotice(
+            context,
+            'Changing these settings needs a USB link to the device; over any other link the '
+            'device refuses the write.',
+          ),
+        const SizedBox(height: Spacing.lg),
+        InfoCard(
+          title: 'WiFi Settings',
+          children: [
+            blockPanelSwitch(
+              title: 'Enabled',
+              subtitle: snapshot.enabled
+                  ? 'The radio is used'
+                  : 'The radio is off',
+              value: snapshot.enabled,
+              onChanged: _busy ? null : _setEnabled,
             ),
-          const SizedBox(height: Spacing.lg),
-          InfoCard(
-            title: 'WiFi Settings',
-            children: [
-              blockPanelSwitch(
-                title: 'Enabled',
-                subtitle: snapshot.enabled
-                    ? 'The radio is used'
-                    : 'The radio is off',
-                value: snapshot.enabled,
-                onChanged: _busy ? null : _setEnabled,
+            blockPanelRow(
+              title: 'SSID',
+              subtitle: snapshot.ssid.isEmpty ? 'not set' : snapshot.ssid,
+              trailing: IconButton(
+                tooltip: 'Set the SSID',
+                icon: const Icon(Icons.edit_outlined, size: IconSize.sm),
+                onPressed: _busy ? null : () => _editSsid(snapshot.ssid),
               ),
-              blockPanelRow(
-                title: 'SSID',
-                subtitle: snapshot.ssid.isEmpty ? 'not set' : snapshot.ssid,
-                trailing: IconButton(
-                  tooltip: 'Set the SSID',
-                  icon: const Icon(Icons.edit_outlined, size: IconSize.sm),
-                  onPressed: _busy ? null : () => _editSsid(snapshot.ssid),
-                ),
-              ),
-              blockPanelRow(
-                title: 'Password',
-                subtitle: _passwordText(snapshot),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (snapshot.passwordReadsBack)
-                      IconButton(
-                        tooltip: _revealPassword ? 'Hide' : 'Reveal',
-                        icon: Icon(
-                          _revealPassword
-                              ? Icons.visibility_off_outlined
-                              : Icons.visibility_outlined,
-                          size: IconSize.sm,
-                        ),
-                        onPressed: () =>
-                            setState(() => _revealPassword = !_revealPassword),
-                      ),
+            ),
+            blockPanelRow(
+              title: 'Password',
+              subtitle: _passwordText(snapshot),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (snapshot.passwordReadsBack)
                     IconButton(
-                      tooltip: 'Set the password',
-                      icon: const Icon(Icons.key_outlined, size: IconSize.sm),
-                      onPressed: _busy ? null : _editPassword,
+                      tooltip: _revealPassword ? 'Hide' : 'Reveal',
+                      icon: Icon(
+                        _revealPassword
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        size: IconSize.sm,
+                      ),
+                      onPressed: () =>
+                          setState(() => _revealPassword = !_revealPassword),
                     ),
-                  ],
-                ),
+                  IconButton(
+                    tooltip: 'Set the password',
+                    icon: const Icon(Icons.key_outlined, size: IconSize.sm),
+                    onPressed: _busy ? null : _editPassword,
+                  ),
+                ],
               ),
-              InfoRow('State', wifiStateLabel(snapshot.state), labelWidth: 110),
-              InfoRow(
-                'IP address',
-                snapshot.ip.isEmpty ? '-' : snapshot.ip,
-                labelWidth: 110,
+            ),
+            InfoRow('State', wifiStateLabel(snapshot.state), labelWidth: 110),
+            InfoRow(
+              'IP address',
+              snapshot.ip.isEmpty ? '-' : snapshot.ip,
+              labelWidth: 110,
+            ),
+          ],
+        ),
+        const SizedBox(height: Spacing.lg),
+        Text(
+          'Every value above is the block\'s own: State and the address are computed by the '
+          'device. Enabled and SSID are saved on the device only by Save all - until then a '
+          'reset brings the old values back; the password is stored by the device itself and '
+          'never read back.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ],
+    );
+    return _leaveGuard(
+      TamuPage(
+        title: 'WiFi',
+        actions: blockActions,
+        child: strip == null
+            ? list
+            : Column(
+                children: [
+                  strip,
+                  Expanded(child: list),
+                ],
               ),
-            ],
-          ),
-          const SizedBox(height: Spacing.lg),
-          Text(
-            'Every value above is the block\'s own: State and the address are computed by the '
-            'device. Enabled and SSID are saved on the device after a write so they survive a '
-            'reboot; the password is stored by the device itself and never read back.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ],
       ),
     );
   }
