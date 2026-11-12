@@ -2540,6 +2540,7 @@ Future<List<RestoreFailure>> _persistWrites(
   RestorePlan plan,
   Set<int> deviceIds, {
   RestoreProgressCallback? onProgress,
+  UnsavedSettings? store,
 }) async {
   if (deviceIds.isEmpty) return const <RestoreFailure>[];
   final ids = deviceIds.toList()..sort();
@@ -2559,7 +2560,7 @@ Future<List<RestoreFailure>> _persistWrites(
   final failures = <RestoreFailure>[];
   var done = 0;
   for (final id in ids) {
-    final failure = await _saveOneDevice(plan, id, policy);
+    final failure = await _saveOneDevice(plan, id, policy, store: store);
     if (failure != null) failures.add(failure);
     done++;
     onProgress?.call(
@@ -2579,11 +2580,19 @@ Future<List<RestoreFailure>> _persistWrites(
 /// Returns null when the save was confirmed, and a [RestoreFailure] naming what the node did
 /// otherwise: answered nothing at all (so the save may still be running and was not re-sent), or
 /// answered a light read and then did not answer the re-send either.
+///
+/// A save that lands also **confirms the device's pending settings**: the save this run just sent
+/// is the same CID 5 a settings panel's own "Save all" sends, and the restore writes the same
+/// fields, so a panel's write can be durable now while its entry still says "Not saved". The
+/// read-back is what decides - [confirmPendingSettings] drops only the fields the device holds,
+/// exactly as the register view's button does after its own Save All. A save that failed or timed
+/// out never reaches it, so the entry stays where it is.
 Future<RestoreFailure?> _saveOneDevice(
   RestorePlan plan,
   int id,
-  RestoreSavePolicy policy,
-) async {
+  RestoreSavePolicy policy, {
+  UnsavedSettings? store,
+}) async {
   final client = RegisterClient(deviceId: id);
   client.trace.clear();
   var saved = await client.saveAll(timeout: policy.window);
@@ -2606,7 +2615,11 @@ Future<RestoreFailure?> _saveOneDevice(
           'and it was not re-sent';
     }
   }
-  if (saved) return null;
+  if (saved) {
+    // The save is the panels' save too: confirm the writes they are holding rather than assume.
+    await confirmPendingSettings(client, deviceId: id, store: store);
+    return null;
+  }
   final target = plan.liveDevices
       .where((device) => device.id == id)
       .firstOrNull;
@@ -4278,10 +4291,15 @@ pruneRequesterTable(RestorePlan plan) async {
 /// A run reports each failure as it happens rather than only counting them: a count without a cause
 /// is what Akyirr's card is about, and a truncated list would be the same defect wearing a smaller
 /// number. Nothing is capped, and the successes stay out of the report entirely.
+///
+/// [unsavedStore] is where the settings panels keep the writes they have not saved. The run's final
+/// Save All is the same command their own "Save all" sends, so a save that lands confirms their
+/// entries ([confirmPendingSettings]); the app's singleton is used when none is given.
 Future<RestoreReport> applyRestorePlan(
   RestorePlan plan, {
   RestoreProgressCallback? onProgress,
   bool Function()? isCancelled,
+  UnsavedSettings? unsavedStore,
 }) async {
   // A dynamic block's values can only be written into a block that exists.
   onProgress?.call(
@@ -4763,7 +4781,12 @@ Future<RestoreReport> applyRestorePlan(
   // those bytes sit in RAM, so leaving them unsaved would lose the work the user did allow.
   if (cancelled) {
     reasons.addAll(
-      await _persistWrites(plan, writtenDevices, onProgress: onProgress),
+      await _persistWrites(
+        plan,
+        writtenDevices,
+        onProgress: onProgress,
+        store: unsavedStore,
+      ),
     );
     final stopped = RestoreReport(
       at: DateTime.now(),
@@ -4789,7 +4812,12 @@ Future<RestoreReport> applyRestorePlan(
   // are loaded last, so they read the values the restore has just written. A device whose save
   // never answered is reported, because a restore that stays in RAM is not a restore.
   reasons.addAll(
-    await _persistWrites(plan, writtenDevices, onProgress: onProgress),
+    await _persistWrites(
+      plan,
+      writtenDevices,
+      onProgress: onProgress,
+      store: unsavedStore,
+    ),
   );
   // Then the reload rule: a script this run CHANGED is unloaded and loaded again, because the
   // device runs the image it loaded rather than the file on flash - a restore that only rewrote the

@@ -21,6 +21,7 @@ import 'package:tamuapp/core/diagnostics.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/storage_client.dart';
+import 'package:tamuapp/core/unsaved_settings.dart';
 
 import 'support/fake_bus.dart';
 import 'support/fake_core.dart';
@@ -62,6 +63,14 @@ class _RefusingBus extends FakeBus {
   /// Loaded script slots: slot -> SCR file id.
   final Map<int, int> loaded;
 
+  /// Block fields the device holds, by BlockInfo word (`makeBlockInfo`) -> value bytes.
+  ///
+  /// A read of one of these answers the address, its ValueInfo and the value, which is the shape
+  /// `RegisterClient.readBlockField` decodes; a read of any other address answers bare success,
+  /// i.e. nothing a caller can use. That is what lets a case tell "the app read the panel's field
+  /// back" from "the app assumed it".
+  final Map<int, List<int>> fieldValues = {};
+
   /// The names the device's file table lists.
   final tableNames = <String>[];
 
@@ -95,6 +104,24 @@ class _RefusingBus extends FakeBus {
     if (_refuses(service, functionCid)) return busRefused;
     if (service == ServiceType.register) {
       switch (functionCid) {
+        case RegisterCid.read:
+          final held = payload.length < 4
+              ? null
+              : fieldValues[bytesToInt(payload.sublist(0, 4))];
+          if (held == null) return busAccepted;
+          // The reply a field read gives: the BlockInfo, then its ValueInfo, then the value.
+          return PacketResponse(
+            payload: [
+              ...payload.sublist(0, 4),
+              DataType.bool_.value,
+              0,
+              held.length,
+              ValueFlags.persistent,
+              ...held,
+            ],
+            success: true,
+            fail: false,
+          );
         case RegisterCid.write:
           // An accepted write echoes the address, the ValueInfo and the value.
           return registerWriteEcho(payload);
@@ -316,6 +343,37 @@ RestorePlan _plan({
     },
   );
 }
+
+/// The address of the panel's pending field: the BLE Settings block's own `Enabled`.
+///
+/// The settings panels write a persistent field and hold it in `core/unsaved_settings.dart` until a
+/// Save All confirms it; this is the same write the Bluetooth panel makes.
+int get _enabledAddress => makeBlockInfo(BlockType.bleSettings.value, 0, 0, 0);
+
+PendingSetting _pendingEnabled() => PendingSetting(
+  deviceId: idFromString('1.1')!,
+  blockName: 'Bluetooth',
+  blockType: BlockType.bleSettings.value,
+  inst: 0,
+  field: 0,
+  fieldName: 'Enabled',
+  meta: ValueInfo(type: DataType.bool_.value, size: 1),
+  bytes: const [1],
+);
+
+/// How many times the run READ the panel's field: a field read's payload is its 4-byte BlockInfo.
+///
+/// This is the difference between "the app read the field back" and "the app assumed it", which is
+/// the whole point of the confirmation.
+int _readsOf(_RefusingBus bus, int address) => bus.sent
+    .where(
+      (r) =>
+          r.service == ServiceType.register &&
+          r.cid == RegisterCid.read &&
+          r.payload.length == 4 &&
+          bytesToInt(r.payload) == address,
+    )
+    .length;
 
 void main() {
   tearDown(RestoreSession.clear);
@@ -618,6 +676,70 @@ void main() {
       );
     },
   );
+
+  test('a Save All that lands confirms the panel\'s pending write', () async {
+    // The run's own Save All is the same CID 5 a settings panel's "Save all" sends, and the
+    // restore writes the same fields - so the panel's write can be durable now while its entry
+    // still says "Not saved". The run confirms it the way the register view's button does: the
+    // field is READ BACK, and the entry leaves the store only because the device holds it.
+    final bus = _RefusingBus()..fieldValues[_enabledAddress] = const [1];
+    installRequestChannel(bus);
+    addTearDown(() => installRequestChannel(null));
+    final store = UnsavedSettings.forTest()..mark(_pendingEnabled());
+    final device = idFromString('1.1')!;
+
+    final report = await applyRestorePlan(_plan(), unsavedStore: store);
+
+    expect(
+      report.reasons.where((r) => r.kindWord == 'save all'),
+      isEmpty,
+      reason: report.failures.join(' | '),
+    );
+    expect(
+      store.isDirty(device),
+      isFalse,
+      reason: 'the save made it durable: ${store.describe(device)}',
+    );
+    expect(store.of(device), isEmpty);
+    expect(_readsOf(bus, _enabledAddress), 1);
+  });
+
+  test('a refused Save All keeps the panel\'s write in place', () async {
+    // A save that does not land is not a save: the entry must survive it, and the run must not
+    // read the field back at all (the confirmation is not a guess that the write stuck).
+    final bus = _RefusingBus()
+      ..refuse.add('register/5')
+      ..fieldValues[_enabledAddress] = const [1];
+    installRequestChannel(bus);
+    addTearDown(() => installRequestChannel(null));
+    installFastSavePolicy();
+    final store = UnsavedSettings.forTest()..mark(_pendingEnabled());
+    final device = idFromString('1.1')!;
+
+    final report = await applyRestorePlan(_plan(), unsavedStore: store);
+
+    expect(report.reasons.where((r) => r.kindWord == 'save all'), hasLength(1));
+    expect(store.isDirty(device), isTrue);
+    expect(store.describe(device), 'Enabled');
+    expect(_readsOf(bus, _enabledAddress), 0);
+  });
+
+  test('a landed save whose field reads back different keeps the entry', () async {
+    // Save All answered, but the device holds another value for the panel's field: the entry is
+    // exactly the thing that must not be dropped, because the value it names is not on the device.
+    final bus = _RefusingBus()..fieldValues[_enabledAddress] = const [0];
+    installRequestChannel(bus);
+    addTearDown(() => installRequestChannel(null));
+    final store = UnsavedSettings.forTest()..mark(_pendingEnabled());
+    final device = idFromString('1.1')!;
+
+    final report = await applyRestorePlan(_plan(), unsavedStore: store);
+
+    expect(report.reasons.where((r) => r.kindWord == 'save all'), isEmpty);
+    expect(store.isDirty(device), isTrue);
+    expect(store.describe(device), 'Enabled');
+    expect(_readsOf(bus, _enabledAddress), 1);
+  });
 
   test('a run with no failures reports none - the control case', () async {
     final bus = _RefusingBus();

@@ -35,6 +35,7 @@ import 'storage_client.dart';
 import 'subscription_client.dart';
 import 'system_schema.dart';
 import 'types.dart';
+import 'unsaved_settings.dart';
 
 part 'backup_capture.dart'; // capture a device into the semantic backup model
 part 'backup_failure.dart'; // why a restore item failed, and the run's report
