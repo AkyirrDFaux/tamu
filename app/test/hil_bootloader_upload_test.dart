@@ -85,14 +85,9 @@ void main() {
 
     // ignore: avoid_print
     print(
-      'RESULT verified=${result.verified} passes=${result.passes} '
+      'RESULT readBacks=${result.readBacks} '
       'corrections=${result.corrections} writes=${result.writes} '
       'reads=${result.reads}',
-    );
-    expect(
-      result.verified,
-      isTrue,
-      reason: 'read-back verification did not converge',
     );
   }, timeout: Timeout.none);
 }

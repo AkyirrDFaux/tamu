@@ -1986,3 +1986,11 @@ resize 92 B + in-place write       ok, append 3 -> 4 (+1)   content: CORRUPT fir
 ```
 
 **What the app does today.** `StorageClient.writeFile` has one path - temp file, write, rename over the target - at +2 records per write, and `resizeFile` is left documented and uncalled with the reason on its doc comment. **What would make the ruling implementable** is a firmware command the app does not have: erase the file's existing data area (a replace-in-place / erase-then-write CID 3 variant), or an erase on the first fragment of a stream that targets an existing file. That is a firmware decision, not an app workaround, so it is recorded here rather than implemented.
+
+## Docs: the update page no longer corrects "until verified" (2026-11-12, card t_4e5dadd6)
+
+**A doc/code conflict, reported not edited.** `Docs/App/Update.md:5-7` still describes the old flash loop: "Tap Update; writes are broadcast on the core's bus and each is acknowledged (the write response returns the offset of the last successfully written chunk), then the image is read back and corrected until verified." Akyirr reported exactly that loop ("the upload tool seems to make it worse increasingly with each verification pass"), and the card removed it: the read-back is read-only, a chunk the write pass acknowledged is never rewritten (the run reports it and stops), and the only correction is one round for chunks whose acknowledgement never named them. Proposed replacement for that bullet:
+
+> - Tap Update; writes are broadcast on the core's bus and each is acknowledged (the write response returns the offset of the last successfully written chunk). The image is then read back once: a chunk that does not read back as written stops the run with its count and offsets instead of being rewritten, and a run that stops leaves the target in its bootloader, where only a power cycle gets it out.
+
+Nothing else in `Docs/App/Update.md` moved: the phase row (`Writing / Verifying / Correcting / Done`) and the "verified/corrections result" are still what the page shows. `Docs/Services/Bootloader.md:7` ("Final verification of the image remains the app's responsibility, via read requests") is unchanged and still true.

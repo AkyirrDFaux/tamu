@@ -212,23 +212,18 @@ class _UpdatePageState extends State<UpdatePage> {
         },
       );
       setState(() => _result = result);
-      if (result.verified) {
-        _addLog(
-          'Verified in ${result.passes} pass(es), '
-          '${result.corrections} correction(s). '
-          'Reset/power-cycle the device to run the new firmware.',
-        );
-      } else {
-        _addLog(
-          'Not verified after ${result.passes} passes '
-          '(${result.corrections} corrections). Check the link and retry.',
-        );
-      }
+      _addLog(
+        'Verified: ${result.readBacks} read-back(s), '
+        '${result.corrections} correction(s). '
+        'Power-cycle the device to run the new firmware.',
+      );
     } on FlashAborted catch (aborted) {
-      // Cancelled, past its deadline, or a chunk the node never took: the device holds a partial
-      // image, so this is a failure to show, not a result to interpret.
-      _addLog('Update stopped: ${aborted.message}.');
-      _addLog('A partial image is safe to retry from the start.');
+      // Cancelled, past its deadline, or one of the three device faults (node silent, write
+      // refused, image does not read back). Every one of them leaves the node in bootloader mode,
+      // where it waits for a power cycle - no packet can reset it - so the stop says both what
+      // happened and what the user has to do, and the two sentences differ per fault.
+      _addLog('Update stopped (${aborted.fault.label}): ${aborted.message}.');
+      _addLog(aborted.remedy);
     } catch (error) {
       _addLog('Update failed: $error');
     } finally {
@@ -249,7 +244,7 @@ class _UpdatePageState extends State<UpdatePage> {
 
   String _phaseLabel(FlashProgress p) => switch (p.phase) {
     FlashPhase.writing => 'Writing',
-    FlashPhase.verifying => 'Verifying (pass ${p.round})',
+    FlashPhase.verifying => 'Verifying (read-back)',
     FlashPhase.correcting => 'Correcting',
     FlashPhase.done => 'Done',
   };
@@ -295,13 +290,16 @@ class _UpdatePageState extends State<UpdatePage> {
       ),
       _bullet(
         context,
-        'Tap Update. Writes are acknowledged by the target (it reports the last '
-        'successfully written chunk), then read back and corrected until verified.',
+        'Tap Update. Every write is acknowledged by the target (it reports the '
+        'last successfully written chunk), then the image is read back once. A '
+        'chunk that does not read back stops the run - the log names the count, '
+        'the offsets and what to do.',
       ),
       _bullet(
         context,
-        'Reset/power-cycle the device to run the new firmware. A failed or '
-        'interrupted update is safe to retry.',
+        'Power-cycle the device to run the new firmware. A failed update leaves '
+        'it in its bootloader, which only a power cycle leaves; retrying after '
+        'that is safe.',
       ),
     ],
   );
@@ -396,7 +394,7 @@ class _UpdatePageState extends State<UpdatePage> {
               p == null
                   ? 'Starting...'
                   : '${_phaseLabel(p)}  ${p.completed}/${p.total}'
-                        '${p.mismatches > 0 ? '  ·  ${p.mismatches} to correct' : ''}',
+                        '${p.mismatches > 0 ? '  ·  ${p.mismatches} chunk(s) differ' : ''}',
             ),
           ),
         ],
@@ -405,20 +403,16 @@ class _UpdatePageState extends State<UpdatePage> {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: Row(
               children: [
-                Icon(
-                  result.verified ? Icons.check_circle : Icons.error,
-                  color: result.verified
-                      ? Colors.greenAccent
-                      : Colors.redAccent,
+                const Icon(
+                  Icons.check_circle,
+                  color: Colors.greenAccent,
                   size: 18,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    result.verified
-                        ? 'Verified: ${result.passes} pass(es), '
-                              '${result.corrections} correction(s)'
-                        : 'Not verified after ${result.passes} passes',
+                    'Verified: ${result.readBacks} read-back(s), '
+                    '${result.corrections} correction(s)',
                   ),
                 ),
               ],

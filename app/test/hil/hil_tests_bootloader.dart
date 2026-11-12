@@ -169,19 +169,14 @@ final List<HilTest> bootloaderTests = <HilTest>[
             }
           },
         );
-        expect(
-          result.verified,
-          isTrue,
-          reason:
-              'the device image not verified after ${result.passes} '
-              'passes (${result.corrections} corrections)',
-        );
+        // flash() returns only once one read-back confirmed every chunk; a chunk that does not
+        // read back throws FlashAborted instead, which fails this test with its own sentence.
         expect(phases, contains(FlashPhase.writing));
         expect(phases, contains(FlashPhase.verifying));
         expect(phases.last, FlashPhase.done);
         ctx.note(
           'the device: rewrote ${image.length} bytes, '
-          'passes=${result.passes} corrections=${result.corrections} '
+          'readBacks=${result.readBacks} corrections=${result.corrections} '
           'writes=${result.writes} reads=${result.reads}',
         );
       }

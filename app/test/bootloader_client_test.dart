@@ -1,94 +1,18 @@
-import 'dart:typed_data';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/bootloader.dart';
 import 'package:tamuapp/core/bootloader_client.dart';
-import 'package:tamuapp/core/transport.dart';
 
-/// In-memory bootloader channel: records written chunks, tracks the device's last-written
-/// offset, and can simulate a rejected write (direct-USB style: a stale write-response offset),
-/// a dropped write (passthrough style: ACKed but never programmed), a read timeout, a
-/// permanently unreachable node, and an identify reply.
-class FakeTransport implements BootloaderTransport {
-  final Map<int, Uint8List> flash = {};
-  final Set<int> rejectOnce = {};
-  final Set<int> dropOnce = {};
-  final Set<int> timeoutOnce = {};
-  bool alwaysNullRead = false;
+import 'support/bootloader_transport.dart';
 
-  /// True to refuse every write the way a node that has left bootloader mode does: a FAIL with a
-  /// stale last-written offset, for every chunk and every attempt.
-  bool alwaysReject = false;
-
-  /// True to mirror the passthrough: writes are ACKed with a success flag but no last-written
-  /// offset, so the client cannot reconcile per chunk and the verify pass must catch a drop.
-  bool nullOffsetAcks = false;
-
-  BootloaderIdentity? identity;
-  int writes = 0, reads = 0;
-  int _last = Bootloader.nothingWritten;
-
-  @override
-  Future<WriteAck> writeChunk(
-    int offset,
-    List<int> data,
-    Duration timeout,
-  ) async {
-    writes++;
-    if (alwaysReject) {
-      return nullOffsetAcks
-          ? const WriteAck(false)
-          : WriteAck(false, lastWrittenOffset: _last);
-    }
-    // A rejected write is acknowledged with the device's (stale) last-written offset.
-    if (rejectOnce.remove(offset)) {
-      return nullOffsetAcks
-          ? const WriteAck(false)
-          : WriteAck(false, lastWrittenOffset: _last);
-    }
-    // A dropped write is acknowledged by the core but never reaches the node.
-    if (dropOnce.remove(offset)) {
-      return nullOffsetAcks
-          ? const WriteAck(true)
-          : WriteAck(false, lastWrittenOffset: _last);
-    }
-    flash[offset] = Uint8List.fromList(data);
-    _last = offset;
-    return nullOffsetAcks
-        ? const WriteAck(true)
-        : WriteAck(true, lastWrittenOffset: offset);
-  }
-
-  @override
-  Future<Uint8List?> readChunk(int offset, Duration timeout) async {
-    reads++;
-    if (timeoutOnce.remove(offset)) {
-      throw const TransportException('timeout');
-    }
-    if (alwaysNullRead) return null;
-    return flash[offset] ??
-        (Uint8List(Bootloader.payloadSize)
-          ..fillRange(0, Bootloader.payloadSize, 0xFF));
-  }
-
-  @override
-  Future<BootloaderIdentity?> identify(Duration timeout) async => identity;
-}
-
-Uint8List _image(int length) =>
-    Uint8List.fromList(List.generate(length, (i) => i & 0xFF));
-
-BootloaderClient _client(FakeTransport t) =>
+BootloaderClient _client(FakeBootloaderTransport t) =>
     BootloaderClient(transport: t, writePacing: Duration.zero);
 
 void main() {
-  test('a clean write verifies in one pass with no corrections', () async {
-    final t = FakeTransport();
-    final image = _image(100);
-    final result = await _client(t).flash(image);
+  test('a clean write is confirmed by one read-back, no corrections', () async {
+    final t = FakeBootloaderTransport();
+    final result = await _client(t).flash(testImage(100));
 
-    expect(result.verified, isTrue);
-    expect(result.passes, 1);
+    expect(result.readBacks, 1);
     expect(result.corrections, 0);
     // 100 bytes -> 4 chunks (the tail padded).
     expect(result.writes, 4);
@@ -99,59 +23,138 @@ void main() {
     'the write response lets a rejected chunk be retried immediately',
     () async {
       // A rejected write is reported with a stale last-written offset, so the client retries it
-      // inside the write loop instead of waiting for the verify pass.
-      final t = FakeTransport()..rejectOnce.add(64);
-      final result = await _client(t).flash(_image(100));
+      // inside the write loop instead of waiting for the read-back.
+      final t = FakeBootloaderTransport()..rejectOnce.add(64);
+      final result = await _client(t).flash(testImage(100));
 
-      expect(result.verified, isTrue);
+      expect(result.readBacks, 1);
       expect(result.corrections, 0);
-      expect(result.passes, 1);
       // 4 chunks issued, plus one retry of the rejected chunk.
       expect(t.writes, 5);
       expect(t.flash[64], isNotNull);
     },
   );
 
-  test('the passthrough catches a dropped write in the verify pass', () async {
-    // The passthrough ACKs without a last-written offset, so a dropped write only shows up as
-    // a read mismatch and is corrected.
-    final t = FakeTransport()
+  test('a dropped write the channel did not confirm is rewritten once', () async {
+    // The passthrough ACKs without a last-written offset, so a dropped write only shows up as a
+    // read-back mismatch - and only that kind of chunk may be rewritten.
+    final t = FakeBootloaderTransport()
       ..nullOffsetAcks = true
       ..dropOnce.addAll({0, 64});
-    final result = await _client(t).flash(_image(100));
+    final result = await _client(t).flash(testImage(100));
 
-    expect(result.verified, isTrue);
+    expect(result.readBacks, 2, reason: 'the faults plus one re-read of them');
     expect(result.corrections, 2);
-    expect(result.passes, 2);
+    expect(t.writes, 6, reason: '4 chunks written, 2 of them rewritten once');
+    expect(t.reads, 6, reason: '4 chunks read back, then the 2 corrected ones');
   });
 
   test('a read timeout is retried, not treated as a mismatch', () async {
-    final t = FakeTransport()..timeoutOnce.add(32);
-    final result = await _client(t).flash(_image(100));
+    final t = FakeBootloaderTransport()..timeoutOnce.add(32);
+    final result = await _client(t).flash(testImage(100));
 
-    expect(result.verified, isTrue);
     expect(result.corrections, 0);
-    // The timed-out chunk was re-read by the transport within the same pass.
+    // The timed-out chunk was re-read by the transport within the same read-back.
     expect(t.reads, greaterThan(t.writes));
   });
 
+  group('a verification read is read-only and never repeats', () {
+    // The card's case: the transport acknowledges every write (with the chunk's own offset) but
+    // returns wrong data on read. The old loop read the image back, rewrote every chunk that did
+    // not match and verified again, up to 20 passes. The run must now stop after the first
+    // read-back, having written the image exactly once.
+    test('an acknowledged chunk that reads back wrong stops the run', () async {
+      final t = FakeBootloaderTransport()..corruptAll = true;
+      const total = 4; // 100 bytes at the 32-byte payload
+
+      await expectLater(
+        _client(t).flash(testImage(100)),
+        throwsA(
+          isA<FlashAborted>()
+              .having((a) => a.fault, 'fault', FlashFault.verifyMismatch)
+              .having((a) => a.fault.label, 'label', 'image does not read back')
+              .having((a) => a.mismatches?.count, 'count', total)
+              .having((a) => a.mismatches?.confirmed, 'confirmed', total)
+              .having((a) => a.mismatches?.unconfirmed, 'unconfirmed', 0)
+              .having(
+                (a) => a.mismatches?.summary,
+                'summary',
+                allOf(
+                  contains('$total of $total chunks differ'),
+                  contains('first: 0x0 (byte 0: wrote 0x00, read 0xff)'),
+                ),
+              )
+              .having(
+                (a) => a.message,
+                'message',
+                contains('acknowledged $total of the differing chunks'),
+              )
+              .having((a) => a.remedy, 'remedy', contains('Power-cycle')),
+        ),
+      );
+      expect(
+        t.writes,
+        total,
+        reason:
+            'the image written exactly once: a chunk the device confirmed is not '
+            'rewritten while it is failing to hold the data',
+      );
+      expect(t.reads, total, reason: 'one read-back of the image, then stop');
+    });
+
+    test('wrong and unconfirmed everywhere: one correction, then stop', () async {
+      // Every write is ACKed without an offset and every read comes back wrong, so every chunk is
+      // a correction candidate. The old bound was 20 read-verify-correct passes; the run gets one
+      // correction round and one re-read, then aborts.
+      final t = FakeBootloaderTransport()
+        ..nullOffsetAcks = true
+        ..corruptAll = true;
+      const total = 4;
+
+      await expectLater(
+        _client(t).flash(testImage(100)),
+        throwsA(
+          isA<FlashAborted>()
+              .having((a) => a.fault, 'fault', FlashFault.verifyMismatch)
+              .having(
+                (a) => a.message,
+                'message',
+                contains('corrected chunk still does not read back'),
+              ),
+        ),
+      );
+      expect(
+        t.writes,
+        total * 2,
+        reason: 'one write pass, one correction round',
+      );
+      expect(
+        t.reads,
+        total + 1,
+        reason:
+            'one read-back, then the re-read stops at the first chunk still '
+            'wrong',
+      );
+    });
+  });
+
   group('a flash that cannot finish stops in bounded time', () {
-    // The card's case: the node leaves bootloader mode after identify() succeeded, so every
-    // write (or every read) goes nowhere. The pass used to walk all 13,500 chunks and then
-    // repeat it up to 20 times, because the write result was discarded and a null read only
-    // counted as "retry next pass". It now stops at the first chunk that does not land.
+    // A node that leaves bootloader mode after identify() succeeded: every write (or every read)
+    // goes nowhere. The pass used to walk all 13,500 chunks and then repeat it up to 20 times.
     const chunks = 100; // 3,200 bytes: the same shapes, a test-sized walk
 
     test('the first write the node never takes ends the write pass', () async {
-      final t = FakeTransport()..alwaysReject = true;
+      final t = FakeBootloaderTransport()..alwaysReject = true;
 
       await expectLater(
-        _client(t).flash(_image(chunks * Bootloader.payloadSize)),
+        _client(t).flash(testImage(chunks * Bootloader.payloadSize)),
         throwsA(
           isA<FlashAborted>()
+              .having((a) => a.fault, 'fault', FlashFault.writeRefused)
               .having((a) => a.chunk, 'chunk', 1)
               .having((a) => a.total, 'total', chunks)
-              .having((a) => a.message, 'message', contains('never confirmed')),
+              .having((a) => a.message, 'message', contains('never confirmed'))
+              .having((a) => a.remedy, 'remedy', contains('Power-cycle')),
         ),
       );
       expect(
@@ -159,65 +162,67 @@ void main() {
         3,
         reason: 'three attempts on ONE chunk, not one attempt on every chunk',
       );
+      expect(t.reads, 0, reason: 'there is nothing to read back');
     });
 
-    test('a node that stops answering ends the verify pass', () async {
-      final t = FakeTransport()..alwaysNullRead = true;
+    test('a node that stops answering ends the read-back pass', () async {
+      final t = FakeBootloaderTransport()..alwaysNullRead = true;
 
       await expectLater(
-        _client(t).flash(_image(chunks * Bootloader.payloadSize)),
+        _client(t).flash(testImage(chunks * Bootloader.payloadSize)),
         throwsA(
           isA<FlashAborted>()
+              .having((a) => a.fault, 'fault', FlashFault.nodeSilent)
               .having((a) => a.chunk, 'chunk', 1)
               .having(
                 (a) => a.message,
                 'message',
                 contains('stopped answering'),
-              ),
+              )
+              .having((a) => a.remedy, 'remedy', contains('Power-cycle')),
         ),
       );
       expect(
         t.reads,
         5,
         reason:
-            'the first chunk\'s five read attempts, then stop - not 100 chunks '
+            "the first chunk's five read attempts, then stop - not 100 chunks "
             'x 20 passes',
       );
       expect(t.writes, chunks, reason: 'the write pass had already run');
     });
 
     test('the deadline stops a run before its first chunk', () async {
-      final t = FakeTransport();
+      final t = FakeBootloaderTransport();
 
       await expectLater(
         _client(t).flash(
-          _image(chunks * Bootloader.payloadSize),
+          testImage(chunks * Bootloader.payloadSize),
           // An already-expired deadline is what a test can do to prove the check runs at all;
           // the real one is BootloaderClient.flashDeadline.
           deadline: const Duration(milliseconds: -1),
         ),
         throwsA(
-          isA<FlashAborted>().having(
-            (a) => a.message,
-            'message',
-            contains('deadline'),
-          ),
+          isA<FlashAborted>()
+              .having((a) => a.fault, 'fault', FlashFault.deadline)
+              .having((a) => a.message, 'message', contains('deadline')),
         ),
       );
       expect(t.writes, 0);
     });
 
     test('the user can cancel between chunks', () async {
-      final t = FakeTransport();
+      final t = FakeBootloaderTransport();
 
       await expectLater(
         _client(t).flash(
-          _image(chunks * Bootloader.payloadSize),
+          testImage(chunks * Bootloader.payloadSize),
           // Two chunks land, then the flag goes up.
           isCancelled: () => t.writes >= 2,
         ),
         throwsA(
           isA<FlashAborted>()
+              .having((a) => a.fault, 'fault', FlashFault.cancelled)
               .having((a) => a.message, 'message', contains('cancelled'))
               .having((a) => a.chunk, 'chunk', 3),
         ),
@@ -242,7 +247,7 @@ void main() {
   });
 
   test('identify exposes the app size and name', () async {
-    final t = FakeTransport()
+    final t = FakeBootloaderTransport()
       ..identity = const BootloaderIdentity(
         appSize: 0x2A0000,
         name: 'Tamu v2.0A',
@@ -255,23 +260,23 @@ void main() {
   });
 
   test('identify returns null when the device does not answer', () async {
-    final t = FakeTransport();
+    final t = FakeBootloaderTransport();
     expect(await _client(t).identify(), isNull);
   });
 
   test(
     'an image larger than the device app space is refused before writing',
     () async {
-      final t = FakeTransport();
+      final t = FakeBootloaderTransport();
       await expectLater(
-        _client(t).flash(_image(100), maxImageSize: 64),
+        _client(t).flash(testImage(100), maxImageSize: 64),
         throwsA(isA<ArgumentError>()),
       );
       expect(t.writes, 0); // nothing was written
 
       // The same image fits when the app space is large enough.
-      final ok = await _client(t).flash(_image(100), maxImageSize: 100);
-      expect(ok.verified, isTrue);
+      final ok = await _client(t).flash(testImage(100), maxImageSize: 100);
+      expect(ok.readBacks, 1);
     },
   );
 
