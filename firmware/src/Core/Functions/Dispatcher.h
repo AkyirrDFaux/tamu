@@ -67,7 +67,8 @@ void DispatchPacket(const PacketFrame &Frame)
         // 040x/1 Change that is still owed its answer, and closing the slot on that push would put
         // the next frame on the wire on top of the Change's real answer.
         if (Frame.IdSrc != DeviceStatus.ShortAddress)
-            AppBusForwardSawReply(Frame.Trid, Frame.Cmd, Frame.IdSrc, PayloadBytes(Frame));
+            AppBusForwardSawReply(Frame.Trid, Frame.Cmd, Frame.IdSrc, PayloadBytes(Frame),
+                                  Frame.Flags);
 #endif
         // Only the gated routing blocks below read this, so declare it under the same guard;
         // a target with none of them enabled (a DAS node) must not carry an unused local.

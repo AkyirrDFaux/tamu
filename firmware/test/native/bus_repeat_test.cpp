@@ -289,16 +289,55 @@ static void TestBackoffSeparates()
     };
     CHECK(OldLockstep(1, 9));      // the defect, in the formula that shipped in 52c07aa
     CHECK(NewSeparates(1, 9));     // ... and gone in the address-phase fold
-    // The core (1) against every plausible node number. Node 32 is the ONE skipped case and it is
-    // the documented residual: 1 ^ 32 == 33 is the smallest degenerate difference, so that pair is
-    // still separated only to the extent the two PRNG states differ.
+    // The core (1) against every plausible node number. Every node in 2..33 separates EXCEPT node
+    // 32, and that exception is not skipped any more (card t_e707d153, E80): the pair is the
+    // smallest member of the fold's kernel, the one address class neither this helper nor any other
+    // 5-bit phase can separate, so the test names it and measures what it costs instead of leaving
+    // a silent gap that reads like "no such pair exists".
+    unsigned SeparatedNear = 0, DegenerateNear = 0;
     for (uint16_t B = 2; B <= 33; B++)
     {
-        if (B == 32)
-            continue;
-        CHECK(NewSeparates(1, B));
+        if (NewSeparates(1, B))
+            SeparatedNear++;
+        else
+            DegenerateNear++;
     }
+    CHECK_EQ(SeparatedNear, 31);
+    CHECK_EQ(DegenerateNear, 1); // node 32 only: 1 ^ 32 == 33 is the smallest kernel member
+    CHECK(!NewSeparates(1, 32)); // ... and the class is asserted, not skipped
+
+    // The class is the ADDRESSES, not the low bits: 0.3 and 0.34 differ in their low 5 bits
+    // (3 & 31 == 3, 34 & 31 == 2) and still collide, because 3 ^ 34 == 33. The earlier wording
+    // ("two nodes whose addresses differ in the low 5 bits never draw the same delay") claimed the
+    // opposite, which is why the guarantee is stated as an XOR difference in Bus.h.
+    CHECK(!NewSeparates(3, 34));
+    CHECK(!NewSeparates(2, 35));
+    CHECK(NewSeparates(3, 33));  // one 32-address block: every pair inside it separates
+    CHECK(NewSeparates(3, 35));
+
+    // What the class costs when the two PRNG states differ: the pair is separated by the DRAW
+    // alone - 1 collision in 32 slot draws - measured here from two independent 32-bit streams.
+    unsigned SameSlot = 0, Draws = 0;
+    uint32_t StateA = 0x12345678u, StateB = 0xCAFEBABEu;
+    for (uint8_t Attempt = 0; Attempt < RS485_RETRIES; Attempt++)
+        for (int i = 0; i < 2048; i++)
+        {
+            StateA = StateA * 1664525u + 1013904223u; // two different streams: same kernel phase
+            StateB = StateB * 22695477u + 1u;
+            Draws++;
+            if (RS485BackoffMs(1, Attempt, StateA) == RS485BackoffMs(32, Attempt, StateB))
+                SameSlot++;
+        }
+    std::printf("  backoff, kernel class (node 1 vs 32): separated by the draw in %u of %u pair-draws "
+                "(%.1f %% collide, the 32-slot grid), never by the phase\n", Draws - SameSlot, Draws,
+                100.0 * (double)SameSlot / (double)Draws);
+    std::printf("  backoff, kernel class: the phase gives the pair the same slot for every draw of "
+                "one PRNG state (that is the class)\n");
+    CHECK(SameSlot * 10 <= Draws);  // under 10 %: the grid, not a lockstep
+    CHECK(SameSlot * 100 >= Draws); // ... and at least 1 %: the class is real, not invisible
+
     CHECK(OldLockstep(1, 33)); // the old mod-8 group locked a pair 32 apart as well
+
 
     // Nodes draw from their OWN PRNG state, so a pair can land on the same step by chance: 1 draw
     // in 32 for two independent draws over the 32 slots. Measured here, asserted under 5 %.

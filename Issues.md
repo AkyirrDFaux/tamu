@@ -632,6 +632,52 @@ are hardware-only.
   for the bus, and has no room for a keep ring), and a DAS still answers the `Script` service with
   silence instead of `FLAG_FAIL` (the other half above) - the relay's retry covers app writes, not
   the read-back's script reads, which is what the app-side capability gate removed.
+  *(2026-11-13, card `t_e707d153` - **the loss is now NAMED by the core, and the four candidates are
+  separated by measurement on the rig.** Rig: core `2026.11.12` iter 10 (nothing flashed), 0.2
+  `2026.11.12` iter 7, and **0.3/0.4 answering nothing at all** (5 Register reads each, bootloader
+  identify included: all silent - they stay that way through every measurement below and are the
+  card's blocker). New in the firmware (built, native-guarded, **not yet on the rig**): every
+  app-forwarded `Register` CID 3 write gets one record that names WHY it went unanswered -
+  `refused` (a `FLAG_FAIL` answer), `notsent` (the send never completed), `keepdrop` (the keep ring
+  refused bytes inside the window, E82), `late` (the answer arrived after the window), `silent`/
+  `stray` (nothing / other traffic) - printed as `BUSGATE: appwrite writes= answered= refused=
+  lost= repaired=` plus `appwrite cause silent= late= keepdrop= notsent= stray=` plus one
+  `appwrite tgt= trid= cause= sends= rx= drops= rej= asm= late=` line per lost write
+  (`Core/Functions/AppInterface.h`, pinned by `test/native/bus_retry_guard.sh` section 9, RED
+  against six mutants). The cause is decided keepdrop -> notsent -> silent -> stray, so `silent`
+  means "the line was clean and the send completed" and nothing else.
+  **What the flashed image measures** (`late=0`, `rxdestroyed=0`, `keep dropped=0`,
+  `sendfails=0` over the runs below): of the four candidates, **the answer never arriving (the node
+  never acted) is the only one that occurs**. A kept-answer loss is excluded by `keep dropped=0`
+  (`keep kept=4370 received=219148`), a gate-window loss by `late=0` over 2921 forwards (the window
+  is 600 ms against a 12-14 ms answer), the node's refusal by 60 value-changing writes answering
+  `ok=60 refused=0`, and a send that never left by `sendfails=0`. That is the E59 node-side RX loss
+  of the entry above, and it needs the node's own counter - which the DAS cannot carry (2048/2048 B
+  of RAM).
+  **The `Meas2` asymmetry does NOT reproduce as an instance property.** Meas1 (#0) and Meas2 (#1)
+  of the same `ResistiveMeasure` block, same field (Filter Coefficient), same single-shot write,
+  alternating values (Q16.16) so every write must change the stored value, 300 writes each,
+  interleaved: `Meas1: writes=300 answered=299 silent=1 repaired=22 (1 re-send 18, 2 4)`;
+  `Meas2: writes=300 answered=300 silent=0 repaired=20 (1 re-send 14, 2 6)`; median answer 14 ms
+  for both. **The loss rate is the same on both instances** (23/300 = 7.7 % vs 20/300 = 6.7 %), so
+  "always `Meas2`" inside a restore is a property of the restore's traffic mix and of how few writes
+  fail per run (1-2 of 131), not of the instance: a restore's failures are whichever writes happened
+  to lose both re-sends. The single unanswered write read back **STALE** (field still held the old
+  value), the same discriminator as the attribution above.
+  **Ten restore-shaped passes** (node 0.2 only; 80 writes per pass, 40 value-changing to each
+  instance): `pass 1..10 written=80,78,78,78,78,78,78,78,78,77 skipped=0,2,2,2,2,2,2,2,2,3 failed=0
+  throughout repaired=1,3,6,9,3,5,3,4,4,7`, `TOTAL written=781 skipped=19 failed=0 repaired=45
+  (5.8 %) reads_lost=18 latency ms min/med/p90/max=12/14/15/1223`. The repair still finishes inside
+  the app's 3 s timeout every time (worst 1223 ms = two re-sends; one re-send 614-662 ms), which is
+  the E79 fix's guarantee intact. The core's own counter agrees: `retries=68 -> 118` across the run
+  (50 re-sends for 45 repaired writes - five of them needed both), with `total forwards=2921
+  replies=2540 expired=346 late=0 clash=36 lost=0`.
+  **Still open, and why:** the card's 10-consecutive-*restore* acceptance needs the app's
+  `tool/upload_setup.dart` against three DAS (a setup upload is the SETUP worker's, per the owner's
+  2026-10-21 note), and 0.3/0.4 answer nothing, so it could not be run; and the new counters above
+  need the built image flashed, which needs Akyirr's authorization. The recipe for both is in the
+  card's handoff.*)
+
 
 - **E80 The retry backoff still has one address class that cannot be separated** (card `t_d7802076`,
   2026-11-10, host-verified only - no rig run in that card). The delay is now `2 + (phase ^ draw) ms`
@@ -646,6 +692,28 @@ are hardware-only.
   stays 0 until the discover loop answers (`Devices/DAS_v0.1/Main.h:162-207`), i.e. after the first
   backoff a registering node draws. Not measured on the rig: an in-phase pair is a bench injection the
   `t_e8ddb64a` card's collision test does not stage.
+  *(2026-11-13, card `t_e707d153` - **CLOSED: the class is named, and the claim around it is
+  corrected rather than kept.** Two things were wrong. (1) The guarantee as written was false: it is
+  not "addresses that differ in the low 5 bits" that separate, it is XOR differences 1..32 -
+  0.3 against 0.34 differ in the low bits (`3 & 31 = 3`, `34 & 31 = 2`) and collide anyway
+  (`3 ^ 34 = 33`), and the native test measured both (`CHECK(!NewSeparates(3, 34))`,
+  `CHECK(!NewSeparates(2, 35))`). `Bus.h` now states the XOR form and names the class it cannot tell
+  apart: the fold's kernel, differences 33, 66, 99 ... i.e. pairs 32/96/288 apart inside one net,
+  node 1 against node 32 being the smallest. (2) The residual cannot be closed from this side: a
+  5-bit phase has 32 slots for a net's 1024 addresses, so 32 addresses must share every slot, and
+  every linear fold keeps a kernel member at or below 46 (of the 46 nonzero differences 1..46, one
+  maps to 0 or two of them collide, whose XOR - at most 46 - is in the kernel), so the fold's 33 is
+  within 13 addresses of the bound and no re-arrangement removes the class; a kind-based term cannot
+  either, because two nodes contending for the medium send the same kind of frame and any
+  kind-derived term is equal on both sides. What it costs is measured on the host
+  (`test/native/bus_repeat_test.cpp`, 184 checks, 0 failures): the class's pair (1, 32) is separated
+  by the PRNG draw in 5965 of 6144 pair-draws (2.9 % collide, the 32-slot grid) and **never** by the
+  phase - a 1/1024 chance over both retries, not a lockstep. The pretence is gone from the code and
+  the test (`if (B == 32) continue;` is now `CHECK(!NewSeparates(1, 32));` plus the counts
+  `SeparatedNear = 31`, `DegenerateNear = 1`), and `test/native/run.sh` fails if either the wording or
+  the skip comes back. Nothing in the delay changed: the 32-slot / 2..33 ms budget and the transmit
+  stint's worst case are untouched.*)
+
 
 - **E81 The DAS bootloader still ignores ~4 % of passthrough requests** (card `t_334a1347`,
   2026-11-10, measured on the rig). The core-side half is closed in the same card: a silent USB host

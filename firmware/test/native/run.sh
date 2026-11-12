@@ -110,6 +110,28 @@ done
 # addresses differ draw different delays while they are still in phase (the lockstep case).
 echo "### native bus-retransmission tests (repeat guard + backoff decorrelation)"
 build_run "busrepeat" "bus_repeat_test.cpp"
+# t_e707d153 (E80): the backoff's guarantee is an XOR difference, and the class it cannot separate
+# is named in the source and asserted in the test. Two regressions are pinned: the false claim that
+# "the low 5 bits" separate (0.3 and 0.34 differ there and collide), and a silent skip of the
+# kernel pair in the test (which is how the class used to be hidden).
+E80_BACKOFF="src/Core/Functions/Bus.h"
+E80_TEST="test/native/bus_repeat_test.cpp"
+e80_fail=0
+if ! grep -q 'XOR difference is 1..32' "$E80_BACKOFF" ||
+   ! grep -q 'CANNOT tell apart' "$E80_BACKOFF"; then
+    echo "FAIL $E80_BACKOFF: the backoff must state what it separates (XOR difference 1..32) and name the class it cannot (the fold's kernel)"
+    e80_fail=1
+fi
+if [ "$(grep -c 'CHECK(!NewSeparates(1, 32));' "$E80_TEST")" != 1 ] ||
+   [ "$(grep -c 'CHECK(!NewSeparates(3, 34));' "$E80_TEST")" != 1 ] ||
+   grep -q 'if (B == 32)' "$E80_TEST"; then
+    echo "FAIL $E80_TEST: the kernel pair must be asserted, not skipped (E80's class: 1/32 and 3/34 collide)"
+    e80_fail=1
+fi
+if [ "$e80_fail" = 0 ]; then
+    echo "PASS: the backoff states its XOR-difference guarantee, names the kernel class it cannot separate, and the test asserts that class instead of skipping it"
+fi
+if [ "$e80_fail" != 0 ]; then fail=$((fail + 1)); fi
 echo
 
 # t_45490cbe: a bus send runs on the main task that also pumps the app link, so the card asks two
@@ -1990,11 +2012,18 @@ if [ "$(grep -c 'AppLinkFrameNeedsBus(Frame)) break' "$BG_DISPATCH")" != 0 ]; th
     echo "FAIL $BG_DISPATCH: the RX loop leaves on a blocked head again (the head-of-line block)"
     bg_fail=1
 fi
-if [ "$(grep -c 'AppBusForwardSawReply(Frame.Trid, Frame.Cmd, Frame.IdSrc, PayloadBytes(Frame));' "$BG_DISPATCH")" != 1 ] ||
+if [ "$(grep -c 'AppBusForwardSawReply(Frame.Trid, Frame.Cmd, Frame.IdSrc, PayloadBytes(Frame),' "$BG_DISPATCH")" != 1 ] ||
    grep -q 'if ((Frame.Flags & FLAG_TYPE) && Frame.IdSrc != DeviceStatus.ShortAddress)' "$BG_DISPATCH"; then
     echo "FAIL $BG_DISPATCH: any frame from another device matching the open TRID releases the slot (a value update's confirmation is not FLAG_TYPE)"
     bg_fail=1
 fi
+# ... and the answer's FLAGS travel with it: `FLAG_FAIL` is the node's own refusal of a write, the
+# one cause of E79's four that is not a loss and that no retry can repair (card t_e707d153).
+if [ "$(grep -c '^ *Frame.Flags);$' "$BG_DISPATCH")" != 1 ]; then
+    echo "FAIL $BG_DISPATCH: the answer's flags must reach the gate (AppBusForwardSawReply's Flags), or a refusal reads as a loss"
+    bg_fail=1
+fi
+
 # The call also carries the frame's source and payload length: those are what the gate ring's
 # `stray` trace records when a window expired with frames on the wire that were NOT the answer
 # (card t_82c3dc59). The release itself is still decided by TRID + CMD alone.

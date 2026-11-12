@@ -54,14 +54,34 @@
 //   phase (same PRNG state and attempt, hence the same draw) keep exactly the difference their
 //   ADDRESSES give them: the delays are equal only when phase(A) == phase(B). The phase is linear
 //   over GF(2), so phase(A) ^ phase(B) == phase(A ^ B) and the fold's KERNEL is the whole story.
-//   Over the 16-bit address space the kernel holds 2047 of the 65535 differences and its smallest
-//   member is 33, so any two addresses whose XOR difference is 33 or less always draw different
-//   delays - for every draw and every attempt. Inside one net (device IDs 0..1023) the degenerate
-//   differences are exactly the multiples of 33, the smallest pair being node 1 and node 32
-//   (1 ^ 32 = 33). A bus whose node numbers sit in one 32-address block - every real one; SNDB
-//   reserves 1 and allocates from 2 upwards - cannot produce the same delay from two nodes at all.
-//   Two nodes that are NOT in phase (the core seeds from esp_random, the DAS from SysTick at boot)
-//   land on the same slot with probability 1/32 per attempt - 1/1024 over both retries.
+//   The kernel holds 2047 of the 65535 differences and its smallest member is 33, so the guarantee
+//   is exactly this, and nothing wider:
+//
+//     two addresses whose XOR difference is 1..32 always draw different delays,
+//     for every draw and every attempt.
+//
+//   The class it CANNOT tell apart is the kernel itself: the differences 33, 66, 99 ... i.e. pairs
+//   that are 32, 96, 288 ... apart inside one net (10 address bits). Node 1 against node 32 is the
+//   smallest (1 ^ 32 = 33); 0.3 against 0.34 is one a two-block net can really hold. Such a pair
+//   draws identically whenever both PRNG states agree, and no 5-bit address term can do better - a
+//   phase has 32 slots for a net's 1024 addresses, so 32 addresses must share every slot, and even
+//   the smallest LINEAR fold keeps a kernel member at or below 46: of the 46 nonzero differences
+//   1..46, either one maps to 0 or all 46 map into the 31 nonzero slots and two of them are equal,
+//   whose XOR (again at most 46) is in the kernel. The fold reaches 33, so at most 13 addresses of
+//   span are left unclaimed and none of that removes the class. (Card t_e707d153, E80. This comment
+//   used to claim that "two nodes whose addresses differ in the low 5 bits never draw the same
+//   delay" - false, and a rig-plausible pair: 3 & 31 = 3 and 34 & 31 = 2 differ there and still
+//   collide (3 ^ 34 = 33). The XOR difference is the guarantee; the low bits are not.)
+//   A bus whose node numbers sit inside one ALIGNED 32-address block - every real one; SNDB
+//   reserves 1 and allocates from 2 upwards - therefore has no degenerate pair at all except the
+//   core at 1 against a node at 32, which needs 32 nodes on one net. Two nodes that are NOT in
+//   phase (the core seeds from esp_random, the DAS from SysTick at boot) land on the same slot
+//   with probability 1/32 per attempt - 1/1024 over both retries. That is what the class actually
+//   costs on a bus whose PRNG states differ: addressing cannot close it (a "kind" term cannot
+//   either - two nodes contending for the medium are sending the same kind of frame, so any
+//   kind-derived term is equal on both sides, and the one device-unique term the DAS could have,
+//   its own address, does not exist before it is addressed).
+
 // * The draw reads the TOP half of the PRNG state, whose period is the full 2^32, so the 16-step
 //   low nibble never reaches the delay; XORing it over the phase moves the value uniformly over all
 //   32 slots (every slot is reachable from every address) without disturbing the difference above.

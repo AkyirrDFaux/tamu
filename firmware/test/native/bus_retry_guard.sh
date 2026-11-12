@@ -126,7 +126,98 @@ if ! printf '%s\n' "$drain_body" | grep -q 'AppBusRetryTotal'; then
     note "$IFACE" "retries= must be fed by AppBusRetryTotal"
 fi
 
+# --- (9) WHY it was lost: E79's four candidates, counted apart (card t_e707d153) -------------------
+#
+# The retry above repairs the loss, which is exactly why the loss went unaccounted: `retries=8` said
+# eight writes were repaired and nothing said what had lost them. The account below names one cause
+# per lost write - the node's refusal (a FLAG_FAIL answer), the answer never arriving (silent), the
+# keep ring refusing bytes (keepdrop, E82), the gate's window closing before the answer (late), the
+# frame never leaving (notsent) - and prints it per write. The checks pin (a) one counter per cause,
+# (b) one increment site each, (c) the classification order that makes "silent" mean "the node never
+# acted" rather than "we do not know", and (d) the print, so a rig capture can be read without a
+# wire capture.
+for def in 'AppBusWriteRefused = 0' 'AppBusWriteNotSent = 0' 'AppBusWriteKeepDrop = 0' \
+           'AppBusWriteLate = 0' 'AppBusWriteSilent = 0' 'AppBusWriteStray = 0' \
+           'AppBusWriteTotal = 0' 'AppBusWriteLost = 0' 'AppBusWriteRepaired = 0'; do
+    if [ "$(count "$def")" != 1 ]; then
+        note "$IFACE" "the write account must define $def exactly once"
+    fi
+done
+count_body=$(sed -n '/^inline void AppBusWriteCount/,/^}/p' "$IFACE")
+if [ -z "$count_body" ]; then
+    note "$IFACE" "AppBusWriteCount not found - the five causes have no single counting site"
+else
+    for cause in Refused NotSent KeepDrop Late Silent Stray; do
+        if [ "$(grep -cF "AppBusWrite$cause = AppBusWrite$cause + 1;" "$IFACE")" != 1 ]; then
+            note "$IFACE" "cause $cause must be incremented in exactly one place (AppBusWriteCount)"
+        elif ! printf '%s\n' "$count_body" | grep -qF "AppBusWrite$cause = AppBusWrite$cause + 1;"; then
+            note "$IFACE" "cause $cause is incremented outside AppBusWriteCount - the dump's figures would drift from the records"
+        fi
+    done
+fi
+because_body=$(sed -n '/^inline void AppBusWriteRecause/,/^}/p' "$IFACE")
+if [ -z "$because_body" ] || ! printf '%s\n' "$because_body" | grep -qF 'AppBusWriteLate = AppBusWriteLate - 1;'; then
+    note "$IFACE" "an upgraded cause must MOVE its count (AppBusWriteRecause decrements the old cause), or late+silent exceed the lost total"
+fi
+
+lost_body=$(sed -n '/^inline void AppBusWriteNoteLost/,/^}/p' "$IFACE")
+if [ -z "$lost_body" ]; then
+    note "$IFACE" "AppBusWriteNoteLost not found - a lost write has no cause"
+else
+    # keepdrop first: a refused byte means an answer existed and could not be held (E82), whatever
+    # else the window carried. Then the send itself, then the clean line (the node never acted),
+    # and only then 'stray'.
+    if ! printf '%s\n' "$lost_body" | grep -q 'if (Record.Drops != 0)'; then
+        note "$IFACE" "the classification must test the keep ring's refusals first (E82) - a kept answer makes the node innocent"
+    fi
+    for cause in ABW_KEEPDROP ABW_NOTSENT ABW_SILENT ABW_STRAY; do
+        if ! printf '%s\n' "$lost_body" | grep -qE "Cause = $cause;"; then
+            note "$IFACE" "AppBusWriteNoteLost must be able to name $cause"
+        fi
+    done
+    order=$(printf '%s\n' "$lost_body" | grep -oE 'Cause = ABW_(KEEPDROP|NOTSENT|SILENT|STRAY);' |
+                sed 's/Cause = ABW_//; s/;//' | tr '\n' ' ')
+    if [ "$order" != "KEEPDROP NOTSENT SILENT STRAY " ]; then
+        note "$IFACE" "the cause is decided in the order keepdrop -> notsent -> silent -> stray (found: $order)"
+    fi
+    if ! printf '%s\n' "$lost_body" | grep -q 'if (AppBusWriteRecorded)'; then
+        note "$IFACE" "a retry that expires again must not count the write twice (if (AppBusWriteRecorded) return)"
+    fi
+    if [ "$(grep -cF 'AppBusWriteLost = AppBusWriteLost + 1;' "$IFACE")" != 1 ]; then
+        note "$IFACE" "one increment per lost write (AppBusWriteLost), and only in AppBusWriteNoteLost"
+    fi
+fi
+
+# The refusal is the ANSWER's flag, not a window: a node that says no is not a lost write.
+answer_body=$(sed -n '/^inline void AppBusWriteAnswer/,/^}/p' "$IFACE")
+if [ -z "$answer_body" ] || ! printf '%s\n' "$answer_body" | grep -q 'if (Flags & FLAG_FAIL)'; then
+    note "$IFACE" "a FLAG_FAIL answer must be counted as a REFUSAL (AppBusWriteAnswer tests Flags & FLAG_FAIL)"
+fi
+if [ "$(grep -cF 'AppBusWriteRepaired = AppBusWriteRepaired + 1;' "$IFACE")" != 1 ] ||
+   ! printf '%s\n' "$answer_body" | grep -q 'AppBusWriteRepaired = AppBusWriteRepaired + 1;'; then
+    note "$IFACE" "a repaired write must be counted where its answer lands (AppBusWriteRepaired in AppBusWriteAnswer)"
+fi
+
+# 'late' is only knowable when the answer turns up after the window, so it is reached from that one
+# branch and nowhere else.
+if [ "$(grep -cF 'AppBusWriteNoteLate(Trid, Lateness);' "$IFACE")" != 1 ]; then
+    note "$IFACE" "the gate's late-answer branch is the only place a write may be re-caused to late (AppBusWriteNoteLate)"
+fi
+
+# ... printed, with the figures a capture is reconciled against.
+if ! grep -q 'appwrite writes=%lu answered=%lu refused=%lu lost=%lu repaired=%lu' "$IFACE"; then
+    note "$IFACE" "the dump must print the write totals (writes/answered/refused/lost/repaired)"
+fi
+if ! grep -q 'appwrite cause silent=%lu late=%lu keepdrop=%lu notsent=%lu stray=%lu' "$IFACE"; then
+    note "$IFACE" "the dump must print the five causes apart"
+fi
+if ! printf '%s\n' "$drain_body" | grep -q 'cause=%s sends=%u'; then
+    note "$IFACE" "the dump must name each lost write's cause and how many sends it took"
+fi
+
 if [ "$fail" = 0 ]; then
     echo "PASS: a forwarded Register CID 3 write whose answer never came is re-sent within APP_BUS_WRITE_RETRIES sends, with the app's own TRID, and retries= reports it"
+    echo "PASS: every lost write is named - refused (a FLAG_FAIL answer), notsent, keepdrop, late or silent/stray - with the numbers it was read from, and writes = answered + lost"
 fi
 exit "$fail"
+

@@ -375,6 +375,220 @@ extern uint32_t BusRxDestroyed;   // defined in Core/Functions/Bus.h (bytes the 
 extern uint32_t BusRxKept;        // defined in Core/Functions/Bus.h (bytes the keep ring accepted)
 extern uint32_t RS485TxStintWorstMs; // defined in Devices/Tamu_v2.0A/RSBus.h (longest send, ms)
 
+// --- WHY an app-forwarded write went unanswered (card t_e707d153, E79) ------------------------
+//
+// The retry above repairs a lost write, so the app never sees the loss - and that is exactly what
+// left the loss unaccounted: the totals line could say `retries=8`, never why. A `Register` CID 3
+// write that is not answered can be four different things, and each leaves its own fingerprint on
+// this core. Those fingerprints are the counters below; the point of them is that a restore which
+// needed a repair can say WHICH it was instead of "1 lost" (E79's own complaint):
+//
+//   refused  the node ANSWERED `FLAG_FAIL`: it read the request and said no. Not a loss - the app
+//            is told, and no retry can help. Counted where the answer is matched, not at a window.
+//   notsent  the core's own transmit never completed (`AppBusSendFails` moved inside the window):
+//            the request never left, so the node could not have acted on it.
+//   keepdrop the RX keep ring refused bytes inside the window (E82, `rxdestroyed` moved): an
+//            answer existed and this core could not hold it.
+//   late     the answer turned up AFTER the window closed (`AppBusGateLate`): the gate's window
+//            lost the write, not the node. Only known when/if the answer arrives, so a record
+//            starts as silent/stray and is upgraded here.
+//   silent   the window closed with nothing on the line, nothing refused, nothing half-assembled
+//            and the send completed: the node never acted on the request - the node-side RX loss
+//            of E59/E81 (its own ring is drained while it waits for the bus, and it has no
+//            keep ring: 2048/2048 B of RAM).
+//   stray    bytes arrived inside the window but no complete answer did and nothing was refused:
+//            other traffic on the line, or a frame cut short (the record carries `asm=`).
+//
+// A write that was answered inside its window produces no record at all - `answered=` counts it,
+// so `writes = answered + lost` and a rig capture can be reconciled.
+enum AppBusWriteCause : uint8_t
+{
+    ABW_NONE = 0,
+    ABW_REFUSED,
+    ABW_NOTSENT,
+    ABW_KEEPDROP,
+    ABW_LATE,
+    ABW_SILENT,
+    ABW_STRAY,
+};
+
+#define APP_BUS_WRITE_LOSS_SLOTS 8
+struct AppBusWriteLossRecord
+{
+    uint16_t Tgt;
+    uint16_t Trid;
+    uint16_t Rx;      // bus bytes that arrived inside the window (saturated at 65535)
+    uint16_t AsmGot;  // bytes of the half-assembled frame, when there was one
+    uint16_t AsmNeed;
+    uint16_t LateMs;  // how late the answer finally was; 0 = none came
+    uint8_t Drops;    // keep-ring refusals inside the window (E82)
+    uint8_t Rej;      // RX CRC rejects inside the window
+    uint8_t AsmStage; // the assembler's stage when the window closed
+    uint8_t Cause;    // ABW_* - the named cause, upgraded to LATE if the answer turns up
+    uint8_t Sends;    // sends this write had: 1 + the retries it needed
+    bool Done;        // answered (possibly after a repair) or out of budget: the dump may print it
+};
+
+AppBusWriteLossRecord AppBusWriteLoss[APP_BUS_WRITE_LOSS_SLOTS];
+uint8_t AppBusWriteLossNext = 0;      // ring slot the next lost write takes
+uint8_t AppBusWriteLossSlot = 0;      // ring slot of the write in flight
+bool AppBusWriteOpen = false;         // the write in flight still has an open record
+bool AppBusWriteRecorded = false;     // ... and it already has its loss record
+uint32_t AppBusWriteTotal = 0, AppBusWriteAnswered = 0, AppBusWriteLost = 0,
+         AppBusWriteRepaired = 0;
+uint32_t AppBusWriteRefused = 0, AppBusWriteNotSent = 0, AppBusWriteKeepDrop = 0,
+         AppBusWriteLate = 0, AppBusWriteSilent = 0, AppBusWriteStray = 0;
+uint32_t AppBusWriteOpenDrops = 0;    // BusRxDestroyed when the current send left
+uint32_t AppBusWriteOpenSends = 0;    // AppBusSendFails when the current send left
+
+inline const char *AppBusWriteCauseName(uint8_t Cause)
+{
+    switch (Cause)
+    {
+    case ABW_REFUSED: return "refused";
+    case ABW_NOTSENT: return "notsent";
+    case ABW_KEEPDROP: return "keepdrop";
+    case ABW_LATE: return "late";
+    case ABW_SILENT: return "silent";
+    case ABW_STRAY: return "stray";
+    default: return "-";
+    }
+}
+
+// The one place a cause is counted, so the dump's five figures cannot drift from the records.
+inline void AppBusWriteCount(uint8_t Cause)
+{
+    switch (Cause)
+    {
+    case ABW_REFUSED: AppBusWriteRefused = AppBusWriteRefused + 1; break;
+    case ABW_NOTSENT: AppBusWriteNotSent = AppBusWriteNotSent + 1; break;
+    case ABW_KEEPDROP: AppBusWriteKeepDrop = AppBusWriteKeepDrop + 1; break;
+    case ABW_LATE: AppBusWriteLate = AppBusWriteLate + 1; break;
+    case ABW_SILENT: AppBusWriteSilent = AppBusWriteSilent + 1; break;
+    case ABW_STRAY: AppBusWriteStray = AppBusWriteStray + 1; break;
+    default: break;
+    }
+}
+
+// The write in flight changes cause (silent/stray -> late). Move its count with it, so the totals
+// line stays the sum of the records the ring printed.
+inline void AppBusWriteRecause(uint8_t OldCause, uint8_t NewCause)
+{
+    switch (OldCause)
+    {
+    case ABW_NOTSENT: AppBusWriteNotSent = AppBusWriteNotSent - 1; break;
+    case ABW_KEEPDROP: AppBusWriteKeepDrop = AppBusWriteKeepDrop - 1; break;
+    case ABW_LATE: AppBusWriteLate = AppBusWriteLate - 1; break;
+    case ABW_SILENT: AppBusWriteSilent = AppBusWriteSilent - 1; break;
+    case ABW_STRAY: AppBusWriteStray = AppBusWriteStray - 1; break;
+    default: break;
+    }
+    AppBusWriteCount(NewCause);
+}
+
+// A retryable app write takes a record slot (AppBusForwardStart). A retry does NOT come through
+// here (AppBusRetrying), so the record follows one write across all of its sends.
+inline void AppBusWriteBegin(const PacketFrame &Frame)
+{
+    AppBusWriteTotal = AppBusWriteTotal + 1;
+    AppBusWriteLossSlot = AppBusWriteLossNext;
+    AppBusWriteLossNext = (uint8_t)((AppBusWriteLossNext + 1) % APP_BUS_WRITE_LOSS_SLOTS);
+    AppBusWriteLossRecord &Record = AppBusWriteLoss[AppBusWriteLossSlot];
+    Record.Tgt = Frame.IdTgt;
+    Record.Trid = Frame.Trid;
+    Record.Rx = 0;
+    Record.AsmGot = 0;
+    Record.AsmNeed = 0;
+    Record.LateMs = 0;
+    Record.Drops = 0;
+    Record.Rej = 0;
+    Record.AsmStage = 0;
+    Record.Cause = ABW_NONE;
+    Record.Sends = 0;
+    Record.Done = false;
+    AppBusWriteOpen = true;
+    AppBusWriteRecorded = false;
+}
+
+// The frame is on the wire: this send's window starts now, so the byte/drop/send baselines do too.
+inline void AppBusWriteSent()
+{
+    if (!AppBusWriteOpen)
+        return;
+    AppBusWriteLoss[AppBusWriteLossSlot].Sends =
+        (uint8_t)(AppBusWriteLoss[AppBusWriteLossSlot].Sends + 1);
+    AppBusWriteOpenDrops = BusRxDestroyed;
+    AppBusWriteOpenSends = AppBusSendFails;
+}
+
+// The window closed without an answer: name the cause from what the window actually carried and
+// give the write one record. A retry that expires again only adds a send - the loss is one event,
+// and counting it twice would make `lost=` disagree with the number of repairs.
+inline void AppBusWriteNoteLost(uint32_t RxBytes, uint32_t Rejects)
+{
+    if (!AppBusWriteOpen)
+        return;
+    AppBusWriteLossRecord &Record = AppBusWriteLoss[AppBusWriteLossSlot];
+    Record.Rx = (uint16_t)(RxBytes > 65535 ? 65535 : RxBytes);
+    Record.Rej = (uint8_t)(Rejects > 255 ? 255 : Rejects);
+    Record.AsmStage = BusRxAsmStage;
+    Record.AsmGot = BusRxAsmGot;
+    Record.AsmNeed = BusRxAsmNeed;
+    Record.Drops = (uint8_t)((BusRxDestroyed - AppBusWriteOpenDrops) > 255
+                                 ? 255
+                                 : (BusRxDestroyed - AppBusWriteOpenDrops));
+    if (AppBusWriteRecorded)
+        return; // the retry's window: the write already has its record
+    uint8_t Cause;
+    if (Record.Drops != 0)
+        Cause = ABW_KEEPDROP; // the ring refused bytes: an answer existed (E82)
+    else if (AppBusSendFails != AppBusWriteOpenSends)
+        Cause = ABW_NOTSENT; // the request never got onto the wire
+    else if (Record.Rx == 0 && Record.AsmStage == 0)
+        Cause = ABW_SILENT; // the line was clean: the node never acted on it
+    else
+        Cause = ABW_STRAY; // something was on the line and it was not the answer
+    Record.Cause = Cause;
+    AppBusWriteRecorded = true;
+    AppBusWriteLost = AppBusWriteLost + 1;
+    AppBusWriteCount(Cause);
+}
+
+// The answer (or the refusal) to the write in flight. `Repaired` is the figure the card asks for:
+// a write whose window closed unanswered and whose re-send was answered.
+inline void AppBusWriteAnswer(uint8_t Flags)
+{
+    if (!AppBusWriteOpen)
+        return;
+    AppBusWriteLossRecord &Record = AppBusWriteLoss[AppBusWriteLossSlot];
+    Record.Done = true;
+    AppBusWriteOpen = false;
+    if (Flags & FLAG_FAIL)
+        AppBusWriteCount(ABW_REFUSED);
+    else
+        AppBusWriteAnswered = AppBusWriteAnswered + 1;
+    if (AppBusWriteRecorded)
+        AppBusWriteRepaired = AppBusWriteRepaired + 1;
+}
+
+// An answer for a window that had already closed: the write was lost to the gate's window, not to
+// the node. Upgrades the record it belongs to, so the ring prints "late" with the figure instead
+// of leaving "silent" as the cause of a write the node did execute.
+inline void AppBusWriteNoteLate(uint16_t Trid, uint32_t LatenessMs)
+{
+    for (uint8_t i = 0; i < APP_BUS_WRITE_LOSS_SLOTS; i++)
+    {
+        AppBusWriteLossRecord &Record = AppBusWriteLoss[i];
+        if (Record.Trid != Trid || Record.Done || Record.Cause == ABW_NONE ||
+            Record.Cause == ABW_LATE || Record.Cause == ABW_REFUSED)
+            continue;
+        AppBusWriteRecause(Record.Cause, ABW_LATE);
+        Record.Cause = ABW_LATE;
+        Record.LateMs = (uint16_t)(LatenessMs > 65535 ? 65535 : LatenessMs);
+        return;
+    }
+}
+
 // Frames that are due for the bus while another transaction is still owed an answer. They are
 // held here and dispatched the moment the gate closes: one half-duplex medium means OUR request
 // and the node's answer must not share the wire. Since the gate is asked at SendAndVerifyPacket,
@@ -506,6 +720,30 @@ inline void AppBusGateDrain()
                   (unsigned long)BusRxDestroyed, (unsigned long)RS485TxStintWorstMs,
                   (unsigned long)AppBusCoreRequestLost, (unsigned long)AppBusRepeatsAnswered,
                   (unsigned long)AppBusRetryTotal, (unsigned long)AppBusGateStrayTotal);
+        // The app's writes, named (card t_e707d153, E79). A repair hides the loss from the app, so
+        // these are the only figures that say a write was lost at all - and the five causes say
+        // WHICH mechanism. `writes = answered + lost`; every lost one has a record below.
+        DeviceLog("BUSGATE", "appwrite writes=%lu answered=%lu refused=%lu lost=%lu repaired=%lu",
+                  (unsigned long)AppBusWriteTotal, (unsigned long)AppBusWriteAnswered,
+                  (unsigned long)AppBusWriteRefused, (unsigned long)AppBusWriteLost,
+                  (unsigned long)AppBusWriteRepaired);
+        DeviceLog("BUSGATE", "appwrite cause silent=%lu late=%lu keepdrop=%lu notsent=%lu stray=%lu",
+                  (unsigned long)AppBusWriteSilent, (unsigned long)AppBusWriteLate,
+                  (unsigned long)AppBusWriteKeepDrop, (unsigned long)AppBusWriteNotSent,
+                  (unsigned long)AppBusWriteStray);
+        // One line per lost write, oldest first: the cause, and the three numbers it was read from.
+        for (uint8_t n = 0; n < APP_BUS_WRITE_LOSS_SLOTS; n++)
+        {
+            const AppBusWriteLossRecord &Lost =
+                AppBusWriteLoss[(uint8_t)((AppBusWriteLossNext + n) % APP_BUS_WRITE_LOSS_SLOTS)];
+            if (Lost.Cause == ABW_NONE)
+                continue;
+            DeviceLog("BUSGATE", "appwrite tgt=%u trid=0x%04X cause=%s sends=%u rx=%u drops=%u rej=%u asm=%u/%u/%u late=%ums",
+                      (unsigned)Lost.Tgt, (unsigned)Lost.Trid, AppBusWriteCauseName(Lost.Cause),
+                      (unsigned)Lost.Sends, (unsigned)Lost.Rx, (unsigned)Lost.Drops,
+                      (unsigned)Lost.Rej, (unsigned)Lost.AsmStage, (unsigned)Lost.AsmGot,
+                      (unsigned)Lost.AsmNeed, (unsigned)Lost.LateMs);
+        }
         // The keep ring's own account (card t_5eb19a27, E82), on its own line because the one above
         // is already near the console's 128-byte format buffer: bytes ACCEPTED while a transmit
         // blocked (that is what keeps an answer alive), bytes REFUSED because the ring was full
@@ -577,6 +815,7 @@ inline void AppBusForwardStart(const PacketFrame &Frame, uint16_t WindowMs, bool
         AppBusRetryArmed = true;
         AppBusRetryLeft = APP_BUS_WRITE_RETRIES;
         AppBusRetryDue = false; // this newer write owns the slot; a pending send was for the older one
+        AppBusWriteBegin(Frame); // its own account of WHY it goes unanswered (E79)
     }
 #endif
 }
@@ -597,6 +836,8 @@ inline void AppBusForwardSent()
     // arrived AFTER the request left - the answer's bytes, or none.
     AppBusGateOpenRx = AppBusRxBytes;
     AppBusGateOpenRejects = BusRxCrcRejects;
+    // The write in flight's own baselines: this send's window is what its cause is read from.
+    AppBusWriteSent();
 #endif
 }
 
@@ -640,6 +881,10 @@ inline void AppBusForwardFinish()
 {
     AppInterface.BusPending = false;
 #ifdef TYPE_CORE
+    // The write, if this was one, goes into its account as a send that never happened (E79): the
+    // transmit exhausted its attempts, so `AppBusSendFails` moved and the cause is 'notsent'.
+    if (AppBusWriteOpen && AppBusRetryArmed)
+        AppBusWriteNoteLost(0, 0);
     AppBusGateClose(ABG_LOST);
 #endif
 }
@@ -658,6 +903,15 @@ inline bool AppBusForwardPending()
         AppInterface.BusPending = false;
 #ifdef TYPE_CORE
         AppBusGateClose(ABG_EXPIRED);
+        // Name the cause of a lost app write from the window that just closed (E79): the record's
+        // rx/rej plus the keep ring's and the send's own movement decide which of the four it was.
+        // Only a window that holds the retryable write's own slot is read here - every other
+        // expiry (a read, the read-back's script traffic) has no write record to name.
+        if (AppBusWriteOpen && AppBusRetryArmed)
+        {
+            const AppBusGateEntry &Closed = AppBusGateRing[AppBusGateOpen % APP_BUS_GATE_RING];
+            AppBusWriteNoteLost(Closed.Rx, Closed.Rej);
+        }
         // A forwarded `Register` write that got no answer becomes due for its next send from the
         // pump (AppBusRetry* above): a lost request must not reach the app as a failed write while
         // the node either never saw it or already holds the value.
@@ -666,6 +920,11 @@ inline bool AppBusForwardPending()
             AppBusRetryArmed = false;
             if (AppBusRetryLeft > 0)
                 AppBusRetryDue = true;
+            else
+            {
+                AppBusWriteLoss[AppBusWriteLossSlot].Done = true; // out of sends: report the loss
+                AppBusWriteOpen = false;
+            }
         }
         // Remember the window that closed unanswered: a reply that turns up afterwards is what
         // separates "the node answered too late for the window" from "the node never answered".
@@ -688,7 +947,8 @@ inline bool AppBusForwardPending()
 // real answer. What answers a 040x/1 is the provider's reply with Cmd = Change (the current value,
 // or FLAG_SUCCESS for a cancel); a confirm-required value update is answered by the requester's
 // confirmation with Cmd = ValueUpdate, the Cmd of the update it answers.
-inline void AppBusForwardSawReply(uint16_t Trid, uint16_t Cmd, uint16_t Src, uint16_t Len)
+inline void AppBusForwardSawReply(uint16_t Trid, uint16_t Cmd, uint16_t Src, uint16_t Len,
+                                 uint8_t Flags = FLAG_TYPE)
 {
     if (AppInterface.BusPending && AppInterface.BusPendingTrid == Trid &&
         AppInterface.BusPendingCmd == Cmd)
@@ -698,6 +958,9 @@ inline void AppBusForwardSawReply(uint16_t Trid, uint16_t Cmd, uint16_t Src, uin
         AppBusGateClose(ABG_REPLY);
         AppBusGateLastFrame = DeviceStatus.UptimeMs;
         AppBusRetryArmed = false; // answered: nothing to retry
+        // The write's own account (E79): an answer closes it, and `FLAG_FAIL` is the node's own
+        // refusal - the one cause that is not a loss and that no retry can repair.
+        AppBusWriteAnswer(Flags);
 #endif
         return;
     }
@@ -710,8 +973,10 @@ inline void AppBusForwardSawReply(uint16_t Trid, uint16_t Cmd, uint16_t Src, uin
         if (!Slot.Used && Slot.Trid == Trid && Slot.Cmd == Cmd)
         {
             Slot.Used = true;
-            AppBusGateRecord(Slot.Tgt, Trid, Cmd, Slot.At,
-                             (uint32_t)(DeviceStatus.UptimeMs - Slot.At), 0, 0, ABG_LATE);
+            const uint32_t Lateness = (uint32_t)(DeviceStatus.UptimeMs - Slot.At);
+            AppBusGateRecord(Slot.Tgt, Trid, Cmd, Slot.At, Lateness, 0, 0, ABG_LATE);
+            // If that window held an app write, the gate's window - not the node - lost it (E79).
+            AppBusWriteNoteLate(Trid, Lateness);
             return;
         }
     }
