@@ -13,9 +13,6 @@
 /// `restore_over_gate_test.dart` uses.
 library;
 
-import 'dart:async';
-import 'dart:typed_data';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/backup.dart';
 import 'package:tamuapp/core/connection.dart';
@@ -24,16 +21,10 @@ import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/request_gate.dart';
 import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/subscription_client.dart';
-import 'package:tamuapp/core/transport.dart';
 import 'package:tamuapp/core/types.dart';
 
 import 'support/fake_bus.dart';
-
-const _link = DiscoveredLink(
-  id: 'AA:BB:CC:DD:EE:02',
-  type: LinkType.ble,
-  name: 'Tamu core',
-);
+import 'support/fake_transport.dart';
 
 /// A link whose requests never got a slot: it throws the gate's own expiry, or - once
 /// [queueBound] is off - the ordinary transport failure that keeps meaning [noReply].
@@ -70,45 +61,10 @@ class _QueueBoundChannel extends FakeBus {
 
 /// A device at the other end of a transport that answers NOTHING: every request it is sent stays
 /// on the wire for its own deadline. That is what pins the gate's slots for the read test.
-class _SilentDevice implements Transport {
-  final _packets = StreamController<Uint8List>.broadcast();
-  final _parser = PacketStreamParser();
-
-  /// Every request frame the app got as far as sending, in order.
-  final sent = <({int deviceId, ServiceType service, int cid})>[];
-
+class _SilentDevice extends FrameTransport {
   @override
-  String get id => _link.id;
-
-  @override
-  String get displayName => 'BLE ${_link.id}';
-
-  @override
-  Stream<Uint8List> get linkBytes => _packets.stream;
-
-  @override
-  Stream<Uint8List> get packetStream => _packets.stream;
-
-  @override
-  Future<void> connect() async {}
-
-  @override
-  Future<void> close() async {
-    if (!_packets.isClosed) await _packets.close();
-  }
-
-  @override
-  Future<void> send(List<int> streamBytes) async {
-    for (final frame in _parser.feed(Uint8List.fromList(streamBytes))) {
-      if (frame.isResponse) continue;
-      final service = serviceTypeOf(frame.srvTarget);
-      if (service == null) continue;
-      sent.add((
-        deviceId: frame.idTarget,
-        service: service,
-        cid: serviceCidOf(frame.srvTarget),
-      ));
-    }
+  void onFrame(PacketFrame frame, ServiceType service, int cid) {
+    // Deliberately silent: the frame arrived and no reply will follow.
   }
 }
 
@@ -167,7 +123,7 @@ void main() {
       final device = _SilentDevice();
       final manager = ConnectionManager.forTest();
       manager.transportFactory = (_) => device;
-      await manager.connectTo(_link);
+      await manager.connectTo(fakeBleLink);
       final previous = requestChannel;
       installRequestChannel(manager);
       final client = StorageClient(deviceId: idFromString('1.1')!);

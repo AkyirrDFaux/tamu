@@ -28,14 +28,9 @@ import 'package:tamuapp/core/backup_format.dart';
 import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
-import 'package:tamuapp/core/transport.dart';
 import 'package:tamuapp/core/types.dart';
 
-const _link = DiscoveredLink(
-  id: 'AA:BB:CC:DD:EE:02',
-  type: LinkType.ble,
-  name: 'Tamu core',
-);
+import 'support/fake_transport.dart';
 
 /// How long the fake device holds a Save All before answering it: long enough that two saves
 /// issued together overlap on the wire, short enough for a unit test.
@@ -47,13 +42,7 @@ const _saveHold = Duration(milliseconds: 40);
 /// echoes the ValueInfo it stored, Save All is answered after [_saveHold] - and counts how many
 /// Save Alls are on the wire at once, which is what tells a concurrent save phase from a serial
 /// one.
-class _FakeDevice implements Transport {
-  final _packets = StreamController<Uint8List>.broadcast();
-  final _parser = PacketStreamParser();
-
-  /// Every request frame the app sent, in order.
-  final sent = <({int deviceId, ServiceType service, int cid})>[];
-
+class _FakeDevice extends FrameTransport {
   /// Commands answered with nothing at all, as `service/cid`: a request that sits in the link for
   /// the whole of its own deadline.
   final silent = <String>{};
@@ -62,47 +51,20 @@ class _FakeDevice implements Transport {
   int mostSavesOnWire = 0;
 
   @override
-  String get id => _link.id;
-
-  @override
-  String get displayName => 'BLE ${_link.id}';
-
-  @override
-  Stream<Uint8List> get linkBytes => _packets.stream;
-
-  @override
-  Stream<Uint8List> get packetStream => _packets.stream;
-
-  @override
-  Future<void> connect() async {}
-
-  @override
-  Future<void> close() async {
-    if (!_packets.isClosed) await _packets.close();
-  }
-
-  @override
-  Future<void> send(List<int> streamBytes) async {
-    for (final frame in _parser.feed(Uint8List.fromList(streamBytes))) {
-      if (frame.isResponse) continue;
-      final service = serviceTypeOf(frame.srvTarget);
-      if (service == null) continue;
-      final cid = serviceCidOf(frame.srvTarget);
-      sent.add((deviceId: frame.idTarget, service: service, cid: cid));
-      if (silent.contains('${service.name}/$cid')) continue;
-      final isSave = service == ServiceType.register && cid == 5;
-      if (isSave) {
-        savesOnWire++;
-        if (savesOnWire > mostSavesOnWire) mostSavesOnWire = savesOnWire;
-      }
-      unawaited(_answer(frame, isSave: isSave));
+  void onFrame(PacketFrame frame, ServiceType service, int cid) {
+    if (silent.contains('${service.name}/$cid')) return;
+    final isSave = service == ServiceType.register && cid == 5;
+    if (isSave) {
+      savesOnWire++;
+      if (savesOnWire > mostSavesOnWire) mostSavesOnWire = savesOnWire;
     }
+    unawaited(_answer(frame, isSave: isSave));
   }
 
   Future<void> _answer(PacketFrame request, {required bool isSave}) async {
     if (isSave) await Future<void>.delayed(_saveHold);
     if (isSave) savesOnWire--;
-    if (_packets.isClosed) return;
+    if (isClosed) return;
     final service = serviceTypeOf(request.srvTarget);
     final cid = serviceCidOf(request.srvTarget);
     var payload = const <int>[];
@@ -121,7 +83,7 @@ class _FakeDevice implements Transport {
       srvSource: request.srvSource,
       payload: Uint8List.fromList(payload),
     );
-    _packets.add(reply.toBytes());
+    emit(reply.toBytes());
   }
 
   /// The Save All frames the device was sent, in wire order.
@@ -208,7 +170,7 @@ RestorePlan _planFor(List<(String, String)> devices) {
 Future<ConnectionManager> _connected(_FakeDevice device) async {
   final manager = ConnectionManager.forTest();
   manager.transportFactory = (_) => device;
-  await manager.connectTo(_link);
+  await manager.connectTo(fakeBleLink);
   return manager;
 }
 
