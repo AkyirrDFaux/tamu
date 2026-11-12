@@ -20,6 +20,8 @@ import 'package:tamuapp/core/types.dart';
 
 import '../tool/upload_setup.dart';
 
+import 'support/device_fixtures.dart';
+
 /// `0.1`, the core: the requester that owns the subscription rows.
 const int _coreId = 1;
 
@@ -34,80 +36,93 @@ const int _targetType = 0x04;
 
 void main() {
   group('upload_setup read-back', () {
-    test('a provider entry the restore never writes is named, and does not fail the run', () {
-      // The archive names the provider at the address it was CAPTURED under (net 39); the rig
-      // runs net 14 and the live row stores 14.2. The identity of a requester row is its
-      // provider's NODE plus its two registers, so the row still matches - and the provider half
-      // is the only difference left.
-      final plan = _plan();
-      final mismatches = readBackMismatches(plan, [
-        _snapshot(
-          _coreId,
-          requesters: [_heldRow(trid: 0x1000)],
-          providers: const [],
-        ),
-        _snapshot(_providerNode, providers: const []),
-      ]);
+    test(
+      'a provider entry the restore never writes is named, and does not fail the run',
+      () {
+        // The archive names the provider at the address it was CAPTURED under (net 39); the rig
+        // runs net 14 and the live row stores 14.2. The identity of a requester row is its
+        // provider's NODE plus its two registers, so the row still matches - and the provider half
+        // is the only difference left.
+        final plan = _plan();
+        final mismatches = readBackMismatches(plan, [
+          _snapshot(
+            _coreId,
+            requesters: [_heldRow(trid: 0x1000)],
+            providers: const [],
+          ),
+          _snapshot(_providerNode, providers: const []),
+        ]);
 
-      expect(mismatches, hasLength(1));
-      final mismatch = mismatches.single;
-      expect(mismatch.kind, ReadBackClass.runtime);
-      expect(
-        mismatch.fails,
-        isFalse,
-        reason:
-            'no restore writes the provider half (Docs/Services/Subscriptions.md "Provider": '
-            '"active until cancelled; the information is not persistent on this side"), so a '
-            'read-back taken right after one cannot see it',
-      );
-      // One line carries everything the owner needs to act on it.
-      expect(mismatch.line, contains('0.1 "Tamu"'));
-      expect(mismatch.line, contains('subscriptions/provider'));
-      expect(mismatch.line, contains('entry 0x1000'));
-      expect(mismatch.line, contains('expected a provider entry for 0x1000'));
-      expect(mismatch.line, contains('Resistive measurement[0]/field 3[0]'));
-      expect(mismatch.line, contains('on 0.2 "Sensors A", installed by the requester'));
-      expect(mismatch.line, contains('actual 0.2 "Sensors A" holds no entry'));
-      expect(mismatch.line, contains(ReadBackClass.runtime.label));
-    });
+        expect(mismatches, hasLength(1));
+        final mismatch = mismatches.single;
+        expect(mismatch.kind, ReadBackClass.runtime);
+        expect(
+          mismatch.fails,
+          isFalse,
+          reason:
+              'no restore writes the provider half (Docs/Services/Subscriptions.md "Provider": '
+              '"active until cancelled; the information is not persistent on this side"), so a '
+              'read-back taken right after one cannot see it',
+        );
+        // One line carries everything the owner needs to act on it.
+        expect(mismatch.line, contains('0.1 "Tamu"'));
+        expect(mismatch.line, contains('subscriptions/provider'));
+        expect(mismatch.line, contains('entry 0x1000'));
+        expect(mismatch.line, contains('expected a provider entry for 0x1000'));
+        expect(mismatch.line, contains('Resistive measurement[0]/field 3[0]'));
+        expect(
+          mismatch.line,
+          contains('on 0.2 "Sensors A", installed by the requester'),
+        );
+        expect(
+          mismatch.line,
+          contains('actual 0.2 "Sensors A" holds no entry'),
+        );
+        expect(mismatch.line, contains(ReadBackClass.runtime.label));
+      },
+    );
 
-    test('the note explains the whole table once, and only when every difference is that class', () {
-      final runtimeOnly = readBackMismatches(_plan(), [
-        _snapshot(
-          _coreId,
-          requesters: [_heldRow(trid: 0x1000), _heldRow(trid: 0x1001)],
-          providers: const [],
-        ),
-        _snapshot(_providerNode, providers: const []),
-      ]);
-      expect(runtimeOnly, hasLength(2));
+    test(
+      'the note explains the whole table once, and only when every difference is that class',
+      () {
+        final runtimeOnly = readBackMismatches(_plan(), [
+          _snapshot(
+            _coreId,
+            requesters: [_heldRow(trid: 0x1000), _heldRow(trid: 0x1001)],
+            providers: const [],
+          ),
+          _snapshot(_providerNode, providers: const []),
+        ]);
+        expect(runtimeOnly, hasLength(2));
 
-      final note = runtimeDifferenceNote(runtimeOnly);
-      expect(note, isNotNull);
-      expect(note, contains('all 2 difference(s) are the PROVIDER half'));
-      expect(note, contains('Docs/Services/Subscriptions.md'));
-      expect(
-        note,
-        contains('The requester table'),
-        reason: 'the note has to say which half DID read back, or it reads as a shrug',
-      );
+        final note = runtimeDifferenceNote(runtimeOnly);
+        expect(note, isNotNull);
+        expect(note, contains('all 2 difference(s) are the PROVIDER half'));
+        expect(note, contains('Docs/Services/Subscriptions.md'));
+        expect(
+          note,
+          contains('The requester table'),
+          reason:
+              'the note has to say which half DID read back, or it reads as a shrug',
+        );
 
-      expect(
-        runtimeDifferenceNote(const []),
-        isNull,
-        reason: 'nothing to explain when the read-back agrees',
-      );
-      expect(
-        runtimeDifferenceNote([
-          ...runtimeOnly,
-          _mismatchOf(ReadBackClass.notApplied),
-        ]),
-        isNull,
-        reason:
-            'a real difference must not be excused by a note about runtime state - it is '
-            'named on its own line and fails the run',
-      );
-    });
+        expect(
+          runtimeDifferenceNote(const []),
+          isNull,
+          reason: 'nothing to explain when the read-back agrees',
+        );
+        expect(
+          runtimeDifferenceNote([
+            ...runtimeOnly,
+            _mismatchOf(ReadBackClass.notApplied),
+          ]),
+          isNull,
+          reason:
+              'a real difference must not be excused by a note about runtime state - it is '
+              'named on its own line and fails the run',
+        );
+      },
+    );
 
     test('a requester row the device does not hold is a real failed write', () {
       final mismatches = readBackMismatches(_plan(), [
@@ -123,44 +138,53 @@ void main() {
       expect(mismatch.kind, ReadBackClass.notApplied);
       expect(mismatch.fails, isTrue);
       expect(mismatch.line, contains('Periodic'));
-      expect(mismatch.line, contains('Resistive measurement[0]/Measured Value[0]'));
+      expect(
+        mismatch.line,
+        contains('Resistive measurement[0]/Measured Value[0]'),
+      );
       expect(mismatch.line, contains('actual the table holds no entry'));
       expect(runtimeDifferenceNote(mismatches), isNull);
     });
 
-    test('a requester table that did not answer is unreadable, not an empty table', () {
-      // The defect behind the count: `getRequesterSubscriptions` folds a failed read into `[]`,
-      // so a lost reply and an empty table produced the same words.
-      final mismatches = readBackMismatches(_plan(), [
-        _snapshot(_coreId, requesters: null, providers: const []),
-        _snapshot(_providerNode, providers: const []),
-      ]);
+    test(
+      'a requester table that did not answer is unreadable, not an empty table',
+      () {
+        // The defect behind the count: `getRequesterSubscriptions` folds a failed read into `[]`,
+        // so a lost reply and an empty table produced the same words.
+        final mismatches = readBackMismatches(_plan(), [
+          _snapshot(_coreId, requesters: null, providers: const []),
+          _snapshot(_providerNode, providers: const []),
+        ]);
 
-      final requester = mismatches.firstWhere(
-        (m) => m.where == 'subscriptions/requester',
-      );
-      expect(requester.kind, ReadBackClass.unreadable);
-      expect(requester.fails, isTrue);
-      expect(requester.actual, contains('did not answer (3 sends)'));
-    });
+        final requester = mismatches.firstWhere(
+          (m) => m.where == 'subscriptions/requester',
+        );
+        expect(requester.kind, ReadBackClass.unreadable);
+        expect(requester.fails, isTrue);
+        expect(requester.actual, contains('did not answer (3 sends)'));
+      },
+    );
 
-    test('a requester row that holds different timing is a real failed write', () {
-      final mismatches = readBackMismatches(_plan(), [
-        _snapshot(
-          _coreId,
-          requesters: [_heldRow(trid: 0x1000, periodMs: 500)],
-          providers: const [],
-        ),
-        _snapshot(_providerNode, providers: const []),
-      ]);
+    test(
+      'a requester row that holds different timing is a real failed write',
+      () {
+        final mismatches = readBackMismatches(_plan(), [
+          _snapshot(
+            _coreId,
+            requesters: [_heldRow(trid: 0x1000, periodMs: 500)],
+            providers: const [],
+          ),
+          _snapshot(_providerNode, providers: const []),
+        ]);
 
-      final requester = mismatches.firstWhere(
-        (m) => m.where == 'subscriptions/requester',
-      );
-      expect(requester.kind, ReadBackClass.notApplied);
-      expect(requester.actual, contains('500 ms period'));
-      expect(requester.expected, contains('1000'));
-    });
+        final requester = mismatches.firstWhere(
+          (m) => m.where == 'subscriptions/requester',
+        );
+        expect(requester.kind, ReadBackClass.notApplied);
+        expect(requester.actual, contains('500 ms period'));
+        expect(requester.expected, contains('1000'));
+      },
+    );
 
     test('a provider this run did not read is "not read", not "missing"', () {
       // `--device 0.1` selects the core only: the provider node is not a target, so its table was
@@ -213,7 +237,10 @@ void main() {
 
       final script = mismatches.firstWhere((m) => m.where == 'scripts/slot 4');
       expect(script.kind, ReadBackClass.notApplied);
-      expect(script.line, contains('expected a script that runs without an error'));
+      expect(
+        script.line,
+        contains('expected a script that runs without an error'),
+      );
       expect(script.line, contains('actual the slot is in error (state 4)'));
     });
   });
@@ -223,83 +250,99 @@ void main() {
   // 3 s timeout: 72 per restore over 3 nodes x 2 passes, 22 % of its forwarded traffic and ~3.6 min
   // of wall time (Issues.md E79, attributed on t_e7518382). The loop now asks nothing of a device
   // whose capabilities lack the bit.
-  group('upload_setup read-back: the script slot loop is gated on Capability.scripts', () {
-    /// The set a DAS advertises: `0x300`, Node|SubscriptionProvide, no script role.
-    const dasCaps = Capability.node | Capability.subscriptionProvide;
+  group(
+    'upload_setup read-back: the script slot loop is gated on Capability.scripts',
+    () {
+      /// The set a DAS advertises: `0x300`, Node|SubscriptionProvide, no script role.
+      const dasCaps = Capability.node | Capability.subscriptionProvide;
 
-    test('a device without Capability.scripts is asked for no slot at all', () async {
-      final asked = <int>[];
-      final states = await readBackScriptSlots(
-        capabilities: dasCaps,
-        readState: (slot) async {
-          asked.add(slot);
-          return const ScriptReport(state: 1, depth: 0, line: 0);
+      test(
+        'a device without Capability.scripts is asked for no slot at all',
+        () async {
+          final asked = <int>[];
+          final states = await readBackScriptSlots(
+            capabilities: dasCaps,
+            readState: (slot) async {
+              asked.add(slot);
+              return const ScriptReport(state: 1, depth: 0, line: 0);
+            },
+          );
+
+          expect(
+            asked,
+            isEmpty,
+            reason:
+                'every slot read is a forwarded request the device cannot answer, so the gate has to '
+                'stop the loop before the first send - not filter its empty answers afterwards',
+          );
+          expect(states, isEmpty);
+          expect(
+            readBackScriptsLine(capabilities: dasCaps, states: states),
+            'scripts=(no script service: the device cannot run scripts)',
+            reason:
+                'an empty bracket would read as "no scripts loaded" - the line has to name the '
+                'capability, the way the requester and provider lines do',
+          );
+          expect(dasCaps & Capability.scripts, 0);
         },
       );
 
-      expect(
-        asked,
-        isEmpty,
-        reason:
-            'every slot read is a forwarded request the device cannot answer, so the gate has to '
-            'stop the loop before the first send - not filter its empty answers afterwards',
-      );
-      expect(states, isEmpty);
-      expect(
-        readBackScriptsLine(capabilities: dasCaps, states: states),
-        'scripts=(no script service: the device cannot run scripts)',
-        reason:
-            'an empty bracket would read as "no scripts loaded" - the line has to name the '
-            'capability, the way the requester and provider lines do',
-      );
-      expect(dasCaps & Capability.scripts, 0);
-    });
+      test(
+        'a device with the bit still has all 12 slots read, and the line lists them',
+        () async {
+          const caps = Capability.core | Capability.scripts;
+          final asked = <int>[];
+          final states = await readBackScriptSlots(
+            capabilities: caps,
+            readState: (slot) async {
+              asked.add(slot);
+              // Slot 3 does not answer: a read that did not answer is skipped, not invented.
+              if (slot == 3) return null;
+              return ScriptReport(
+                state: slot == 4 ? 4 : 1,
+                depth: 0,
+                line: 0,
+                instruction: slot == 4 ? 0x0105 : 0,
+              );
+            },
+          );
 
-    test('a device with the bit still has all 12 slots read, and the line lists them', () async {
-      const caps = Capability.core | Capability.scripts;
-      final asked = <int>[];
-      final states = await readBackScriptSlots(
-        capabilities: caps,
-        readState: (slot) async {
-          asked.add(slot);
-          // Slot 3 does not answer: a read that did not answer is skipped, not invented.
-          if (slot == 3) return null;
-          return ScriptReport(
-            state: slot == 4 ? 4 : 1,
-            depth: 0,
-            line: 0,
-            instruction: slot == 4 ? 0x0105 : 0,
+          expect(
+            asked,
+            List<int>.generate(12, (i) => i),
+            reason:
+                'the gate skips a device that cannot run scripts, nothing else',
+          );
+          expect(states, hasLength(11));
+          expect(states.map((s) => s.slot), isNot(contains(3)));
+
+          final line = readBackScriptsLine(capabilities: caps, states: states);
+          expect(line, startsWith('scripts=['));
+          expect(line, contains('0:state=1'));
+          expect(line, contains('4:state=4 ERR'));
+          expect(line, isNot(contains('no script service')));
+        },
+      );
+
+      test(
+        'a device that can run scripts and answers nothing is an empty table',
+        () async {
+          // The other half of "the line names which case it is": a script-capable device whose 12
+          // reads all went unanswered is not a device that cannot run scripts.
+          const caps = Capability.core | Capability.scripts;
+          final states = await readBackScriptSlots(
+            capabilities: caps,
+            readState: (slot) async => null,
+          );
+          expect(states, isEmpty);
+          expect(
+            readBackScriptsLine(capabilities: caps, states: states),
+            'scripts=[]',
           );
         },
       );
-
-      expect(
-        asked,
-        List<int>.generate(12, (i) => i),
-        reason: 'the gate skips a device that cannot run scripts, nothing else',
-      );
-      expect(states, hasLength(11));
-      expect(states.map((s) => s.slot), isNot(contains(3)));
-
-      final line = readBackScriptsLine(capabilities: caps, states: states);
-      expect(line, startsWith('scripts=['));
-      expect(line, contains('0:state=1'));
-      expect(line, contains('4:state=4 ERR'));
-      expect(line, isNot(contains('no script service')));
-    });
-
-    test('a device that can run scripts and answers nothing is an empty table', () async {
-      // The other half of "the line names which case it is": a script-capable device whose 12
-      // reads all went unanswered is not a device that cannot run scripts.
-      const caps = Capability.core | Capability.scripts;
-      final states = await readBackScriptSlots(
-        capabilities: caps,
-        readState: (slot) async => null,
-      );
-      expect(states, isEmpty);
-      expect(readBackScriptsLine(capabilities: caps, states: states), 'scripts=[]');
-    });
-  });
+    },
+  );
 }
 
 /// A one-device archive (the core) with one requester subscription, and the rig it restores onto.
@@ -384,27 +427,10 @@ RestorePlan _plan() {
       ),
     ],
   );
-  final provider = LiveDevice(
+  final provider = providerDevice(
     id: _providerNode,
     name: 'Sensors A',
     capabilities: Capability.node | Capability.subscriptionProvide,
-    blocks: [
-      LiveBlock(
-        type: _providerType,
-        instance: 0,
-        name: 'Resistive measurement',
-        isDynamic: false,
-        entries: [
-          LiveEntry(
-            field: 3,
-            key: 0,
-            fieldName: 'Measured Value',
-            keyName: 'Key 0',
-            meta: ValueInfo(type: DataType.number.value, size: 4),
-          ),
-        ],
-      ),
-    ],
   );
   final item = RestoreItem(
     kind: RestoreKind.subscription,

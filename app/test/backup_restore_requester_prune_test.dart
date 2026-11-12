@@ -5,6 +5,7 @@ import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/types.dart';
 
+import 'support/device_fixtures.dart';
 import 'support/fake_bus.dart';
 import 'support/register_write_bus.dart';
 
@@ -198,27 +199,7 @@ LiveDevice _liveRequester() => LiveDevice(
   ],
 );
 
-LiveDevice _liveProvider() => LiveDevice(
-  id: _providerId,
-  name: 'DAS',
-  blocks: [
-    LiveBlock(
-      type: 8,
-      instance: 0,
-      name: 'Resistive measurement',
-      isDynamic: false,
-      entries: [
-        LiveEntry(
-          field: 3,
-          key: 0,
-          fieldName: 'Measured Value',
-          keyName: 'Key 0',
-          meta: ValueInfo(type: DataType.number.value, size: 4),
-        ),
-      ],
-    ),
-  ],
-);
+LiveDevice _liveProvider() => providerDevice(id: _providerId);
 
 /// One requester entry as the rig holds it: [field] of the target block, fed from the provider.
 RequesterSubscription _held(int trid, int field) => RequesterSubscription(

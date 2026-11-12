@@ -8,6 +8,7 @@ import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/types.dart';
 
+import 'support/device_fixtures.dart';
 import 'support/register_write_bus.dart';
 
 /// Format 2's STRUCTURAL row and the two places it has to work.
@@ -116,27 +117,7 @@ BackupDevice _archive({bool withStructuralRows = true}) => BackupDevice(
 );
 
 /// The provider the requester reads from: an ordinary static block that has the source entry.
-LiveDevice _provider() => LiveDevice(
-  id: idFromString('0.2')!,
-  name: 'DAS',
-  blocks: [
-    LiveBlock(
-      type: 8,
-      instance: 0,
-      name: 'Resistive measurement',
-      isDynamic: false,
-      entries: [
-        LiveEntry(
-          field: 3,
-          key: 0,
-          fieldName: 'Measured Value',
-          keyName: 'Key 0',
-          meta: ValueInfo(type: DataType.number.value, size: 4),
-        ),
-      ],
-    ),
-  ],
-);
+LiveDevice _provider() => providerDevice(id: idFromString('0.2')!);
 
 /// A device that runs the firmware but carries no dynamic block at all: a wiped (reflashed) core.
 /// Its STATIC blocks exist because their layout is compile-time.
