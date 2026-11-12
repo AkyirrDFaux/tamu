@@ -35,7 +35,7 @@ Applies in addition to the rules above.
 
 **Git**
 - Never `git push`. Akyirr pushes. Commit locally, on the current branch only (`sys2`).
-- `./upload.sh` (flashing) is Akyirr's — do not run it.
+- `./upload.sh` — the app lane owns this script and may edit it. Running it to flash hardware needs Akyirr's authorisation recorded in the card.
 
 **Toolchain**
 - `export PLATFORMIO_CORE_DIR=/home/akyirr/.platformio` before any `pio` command. The agent's own

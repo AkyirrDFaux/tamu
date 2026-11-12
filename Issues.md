@@ -2062,7 +2062,7 @@ live (`e71` pass, and the 2026-11-06 rename measurement above).
 ## Open (2026-11-06): the BLE updater shipped - three things around it
 
 **F63 `upload.sh`'s raw-bin offsets are stale, and the default one lands inside `factory`.** The
-script (`upload.sh`, the owner's file) still carries `TAMU_APP_OFFSET=0x70000` and prints
+script (`upload.sh`, owned by the app lane since the 2026-11-13 ruling) still carries `TAMU_APP_OFFSET=0x70000` and prints
 `bootloader.bin 0x10000` in its help, both from before the 2026-11-06 repartition
 (`17e5259`): `ota_0` is at **0x90000** and `factory` is the app partition at 0x10000
 (0x10000..0x8D000). So `./upload.sh bin tamu` with no offset writes the main app **into the factory
