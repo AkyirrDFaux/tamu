@@ -5,94 +5,15 @@ import 'package:tamuapp/core/backup_script.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/script_client.dart';
-import 'package:tamuapp/core/storage_client.dart';
 
-import 'support/fake_bus.dart';
-import 'support/fake_core.dart';
+import 'support/restore_core.dart';
 import 'package:tamuapp/core/types.dart';
 
-/// A core that answers the service requests a restore sends, so `applyRestorePlan` can be driven
-/// without a rig. It models only what the script bring-up touches: the slot map, the load/unload
-/// commands, the storage file writes and the save.
-class _FakeCore extends FakeBus {
-  _FakeCore({Map<int, int> loaded = const {}}) : loaded = {...loaded};
-
-  /// loaded slot -> SCR file id. The load/unload commands mutate it, so a test can read the
-  /// device state the restore left behind.
-  final Map<int, int> loaded;
-
-  /// File contents staged by the storage writes, keyed by the name the rename landed them under.
-  final Map<String, List<int>> files = {};
-
-  @override
-  Future<List<int>> plain(
-    int targetId,
-    ServiceType service,
-    int functionCid,
-    List<int> payload,
-  ) async {
-    if (service == ServiceType.script && functionCid == 0) {
-      return scriptSlotMap(loaded);
-    }
-    if (service == ServiceType.storage && functionCid == 6) {
-      // A write fragment: frag info (4), the file name (8), then its slice of the content.
-      final name = StorageClient.unpadName(payload.sublist(4, 12));
-      files.putIfAbsent(name, () => []).addAll(payload.sublist(12));
-      return const [0, 0]; // the sequence the device accepted
-    }
-    if (service == ServiceType.storage && functionCid == 5) {
-      // The file sweep reads the file table; a device that does not answer it looks like one
-      // nobody can tell a stale script file from.
-      if (StorageClient.unpadName(payload.sublist(0, 8)) == '.TABLE') {
-        return tableReply(
-          files.keys.toList()..sort(),
-          (name) => files[name]!.length,
-        );
-      }
-      throw StateError('no such file');
-    }
-    return const [];
-  }
-
-  @override
-  Future<PacketResponse> flagged(
-    int targetId,
-    ServiceType service,
-    int functionCid,
-    List<int> payload,
-  ) async {
-    if (service == ServiceType.script) {
-      switch (functionCid) {
-        case 1: // load: file id (u16), slot (u8)
-          final fileId = payload[0] | (payload[1] << 8);
-          final slot = payload.length > 2 ? payload[2] : -1;
-          if (slot >= 0) loaded[slot] = fileId;
-        case 2: // unload: slot (u8)
-          loaded.remove(payload[0]);
-      }
-    }
-    if (service == ServiceType.storage && functionCid == 4) {
-      // A rename lands the staged content under the new name.
-      final from = StorageClient.unpadName(payload.sublist(0, 8));
-      final to = StorageClient.unpadName(payload.sublist(8, 16));
-      final staged = files.remove(from);
-      if (staged != null) files[to] = staged;
-    }
-    return busAccepted;
-  }
-
-  /// The script commands the restore sent (`cid` followed by its payload), in order.
-  List<List<int>> get scriptCommands => [
-    for (final c in sent)
-      if (c.service == ServiceType.script && c.cid != 0) [c.cid, ...c.payload],
-  ];
-
-  /// The slots the restore asked to LOAD, with the file id it named for each.
-  List<int> get loads => [
-    for (final c in scriptCommands)
-      if (c.first == 1) c[3],
-  ];
-}
+/// The device model: `RestoreCore` at its shallowest, which is what this suite's restore touches -
+/// the slot map, the load/unload commands, the write fragments and the rename. The deeper reads
+/// (a per-slot state record, the file table) are off here on purpose: this suite pins that a
+/// function library is written as a file and never loaded, and a device that answered more would
+/// move the commands under the assertions.
 
 BackupDevice _device() => BackupDevice(
   type: 'Tamu v2.0A',
@@ -146,11 +67,11 @@ RestoreItem _item(BackupDevice device, BackupScript script) => RestoreItem(
 
 void main() {
   late RequestChannel? previous;
-  late _FakeCore core;
+  late RestoreCore core;
 
   setUp(() {
     previous = requestChannel;
-    core = _FakeCore();
+    core = RestoreCore();
     installRequestChannel(core);
   });
 

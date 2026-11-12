@@ -2,132 +2,23 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/backup.dart';
 import 'package:tamuapp/core/backup_format.dart';
 import 'package:tamuapp/core/backup_script.dart';
-import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_instructions.dart';
-import 'package:tamuapp/core/storage_client.dart';
 
-import 'support/fake_bus.dart';
-import 'support/fake_core.dart';
+import 'support/restore_core.dart';
 import 'package:tamuapp/core/types.dart';
 
-/// A core that answers the service requests a restore sends, with a FILE TABLE the sweep can
-/// read and delete from - the thing the slot sweep's fake did not have, and the reason `SCR_000`
-/// survived a restore: the slot was unloaded, the file stayed.
-class _FakeCore extends FakeBus {
-  _FakeCore({
-    Map<int, int> loaded = const {},
-    Map<String, int> table = const {},
-  }) : loaded = {...loaded},
-       table = {...table};
-
-  /// loaded slot -> SCR file id; the load/unload commands mutate it.
-  final Map<int, int> loaded;
-
-  /// The device's file table: name -> recorded size. A create adds a name, a delete removes it,
-  /// a rename moves it, so a test reads the table the device would report afterwards.
-  final Map<String, int> table;
-
-  /// The bytes of each stored file (what a read returns).
-  final Map<String, List<int>> files = {};
-
-  /// Names the device refuses to delete (it answers FAIL), as a stuck record would.
-  final refuseDelete = <String>{};
-
-  /// Slots the device refuses to unload.
-  final refuseUnload = <int>{};
-
-  /// Answer the file-table read with nothing, as a device that cannot say what it stores.
-  bool tableUnreadable = false;
-
-  @override
-  Future<List<int>> plain(
-    int targetId,
-    ServiceType service,
-    int functionCid,
-    List<int> payload,
-  ) async {
-    if (service == ServiceType.script && functionCid == 0) {
-      return scriptSlotMap(loaded);
-    }
-    if (service == ServiceType.storage && functionCid == 6) {
-      // A write fragment: frag info (4), the file name (8), then its slice of the content.
-      final name = StorageClient.unpadName(payload.sublist(4, 12));
-      files.putIfAbsent(name, () => []).addAll(payload.sublist(12));
-      table[name] = files[name]!.length;
-      return const [0, 0];
-    }
-    if (service == ServiceType.storage && functionCid == 5) {
-      final name = StorageClient.unpadName(payload.sublist(0, 8));
-      if (name == '.TABLE') {
-        if (tableUnreadable) throw StateError('no reply');
-        return tableReply(table.keys.toList()..sort(), (name) => table[name]!);
-      }
-      final content = files[name] ?? List<int>.filled(table[name] ?? 0, 0);
-      final out = <int>[];
-      for (var off = 0; off < content.length; off += 64) {
-        final end = off + 64 > content.length ? content.length : off + 64;
-        out
-          ..addAll(StorageClient.padName(name))
-          ..addAll(content.sublist(off, end));
-      }
-      return out;
-    }
-    throw StateError('$service/$functionCid not answered');
-  }
-
-  @override
-  Future<PacketResponse> flagged(
-    int targetId,
-    ServiceType service,
-    int functionCid,
-    List<int> payload,
-  ) async {
-    if (service == ServiceType.script) {
-      switch (functionCid) {
-        case 1: // load: file id (u16), slot (u8)
-          final fileId = payload[0] | (payload[1] << 8);
-          final slot = payload.length > 2 ? payload[2] : -1;
-          if (slot >= 0) loaded[slot] = fileId;
-        case 2: // unload: slot (u8)
-          if (refuseUnload.contains(payload[0])) return busRefused;
-          loaded.remove(payload[0]);
-      }
-    }
-    if (service == ServiceType.storage) {
-      switch (functionCid) {
-        case 1: // create: name (8), size (u32)
-          final name = StorageClient.unpadName(payload.sublist(0, 8));
-          final size = uint32FromBytes(payload, 8);
-          table[name] = size;
-          files[name] = [];
-        case 2: // delete: name (8)
-          final name = StorageClient.unpadName(payload.sublist(0, 8));
-          if (refuseDelete.contains(name)) return busRefused;
-          table.remove(name);
-          files.remove(name);
-        case 4: // rename: old (8), new (8)
-          final from = StorageClient.unpadName(payload.sublist(0, 8));
-          final to = StorageClient.unpadName(payload.sublist(8, 16));
-          final size = table.remove(from);
-          final bytes = files.remove(from);
-          if (size != null) table[to] = size;
-          if (bytes != null) files[to] = bytes;
-      }
-    }
-    return busAccepted;
-  }
-
-  /// The `SCR_XXX` files the restore asked the device to DELETE, in order. The staging name a
-  /// write uses (`~SCR_00`) is not one of them.
-  List<String> get scriptDeletes => [
-    for (final c in sent)
-      if (c.service == ServiceType.storage && c.cid == 2)
-        if (scriptFileId(StorageClient.unpadName(c.payload.sublist(0, 8))) !=
-            null)
-          StorageClient.unpadName(c.payload.sublist(0, 8)),
-  ];
+/// The shared restore device (see `support/restore_core.dart`) with the file TABLE modelled: this
+/// suite's sweep reads the table, deletes from it and renames into it, and `SCR_000` surviving a
+/// restore is exactly the defect a device without a table model cannot show.
+class _FakeCore extends RestoreCore {
+  _FakeCore({super.loaded, super.table})
+    : super(
+        modelsFileTable: true,
+        answersFileReads: true,
+        throwOnUnknown: true,
+      );
 }
 
 BackupDevice _device(List<BackupScript> scripts) => BackupDevice(
