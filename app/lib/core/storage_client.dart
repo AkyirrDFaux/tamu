@@ -183,35 +183,6 @@ class FileTableRead {
   List<FileRecord> get recordsOrEmpty => records ?? const <FileRecord>[];
 }
 
-/// How a [StorageClient.writeFile] put a file's content on the device.
-///
-/// The three are kept apart because they cost the device's FILE TABLE different amounts, and a
-/// node's table is the thing that runs out: a DAS holds 8 sixteen-byte records, and every append
-/// consumes one of them FOR GOOD - "Invalidated (0x00) holes are never reused"
-/// (`firmware/src/Core/Functions/StorageBlockFS.h`). Creating a staging file and renaming it over
-/// the target appends two records per write; a resize (Storage CID 3) appends one and keeps the
-/// data area; a write into a file that is already the right length appends none.
-enum FileWritePath {
-  /// The file was already the right length: the fragments went into the file itself. No record.
-  inPlace,
-
-  /// Storage CID 3 put the file at its new length in place (verified by reading the size back) and
-  /// the fragments went into it. One record, same data area.
-  resize,
-
-  /// The content was staged under a temporary name and renamed over the target. What a first
-  /// creation takes, and the fallback for a refused resize or a failed in-place write. Two records.
-  staged;
-
-  /// How many file-table records this path appends on a device that never compacts, in one word a
-  /// report can print.
-  String get recordCost => switch (this) {
-    FileWritePath.inPlace => 'no record',
-    FileWritePath.resize => '1 record',
-    FileWritePath.staged => '2 records',
-  };
-}
-
 class StorageClient {
   final int deviceId;
 
@@ -367,24 +338,15 @@ class StorageClient {
   /// device holds no `.TABLE` file, which is an empty filesystem and renders as an empty list), and
   /// [FileTableRead.failed] / [FileTableRead.partial] (an error with the reason in
   /// [FileTableRead.detail], never an empty list).
-  ///
-  /// [attempts] is the re-send budget, [readAttempts] unless a caller is reading the table as a
-  /// PROBE rather than for the user. `StorageClient.writeFile` is such a caller: it reads the table
-  /// only to learn whether the file is already there and how long it is, and one attempt is enough
-  /// - a probe that failed means the staging path runs, which needs no table at all. A probe at the
-  /// full budget would add three request timeouts (30 s) to a single write on a node that answers
-  /// nothing.
   Future<FileTableRead> readFileTableResult({
     void Function(int received, int total)? onProgress,
     bool Function()? isCancelled,
-    int attempts = readAttempts,
   }) async {
     const tableName = '.TABLE  ';
     final read = await _readWhole(
       tableName,
       onProgress: onProgress,
       isCancelled: isCancelled,
-      attempts: attempts,
     );
     if (read.kind == FileReadFault.absent) {
       final detail =
@@ -424,7 +386,7 @@ class StorageClient {
       'storage',
       'file table: ${records.length} record(s) from '
           '${read.placed!.fragmentsUsed} fragment(s), '
-          '${contents.length} byte(s), attempt $lastReadAttempts/$attempts',
+          '${contents.length} byte(s), attempt $lastReadAttempts/$readAttempts',
     );
     return FileTableRead(records: records, attempts: lastReadAttempts);
   }
@@ -548,7 +510,6 @@ class StorageClient {
     int? size,
     void Function(int received, int total)? onProgress,
     bool Function()? isCancelled,
-    int attempts = readAttempts,
   }) async {
     lastReadAttempts = 0;
     lastReadError = null;
@@ -568,7 +529,7 @@ class StorageClient {
     PacketResponse? reply;
     String? fault;
     FileReadFault? kind;
-    for (var attempt = 1; attempt <= attempts; attempt++) {
+    for (var attempt = 1; attempt <= readAttempts; attempt++) {
       // A cancelled read sends nothing further: the page has stopped waiting and the user asked it
       // to stop, so only the attempt already in flight can still land.
       if (isCancelled?.call() ?? false) {
@@ -658,7 +619,7 @@ class StorageClient {
       if (fault == null) {
         AppDiagnostics.log(
           'storage',
-          'read "$name": complete on attempt $attempt/$attempts - '
+          'read "$name": complete on attempt $attempt/$readAttempts - '
               '${_fragmentSummary(reply!)}',
         );
         return (
@@ -690,11 +651,11 @@ class StorageClient {
           busy: false,
         );
       }
-      final more = attempt < attempts;
+      final more = attempt < readAttempts;
       final wait = more ? readRetryBackoff[attempt - 1] : Duration.zero;
       AppDiagnostics.log(
         'storage',
-        'read "$name": attempt $attempt/$attempts failed '
+        'read "$name": attempt $attempt/$readAttempts failed '
             '(${kind?.label ?? FileReadFault.failed.label}) - $fault'
             '${more ? '; re-requesting the whole file in '
                       '${wait.inMilliseconds} ms' : '; giving up'}',
@@ -865,13 +826,30 @@ class StorageClient {
 
   /// Resizes a file per Docs 03.03 CID3.
   ///
-  /// On a block filesystem this is the CHEAP way to change a file's length: the record is appended
+  /// On a block filesystem this is the CHEAP half of a length change: the record is appended
   /// against the file's existing data area (`StorageBlockFS.h` `ResizeFile`), where a
   /// delete+create allocates (and erases) a fresh area for the same bytes. Shrinking always
   /// works; growing only works when the free run behind the file can be extended in place, and
   /// both refuse a zero size (B11).
   ///
-  /// [writeFile] sends it as part of its in-place path; nothing else calls it directly.
+  /// **Deliberately UNCALLED - the reason, so nobody "finishes" this.** The owner's ruling
+  /// (2026-11-12) was to route a file's length change through this command, and the saving it
+  /// describes is real: measured on the real `StorageBlockFS.h` in the DAS geometry (host probe
+  /// `app/.dart_tool/hermes/write_path_probe.cpp`), a length change costs **+1** record this way
+  /// against **+2** the staged way. What it cannot do is carry the CONTENT. A resize only moves
+  /// the record; the new bytes still have to land in the file's data area, and the CID-6 stream
+  /// writes straight through `StorageFlash.Write` with nothing erased in front of it
+  /// (`firmware/src/Core/Services/Storage.h`, the fragment case: `WriteActive`, `WriteName`,
+  /// `WriteSeq`, `WriteOff` - no erase on `Frag.Current == 0`). Flash only programs 1s to 0s
+  /// ("the target must be freshly erased", `firmware/src/Devices/DAS_v0.1/Storage.h`), so the
+  /// bytes left on the device are `new & old` while the resize and every fragment answer success.
+  /// Same probe, same store: `resize answered success` then
+  /// `content: CORRUPT first bad byte 0: want 7E got 6C; on-flash == want&previous: YES`.
+  ///
+  /// Only `CreateFile` erases an area, and `ResizeFile` erases just the newly added tail pages, so
+  /// [writeFile] stages every write (see there). Making this usable needs a firmware capability
+  /// the app cannot invent: erase-the-file's-area / replace-in-place. Recorded as a finding for
+  /// the owner in `Issues.md`, not worked around here.
   Future<bool> resizeFile(String name, int size) async {
     final payload = <int>[...padName(name), ...uint32ToBytes(size)];
     return _status(3, payload: payload);
@@ -945,139 +923,28 @@ class StorageClient {
   Future<List<int>?> readFile(String name, {int? size}) async =>
       (await readFileWhole(name, size: size)).bytes;
 
-  /// How the last [writeFile] put a file's content on the device, so a caller (a restore report, a
-  /// page notice) can say which path ran instead of assuming one did.
-  FileWritePath lastWritePath = FileWritePath.staged;
-
-  /// Why the last [writeFile] did not take its in-place path, in one sentence - null when it did,
-  /// or when the file was simply not there yet (a first creation is staged by design).
-  String? lastWriteNote;
-
-  /// Set once this client has seen a device refuse the resize (a FAIL reply, or no reply at all to
-  /// what is a documented CID). An image older than the resize capability answers NOTHING to CID 3,
-  /// which costs this client a whole request timeout PER WRITE; a refusal is a property of the
-  /// device, so it is remembered for the rest of this client's life and not re-probed.
-  bool _resizeRefused = false;
-
-  /// The sentence [lastWriteNote] gets when the resize is skipped because this device already
-  /// refused it. Size-independent on purpose: the sizes of later writes are not the one that was
-  /// refused.
-  static const String _resizeRefusedNote =
-      'the device refused Storage CID 3 earlier';
-
   /// Writes a whole file per docs 03.06 CID6. Stream fragments are capped at 64
   /// content bytes (docs: "maximum 64 byte stream fragment"); every fragment carries
   /// the 4-byte frag info so the device can detect out-of-order delivery.
   ///
-  /// TWO paths, and which one ran is in [lastWritePath]:
+  /// One path, and it is STAGED: the content goes into a temporary file, which is renamed over the
+  /// target once the write succeeded, so a failed create or write cannot destroy the original.
+  /// It costs the device's file table **two appended records** per write (create + rename), and
+  /// on a DAS **an invalidated (0x00) hole is never reused**
+  /// (`firmware/src/Core/Functions/StorageBlockFS.h`), so this is the cost that fills an 8-record
+  /// table until a Save All is refused.
   ///
-  /// * IN PLACE ([FileWritePath.inPlace] / [FileWritePath.resize]) - the file is already on the
-  ///   device, so its length is changed with Storage CID 3 (one appended record, same data area)
-  ///   or not at all when it is already the right length (no record), and the fragments are
-  ///   written into it. This is the path that stops the app filling a node's file table: a DAS
-  ///   holds 8 sixteen-byte records and **an invalidated (0x00) hole is never reused**
-  ///   (`firmware/src/Core/Functions/StorageBlockFS.h`), so a write that appends two records per
-  ///   save is what made nodes start refusing Save All.
-  /// * STAGED ([FileWritePath.staged]) - the content is staged under a temporary name and renamed
-  ///   over the target once the write succeeded. This is the path a FIRST creation takes (there is
-  ///   no length to change and nothing to preserve), and the fallback whenever the resize is
-  ///   refused, does not take, or the in-place write fails. It appends two records (create +
-  ///   rename) and reallocates the data area, and it is the only path that leaves the original
-  ///   untouched until the new content is complete.
-  ///
-  /// The in-place path trades that last guarantee for the records: a link that dies mid-write
-  /// leaves the file at its new length with part of the new content. Everything short of that is
-  /// repaired by the staged path, which rewrites the file whole from the bytes the caller holds.
-  Future<bool> writeFile(String name, List<int> bytes) async {
-    lastWritePath = FileWritePath.staged;
-    lastWriteNote = null;
-    final ok =
-        await _writeInPlace(name, bytes) || await _stageAndSwap(name, bytes);
-    // The path is a fact about the device, not an implementation detail: a file table fills up
-    // WATCHING which path ran, and the diagnostics ring is where a rig session reads it back.
-    AppDiagnostics.log(
-      'storage',
-      'write "$name" (${bytes.length} B): ${lastWritePath.name}, '
-          '${lastWritePath.recordCost}'
-          '${lastWriteNote == null ? '' : ' - $lastWriteNote'}',
-    );
-    return ok;
-  }
+  /// The owner's ruling (2026-11-12) was to spend ONE record by changing the length with
+  /// [resizeFile] (Storage CID 3) and writing into the existing file. That was implemented,
+  /// measured and reverted: a resize moves the record but the bytes still have to land in the
+  /// file's own, already-programmed area, and flash only programs 1s to 0s - so the write answers
+  /// success and leaves `new & old` on the device. The evidence and the firmware gap it needs
+  /// (an erase-the-file's-area / replace-in-place command) are recorded on [resizeFile].
+  Future<bool> writeFile(String name, List<int> bytes) =>
+      _stageAndSwap(name, bytes);
 
-  /// The in-place half of [writeFile]. True only when the whole file is on the device; false means
-  /// the caller must stage and swap (and [lastWriteNote] says why, when there is something to say).
-  ///
-  /// The length change is verified by READING THE FILE'S SIZE BACK, never by the resize reply
-  /// alone: a device that answers success and leaves the old size would then take the fragments as
-  /// an over-run (`Core/Services/Storage.h` refuses a fragment past the file's end) and the write
-  /// would leave the file at its old length - the worst outcome there is, because nothing reports
-  /// it.
-  Future<bool> _writeInPlace(String name, List<int> bytes) async {
-    // A zero-size file cannot exist (Docs 03.01/03.03), so there is nothing to write in place.
-    if (bytes.isEmpty) return false;
-
-    final before = await _readTableQuietly();
-    if (before == null) {
-      lastWriteNote =
-          'the file table could not be read, so the file was staged and renamed '
-          'instead of resized';
-      return false;
-    }
-    final existing = _liveRecord(before, name);
-    if (existing == null) {
-      // A first creation: there is no length to change and nothing to preserve, so the staging
-      // path is the normal one and needs no explanation.
-      return false;
-    }
-
-    if (existing.size != bytes.length) {
-      if (_resizeRefused) {
-        lastWriteNote = _resizeRefusedNote;
-        return false;
-      }
-      // The resize is a PROBE for a capability this device may not have. Its fault is not the
-      // reason a later failure is reported with, so the trace starts clean for the path that runs.
-      trace.clear();
-      if (!await resizeFile(name, bytes.length)) {
-        _resizeRefused = true;
-        lastWriteNote =
-            'the device refused the resize (Storage CID 3) of "$name" to '
-            '${bytes.length} byte(s), so the file was staged and renamed instead';
-        trace.clear();
-        return false;
-      }
-      final after = await _readTableQuietly();
-      final resized = after == null ? null : _liveRecord(after, name);
-      if (resized == null || resized.size != bytes.length) {
-        final what = resized == null
-            ? 'no longer lists the file'
-            : 'still says ${resized.size} byte(s)';
-        lastWriteNote =
-            'the device accepted the resize of "$name" to ${bytes.length} '
-            'byte(s) but its file table $what, so the file was staged and '
-            'renamed instead';
-        trace.clear();
-        return false;
-      }
-      lastWritePath = FileWritePath.resize;
-    } else {
-      lastWritePath = FileWritePath.inPlace;
-    }
-
-    if (!await _writeFragments(name, bytes)) {
-      // The file is now at the new length with part of the content. The staged path rewrites it
-      // whole from the caller's bytes, so falling back here repairs the file as well as it can.
-      lastWritePath = FileWritePath.staged;
-      lastWriteNote =
-          'the write into "$name" did not land, so the file was staged and '
-          'renamed instead';
-      return false;
-    }
-    return true;
-  }
-
-  /// Today's path: stage under a temporary name, write, then rename over the target only once the
-  /// content is safely staged, so a failed create/write cannot destroy the original.
+  /// Stage under a temporary name, write, then rename over the target only once the content is
+  /// safely staged, so a failed create/write cannot destroy the original.
   Future<bool> _stageAndSwap(String name, List<int> bytes) async {
     final temp = _tempName(name);
     await deleteFile(temp); // clear a stale temp from a previous failed write
@@ -1098,34 +965,6 @@ class StorageClient {
       return false;
     }
     return true;
-  }
-
-  /// The live record for [name], or null when the table does not list it.
-  static FileRecord? _liveRecord(List<FileRecord> records, String name) {
-    final wanted = normalizeFileName(name);
-    for (final record in records) {
-      if (record.invalidated) continue;
-      if (normalizeFileName(record.name) == wanted) return record;
-    }
-    return null;
-  }
-
-  /// A file-table read that leaves [lastReadError] and [lastReadAttempts] alone.
-  ///
-  /// A write is not a read: those two fields are the answer a PAGE shows for its last read, and a
-  /// table read taken inside a write must not put a stale sentence on a view that never asked for
-  /// one. Null means the table could not be read whole. One attempt only: this is a probe (see
-  /// [readFileTableResult]'s `attempts`), and its answer decides between two paths, not a page.
-  Future<List<FileRecord>?> _readTableQuietly() async {
-    final error = lastReadError;
-    final attempts = lastReadAttempts;
-    try {
-      final read = await readFileTableResult(attempts: 1);
-      return read.ok ? read.recordsOrEmpty : null;
-    } finally {
-      lastReadError = error;
-      lastReadAttempts = attempts;
-    }
   }
 
   /// The CID-6 fragment stream; every fragment carries the file name (B12).

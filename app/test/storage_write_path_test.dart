@@ -1,24 +1,24 @@
-/// The two paths a file write can take, and what each costs a node's file table.
+/// The one path a file write takes, and what it costs a node's file table.
 ///
-/// The owner's ruling (2026-11-12) is that `StorageClient.resizeFile` (Storage CID 3) is the way a
-/// file's LENGTH changes. The reason is in the firmware: a DAS file table holds 8 sixteen-byte
-/// records, every append consumes one, and "Invalidated (0x00) holes are never reused"
-/// (`firmware/src/Core/Functions/StorageBlockFS.h`). The staged path - create a temporary file,
-/// write it, rename it over the target - appends TWO records per write (create + rename) and
-/// erases a fresh data area; a resize appends ONE and keeps the file's own area; a write into a
-/// file that is already the right length appends none.
+/// The owner's ruling (2026-11-12) was to change a file's LENGTH through `StorageClient.resizeFile`
+/// (Storage CID 3) and write into the existing file, which costs one file-table record instead of
+/// the staged path's two. That was implemented, measured and reverted, and this file pins the
+/// revert so nobody "finishes" the optimisation: a resize only moves the record, while the CONTENT
+/// still has to land in the file's own data area, and a CID-6 fragment stream writes with nothing
+/// erased in front of it (flash only programs 1s to 0s). The byte-level evidence is the host probe
+/// `app/.dart_tool/hermes/write_path_probe.cpp`, which runs the REAL `StorageBlockFS.h` over the
+/// fake NOR flash: `resize answered success` then `content: CORRUPT ... on-flash ==
+/// want&previous: YES`.
 ///
-/// The device below is a model, not a mock: it appends a record for exactly the three commands the
-/// firmware appends one for (`CreateFile`, `ResizeFile`, `RenameFile` - see the same header), and
-/// it applies the firmware's own rules for a CID-6 stream: fragment 0 opens it, a fragment may not
-/// run past the file's end, and every fragment carries the sequence it accepted. That is what lets
-/// [appends] stand in for the record count a rig session would read out of `.TABLE  `.
+/// The device below is a model: it appends a record for the commands the firmware appends one for
+/// (`CreateFile`, `ResizeFile`, `RenameFile`) and applies the firmware's rules for a CID-6 stream
+/// (fragment 0 opens it, a fragment may not run past the file's end). That is what lets
+/// [appends] stand in for the record count a rig session reads out of `.TABLE  `.
 library;
 
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tamuapp/core/diagnostics.dart';
 import 'package:tamuapp/core/fragment_reassembler.dart' show FragmentChunk;
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
@@ -39,20 +39,10 @@ class _Device extends FakeTolerantChannel {
   /// Every command the node answered, in order, as `cid:name[:detail]`.
   final List<String> ops = [];
 
-  /// Answer FAIL to a resize (an image with no CID 3, or one that refuses this growth).
-  bool refuseResize = false;
-
-  /// Answer SUCCESS to a resize and leave the file at its old size - the silent failure the
-  /// read-back exists for.
-  bool ignoreResize = false;
-
-  /// The reply to the `.TABLE  ` read is a stream that lost its last fragment.
-  bool tablePartial = false;
-
   /// Refuse this many fragment writes before accepting them (`-1` = never refuse).
   int refuseFragments = -1;
 
-  /// How many times the `.TABLE  ` file was asked for.
+  /// How many times the `.TABLE  ` file was asked for: a write should not need it.
   int tableReads = 0;
 
   int _writeOffset = 0;
@@ -90,9 +80,9 @@ class _Device extends FakeTolerantChannel {
         return busAccepted;
       case 3: // resize
         ops.add('resize $name ${_u32(payload, 8)}');
-        if (refuseResize || !files.containsKey(name)) return busRefused;
+        if (!files.containsKey(name)) return busRefused;
         final size = _u32(payload, 8);
-        if (!ignoreResize) files[name] = _resized(files[name]!, size);
+        files[name] = _resized(files[name]!, size);
         appends++;
         return busAccepted;
       case 4: // rename
@@ -105,8 +95,7 @@ class _Device extends FakeTolerantChannel {
       case 5: // read
         if (name == '.TABLE') {
           tableReads++;
-          final reply = _tableResponse();
-          return tablePartial ? _lostTail(reply) : reply;
+          return _chunked(tableReply(names, (n) => files[n]!.length));
         }
         final content = files[name];
         if (content == null) return busRefused;
@@ -149,11 +138,6 @@ class _Device extends FakeTolerantChannel {
     );
   }
 
-  PacketResponse _tableResponse() {
-    final payload = tableReply(names, (n) => files[n]!.length);
-    return _chunked(payload);
-  }
-
   /// The device's reply shape: `[name][content, at most 64 bytes]` per fragment, the payload being
   /// their concatenation (B12).
   PacketResponse _chunked(List<int> payload) {
@@ -174,21 +158,6 @@ class _Device extends FakeTolerantChannel {
       chunks: chunks,
       stopped: true,
       total: chunks.length,
-    );
-  }
-
-  /// The same reply with its last fragment gone and no STOP frame - the shape the rig's link
-  /// produces when a stream is cut.
-  PacketResponse _lostTail(PacketResponse reply) {
-    final kept = reply.chunks.sublist(0, reply.chunks.length - 1);
-    return PacketResponse(
-      payload: [for (final chunk in kept) ...chunk.body],
-      success: true,
-      fail: false,
-      chunks: kept,
-      missing: [reply.chunks.length - 1],
-      stopped: false,
-      total: reply.total,
     );
   }
 
@@ -224,7 +193,6 @@ void main() {
     final ok = await client.writeFile('NEW', List<int>.filled(8, 0xAB));
 
     expect(ok, isTrue);
-    expect(client.lastWritePath, FileWritePath.staged);
     expect(device.appends, 2, reason: 'create + rename');
     expect(device.ops, [
       'delete ~NEW',
@@ -233,187 +201,82 @@ void main() {
       'rename ~NEW->NEW',
     ]);
     expect(device.files['NEW'], List<int>.filled(8, 0xAB));
-    expect(client.lastWriteNote, isNull);
   });
 
-  test(
-    'a rewrite of the same length writes in place: no record at all',
-    () async {
-      device.files['SCR_007'] = List<int>.filled(16, 0x11);
-      device.appends = 0;
-
-      final ok = await client.writeFile('SCR_007', List<int>.filled(16, 0x22));
-
-      expect(ok, isTrue);
-      expect(client.lastWritePath, FileWritePath.inPlace);
-      expect(device.appends, 0, reason: 'no create, no resize, no rename');
-      expect(device.ops.where((op) => !op.startsWith('write')), isEmpty);
-      expect(device.files['SCR_007'], List<int>.filled(16, 0x22));
-    },
-  );
-
-  test(
-    'a length change is one resize, not a delete+create: one record',
-    () async {
-      device.files['SCR_007'] = List<int>.filled(16, 0x11);
-      device.appends = 0;
-      final image = [for (var i = 0; i < 148; i++) i & 0xFF];
-
-      final ok = await client.writeFile('SCR_007', image);
-
-      expect(ok, isTrue);
-      expect(client.lastWritePath, FileWritePath.resize);
-      expect(
-        device.appends,
-        1,
-        reason: 'one resize record, the same data area',
-      );
-      expect(device.ops.first, 'resize SCR_007 148');
-      expect(device.ops.where((op) => op.startsWith('create')), isEmpty);
-
-      // Verified by reading the file's SIZE back, not by the resize reply: a fresh client, a fresh
-      // table read, the number the device now reports.
-      final table = await StorageClient(deviceId: 3).readFileTableResult();
-      expect(table.ok, isTrue);
-      final record = table.recordsOrEmpty.firstWhere(
-        (r) => r.name == 'SCR_007',
-      );
-      expect(record.size, 148);
-      expect(record.invalidated, isFalse);
-      expect(device.files['SCR_007'], image);
-    },
-  );
-
-  test(
-    'a refused resize falls back to the staged path and says which ran',
-    () async {
-      device.files['SCR_007'] = List<int>.filled(16, 0x11);
-      device.appends = 0;
-      device.refuseResize = true;
-      final image = List<int>.filled(40, 0x5A);
-
-      final ok = await client.writeFile('SCR_007', image);
-
-      expect(ok, isTrue, reason: 'the fallback still writes the file');
-      expect(client.lastWritePath, FileWritePath.staged);
-      expect(client.lastWriteNote, contains('refused the resize'));
-      expect(
-        device.appends,
-        2,
-        reason: 'create + rename (the refused resize appends nothing)',
-      );
-      expect(device.files['SCR_007'], image);
-    },
-  );
-
-  test(
-    'a resize the device accepts but does not apply is caught by the read-back',
-    () async {
-      device.files['SCR_007'] = List<int>.filled(16, 0x11);
-      device.appends = 0;
-      device.ignoreResize = true;
-      final image = List<int>.filled(40, 0x5A);
-
-      final ok = await client.writeFile('SCR_007', image);
-
-      expect(ok, isTrue);
-      expect(
-        client.lastWritePath,
-        FileWritePath.staged,
-        reason:
-            'the table still said 16 byte(s), so the file was rewritten whole',
-      );
-      expect(client.lastWriteNote, contains('still says 16 byte(s)'));
-      expect(device.files['SCR_007'], image);
-    },
-  );
-
-  test('a failed in-place write is repaired by the staged path', () async {
+  test('an existing file is rewritten the staged way, never resized', () async {
     device.files['SCR_007'] = List<int>.filled(16, 0x11);
     device.appends = 0;
+
+    final ok = await client.writeFile('SCR_007', List<int>.filled(16, 0x22));
+
+    expect(ok, isTrue);
+    // Two records rather than the one a resize would cost: a resize cannot carry the bytes (see
+    // the library doc), so paying two is the price of a correct file.
+    expect(device.appends, 2, reason: 'create + rename');
+    expect(
+      device.ops.where((op) => op.startsWith('resize')),
+      isEmpty,
+      reason: 'a resize leaves the content programmed over live flash',
+    );
+    expect(device.files['SCR_007'], List<int>.filled(16, 0x22));
+  });
+
+  test('a length change puts the NEW bytes on the device', () async {
+    final first = [for (var i = 0; i < 16; i++) 0x11 + i];
+    final second = [for (var i = 0; i < 92; i++) 0x60 + i];
+    await client.writeFile('SCR_007', first);
+
+    final ok = await client.writeFile('SCR_007', second);
+
+    expect(ok, isTrue);
+    expect(device.files['SCR_007'], second);
+    expect(device.appends, 4, reason: 'two writes, two records each');
+    // The file is a different length and holds bytes the first write never sent, so a masked
+    // (new & old) write could not pass this.
+    expect(device.files['SCR_007']!.length, 92);
+  });
+
+  test('a write that dies mid-stream leaves the original intact', () async {
+    final original = [for (var i = 0; i < 16; i++) 0x40 + i];
+    await client.writeFile('SCR_007', original);
+    device.appends = 0;
     device.refuseFragments = 1;
-    final image = List<int>.filled(40, 0x5A);
 
-    final ok = await client.writeFile('SCR_007', image);
+    final ok = await client.writeFile('SCR_007', List<int>.filled(40, 0x7E));
 
-    expect(ok, isTrue, reason: 'the staged path rewrote the file whole');
-    expect(client.lastWritePath, FileWritePath.staged);
-    expect(client.lastWriteNote, contains('did not land'));
+    expect(ok, isFalse);
     expect(
       device.files['SCR_007'],
-      image,
-      reason: 'no partial content is left behind',
+      original,
+      reason: 'the target was never touched',
     );
+    expect(
+      device.files.containsKey('~SCR_007'),
+      isFalse,
+      reason: 'the temp is cleaned up',
+    );
+    expect(device.ops.last, 'delete ~SCR_007');
+  });
+
+  test('the write path reads no file table', () async {
+    await client.writeFile('SCR_007', List<int>.filled(16, 0x11));
+    device.tableReads = 0;
+
+    await client.writeFile('SCR_007', List<int>.filled(32, 0x22));
+
+    expect(device.tableReads, 0, reason: 'a write needs no probe of the table');
   });
 
   test(
-    'a refusal is remembered: the next write does not probe CID 3 again',
+    'resizeFile still speaks Storage CID 3, although nothing calls it',
     () async {
       device.files['SCR_007'] = List<int>.filled(16, 0x11);
-      device.refuseResize = true;
 
-      await client.writeFile('SCR_007', List<int>.filled(40, 0x5A));
-      await client.writeFile('SCR_007', List<int>.filled(80, 0x5A));
-
-      expect(
-        device.ops.where((op) => op.startsWith('resize')),
-        hasLength(1),
-        reason: 'a CID 3 the device does not answer costs a timeout each time',
-      );
-      expect(client.lastWritePath, FileWritePath.staged);
-      expect(client.lastWriteNote, contains('refused Storage CID 3 earlier'));
-    },
-  );
-
-  test(
-    'an unreadable file table falls back to staging, after ONE probe',
-    () async {
-      device.files['SCR_007'] = List<int>.filled(16, 0x11);
-      device.tablePartial = true;
-
-      final ok = await client.writeFile('SCR_007', List<int>.filled(16, 0x22));
+      final ok = await client.resizeFile('SCR_007', 96);
 
       expect(ok, isTrue);
-      expect(client.lastWritePath, FileWritePath.staged);
-      expect(client.lastWriteNote, contains('file table could not be read'));
-      expect(
-        device.tableReads,
-        1,
-        reason:
-            'the table is a PROBE here: a failed probe means the staging path '
-            'runs, so the full three-send budget would only add timeouts',
-      );
+      expect(device.ops.last, 'resize SCR_007 96');
+      expect(device.files['SCR_007']!.length, 96);
     },
   );
-
-  test(
-    'a table read taken inside a write leaves the page\'s last read alone',
-    () async {
-      client.lastReadError = 'Could not read "LAY_1": ...';
-      client.lastReadAttempts = 2;
-
-      await client.writeFile('NEW', List<int>.filled(8, 0xAB));
-
-      expect(client.lastReadError, 'Could not read "LAY_1": ...');
-      expect(client.lastReadAttempts, 2);
-    },
-  );
-
-  test('the path each write took is in the diagnostics ring', () async {
-    device.files['SCR_101'] = List<int>.filled(101, 0x11);
-    await client.writeFile('SCR_101', List<int>.filled(101, 0x22));
-    await client.writeFile('SCR_101', List<int>.filled(131, 0x22));
-    await client.writeFile('NEW101', List<int>.filled(101, 0xAB));
-
-    final lines = [
-      for (final event in AppDiagnostics.events)
-        if (event.toString().contains('write "SCR_101"') ||
-            event.toString().contains('write "NEW101"'))
-          event.toString(),
-    ];
-    expect(lines, hasLength(3));
-    expect(lines[0], contains('inPlace, no record'));
-    expect(lines[1], contains('resize, 1 record'));
-    expect(lines[2], contains('staged, 2 records'));
-  });
 }

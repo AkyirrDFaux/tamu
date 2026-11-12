@@ -1924,3 +1924,23 @@ Probe-side quirks recorded while measuring: this host's adapter answers only the
 
 **Fixed in the same card, so the figures above are the only ones left:** the request gate's queue bound used to be paid up to three times per storage read (3 x 5 s of queueing, ~15.8 s worst case) and every expiry was reported as "the device did not answer". `RequestQueueTimeout` now keeps its own type through `ConnectionManager` (`app/lib/core/connection.dart:1177-1184`) and is recorded as `RequestFaultKind.busy`, so the report says the request never got a slot instead of naming a dead node; a whole-file read that never got a slot ends after ONE queue bound with "the link was busy holding other requests (...), so this read was never sent" (`app/lib/core/storage_client.dart:516-533`), and a discovery ping refuses to count a queue expiry as a miss (`app/lib/core/device_db.dart:472-495`).
 
+
+## App storage write: the one-record length change needs a firmware capability the app cannot invent (2026-11-12, card t_72e4c98f)
+
+**The ruling, and why it is not implemented.** Akyirr ruled on pass-2 finding 6: "keep and use resize" - a file's length change should go through Storage CID 3 (`resizeFile`) instead of the staged delete+create, because on a DAS every file-table mutation appends a record and "Invalidated (0x00) holes are never reused" (`firmware/src/Core/Functions/StorageBlockFS.h`), which is what filled the 8-record tables until nodes refused Save All. The saving is real: measured on the real filesystem in the DAS geometry, a length change costs **+1** record through a resize and **+2** through the staged path. It was implemented, and it cannot ship, because **a resize moves the record but not the content**:
+
+- The new bytes still have to land in the file's own data area, and the CID-6 fragment case in `firmware/src/Core/Services/Storage.h` calls `StorageFlash.Write(FileOffset + WriteOff, ...)` with nothing erased in front of it (no erase on `Frag.Current == 0`).
+- Flash only programs 1s to 0s - "the target must be freshly erased" (`firmware/src/Devices/DAS_v0.1/Storage.h:87`, `Devices/Valu_v2.0/Storage.h:80`) - so the device ends up holding `new & old` while the resize and every fragment answer success. Nothing reads content back, and the app's size re-read confirms only the length, so this is silent corruption of the saved file, not a trade.
+- Only `CreateFile` erases an area; `ResizeFile` erases just the newly added tail pages (`StorageBlockFS.h:537`), which is why shrinking loses nothing and rewriting loses everything.
+
+**Measured** (`app/.dart_tool/hermes/write_path_probe.cpp`: the real `StorageBlockFS.h` over `firmware/test/native/fake_flash.h`, DAS geometry 128 B table / 512 B flash, firmware untouched):
+
+```
+staged 40 B (first creation)       ok, append 1 -> 3 (+2)   content: OK (40 bytes match)
+staged 92 B (length change)        ok, append 3 -> 5 (+2)   content: OK (92 bytes match)
+staged 92 B (same length)          ok, append 5 -> 7 (+2)   content: OK (92 bytes match)
+resize 92 B + in-place write       ok, append 3 -> 4 (+1)   content: CORRUPT first bad byte 0:
+                                   want 7E got 6C; on-flash == want&previous: YES
+```
+
+**What the app does today.** `StorageClient.writeFile` has one path - temp file, write, rename over the target - at +2 records per write, and `resizeFile` is left documented and uncalled with the reason on its doc comment. **What would make the ruling implementable** is a firmware command the app does not have: erase the file's existing data area (a replace-in-place / erase-then-write CID 3 variant), or an erase on the first fragment of a stream that targets an existing file. That is a firmware decision, not an app workaround, so it is recorded here rather than implemented.
