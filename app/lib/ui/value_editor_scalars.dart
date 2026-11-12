@@ -5,23 +5,52 @@ Future<List<int>?> _editSerialNumber(BuildContext context, List<int> current) {
   final controller = TextEditingController(
     text: current.length >= 14 ? serialNumberToHex(current) : '',
   );
+  // The strict side of the app's one hex parser (`core/hex_bytes.dart`, Akyirr's ruling
+  // 2026-11-12). This dialog used to spell out a 28-character regex and an `int.parse` loop of its
+  // own, and refused a bad entry by doing nothing at all; now it says what is wrong.
+  String? error;
+  // OK lives in the dialog's action row, outside the body's StatefulBuilder.
+  late StateSetter rebuildBody;
   return showTamuDialog<List<int>>(
     context,
     title: 'Serial number (28 hex chars)',
-    body: TextField(controller: controller, autofocus: true, maxLength: 28),
+    body: StatefulBuilder(
+      builder: (context, setState) {
+        rebuildBody = setState;
+        return TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 28,
+          decoration: InputDecoration(
+            hintText: '28 hex digits, two per byte',
+            errorText: error,
+          ),
+          onChanged: (_) {
+            if (error != null) setState(() => error = null);
+          },
+        );
+      },
+    ),
     actions: tamuDialogActions(
       onCancel: () => Navigator.pop(context),
       onConfirm: () {
-        final hex = controller.text.trim().toUpperCase();
-        // 28 hex chars = 112 bits; int.tryParse would overflow int64, so
-        // validate the whole string with a regex before parsing the bytes.
-        if (!RegExp(r'^[0-9A-F]{28}$').hasMatch(hex)) {
+        final parsed = parseHexBytes(controller.text, strict: true);
+        final bytes = parsed.bytes;
+        if (bytes == null) {
+          rebuildBody(() => error = parsed.error);
           return;
         }
-        Navigator.pop(context, [
-          for (var i = 0; i < 28; i += 2)
-            int.parse(hex.substring(i, i + 2), radix: 16),
-        ]);
+        // 28 hex chars = 112 bits; the count is checked as BYTES so a separated entry reads the
+        // same as a packed one.
+        if (bytes.length != 14) {
+          rebuildBody(
+            () => error =
+                'A serial number is 14 bytes (28 hex digits); this is '
+                '${bytes.length}',
+          );
+          return;
+        }
+        Navigator.pop(context, bytes);
       },
     ),
   );

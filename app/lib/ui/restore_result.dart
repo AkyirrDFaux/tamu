@@ -83,6 +83,14 @@ class RestoreResultView extends StatelessWidget {
             _listSection(context, 'Removed from the device', removed),
           if (kept.isNotEmpty)
             _listSection(context, 'Left alone by selection', kept),
+          // A hex value the run read with a digit left over DID land - with the digit dropped. That
+          // is the one thing about the run a count of successes cannot say, so it is listed.
+          if (report.hexWarningLines.isNotEmpty)
+            _listSection(
+              context,
+              'Read short: an odd hex digit count',
+              report.hexWarningLines,
+            ),
         ],
       ),
     );

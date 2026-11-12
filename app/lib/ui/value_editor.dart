@@ -18,6 +18,7 @@ library;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../core/block_registry.dart';
+import '../core/hex_bytes.dart';
 import '../core/transform_23.dart';
 
 export '../core/block_registry.dart' show FieldInfo;

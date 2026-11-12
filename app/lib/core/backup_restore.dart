@@ -279,10 +279,15 @@ Future<LiveRead> readLiveDevice(int deviceId) async {
 /// read of it then lands as `SCRIPT_ERR_TYPE` (`ScriptService::AssignResolved`), and a restore that
 /// skipped the row because its type no longer matched would leave the address dead. A STATIC
 /// block's type comes from the firmware's schema, so a different type there is still refused.
+///
+/// [warnings] collects every hex string this row read with a digit left over (see
+/// `hex_bytes.dart`): the import stays lenient - an archive that restores today keeps restoring -
+/// but the plan no longer loses a nibble invisibly.
 List<int>? resolveEntryBytes(
   BackupEntry source,
   LiveEntry target, {
   bool allowTypeChange = false,
+  List<HexTruncation>? warnings,
 }) {
   final sourceType = dataTypeFromWord(source.type);
   if (sourceType == null) return null;
@@ -314,6 +319,7 @@ List<int>? resolveEntryBytes(
     source.value,
     info: target.info,
     size: hint > 0 ? hint : null,
+    warnings: warnings,
   );
 }
 
@@ -694,6 +700,14 @@ class RestoreItem {
   /// it cannot change the result.
   List<int>? resolvedBytes;
 
+  /// The hex strings this row's value was read from with a digit left over, each already
+  /// attributed to the row (`hex_bytes.dart`, Akyirr's ruling 2026-11-12). Empty for every row
+  /// whose value is not hex-encoded or whose digits pair up.
+  ///
+  /// It lives on the ITEM so a re-resolve cannot leave a stale line behind: [_resolveItems] clears
+  /// it for every row it places, and the plan's list is derived, never accumulated.
+  final List<HexTruncation> hexWarnings = [];
+
   RestoreItem({
     required this.kind,
     required this.device,
@@ -776,6 +790,15 @@ class RestorePlan {
   /// ([RestoreStructureRow]): created and re-created rows, with the shape each was made as and the
   /// shape the device held before it.
   final List<RestoreStructureRow> structureRows = [];
+
+  /// Every hex value in this plan that was read with a digit left over, in item order
+  /// ([RestoreItem.hexWarnings], Akyirr's ruling 2026-11-12).
+  ///
+  /// Derived from the items on every read rather than accumulated through [resolve], so a plan that
+  /// is resolved twice reports one line per row and not two.
+  List<HexTruncation> get hexWarnings => [
+    for (final item in items) ...item.hexWarnings,
+  ];
 
   RestorePlan({
     required this.devices,
@@ -893,6 +916,7 @@ class RestorePlan {
       item.targetEntry = null;
       item.resolvedBytes = null;
       item.issue = null;
+      item.hexWarnings.clear();
       final target = item.targetDevice;
       if (target == null) {
         item.issue = 'No target device';
@@ -926,11 +950,18 @@ class RestorePlan {
           } else {
             // Validate the value now and keep the bytes for the write, so `applyRestorePlan`
             // does not recompute the same decode.
+            final rowWarnings = <HexTruncation>[];
             final bytes = resolveEntryBytes(
               entry,
               item.targetEntry!,
               allowTypeChange: item.block!.isDynamic,
+              warnings: rowWarnings,
             );
+            // A hex value read with a digit left over is still written (the import stays lenient),
+            // and the line travels with the row so the report can name it.
+            for (final warning in rowWarnings) {
+              item.hexWarnings.add(warning.at(restoreItemSubject(item)));
+            }
             if (bytes == null) {
               item.issue = 'Incompatible value';
             } else {
@@ -4263,6 +4294,9 @@ Future<RestoreReport> applyRestorePlan(
   // The SNDB is written once per record, through a free function rather than a client: give it a
   // trace of its own so a refused row is reported with its code like every other kind.
   final sndbTrace = RequestTrace();
+  // The hex values this run read SHORT while writing (the SNDB serial, whose decode happens here
+  // rather than in the plan). The plan's own rows are already on `plan.hexWarnings`.
+  final runWarnings = <HexTruncation>[];
   // What this run measured about the script images it wrote (see [ScriptChanges]): the reload phase
   // acts on the difference between what the device HELD and what was written, not on the fact that
   // a restore wrote it.
@@ -4635,8 +4669,15 @@ Future<RestoreReport> applyRestorePlan(
         // target's own row rather than counting it as a failure.
         if (id == null || id == target.id) break;
         sndbTrace.clear();
+        // The serial is hex in the archive and it is read LENIENTLY, like every other import value:
+        // an older archive whose serial has a digit left over must still restore, and the dropped
+        // digit is reported instead of vanishing (Akyirr's ruling, 2026-11-12).
+        final serial = parseHexBytes(e.serial, strict: false);
+        for (final warning in serial.warnings) {
+          runWarnings.add(warning.at(restoreItemSubject(item)));
+        }
         done(
-          await sndbWrite(unhexBytes(e.serial), id, trace: sndbTrace),
+          await sndbWrite(serial.bytes!, id, trace: sndbTrace),
           item,
           fault: sndbTrace.fault,
           meaning:
@@ -4716,6 +4757,7 @@ Future<RestoreReport> applyRestorePlan(
       notRun: notRun,
       skipped: skipped,
       structure: [...plan.structureRows],
+      hexWarnings: [...plan.hexWarnings, ...runWarnings],
     );
     RestoreSession.record(stopped);
     return stopped;
@@ -4779,6 +4821,7 @@ Future<RestoreReport> applyRestorePlan(
     scriptSlots: swept.prunes,
     scriptFiles: sweptFiles.prunes,
     scriptReload: reloadedScripts.reports,
+    hexWarnings: [...plan.hexWarnings, ...runWarnings],
   );
   // The reasons outlive the page: the backup page can reopen this run, and every failure is also
   // in the diagnostics ring the Logs page dumps.

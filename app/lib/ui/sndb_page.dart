@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../core/connection.dart';
 import '../core/device_db.dart';
+import '../core/hex_bytes.dart';
 import '../core/types.dart';
 import '../core/notice.dart';
 import 'theme.dart';
@@ -90,25 +91,31 @@ class _SndbPageState extends State<SndbPage> with AutoRefreshMixin<SndbPage> {
         ],
       ),
     );
-    final hex = snController.text.trim().toUpperCase();
+    final hex = snController.text.trim();
     final id = int.tryParse(idController.text.trim());
     snController.dispose();
     idController.dispose();
     if (ok != true) return;
-    // A 14-byte serial is 28 hex chars (112 bits); int.tryParse would overflow int64, so
-    // validate the whole string with a regex (like the value editor does).
-    if (!RegExp(r'^[0-9A-F]{28}$').hasMatch(hex)) {
-      _snack('Invalid serial number');
+    // The strict side of the app's one hex parser (Akyirr's ruling, 2026-11-12): 14 bytes is 28 hex
+    // digits, and an entry that cannot be read says which of the two it broke instead of only
+    // "invalid".
+    final parsed = parseHexBytes(hex, strict: true);
+    final snBytes = parsed.bytes;
+    if (snBytes == null) {
+      _snack('Invalid serial number: ${parsed.error}');
+      return;
+    }
+    if (snBytes.length != 14) {
+      _snack(
+        'Invalid serial number: a serial is 14 bytes (28 hex digits), this '
+        'is ${snBytes.length}',
+      );
       return;
     }
     if (id == null || id < 0 || id > 0xFFF) {
       _snack('ID must be 0..4095');
       return;
     }
-    final snBytes = [
-      for (var i = 0; i < 14; i++)
-        int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16),
-    ];
     final success = await _db.sndbWrite(snBytes, id);
     _snack(success ? 'Registry updated' : 'Write failed');
     await _refresh();
@@ -122,10 +129,13 @@ class _SndbPageState extends State<SndbPage> with AutoRefreshMixin<SndbPage> {
       confirmLabel: 'Remove',
     );
     if (confirmed != true) return;
-    final sn = [
-      for (var i = 0; i < snHex.length; i += 2)
-        int.parse(snHex.substring(i, i + 2), radix: 16),
-    ];
+    // The roster's serial is 28 hex chars the device itself answered; read it through the app's one
+    // hex parser rather than a substring walk that would throw on anything shorter.
+    final sn = parseHexBytes(snHex, strict: true).bytes;
+    if (sn == null || sn.length < 14) {
+      _snack('That serial could not be read, so nothing was removed');
+      return;
+    }
     final ok = await _db.sndbDelete(sn);
     _snack(ok ? 'Entry removed' : 'Delete failed');
     await _refresh();

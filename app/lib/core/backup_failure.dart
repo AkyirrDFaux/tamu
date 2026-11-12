@@ -383,6 +383,16 @@ class RestoreReport {
   final List<ScriptFilePrune> scriptFiles;
   final List<ScriptReloadReport> scriptReload;
 
+  /// The values the run read with a hex digit left over (`HexTruncation`, `hex_bytes.dart`).
+  ///
+  /// The import is LENIENT by design (Akyirr's ruling 2026-11-12): an archive whose serial or
+  /// `Undefined` value has an odd digit count still restores, exactly as it did before there was
+  /// one parser. What changes is that the dropped digit is now a line here - the text as it arrived,
+  /// the character it was dropped at, and the byte count that was written - so "the archive had a
+  /// typo" can be told apart from "the app wrote something else". Never a failure: [failed] does not
+  /// count these.
+  final List<HexTruncation> hexWarnings;
+
   RestoreReport({
     required this.at,
     required this.written,
@@ -395,6 +405,7 @@ class RestoreReport {
     this.scriptSlots = const [],
     this.scriptFiles = const [],
     this.scriptReload = const [],
+    this.hexWarnings = const [],
   });
 
   int get failed => reasons.length;
@@ -421,6 +432,10 @@ class RestoreReport {
   /// The structural skips as plain lines, one per row.
   List<String> get skips => [for (final s in skipped) s.line];
 
+  /// The values read with a dropped hex digit, as plain lines: the row, the text, the character the
+  /// digit was dropped at and the byte count written.
+  List<String> get hexWarningLines => [for (final w in hexWarnings) w.line];
+
   /// The run's counts as one line: written, created, re-created, skipped as structure, failed.
   ///
   /// The three structural numbers are separate because they are three different facts and a run
@@ -436,6 +451,11 @@ class RestoreReport {
     if (recreated.isNotEmpty) parts.add('${recreated.length} re-created');
     parts.add('${skipped.length} skipped (structural)');
     parts.add('$failed failed');
+    // A value read short is neither a success nor a failure: it is a line the reader has to see
+    // before trusting what landed, so it gets its own number on the first line of the report.
+    if (hexWarnings.isNotEmpty) {
+      parts.add('${hexWarnings.length} read short (a hex digit had no pair)');
+    }
     return parts.join(' · ');
   }
 
@@ -599,6 +619,9 @@ class RestoreReport {
 
     section('Removed from the device', removals);
     section('Left alone by selection', keptBySelection);
+    // A value read with a digit left over is written anyway (the import stays lenient), so it is
+    // neither a failure nor a skip: its own heading, before the reader trusts the bytes.
+    section('Read short: an odd hex digit count', hexWarningLines);
     return buffer.toString().trimRight();
   }
 
@@ -650,6 +673,15 @@ class RestoreReport {
     ],
     'removed': removals,
     'kept': keptBySelection,
+    'hexWarnings': [
+      for (final w in hexWarnings)
+        {
+          'where': w.where,
+          'text': w.text,
+          'offset': w.offset,
+          'bytes': w.byteCount,
+        },
+    ],
   };
 
   static String _stamp(DateTime at) =>
@@ -686,6 +718,11 @@ abstract final class RestoreSession {
     // proof of it has to outlive the dialog the same way its failures do.
     for (final row in report.structure) {
       AppDiagnostics.log('restore', row.line);
+    }
+    // A value read short is a fact about bytes that LANDED, so it has to survive the dialog too:
+    // "the archive had a typo" is only answerable while the line is still readable.
+    for (final warning in report.hexWarnings) {
+      AppDiagnostics.log('restore', warning.line);
     }
   }
 

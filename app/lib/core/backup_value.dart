@@ -10,6 +10,7 @@ library;
 import 'dart:typed_data';
 
 import 'block_registry.dart';
+import 'hex_bytes.dart';
 import 'render_dict.dart';
 import 'types.dart';
 
@@ -101,15 +102,8 @@ bool hasSemanticForm(String kind) => kind == 'Script' || kind == 'LED layout';
 /// Lower-case hex of [bytes] (the upper-case encoder is `serialNumberToHex` in types.dart).
 String hexBytes(List<int> bytes) => serialNumberToHex(bytes).toLowerCase();
 
-final _nonHex = RegExp(r'[^0-9a-fA-F]');
-
-List<int> unhexBytes(String hex) {
-  final clean = hex.replaceAll(_nonHex, '');
-  return [
-    for (var i = 0; i + 1 < clean.length; i += 2)
-      int.parse(clean.substring(i, i + 2), radix: 16),
-  ];
-}
+// The decoder of those strings is `parseHexBytes` in hex_bytes.dart: one parser for the app, strict
+// in the editors and lenient (with a counted warning) on the archive-import path below.
 
 /// Encodes raw wire [bytes] of [type] into a semantic JSON value. Enum and
 /// device-type values become their name; numbers stay literal; unknown types fall
@@ -198,11 +192,16 @@ Object? encodeSemantic(DataType type, List<int> bytes, {FieldInfo? info}) {
 
 /// Decodes a semantic JSON [value] back into raw wire bytes for [type]. Returns
 /// null when the value is missing or incompatible with the requested type/size.
+///
+/// [warnings] is the archive-import side of the hex ruling (see `hex_bytes.dart`): a hex string
+/// whose digit count is odd still decodes - a restore must not start refusing an archive it imports
+/// today - and every dropped digit is appended here, attributed to the row by whoever reads it.
 List<int>? decodeSemantic(
   DataType type,
   Object? value, {
   FieldInfo? info,
   int? size,
+  List<HexTruncation>? warnings,
 }) {
   switch (type) {
     case DataType.none:
@@ -223,7 +222,9 @@ List<int>? decodeSemantic(
       return raw == null ? null : [raw & 0xFF, (raw >> 8) & 0xFF];
     case DataType.sn:
       if (value is! String) return null;
-      final sn = unhexBytes(value);
+      final parse = parseHexBytes(value, strict: false);
+      warnings?.addAll(parse.warnings);
+      final sn = parse.bytes!;
       return sn.length >= 14 ? sn.sublist(0, 14) : null;
     case DataType.id:
       return _idBytes(value, size);
@@ -264,7 +265,7 @@ List<int>? decodeSemantic(
     case DataType.unknownKeyed:
     case DataType.geometry:
     case DataType.texture:
-      return decodeDictionary(type.value, value);
+      return decodeDictionary(type.value, value, warnings: warnings);
     case DataType.blockInfo:
       if (value is! Map) return null;
       final type = _blockTypeRaw(value['block']);
@@ -288,7 +289,9 @@ List<int>? decodeSemantic(
       );
     case DataType.undefined:
       if (value is Map && value['hex'] is String) {
-        return unhexBytes(value['hex'] as String);
+        final parse = parseHexBytes(value['hex'] as String, strict: false);
+        warnings?.addAll(parse.warnings);
+        return parse.bytes;
       }
       return null;
   }
@@ -376,7 +379,14 @@ List<Map<String, dynamic>> encodeDictionary(int dictType, List<int> bytes) {
 }
 
 /// Rebuilds a keyed-dictionary field value from its semantic entries.
-List<int>? decodeDictionary(int dictType, Object? value) {
+///
+/// [warnings] is threaded on like `decodeSemantic`'s: an entry of a hex-carrying type (`Serial
+/// number`, `Undefined`) reports a dropped digit through the same list.
+List<int>? decodeDictionary(
+  int dictType,
+  Object? value, {
+  List<HexTruncation>? warnings,
+}) {
   if (value is! List) return null;
   final entries = <KeyedEntry>[];
   for (final raw in value) {
@@ -388,6 +398,7 @@ List<int>? decodeDictionary(int dictType, Object? value) {
       type,
       raw['value'],
       info: renderKeyFieldInfo(dictType, key),
+      warnings: warnings,
     );
     if (bytes == null) return null;
     entries.add(

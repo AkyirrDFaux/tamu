@@ -1,18 +1,10 @@
 part of 'value_editor.dart';
 
-/// The bytes a hex field's text encodes, or null when it carries no whole byte
-/// pair. Separators and any other non-hex character are ignored, which is what
-/// the hex fields have always accepted (`ab cd` reads as one byte).
-List<int>? _hexBytes(String text) {
-  final clean = text.replaceAll(RegExp(r'[^0-9a-fA-F]'), '');
-  if (clean.isEmpty || clean.length.isOdd) {
-    return null;
-  }
-  return [
-    for (var i = 0; i < clean.length; i += 2)
-      int.parse(clean.substring(i, i + 2), radix: 16),
-  ];
-}
+// The hex fields below read their text through `parseHexBytes(..., strict: true)` in
+// `core/hex_bytes.dart`: the app has ONE hex parser (Akyirr's ruling, 2026-11-12), and the editors
+// are its strict side. A customer-facing field never truncates a value - an empty or odd-length
+// entry is an error the user sees, because a value editor that dropped a nibble would write a byte
+// pattern nobody typed.
 
 /// Colour: RGBA byte order on the wire (Data Formats.md). Editor offers an RGBA hex
 /// field, HSVA sliders, a live preview and presets.
@@ -28,6 +20,14 @@ Future<List<int>?> _editColour(BuildContext context, List<int> current) {
 
   final controller = TextEditingController(text: hex());
   Color preview() => Color.fromARGB((a & 0xFF), r & 0xFF, g & 0xFF, b & 0xFF);
+
+  // The hex field's refusal, shown UNDER it: the text is read strictly, so eight digits are
+  // required and a short, empty or odd-length entry is never turned into some other colour. It is
+  // null while the field holds a value the editor accepted.
+  String? hexError;
+  // OK lives in the dialog's action row, outside the body's StatefulBuilder, so it holds the setter
+  // to re-render the body with the refusal it just made.
+  late StateSetter rebuildBody;
 
   // HSVA slider state, derived from the current RGBA.
   var sliderH = 0.0, sliderS = 100.0, sliderV = 100.0;
@@ -69,6 +69,7 @@ Future<List<int>?> _editColour(BuildContext context, List<int> current) {
     maxWidth: 320,
     body: StatefulBuilder(
       builder: (context, setState) {
+        rebuildBody = setState;
         final styles = Theme.of(context).textTheme;
         Widget channel(
           String label,
@@ -119,17 +120,22 @@ Future<List<int>?> _editColour(BuildContext context, List<int> current) {
             TextField(
               controller: controller,
               maxLength: 8,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 hintText: 'RRGGBBAA',
                 labelText: 'RGBA hex',
+                errorText: hexError,
               ),
               onChanged: (text) {
-                final bytes = _hexBytes(text);
+                // Strict, like every editor field: the typed text only ever becomes the preview
+                // when it is a whole four bytes. Anything else keeps the last good preview and is
+                // refused at OK with the reason under the field.
+                final bytes = parseHexBytes(text, strict: true).bytes;
                 if (bytes != null && bytes.length == 4) {
                   r = bytes[0];
                   g = bytes[1];
                   b = bytes[2];
                   a = bytes[3];
+                  hexError = null;
                   syncHsv();
                 }
                 setState(() {});
@@ -200,7 +206,23 @@ Future<List<int>?> _editColour(BuildContext context, List<int> current) {
     ),
     actions: tamuDialogActions(
       onCancel: () => Navigator.pop(context),
-      onConfirm: () => Navigator.pop(context, [r, g, b, a]),
+      onConfirm: () {
+        // The field is read AGAIN here, strictly: OK used to hand back the slider state whatever
+        // the text said, so a half-typed colour closed the dialog with a byte pattern nobody had
+        // typed. A refusal keeps the dialog open with the reason under the field.
+        final field = parseHexBytes(controller.text, strict: true);
+        if (field.bytes == null) {
+          rebuildBody(() => hexError = field.error);
+          return;
+        }
+        if (field.bytes!.length != 4) {
+          rebuildBody(
+            () => hexError = 'Type all four bytes: eight hex digits (RRGGBBAA)',
+          );
+          return;
+        }
+        Navigator.pop(context, field.bytes);
+      },
     ),
   );
 }
@@ -562,15 +584,38 @@ Future<List<int>?> _editHex(
   final controller = TextEditingController(
     text: current.map((int b) => b.toRadixString(16).padLeft(2, '0')).join(),
   );
+  // The refusal, shown under the field. OK used to return silently on a text it could not read, so
+  // a typo - `abc`, three digits with no pair for the last one - left the dialog open with nothing
+  // said and the old bytes kept. The strict side of the app's one hex parser says why.
+  String? error;
+  // OK lives in the dialog's action row, outside the body's StatefulBuilder.
+  late StateSetter rebuildBody;
   return showTamuDialog<List<int>>(
     context,
     title: '$title (hex)',
-    body: TextField(controller: controller, autofocus: true),
+    body: StatefulBuilder(
+      builder: (context, setState) {
+        rebuildBody = setState;
+        return TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(
+            hintText: 'One pair of hex digits per byte',
+            errorText: error,
+          ),
+          onChanged: (_) {
+            if (error != null) setState(() => error = null);
+          },
+        );
+      },
+    ),
     actions: tamuDialogActions(
       onCancel: () => Navigator.pop(context),
       onConfirm: () {
-        final bytes = _hexBytes(controller.text);
+        final parsed = parseHexBytes(controller.text, strict: true);
+        final bytes = parsed.bytes;
         if (bytes == null) {
+          rebuildBody(() => error = parsed.error);
           return;
         }
         Navigator.pop(context, bytes);

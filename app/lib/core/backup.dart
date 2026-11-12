@@ -24,6 +24,7 @@ import 'backup_value.dart';
 import 'block_registry.dart';
 import 'device_identity.dart';
 import 'diagnostics.dart';
+import 'hex_bytes.dart';
 import 'protocol.dart';
 import 'register_client.dart';
 import 'request_channel.dart';

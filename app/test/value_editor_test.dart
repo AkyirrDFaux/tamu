@@ -13,8 +13,8 @@ import 'package:tamuapp/ui/value_editor.dart';
 /// The value editing family's contracts, pinned through the one entry point
 /// (`showValueEditor`) after the 1c.3 merge. The shared blocks batch 3 added -
 /// `_SizeStepper` (the vector/matrix size control), `_NumberGrid` (the matrix and
-/// transform cell grid), `_hexBytes` (the hex fields) - are exercised by the
-/// editors that used to carry their own copy, so a regression in any of them
+/// transform cell grid), `parseHexBytes(strict: true)` (the hex fields, `core/hex_bytes.dart`) -
+/// are exercised by the editors that used to carry their own copy, so a regression in any of them
 /// shows up here as a semantics change, not as a compile error.
 class _Recorder {
   List<int>? bytes;
@@ -313,11 +313,21 @@ void main() {
       'AB' * 14,
     );
 
-    // A non-hex entry is refused: the dialog stays open, nothing is returned.
+    // A non-hex entry is refused WITH a reason: the dialog stays open, nothing is returned.
     await tester.enterText(find.byType(TextField), 'G' * 28);
     await _confirm(tester);
     expect(out.bytes, isNull);
     expect(find.text('Serial number (28 hex chars)'), findsOneWidget);
+    expect(find.text('No hex digits'), findsOneWidget);
+
+    // A short entry says what it is short of, through the same one parser.
+    await tester.enterText(find.byType(TextField), 'AB' * 13);
+    await _confirm(tester);
+    expect(out.bytes, isNull);
+    expect(
+      find.text('A serial number is 14 bytes (28 hex digits); this is 13'),
+      findsOneWidget,
+    );
 
     await tester.enterText(
       find.byType(TextField),
@@ -338,6 +348,69 @@ void main() {
     await _confirm(tester);
 
     expect(out.bytes, [0xAB, 0xCD, 0xEF]);
+  });
+
+  testWidgets('hex editor refuses an odd digit count instead of truncating it', (
+    tester,
+  ) async {
+    // The strict half of the app's one hex parser (Akyirr's ruling, 2026-11-12). `abc` used to be
+    // read as `0xAB` by the archive copy and refused silently by the editor copy; now the editor
+    // says WHY and keeps the dialog open, so a typo can never write a different byte pattern.
+    final out = _Recorder();
+    await _openValueEditor(tester, out, DataType.undefined, [0x01, 0x02]);
+
+    expect(find.text('Undefined (hex)'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'abc');
+    await tester.pumpAndSettle();
+    await _confirm(tester);
+
+    expect(out.bytes, isNull);
+    expect(find.text('Undefined (hex)'), findsOneWidget);
+    expect(
+      find.text('An odd number of hex digits: every byte needs two'),
+      findsOneWidget,
+    );
+
+    // An empty field is the same refusal, not an empty value.
+    await tester.enterText(find.byType(TextField), '');
+    await tester.pumpAndSettle();
+    await _confirm(tester);
+
+    expect(out.bytes, isNull);
+    expect(find.text('No hex digits'), findsOneWidget);
+
+    // Whole pairs go through, separators and all.
+    await tester.enterText(find.byType(TextField), 'ab cd');
+    await tester.pumpAndSettle();
+    await _confirm(tester);
+
+    expect(out.bytes, [0xAB, 0xCD]);
+  });
+
+  testWidgets('colour editor refuses a hex field that is not four bytes', (
+    tester,
+  ) async {
+    // OK used to hand back the slider state whatever the field said, so a six-digit entry closed
+    // the dialog with a colour nobody typed. The strict parse is what the OK path asks now.
+    final out = _Recorder();
+    await _openValueEditor(tester, out, DataType.colour, [255, 0, 0, 128]);
+
+    await tester.enterText(find.byType(TextField), '00ff00');
+    await tester.pumpAndSettle();
+    await _confirm(tester);
+
+    expect(out.bytes, isNull);
+    expect(
+      find.text('Type all four bytes: eight hex digits (RRGGBBAA)'),
+      findsOneWidget,
+    );
+
+    await tester.enterText(find.byType(TextField), '00ff00ff');
+    await tester.pumpAndSettle();
+    await _confirm(tester);
+
+    expect(out.bytes, [0, 255, 0, 255]);
   });
 
   testWidgets('a BlockInfo type outside the picker still renders', (
