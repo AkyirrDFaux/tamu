@@ -17,7 +17,9 @@ import 'package:tamuapp/core/request_channel.dart';
 import 'fake_bus.dart';
 
 /// A bus whose register writes are accepted the way the firmware accepts them.
-abstract class RegisterWriteBus extends FakeBus {
+///
+/// Usable as-is when a suite only needs a device that refuses nothing (restore_link_refusal). A fake that answers other requests subclasses it and overrides plainOther/flaggedOther.
+class RegisterWriteBus extends FakeBus {
   RegisterWriteBus({super.firstTxId});
 
   @override

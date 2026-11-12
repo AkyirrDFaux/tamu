@@ -19,7 +19,7 @@ import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/types.dart';
 
-import 'support/fake_bus.dart';
+import 'support/register_write_bus.dart';
 
 BackupDevice _archive() => BackupDevice(
   type: 'Tamu v2.0A',
@@ -96,30 +96,7 @@ RestorePlan _plan({required bool overUsb, bool bleLinkSecured = true}) =>
 /// A core that accepts every request, so `applyRestorePlan` can be driven without a rig. The
 /// register write is what this file measures; the sweeps a restore runs afterwards (slot map,
 /// file table, requester table) answer empty, which the app reads as "the device holds none".
-class _AcceptingBus extends FakeBus {
-  @override
-  Future<List<int>> plain(
-    int targetId,
-    ServiceType service,
-    int functionCid,
-    List<int> payload,
-  ) async => const [];
-
-  @override
-  Future<PacketResponse> flagged(
-    int targetId,
-    ServiceType service,
-    int functionCid,
-    List<int> payload,
-  ) async {
-    // An accepted register write echoes the address and the ValueInfo it was sent, then the
-    // value: the reply IS the request payload.
-    if (service == ServiceType.register && functionCid == RegisterCid.write) {
-      return registerWriteEcho(payload);
-    }
-    return busAccepted;
-  }
-}
+/// That is `RegisterWriteBus` with nothing overridden, so the file uses it directly.
 
 void main() {
   tearDown(() => installRequestChannel(null));
@@ -136,7 +113,7 @@ void main() {
 
     // ... and the run APPLIES it: one row written, none skipped, none failed, and the write that
     // reached the bus is the block's own field (type 0x0B, instance 0, field 0).
-    final bus = _AcceptingBus();
+    final bus = RegisterWriteBus();
     installRequestChannel(bus);
     final report = await applyRestorePlan(plan);
     // ignore: avoid_print
@@ -170,7 +147,7 @@ void main() {
     expect(item.selected, isTrue);
     expect(plan.linkRefusedBlocks, isEmpty);
 
-    final bus = _AcceptingBus();
+    final bus = RegisterWriteBus();
     installRequestChannel(bus);
     final report = await applyRestorePlan(plan);
     expect(report.written, 1);

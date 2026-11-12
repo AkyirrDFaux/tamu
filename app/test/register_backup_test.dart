@@ -7,36 +7,27 @@ import 'package:tamuapp/ui/register_backup_view.dart';
 import 'package:tamuapp/ui/register_page.dart';
 import 'package:tamuapp/ui/theme.dart';
 
+import 'support/byte_fixtures.dart';
+import 'support/topology_client.dart';
+
 /// The Register page's Backup view (Docs/App/Service views/Register.md: "Current/Backup
 /// view", "Save button (current) / Recall button (backup)").
 
 /// Counts topology reads so the auto-refresh cadence can be asserted without a device.
-class _CountingRegisterClient extends RegisterClient {
+class _CountingRegisterClient extends TopologyClient {
   _CountingRegisterClient({required super.deviceId});
 
   int readBlocksCalls = 0;
 
   @override
-  Future<BlocksRead?> readBlocks({List<int>? scriptSlots}) async {
+  Future<BlocksRead?> readBlocks({List<int>? scriptSlots}) {
     readBlocksCalls++;
-    return (
-      blocks: <ReportedBlock>[
-        (
-          type: 0,
-          inst: 0,
-          meta: const ValueInfo(type: 0, size: 9),
-          name: 'System',
-        ),
-      ],
-      unreadTypes: const <int>{},
-    );
+    return super.readBlocks(scriptSlots: scriptSlots);
   }
 }
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-
-  List<int> u16(int v) => [v & 0xFF, (v >> 8) & 0xFF];
 
   /// One static block (resistive measure, 2 fields), one dynamic slot and a script block.
   final blocks = <({int type, int inst, ValueInfo meta, String name})?>[
