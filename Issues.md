@@ -2009,3 +2009,26 @@ resize 92 B + in-place write       ok, append 3 -> 4 (+1)   content: CORRUPT fir
 > - Tap Update; writes are broadcast on the core's bus and each is acknowledged (the write response returns the offset of the last successfully written chunk). The image is then read back once: a chunk that does not read back as written stops the run with its count and offsets instead of being rewritten, and a run that stops leaves the target in its bootloader, where only a power cycle gets it out.
 
 Nothing else in `Docs/App/Update.md` moved: the phase row (`Writing / Verifying / Correcting / Done`) and the "verified/corrections result" are still what the page shows. `Docs/Services/Bootloader.md:7` ("Final verification of the image remains the app's responsibility, via read requests") is unchanged and still true.
+
+- **E84 The DAS bootloader cannot rewrite a page that already holds data, so a node cannot be
+  re-flashed over the bus** (card `t_c7e71d8d`, 2026-11-12, rig-measured on the node on the
+  WCH-Link with the bootloader in `-DBOOTLOADER_FORCE` mode; unchanged by this card's size work).
+  A write whose 64-byte page is already programmed is refused and the flash is not touched:
+  `write @0x0240` / `@0x0280` answer `flags=0x4E`, ack `0xFFFFFFFF` (the write response echoing the
+  unchanged `LastWritten`), and a 14336-byte SWD dump of the app region is byte-identical before and
+  after. A write into a page that is already erased works: `write @0x3700` answers `0x2E`, ack
+  `0x3700`, and the read-back matches the 32 bytes sent. So the erase half of
+  `HandleWrite` -> `FlashErasePage` -> `FlashErasePageFast` (FCR_PAGE_ER under the MODEKEYR unlock)
+  leaves a programmed page as it was, its read-back check then says "not erased" and the program is
+  skipped - which is also why the check is doing its job. Reproduced with the pre-diet check form
+  (`memcpy` into a local word instead of the direct volatile word read) as well, so it is not this
+  card's code; the suspicious part is the fast-erase sequence, not the caller.
+  **Consequence:** flashing a node twice cannot work. The four nodes' images can only be replaced
+  after a mass erase or an SWD write of the whole region (`minichlink -w <bin> 0x08000800`), and the
+  passthrough uploader's 24-38 re-sent chunks (E81) sit on top of this rather than explaining it.
+  **Also observed, not diagnosed:** one write into the second half of a page whose first half had
+  just been erased and 4 bytes programmed (`write @0x3420`) left the node answering nothing - no
+  identify on the bus and `minichlink` reporting `link error, nothing connected to linker` on SWD -
+  i.e. it needed a physical power cycle. Whether that wedge is the same flash-controller state is
+  unknown; the next measurement should be one write into a half-programmed page on a freshly
+  power-cycled node, with the flash controller's BSY/CTLR state read over SWD between steps.

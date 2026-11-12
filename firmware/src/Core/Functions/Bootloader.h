@@ -13,7 +13,16 @@
 //
 // Header-only frames (no payload): start | control | offset | end = 7 bytes.
 // Commands: 0b000 identify-request, 0b001 identify-response, 0b010 write-request,
-//           0b011 write-response, 0b100 read-request, 0b101 read-response.
+//           0b011 write-response, 0b100 read-request, 0b101 read-response,
+//           0b110 digest-request, 0b111 digest-response.
+//
+// The digest request carries the range in place of a payload - offset (u32, the header's own
+// slot) followed by a u16 length - and its response echoes the offset and carries a u32 CRC32
+// of exactly [offset, offset+length) of the app region: start | control | offset | length | end
+// = 9 bytes, and start | control | offset | crc | end = 11 bytes. Bytes past the end of the app
+// region read as 0xFF, so a tool asks with a padded length and a correct image still matches.
+// CRC32 is the reflected 0xEDB88320 polynomial, init 0xFFFFFFFF, final XOR 0xFFFFFFFF (the
+// CRC-32/ISO-HDLC that zlib.crc32 computes).
 //
 // The identify-response carries the app-space size in the offset slot (u32 LE) and the
 // device name as the 32-byte payload (null-padded); the write-response carries the offset
@@ -37,6 +46,8 @@ namespace Bootloader
     constexpr uint8_t CMD_WRITE_RESP    = 0x3; // 0b011
     constexpr uint8_t CMD_READ_REQ      = 0x4; // 0b100
     constexpr uint8_t CMD_READ_RESP     = 0x5; // 0b101
+    constexpr uint8_t CMD_DIGEST_REQ    = 0x6; // 0b110 - CRC32 of a range of the app region
+    constexpr uint8_t CMD_DIGEST_RESP   = 0x7; // 0b111 - the CRC, offset echoed
 
     // Decode sentinel: 0 is a valid command (identify-request), so "invalid" is 0xFF.
     constexpr uint8_t INVALID = 0xFF;
@@ -45,24 +56,28 @@ namespace Bootloader
     constexpr uint8_t HEADER_SIZE    = 6;  // start + control + offset
     constexpr uint8_t READ_REQ_SIZE  = HEADER_SIZE + 1;                    // header + end
     constexpr uint8_t DATA_SIZE      = HEADER_SIZE + PAYLOAD_SIZE + 1;     // header + payload + end
+    // Digest request: offset (u32) + length (u16) after the header is 2 + 1, response: the CRC
+    // (u32) + end. Both stay well inside MAX_FRAME_SIZE.
+    constexpr uint8_t DIGEST_REQ_SIZE  = HEADER_SIZE + 2 + 1;
+    constexpr uint8_t DIGEST_RESP_SIZE = HEADER_SIZE + 4 + 1;
     constexpr uint8_t NAME_SIZE      = 32; // identify-response name (null-padded)
     constexpr uint8_t MAX_FRAME_SIZE = DATA_SIZE;
 
     // Even parity over the command (3 bits), the offset and the payload (bytes 2..len-2).
+    //
+    // Parity of a XOR is the XOR of the parities, so the whole body collapses to one byte with
+    // a single XOR per byte and one fold at the end - instead of the shift-and-xor ladder run
+    // per byte. The command's three bits join the same sum (cmd is masked to 3 bits, so its
+    // higher bits cannot contribute).
     constexpr uint8_t Parity(const uint8_t *Frame, uint16_t Len)
     {
-        uint8_t Parity = 0;
-        uint8_t Cmd = (uint8_t)(Frame[1] & 0x07u);
-        Parity ^= (uint8_t)(Cmd & 1u) ^ (uint8_t)((Cmd >> 1) & 1u) ^ (uint8_t)((Cmd >> 2) & 1u);
+        uint8_t Acc = (uint8_t)(Frame[1] & 0x07u);
         for (uint16_t i = 2; i + 1 < Len; i++)
-        {
-            uint8_t Byte = Frame[i];
-            Byte ^= (uint8_t)(Byte >> 4);
-            Byte ^= (uint8_t)(Byte >> 2);
-            Byte ^= (uint8_t)(Byte >> 1);
-            Parity ^= (uint8_t)(Byte & 1u);
-        }
-        return (uint8_t)(Parity & 1u);
+            Acc ^= Frame[i];
+        Acc ^= (uint8_t)(Acc >> 4);
+        Acc ^= (uint8_t)(Acc >> 2);
+        Acc ^= (uint8_t)(Acc >> 1);
+        return (uint8_t)(Acc & 1u);
     }
 
     // Fills byte 1: padding 0, even parity, command. `Frame` must already hold the full body.
@@ -115,6 +130,17 @@ namespace Bootloader
         WriteControl(Out, CMD_READ_RESP, DATA_SIZE);
     }
 
+    // A read-response frame whose payload slot the caller has already filled. The node copies
+    // the 32 bytes straight from flash into `Out + 6`, so it needs the frame shell and the
+    // control byte but not the staging copy `EncodeReadResponse` makes.
+    inline void EncodeReadFrame(uint32_t Offset, uint8_t *Out)
+    {
+        Out[0] = START;
+        memcpy(Out + 2, &Offset, 4);
+        Out[DATA_SIZE - 1] = END;
+        WriteControl(Out, CMD_READ_RESP, DATA_SIZE);
+    }
+
     // Identify request: header-only, offset slot zero.
     inline void EncodeIdentifyRequest(uint8_t *Out)
     {
@@ -147,14 +173,77 @@ namespace Bootloader
 
     inline const uint8_t *Payload(const uint8_t *Frame) { return Frame + 6; }
 
-    // The frame length for a command, or 0 when the command is unknown.
+    // -----------------------------------------------------------------------
+    // CRC32 (the digest command)
+    // -----------------------------------------------------------------------
+    //
+    // One step of the reflected CRC-32/ISO-HDLC (poly 0xEDB88320), fed byte by byte. Exposed as
+    // a step so the node can run one loop over a range that runs past the end of the app region
+    // (padding with 0xFF) without a second copy of the loop - and without a 1 KB table, which
+    // the 2 KB bootloader does not have.
+    constexpr uint32_t Crc32Step(uint32_t Crc, uint8_t Byte)
+    {
+        Crc ^= Byte;
+        for (uint8_t Bit = 0; Bit < 8; Bit++)
+            Crc = (Crc >> 1) ^ ((Crc & 1u) ? 0xEDB88320u : 0u);
+        return Crc;
+    }
+
+    // CRC32 of a whole buffer: init 0xFFFFFFFF, final XOR 0xFFFFFFFF (zlib.crc32's value).
+    inline uint32_t Crc32(const uint8_t *Data, uint32_t Len)
+    {
+        uint32_t Crc = 0xFFFFFFFFu;
+        while (Len--) Crc = Crc32Step(Crc, *Data++);
+        return Crc ^ 0xFFFFFFFFu;
+    }
+
+    // Digest request: offset (u32) in the header's slot, then the length (u16).
+    inline void EncodeDigestRequest(uint32_t Offset, uint16_t Length, uint8_t *Out)
+    {
+        Out[0] = START;
+        memcpy(Out + 2, &Offset, 4);
+        memcpy(Out + 6, &Length, 2);
+        Out[DIGEST_REQ_SIZE - 1] = END;
+        WriteControl(Out, CMD_DIGEST_REQ, DIGEST_REQ_SIZE);
+    }
+
+    // Digest response: the offset echoed in the header's slot, then the CRC32 (u32).
+    inline void EncodeDigestResponse(uint32_t Offset, uint32_t Crc, uint8_t *Out)
+    {
+        Out[0] = START;
+        memcpy(Out + 2, &Offset, 4);
+        memcpy(Out + 6, &Crc, 4);
+        Out[DIGEST_RESP_SIZE - 1] = END;
+        WriteControl(Out, CMD_DIGEST_RESP, DIGEST_RESP_SIZE);
+    }
+
+    inline uint16_t DigestLength(const uint8_t *Frame)
+    {
+        return (uint16_t)(Frame[6] | ((uint16_t)Frame[7] << 8));
+    }
+
+    inline uint32_t DigestCrc(const uint8_t *Frame)
+    {
+        return (uint32_t)Frame[6] | ((uint32_t)Frame[7] << 8) | ((uint32_t)Frame[8] << 16) |
+               ((uint32_t)Frame[9] << 24);
+    }
+
+    // The frame length for a command, or 0 when the command is unknown. One byte per command
+    // in flash measures smaller than the compare chain on this target.
+    constexpr uint8_t FRAME_SIZE_OF[8] = {
+        READ_REQ_SIZE,     // 0b000 identify-request
+        DATA_SIZE,         // 0b001 identify-response
+        DATA_SIZE,         // 0b010 write
+        READ_REQ_SIZE,     // 0b011 write-response
+        READ_REQ_SIZE,     // 0b100 read-request
+        DATA_SIZE,         // 0b101 read-response
+        DIGEST_REQ_SIZE,   // 0b110 digest-request
+        DIGEST_RESP_SIZE   // 0b111 digest-response
+    };
+
     inline uint16_t FrameSize(uint8_t Cmd)
     {
-        if (Cmd == CMD_IDENTIFY_REQ || Cmd == CMD_READ_REQ || Cmd == CMD_WRITE_RESP)
-            return READ_REQ_SIZE;
-        if (Cmd == CMD_IDENTIFY_RESP || Cmd == CMD_WRITE || Cmd == CMD_READ_RESP)
-            return DATA_SIZE;
-        return 0;
+        return Cmd < 8 ? FRAME_SIZE_OF[Cmd] : 0;
     }
 
     // Validates a complete frame; returns the command, or INVALID when the frame is bad.

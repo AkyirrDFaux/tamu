@@ -161,8 +161,11 @@ int main()
         CHECK_EQ(Decode(Frame, READ_REQ_SIZE), INVALID); // wrong length for the command
         CHECK_EQ(Decode(Frame, 0), INVALID);
 
+        // The 3-bit command field is now fully used (0b110/0b111 are the digest pair), so an
+        // undefined command no longer exists: what rejects a mislabelled frame is the length it
+        // announces. A write body claiming to be a digest request (9 bytes) must not decode.
         std::memcpy(bad, Frame, DATA_SIZE);
-        bad[1] = (uint8_t)((bad[1] & 0x07u) | 0x06u); // undefined command 0b110
+        bad[1] = (uint8_t)((bad[1] & 0x07u) | 0x06u); // digest-request command
         CHECK_EQ(Decode(bad, DATA_SIZE), INVALID);
     }
 
@@ -219,6 +222,121 @@ int main()
         CHECK(ClassifyEchoByte(0x00, 0xAA) == EchoByte::Collision);
         CHECK(ClassifyEchoByte(0xCA, 0x00) == EchoByte::Collision);
         CHECK(ClassifyEchoByte(0xBC, 0xBC) == EchoByte::Echo); // the END marker echoing is ours
+    }
+
+    // --- the folded parity is bit-identical to the per-byte ladder (size diet) -----
+    // Core/Functions/Bootloader.h used to fold every byte on its own and XOR the results. It now
+    // XORs the body into one byte and folds once (the parity of a XOR is the XOR of the parities).
+    // Parity is what makes a frame acceptable, so prove the rewrite over every byte value and
+    // every command value, on both a full data frame and a header-only frame.
+    {
+        auto LadderParity = [](const uint8_t *Frame, uint16_t Len) {
+            uint8_t Parity = 0;
+            uint8_t Cmd = (uint8_t)(Frame[1] & 0x07u);
+            Parity ^= (uint8_t)(Cmd & 1u) ^ (uint8_t)((Cmd >> 1) & 1u) ^ (uint8_t)((Cmd >> 2) & 1u);
+            for (uint16_t i = 2; i + 1 < Len; i++)
+            {
+                uint8_t Byte = Frame[i];
+                Byte ^= (uint8_t)(Byte >> 4);
+                Byte ^= (uint8_t)(Byte >> 2);
+                Byte ^= (uint8_t)(Byte >> 1);
+                Parity ^= (uint8_t)(Byte & 1u);
+            }
+            return (uint8_t)(Parity & 1u);
+        };
+
+        int Mismatches = 0;
+        for (int Cmd = 0; Cmd < 8; Cmd++)
+            for (int Value = 0; Value < 256; Value++)
+            {
+                uint8_t Frame[DATA_SIZE];
+                for (uint16_t i = 0; i < DATA_SIZE; i++) Frame[i] = (uint8_t)(i * 7 + 3);
+                Frame[0] = START;
+                Frame[1] = (uint8_t)Cmd;
+                for (uint16_t i = 2; i < DATA_SIZE - 1; i++) Frame[i] = (uint8_t)Value;
+                Frame[DATA_SIZE - 1] = END;
+                if (Parity(Frame, DATA_SIZE) != LadderParity(Frame, DATA_SIZE)) Mismatches++;
+                if (Parity(Frame, READ_REQ_SIZE) != LadderParity(Frame, READ_REQ_SIZE)) Mismatches++;
+                if (Parity(Frame, DIGEST_REQ_SIZE) != LadderParity(Frame, DIGEST_REQ_SIZE)) Mismatches++;
+                if (Parity(Frame, DIGEST_RESP_SIZE) != LadderParity(Frame, DIGEST_RESP_SIZE)) Mismatches++;
+            }
+        CHECK_EQ(Mismatches, 0);
+        std::printf("parity: 8 commands x 256 byte values x 4 frame lengths, 0 mismatches\n");
+    }
+
+    // --- every command in the 3-bit field is a frame size; nothing is undefined ---
+    {
+        for (int Cmd = 0; Cmd < 8; Cmd++) CHECK(FrameSize((uint8_t)Cmd) != 0);
+        CHECK_EQ(FrameSize(CMD_DIGEST_REQ), DIGEST_REQ_SIZE);
+        CHECK_EQ(FrameSize(CMD_DIGEST_RESP), DIGEST_RESP_SIZE);
+        CHECK_EQ(FrameSize(8), 0); // out of the 3-bit field cannot reach a table entry
+    }
+
+    // --- digest request/response layout --------------------------------------
+    {
+        uint8_t Req[DIGEST_REQ_SIZE];
+        EncodeDigestRequest(0x00001200u, 0x1000u, Req);
+        CHECK_EQ(sizeof(Req), 9);
+        CHECK_EQ(Req[0], START);
+        CHECK_EQ(Req[8], END);
+        CHECK_EQ(Req[1] & 0x07u, CMD_DIGEST_REQ);
+        CHECK_EQ(Req[1] & 0xF0u, 0);
+        CHECK_EQ((Req[1] >> 3) & 1u, RefParity(Req, DIGEST_REQ_SIZE));
+        CHECK_EQ(Offset(Req), 0x00001200u);   // the offset keeps the header's own slot
+        CHECK_EQ(DigestLength(Req), 0x1000u);
+        CHECK_EQ(Req[6], 0x00);               // u16 little-endian
+        CHECK_EQ(Req[7], 0x10);
+        CHECK_EQ(Decode(Req, DIGEST_REQ_SIZE), CMD_DIGEST_REQ);
+        CHECK_EQ(Decode(Req, DIGEST_RESP_SIZE), INVALID); // wrong length for the command
+        CHECK_EQ(Decode(Req, READ_REQ_SIZE), INVALID);
+
+        uint8_t Resp[DIGEST_RESP_SIZE];
+        EncodeDigestResponse(0x00001200u, 0xDEADBEEFu, Resp);
+        CHECK_EQ(sizeof(Resp), 11);
+        CHECK_EQ(Resp[0], START);
+        CHECK_EQ(Resp[10], END);
+        CHECK_EQ(Resp[1] & 0x07u, CMD_DIGEST_RESP);
+        CHECK_EQ((Resp[1] >> 3) & 1u, RefParity(Resp, DIGEST_RESP_SIZE));
+        CHECK_EQ(Offset(Resp), 0x00001200u);  // offset echoed
+        CHECK_EQ(DigestCrc(Resp), 0xDEADBEEFu);
+        CHECK_EQ(Resp[6], 0xEF);              // u32 little-endian
+        CHECK_EQ(Resp[9], 0xDE);
+        CHECK_EQ(Decode(Resp, DIGEST_RESP_SIZE), CMD_DIGEST_RESP);
+        CHECK_EQ(Decode(Resp, DIGEST_REQ_SIZE), INVALID);
+
+        // Every single-bit flip of either frame must be rejected.
+        uint8_t Bad[DIGEST_RESP_SIZE];
+        for (uint16_t i = 0; i < DIGEST_RESP_SIZE; i++)
+            for (int bit = 0; bit < 8; bit++)
+            {
+                std::memcpy(Bad, Resp, DIGEST_RESP_SIZE);
+                Bad[i] ^= (uint8_t)(1u << bit);
+                CHECK_EQ(Decode(Bad, DIGEST_RESP_SIZE), INVALID);
+            }
+
+        PrintHex("digestreq", Req, DIGEST_REQ_SIZE);
+        PrintHex("digestresp", Resp, DIGEST_RESP_SIZE);
+    }
+
+    // --- the digest's CRC32 is the one zlib.crc32 computes ---------------------
+    // The tool and the node must agree byte for byte, so the expected values here come from
+    // Python's zlib.crc32 (CRC-32/ISO-HDLC: poly 0xEDB88320, init 0xFFFFFFFF, final XOR).
+    {
+        CHECK_EQ(Crc32((const uint8_t *)"123456789", 9), 0xCBF43926u);
+        CHECK_EQ(Crc32((const uint8_t *)"", 0), 0x00000000u);
+        const uint8_t Zeros[4] = {0x00, 0x00, 0x00, 0x00};
+        CHECK_EQ(Crc32(Zeros, 4), 0x2144DF1Cu);
+        const uint8_t Erased[4] = {0xFF, 0xFF, 0xFF, 0xFF}; // flash's erased value
+        CHECK_EQ(Crc32(Erased, 4), 0xFFFFFFFFu);
+
+        // Feeding range byte by byte through Crc32Step - what the node does, because it pads
+        // past the end of the app region one byte at a time - equals the whole-buffer form.
+        uint8_t Range[64];
+        for (int i = 0; i < 64; i++) Range[i] = (uint8_t)i;
+        uint32_t Crc = 0xFFFFFFFFu;
+        for (int i = 0; i < 64; i++) Crc = Crc32Step(Crc, Range[i]);
+        CHECK_EQ(Crc ^ 0xFFFFFFFFu, Crc32(Range, 64));
+        CHECK_EQ(Crc ^ 0xFFFFFFFFu, 0x100ECE8Cu);
     }
 
     std::printf("== bootloader packet tests: %d checks, %d failures ==\n", checks, failures);

@@ -8,7 +8,8 @@
 // otherwise the app is launched immediately. It deliberately ignores the standard packet
 // format and speaks the raw bootloader frame on the RS485 bus (no 0xAA sync, so the running
 // nodes - which wait for 0xAA - ignore it). Every write is answered by a write response carrying
-// the last successfully written offset, and an identify request returns the app size and name.
+// the last successfully written offset, an identify request returns the app size and name, and a
+// digest request (0b110) answers with the CRC32 of the requested range of the app region.
 //
 // Flash rules: writes are 32-byte aligned (per the doc); the bootloader erases the 64-byte
 // page on the first half (offset % 64 == 0) and programs both halves. It never touches the
@@ -50,6 +51,12 @@
 
 #define CYCLES_PER_US 48u // 48 MHz core clock (SystemInit)
 #define BL_BYTE_TIME_US 22u // 460800 baud, matching Docs/RSBus and Packets.md
+
+// Bench-only carrier for the digest: a READ at this offset answers with the CRC32 of the whole
+// app region in the first four payload bytes. Only compiled with -DBL_DIGEST_READ_HOOK (the
+// DAS_bootloader env does not define it), because the core's bootloader passthrough has no CID
+// for the digest command itself.
+#define BL_DIGEST_HOOK_OFFSET 0xFFFFFFF0u
 
 // Reply guard: how long the half-duplex line must be quiet before the bootloader answers.
 // The running nodes only need the standard CSMA window (8 byte times) because their reply
@@ -130,8 +137,8 @@ static bool FlashErasePage(uint32_t Addr)
 {
     FlashUnlock();
     FlashErasePageFast(FLASH_CTRL_BASE + Addr);
-    uint32_t Check = 0;
-    memcpy(&Check, (const void *)Addr, sizeof(Check));
+    // Page-aligned, so a plain word read: a memcpy here would pull the library routine in.
+    uint32_t Check = *(volatile uint32_t *)Addr;
     FlashLock();
     return Check == 0xFFFFFFFFu;
 }
@@ -161,61 +168,51 @@ static void SetupUart()
     GpioOutPP(GPIOD, 4); // TXEN PD4
     GPIOD->BCR = (1u << 4);
 
-    RCC->APB2PRSTR |= RCC_APB2Periph_USART1;
-    RCC->APB2PRSTR &= ~RCC_APB2Periph_USART1;
-
-    USART1->CTLR1 = USART_Mode_Rx | USART_Mode_Tx;
-    USART1->CTLR2 = 0;
-    USART1->CTLR3 = 0;
+    // CTLR1/CTLR2/CTLR3 are at their reset values (frame: 8N1, no flow control) - the bootloader
+    // only ever runs straight out of reset, so only the baud rate is written.
     USART1->BRR = (48000000u + 460800u / 2u) / 460800u; // 104 at 48 MHz
-    USART1->CTLR1 |= 0x2000u /* UE */;
+    USART1->CTLR1 = USART_Mode_Rx | USART_Mode_Tx | 0x2000u /* UE */;
 }
 
-static bool WaitByte(uint8_t *Byte, uint32_t Start, uint32_t TimeoutCycles)
+// Reads one raw frame into `Out`; returns its command, or INVALID on timeout/bad frame. `TimeoutUs`
+// bounds the whole frame, not each byte, so a stalled frame is abandoned after one window while a
+// frame that keeps arriving still completes.
+//
+// One byte loop over STATR for the whole frame: a per-byte helper call costs 48 B on this target.
+static uint8_t ReceiveFrame(uint8_t *Out, size_t Cap, uint32_t TimeoutUs)
 {
-    while ((SysTick->CNT - Start) < TimeoutCycles)
-    {
-        if (USART1->STATR & USART_FLAG_RXNE)
-        {
-            *Byte = (uint8_t)USART1->DATAR;
-            return true;
-        }
-    }
-    return false;
-}
-
-// Reads one raw frame into `Out`; returns its length or 0 on timeout/invalid. `TimeoutUs` bounds
-// the whole frame, not each byte, so a stalled frame is abandoned after one window while a frame
-// that keeps arriving still completes.
-static int ReceiveFrame(uint8_t *Out, size_t Cap, uint32_t TimeoutUs)
-{
+    const uint32_t TimeoutCycles = TimeoutUs * CYCLES_PER_US;
     uint32_t Start = SysTick->CNT;
-    uint32_t TimeoutCycles = TimeoutUs * CYCLES_PER_US;
-    uint8_t Byte;
+    size_t Got = 0;
+    uint16_t Need = 0;
     for (;;)
     {
-        if (!WaitByte(&Byte, Start, TimeoutCycles)) return 0;
-        if (Byte == Bootloader::START) break; // skip anything that is not a frame start
-    }
+        if ((uint32_t)(SysTick->CNT - Start) >= TimeoutCycles) return Bootloader::INVALID;
+        if ((USART1->STATR & USART_FLAG_RXNE) == 0) continue;
 
-    size_t Got = 0;
-    Out[Got++] = Byte;
-    // Restart the window now the frame has started: the whole-frame budget must cover the body,
-    // not the idle search before it. Reusing the search's Start lets a request that arrives late
-    // in the window be dropped mid-frame, so the core's own deadline expires - which shows up as
-    // intermittent read failures.
-    Start = SysTick->CNT;
-    if (!WaitByte(&Byte, Start, TimeoutCycles)) return 0;
-    Out[Got++] = Byte;
-
-    uint16_t Need = Bootloader::FrameSize((uint8_t)(Byte & 0x07));
-    if (Need == 0 || Need > Cap) return 0;
-    while (Got < Need)
-    {
-        if (!WaitByte(&Byte, Start, TimeoutCycles)) return 0;
+        uint8_t Byte = (uint8_t)USART1->DATAR;
+        if (Got == 0)
+        {
+            if (Byte != Bootloader::START) continue; // skip anything that is not a frame start
+            // Restart the window now the frame has started: the whole-frame budget must cover
+            // the body, not the idle search before it. Reusing the search's Start lets a request
+            // that arrives late in the window be dropped mid-frame, so the core's own deadline
+            // expires - which shows up as intermittent read failures.
+            Start = SysTick->CNT;
+        }
         Out[Got++] = Byte;
+        if (Got == 2)
+        {
+            Need = Bootloader::FrameSize((uint8_t)(Byte & 0x07u));
+            if (Need == 0 || Need > Cap) return Bootloader::INVALID;
+        }
+        else if (Need != 0 && Got == Need)
+        {
+            break;
+        }
     }
-    return Bootloader::Decode(Out, Need) != Bootloader::INVALID ? (int)Need : 0;
+    // Decode returns the command (or INVALID), which is what the caller dispatches on.
+    return Bootloader::Decode(Out, Need);
 }
 
 static void SendRaw(const uint8_t *Data, size_t Len)
@@ -290,19 +287,52 @@ static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
     SendRaw(Resp, sizeof(Resp));
 }
 
+// CRC32 of [Offset, Offset + Length) of the app region. Bytes past the end of the region read as
+// 0xFF (the flash's erased value), so a tool asks for a padded length and a correct image cannot
+// fail at the tail. The running value is fed through one loop - a second loop would duplicate the
+// CRC step, which the 2 KB image cannot afford.
+__attribute__((always_inline)) static inline uint32_t AppDigest(uint32_t Offset, uint16_t Length)
+{
+    uint32_t Avail = Offset <= APP_SIZE ? APP_SIZE - Offset : 0u;
+    if (Avail > Length) Avail = Length;
+    const uint8_t *Src = (const uint8_t *)(APP_BASE + Offset);
+
+    uint32_t Crc = 0xFFFFFFFFu;
+    for (uint32_t i = 0; i < Length; i++)
+        Crc = Bootloader::Crc32Step(Crc, i < Avail ? Src[i] : 0xFFu);
+    return Crc ^ 0xFFFFFFFFu;
+}
+
 static void HandleRead(uint32_t Offset)
 {
-    // Static, not stack: this runs from main()'s frame, which already holds the 39-byte receive
-    // buffer, and the bootloader's stack is small (the image is within a byte or two of 2 KB).
-    static uint8_t Data[Bootloader::PAYLOAD_SIZE];
+    // The 32 payload bytes are copied straight from flash into the response frame, so no
+    // staging buffer is needed (it also drops the library memcpy/memset from the image).
     static uint8_t Resp[Bootloader::DATA_SIZE];
-    uint32_t Addr = APP_BASE + Offset;
-    if (Offset > APP_SIZE || APP_SIZE - Offset < Bootloader::PAYLOAD_SIZE)
-        memset(Data, 0xFF, sizeof(Data));
-    else
-        memcpy(Data, (const void *)Addr, sizeof(Data));
+    const uint8_t *Src = (const uint8_t *)(APP_BASE + Offset);
+    bool Valid = Offset <= APP_SIZE && APP_SIZE - Offset >= Bootloader::PAYLOAD_SIZE;
+    uint8_t *Dst = Resp + Bootloader::HEADER_SIZE; // the payload slot
 
-    Bootloader::EncodeReadResponse(Offset, Data, Resp);
+#ifdef BL_DIGEST_READ_HOOK
+    // Bench hook, compiled only when the env asks for it (never in the production image): the
+    // core's bootloader passthrough speaks CIDs 0x20/0x21/0x22 and has none for the digest
+    // command, so a bench build hands the CRC out through a READ at an offset no real request
+    // uses. The computation is AppDigest, the same one the digest command runs - only the carrier
+    // frame differs.
+    if (Offset == BL_DIGEST_HOOK_OFFSET)
+    {
+        uint32_t Crc = AppDigest(0, APP_SIZE);
+        for (uint8_t i = 0; i < Bootloader::PAYLOAD_SIZE; i++)
+            Dst[i] = i < 4 ? (uint8_t)(Crc >> (8u * i)) : 0xFFu;
+        Bootloader::EncodeReadFrame(Offset, Resp);
+        SendRaw(Resp, sizeof(Resp));
+        return;
+    }
+#endif
+
+    for (uint8_t i = 0; i < Bootloader::PAYLOAD_SIZE; i++)
+        Dst[i] = Valid ? Src[i] : 0xFFu;
+
+    Bootloader::EncodeReadFrame(Offset, Resp);
     SendRaw(Resp, sizeof(Resp));
 }
 
@@ -311,6 +341,13 @@ constexpr IdentifyFrame Identify = MakeIdentify(APP_LIMIT - APP_BASE, "DAS v0.1"
 static void HandleIdentify()
 {
     SendRaw(Identify.Bytes, Bootloader::DATA_SIZE);
+}
+
+static void HandleDigest(uint32_t Offset, uint16_t Length)
+{
+    static uint8_t Resp[Bootloader::DIGEST_RESP_SIZE];
+    Bootloader::EncodeDigestResponse(Offset, AppDigest(Offset, Length), Resp);
+    SendRaw(Resp, sizeof(Resp));
 }
 
 // ---------------------------------------------------------------------------
@@ -338,7 +375,12 @@ int main(void)
     GPIOD->BCR = (1u << 0);
 
     // Let the pull-up settle, then sample the button: released (high) launches the app.
-    for (volatile uint32_t i = 0; i < 200000u; i++) {}
+    // Counted on SysTick (48 MHz core clock) like SendRaw's silence window, not as a loop of
+    // iterations whose cost depends on what the compiler emits for it.
+    {
+        uint32_t SettleStart = SysTick->CNT;
+        while ((uint32_t)(SysTick->CNT - SettleStart) < 20000u * CYCLES_PER_US) {}
+    }
 #ifndef BOOTLOADER_FORCE
     // BOOTLOADER_FORCE (test hook) skips the button check so the RSBus update path can be
     // exercised without physically holding PC0.
@@ -353,10 +395,9 @@ int main(void)
     for (;;)
     {
         uint8_t Frame[Bootloader::MAX_FRAME_SIZE];
-        int Length = ReceiveFrame(Frame, sizeof(Frame), 2000000u); // 2 s per byte
-        if (Length <= 0) continue;
+        uint8_t Cmd = ReceiveFrame(Frame, sizeof(Frame), 2000000u); // 2 s per byte
+        if (Cmd == Bootloader::INVALID) continue;
 
-        uint8_t Cmd = (uint8_t)(Frame[1] & 0x07);
         uint32_t Offset = Bootloader::Offset(Frame);
         if (Cmd == Bootloader::CMD_IDENTIFY_REQ)
             HandleIdentify();
@@ -364,6 +405,12 @@ int main(void)
             HandleWrite(Offset, Bootloader::Payload(Frame));
         else if (Cmd == Bootloader::CMD_READ_REQ)
             HandleRead(Offset);
+#ifndef BL_DIGEST_READ_HOOK
+        // The bench build reaches the same AppDigest through the read hook below (its carrier
+        // frame), so it leaves this dispatch out to stay inside the 2 KB.
+        else if (Cmd == Bootloader::CMD_DIGEST_REQ)
+            HandleDigest(Offset, Bootloader::DigestLength(Frame));
+#endif
     }
 }
 
