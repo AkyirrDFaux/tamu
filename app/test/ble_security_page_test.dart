@@ -655,6 +655,17 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.textContaining('returns to Just Works'), findsOneWidget);
         expect(find.textContaining('anyone in range can pair'), findsOneWidget);
+        // The way back is not a cable: after Just Works the phone pairs without a code and holds
+        // a secured link that may set one again (`Docs/Services/App Interface.md:31`). The retired
+        // "Set a new code here over USB" claim would tell the user otherwise.
+        expect(
+          find.textContaining(
+            'over USB, or from the secured Bluetooth link the phone holds once it pairs '
+            'again without a code',
+          ),
+          findsOneWidget,
+        );
+        expect(find.textContaining('Set a new code here over USB'), findsNothing);
 
         await tester.tap(find.widgetWithText(FilledButton, 'Clear passkey'));
         await tester.pumpAndSettle();

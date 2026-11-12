@@ -451,8 +451,9 @@ class _BleSecurityPageState extends State<BleSecurityPage>
       title: 'Clear the passkey?',
       body:
           'The device returns to Just Works: pairing will not ask for a code any more, and '
-          'anyone in range can pair while a pairing window is open. Set a new code here over '
-          'USB when you want the protection back.',
+          'anyone in range can pair while a pairing window is open. Set a new code here when '
+          'you want the protection back - over USB, or from the secured Bluetooth link the '
+          'phone holds once it pairs again without a code.',
       confirmLabel: 'Clear passkey',
     );
     if (!ok || !mounted) return;
