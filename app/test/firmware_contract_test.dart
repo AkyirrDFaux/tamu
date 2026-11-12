@@ -21,14 +21,24 @@ import 'package:tamuapp/core/script_instructions.dart';
 ///
 /// The firmware tree is read from disk, so the test skips cleanly when the app is checked out
 /// or tested on its own.
-Map<String, int> _firmwareDefines() {
-  final candidates = [
-    '../firmware/src/Core/Services/ScriptDefs.h',
-    '../../firmware/src/Core/Services/ScriptDefs.h',
-  ];
-  for (final path in candidates) {
+/// The firmware source at [relativePath] (`src/Blocks/BleSettings.h`), or null when the firmware
+/// tree is not checked out next to the app. The app is tested from `app/`, so the tree is one or
+/// two directories up - which is also why every contract test skips instead of failing on a
+/// standalone checkout.
+File? _firmwareFile(String relativePath) {
+  for (final path in [
+    '../firmware/$relativePath',
+    '../../firmware/$relativePath',
+  ]) {
     final file = File(path);
-    if (!file.existsSync()) continue;
+    if (file.existsSync()) return file;
+  }
+  return null;
+}
+
+Map<String, int> _firmwareDefines() {
+  final file = _firmwareFile('src/Core/Services/ScriptDefs.h');
+  if (file != null) {
     final defines = <String, int>{};
     final re = RegExp(
       r'^#define\s+(SCRIPT_\w+|MAX_SCRIPTS)\s+(0x[0-9A-Fa-f]+|-?\d+)[uUlL]*',
@@ -91,12 +101,8 @@ Map<String, int> _firmwareEnum(String relativePath, String enumName) {
 /// is a broken guard, not an absent firmware, so it must not pass silently.
 List<({int field, int offset, String type, String flags})>?
 _firmwareBlockEntries(String relativePath, String tableName) {
-  for (final path in [
-    '../firmware/$relativePath',
-    '../../firmware/$relativePath',
-  ]) {
-    final file = File(path);
-    if (!file.existsSync()) continue;
+  final file = _firmwareFile(relativePath);
+  if (file != null) {
     final source = file.readAsStringSync();
     final start = source.indexOf('$tableName[]');
     if (start < 0) return const [];
@@ -131,12 +137,8 @@ _firmwareBlockEntries(String relativePath, String tableName) {
 /// is enabled - null means "not checked out", `[]` means the file exists but the table was not
 /// found (a broken guard, not an absent block).
 List<({int field, String type})>? _wifiSettingsEntries() {
-  for (final path in [
-    '../firmware/src/Blocks/WifiSettings.h',
-    '../../firmware/src/Blocks/WifiSettings.h',
-  ]) {
-    final file = File(path);
-    if (!file.existsSync()) continue;
+  final file = _firmwareFile('src/Blocks/WifiSettings.h');
+  if (file != null) {
     final source = file.readAsStringSync();
     final defines = <String, int>{};
     for (final m in RegExp(
@@ -174,12 +176,8 @@ List<({int field, String type})>? _wifiSettingsEntries() {
 /// name. Returns null when the firmware tree is not checked out next to the app, and an empty list
 /// when the file exists but the table could not be parsed.
 List<({int field, String type, int size})>? _bleSettingsEntries() {
-  for (final path in [
-    '../firmware/src/Blocks/BleSettings.h',
-    '../../firmware/src/Blocks/BleSettings.h',
-  ]) {
-    final file = File(path);
-    if (!file.existsSync()) continue;
+  final file = _firmwareFile('src/Blocks/BleSettings.h');
+  if (file != null) {
     final source = file.readAsStringSync();
     // The widths the table names live beside it, in its own header and in the policy header it
     // includes (BLE_PASSKEY_LEN).
@@ -239,12 +237,8 @@ List<({int field, String type, int size})>? _bleSettingsEntries() {
 /// entry one byte wider would read a name's first byte as the next address. Returns null when the
 /// firmware tree is not checked out next to the app.
 Map<String, int>? _bleBondLayout() {
-  for (final path in [
-    '../firmware/src/Blocks/BleSettings.h',
-    '../../firmware/src/Blocks/BleSettings.h',
-  ]) {
-    final file = File(path);
-    if (!file.existsSync()) continue;
+  final file = _firmwareFile('src/Blocks/BleSettings.h');
+  if (file != null) {
     final source = file.readAsStringSync();
     return {
       for (final m in RegExp(
@@ -265,12 +259,8 @@ Map<String, int>? _bleBondLayout() {
 /// ordinary link losses pairing refusals. Returns null when the firmware tree is not checked out
 /// next to the app, and an empty map when the file exists but nothing could be parsed.
 Map<String, int>? _bleSecureBudgets() {
-  for (final path in [
-    '../firmware/src/Blocks/BleSecurityPolicy.h',
-    '../../firmware/src/Blocks/BleSecurityPolicy.h',
-  ]) {
-    final file = File(path);
-    if (!file.existsSync()) continue;
+  final file = _firmwareFile('src/Blocks/BleSecurityPolicy.h');
+  if (file != null) {
     final source = file.readAsStringSync();
     return {
       for (final m in RegExp(
