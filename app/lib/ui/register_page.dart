@@ -758,8 +758,7 @@ class _RegisterPageState extends State<RegisterPage>
     if (isScriptType(blockType)) {
       final keyMap = _scriptKeys.putIfAbsent(cacheKey, () => {});
       final byField = groupKeysByField(
-        await _client.enumerateFieldKeys(blockType, instance) ??
-            const <int>[],
+        await _client.enumerateFieldKeys(blockType, instance) ?? const <int>[],
       );
       for (var f = ScriptField.input; f < block.meta.size; f++) {
         keyMap[f] = byField[f] ?? <int>[];
