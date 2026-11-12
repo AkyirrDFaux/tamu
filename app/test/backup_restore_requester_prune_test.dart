@@ -6,12 +6,13 @@ import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/types.dart';
 
 import 'support/fake_bus.dart';
+import 'support/register_write_bus.dart';
 
 /// A device's requester table that answers the Subscriptions CIDs a restore uses - Get (0x10),
 /// Set (0x11, a None trigger cancels) and Save-all (0x13) - so the prune can be driven without a
 /// rig. `entries` is the live table: the commands mutate it, so a test reads the state the restore
 /// left behind.
-class _FakeTable extends FakeBus {
+class _FakeTable extends RegisterWriteBus {
   _FakeTable(List<RequesterSubscription> entries)
     : entries = [...entries],
       super(firstTxId: 0x40);
@@ -56,34 +57,14 @@ class _FakeTable extends FakeBus {
         c.trid!,
   ];
 
+  /// The requests this fake adds to the shared write-accepting bus: the subscription table.
   @override
-  Future<List<int>> plain(
+  Future<PacketResponse> flaggedOther(
     int targetId,
     ServiceType service,
     int functionCid,
     List<int> payload,
   ) async {
-    // A register write echoes BlockInfo + ValueInfo + the value, so the reply IS the request's own
-    // payload. The device answers it; a fake that answered nothing would make every entry write
-    // fail and drown the requester table this test is about.
-    if (service == ServiceType.register && functionCid == RegisterCid.write) {
-      return payload;
-    }
-    return const [];
-  }
-
-  @override
-  Future<PacketResponse> flagged(
-    int targetId,
-    ServiceType service,
-    int functionCid,
-    List<int> payload,
-  ) async {
-    // A register write echoes the address, the accepted ValueInfo and the value - the same reply
-    // the payload path returns, now carrying the SUCCESS flag the write is judged by.
-    if (service == ServiceType.register && functionCid == RegisterCid.write) {
-      return registerWriteEcho(payload);
-    }
     if (service != ServiceType.subscriptions) return busAccepted;
     switch (functionCid) {
       case 0x10: // Get subscriptions: the table, 32-byte entries (hash at offset 28), no count

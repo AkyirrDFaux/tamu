@@ -8,7 +8,7 @@ import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/types.dart';
 
-import 'support/fake_bus.dart';
+import 'support/register_write_bus.dart';
 
 /// Format 2's STRUCTURAL row and the two places it has to work.
 ///
@@ -165,38 +165,10 @@ RestorePlan _plan(BackupDevice archive, LiveDevice target) {
   return plan;
 }
 
-/// A Register service that accepts dynamic-block creates and entry writes, and refuses everything
-/// else (so the live re-read after a create comes back empty, which is fine for the assertions).
-class _FakeRegisterChannel extends FakeBus {
-  @override
-  Future<List<int>> plain(
-    int targetId,
-    ServiceType service,
-    int functionCid,
-    List<int> payload,
-  ) async {
-    // A Register write replies with the address, the accepted ValueInfo and the value bytes.
-    if (service == ServiceType.register && functionCid == RegisterCid.write) {
-      return payload;
-    }
-    return const [];
-  }
-
-  @override
-  Future<PacketResponse> flagged(
-    int targetId,
-    ServiceType service,
-    int functionCid,
-    List<int> payload,
-  ) async {
-    // A Register write echoes the address, the accepted ValueInfo and the value: the reply is the
-    // request's own payload, and the flag says the device accepted it.
-    if (service == ServiceType.register && functionCid == RegisterCid.write) {
-      return registerWriteEcho(payload);
-    }
-    return busAccepted;
-  }
-}
+/// A Register service that accepts dynamic-block creates and entry writes, and answers everything
+/// else with nothing (so the live re-read after a create comes back empty, which is fine for the
+/// assertions).
+class _FakeRegisterChannel extends RegisterWriteBus {}
 
 void main() {
   test('a structural row round-trips through fromJson/toJson with no value', () {

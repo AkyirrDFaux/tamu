@@ -91,6 +91,22 @@ List<String> _planFileRows(RestorePlan plan) => [
     if (r.kind == RestoreKind.file) r.fileName!,
 ];
 
+/// Stages a device holding [table] and [loaded], and returns the plan an archive of [scripts]
+/// restores onto it.
+///
+/// Nine cases below staged that device, built the plan and installed the fake in the same four
+/// lines; the fake stays installed, so `core` reads back the same device the run wrote to. A case
+/// that needs a knob (a refused unload or delete) passes its own [fake].
+RestorePlan _stage(
+  Map<String, int> table,
+  Map<int, int> loaded, {
+  List<BackupScript> scripts = const [],
+  RestoreCore? fake,
+}) {
+  install(fake ?? _FakeCore(loaded: loaded, table: table));
+  return _plan(_device(scripts), _live(), table, loaded);
+}
+
 String _tableText(Map<String, int> table) => table.isEmpty
     ? '-'
     : [
@@ -106,14 +122,16 @@ String _fileReport(ScriptFilePrune p) =>
     'remaining=[${p.remainingText}]'
     '${p.skipped ? ' SKIPPED: ${p.reason}' : ''}';
 
+late RestoreCore core;
+
+/// Installs [fake] as the request channel and as `core`, so a case reads back the device it drove.
+void install(RestoreCore fake) {
+  core = fake;
+  installRequestChannel(fake);
+}
+
 void main() {
   late RequestChannel? previous;
-  late _FakeCore core;
-
-  void install(_FakeCore fake) {
-    core = fake;
-    installRequestChannel(fake);
-  }
 
   setUp(() {
     previous = requestChannel;
@@ -129,9 +147,11 @@ void main() {
       // script is unloaded but loadable, and a later "load all" brings it back.
       final table = {'SCR_000': 4, 'SCR_001': 0, 'SCR_002': 0, 'notes.txt': 12};
       final loaded = {1: 1, 2: 2};
-      final device = _device([_script(1, 'Fan curve'), _script(2, 'Selector')]);
-      install(_FakeCore(loaded: loaded, table: table));
-      final plan = _plan(device, _live(), table, loaded);
+      final plan = _stage(
+        table,
+        loaded,
+        scripts: [_script(1, 'Fan curve'), _script(2, 'Selector')],
+      );
 
       final planRows = _planFileRows(plan);
       final result = await applyRestorePlan(plan);
@@ -378,11 +398,14 @@ void main() {
     () async {
       final table = {'SCR_000': 4, 'SCR_001': 0};
       final loaded = {1: 1};
-      final device = _device([_script(1, 'Fan curve')]);
-      final fake = _FakeCore(loaded: loaded, table: table);
-      fake.refuseDelete.add('SCR_000');
-      install(fake);
-      final plan = _plan(device, _live(), table, loaded);
+      final fake = _FakeCore(loaded: loaded, table: table)
+        ..refuseDelete.add('SCR_000');
+      final plan = _stage(
+        table,
+        loaded,
+        scripts: [_script(1, 'Fan curve')],
+        fake: fake,
+      );
 
       final result = await applyRestorePlan(plan);
 
