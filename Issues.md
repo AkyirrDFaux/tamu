@@ -3,7 +3,7 @@
 Open items only. Resolved findings, the 2026-10-04 per-area audits and the doc-fact-check rulings
 that were applied are in the git history.
 
-Item codes: **B** = code-fix items (the 2026-10-09 fact check); **E** = the remaining open backlog items, numbered for later handling. Closed on 2026-10-15 and removed: **B11** (BLE large-reply drain fixed), **E12** (storage hooks converted to a class), **E19** (structurally requester-only), **E24** (Register string clamp documented), **E28** (no capability bit needed), **E4** (obsolete, replaced), **E22** (not needed), **E23** (fixed). Closed on 2026-10-27 and removed: **E54** (Raw Resistance multiplied before it divided, so every 330 kΩ reading from raw 100 up wrapped; the transform now divides first and clamps at the Q16.16 ceiling, and `firmware/test/native/meas_transform_test.cpp` pins the whole window). Closed on 2026-10-28 and removed: **B5** (the 8.1 row is gone - `03a585b` replaced System field 8 with an interface bitfield - and the WiFi code is `firmware/src/Blocks/WifiSettings.h`, block `0x0C`; the missing radio is stated by the specification itself, `Docs/Services/App Interface.md:47`).
+Item codes: **B** = code-fix items (the 2026-10-09 fact check); **E** = the remaining open backlog items, numbered for later handling. Closed on 2026-10-15 and removed: **B11** (BLE large-reply drain fixed), **E12** (storage hooks converted to a class), **E19** (structurally requester-only), **E24** (Register string clamp documented), **E28** (no capability bit needed), **E4** (obsolete, replaced), **E22** (not needed), **E23** (fixed). Closed on 2026-10-27 and removed: **E54** (Raw Resistance multiplied before it divided, so every 330 kΩ reading from raw 100 up wrapped; the transform now divides first and clamps at the Q16.16 ceiling, and `firmware/test/native/meas_transform_test.cpp` pins the whole window). Closed on 2026-10-28 and removed: **B5** (the 8.1 row is gone - `03a585b` replaced System field 8 with an interface bitfield - and the WiFi code is `firmware/src/Blocks/WifiSettings.h`, block `0x0C`; the missing radio is stated by the specification itself, `Docs/Services/App Interface.md:47`). Closed on 2026-11-12 and removed: **E84** (recorded as "the fast page erase leaves a programmed page alone". Rig-measured again on node 2 by card `t_5195d4bc`: the erase was never the problem - a page-start write into a page that holds an image is ACKED, its 32 bytes land, and the page's other half reads `0xFF` over SWD afterwards; the whole 13812-byte image then went through the bus 432/432 chunks with the SWD dump byte-identical to `binaries/DAS_v0_1.bin`. What was real is that the write handler ACKED chunks whose bytes never became the payload (`write @0x3420` answered ack `0x3420`). `Bootloader::WriteChunk` now erases positionally and reads every programmed word back before it names the offset - pinned by `firmware/test/native/bootloader_write_test.cpp` and a source guard).
 
 ## B. Code fixes still open (the document is the specification)
 
@@ -2012,25 +2012,3 @@ resize 92 B + in-place write       ok, append 3 -> 4 (+1)   content: CORRUPT fir
 
 Nothing else in `Docs/App/Update.md` moved: the phase row (`Writing / Verifying / Correcting / Done`) and the "verified/corrections result" are still what the page shows. `Docs/Services/Bootloader.md:7` ("Final verification of the image remains the app's responsibility, via read requests") is unchanged and still true.
 
-- **E84 The DAS bootloader cannot rewrite a page that already holds data, so a node cannot be
-  re-flashed over the bus** (card `t_c7e71d8d`, 2026-11-12, rig-measured on the node on the
-  WCH-Link with the bootloader in `-DBOOTLOADER_FORCE` mode; unchanged by this card's size work).
-  A write whose 64-byte page is already programmed is refused and the flash is not touched:
-  `write @0x0240` / `@0x0280` answer `flags=0x4E`, ack `0xFFFFFFFF` (the write response echoing the
-  unchanged `LastWritten`), and a 14336-byte SWD dump of the app region is byte-identical before and
-  after. A write into a page that is already erased works: `write @0x3700` answers `0x2E`, ack
-  `0x3700`, and the read-back matches the 32 bytes sent. So the erase half of
-  `HandleWrite` -> `FlashErasePage` -> `FlashErasePageFast` (FCR_PAGE_ER under the MODEKEYR unlock)
-  leaves a programmed page as it was, its read-back check then says "not erased" and the program is
-  skipped - which is also why the check is doing its job. Reproduced with the pre-diet check form
-  (`memcpy` into a local word instead of the direct volatile word read) as well, so it is not this
-  card's code; the suspicious part is the fast-erase sequence, not the caller.
-  **Consequence:** flashing a node twice cannot work. The four nodes' images can only be replaced
-  after a mass erase or an SWD write of the whole region (`minichlink -w <bin> 0x08000800`), and the
-  passthrough uploader's 24-38 re-sent chunks (E81) sit on top of this rather than explaining it.
-  **Also observed, not diagnosed:** one write into the second half of a page whose first half had
-  just been erased and 4 bytes programmed (`write @0x3420`) left the node answering nothing - no
-  identify on the bus and `minichlink` reporting `link error, nothing connected to linker` on SWD -
-  i.e. it needed a physical power cycle. Whether that wedge is the same flash-controller state is
-  unknown; the next measurement should be one write into a half-programmed page on a freshly
-  power-cycled node, with the flash controller's BSY/CTLR state read over SWD between steps.
