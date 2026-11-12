@@ -28,6 +28,7 @@ import 'package:tamuapp/core/render_dict.dart'
 import 'package:tamuapp/core/request_channel.dart';
 
 import 'support/fake_channel.dart';
+import 'support/storage_fixtures.dart';
 import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/file_viewers.dart';
@@ -83,38 +84,6 @@ PacketResponse _truncatedTableReply() => _replay('ble_filetable_reply.bin');
 /// (`dart run tool/storage_read.dart --capture test/fixtures/table_reply_usb.bin`).
 PacketResponse _wholeTableReply() => _replay('table_reply_usb.bin');
 
-/// `LAY_1`, read off the rig over BLE on 2026-11-04: 4 fragments, 223 bytes (an 11 x 10 LED
-/// layout, brightness limit 178). Captured with the independent probe and stored as
-/// `test/fixtures/lay1.bin` so the viewer test runs against the device's own bytes.
-List<int> _lay1Content() => File('test/fixtures/lay1.bin').readAsBytesSync();
-
-/// The reply a storage read of `LAY_1` produces: 4 fragments of [name][content].
-PacketResponse _lay1Reply({bool loseTheLast = false}) {
-  const chunk = 64;
-  final content = _lay1Content();
-  final chunks = <FragmentChunk>[];
-  for (var i = 0; i * chunk < content.length; i++) {
-    final start = i * chunk;
-    final end = (start + chunk).clamp(0, content.length);
-    chunks.add(
-      FragmentChunk(i, [
-        ...StorageClient.padName('LAY_1'),
-        ...content.sublist(start, end),
-      ]),
-    );
-  }
-  final kept = loseTheLast ? chunks.sublist(0, chunks.length - 1) : chunks;
-  return PacketResponse(
-    payload: [for (final c in kept) ...c.body],
-    success: true,
-    fail: false,
-    chunks: kept,
-    missing: loseTheLast ? [chunks.length - 1] : const [],
-    stopped: !loseTheLast,
-    total: chunks.length,
-  );
-}
-
 /// A channel with the rig's answers: the file table as a queue of replies (so one run can be
 /// truncated and the next whole, which is what the re-request does), and whole files.
 class _RigChannel extends FakeTolerantChannel {
@@ -147,7 +116,7 @@ class _RigChannel extends FakeTolerantChannel {
       _tableAsks++;
       return table[index];
     }
-    if (name == 'LAY_1') return _lay1Reply();
+    if (name == 'LAY_1') return lay1Reply();
     return const PacketResponse(payload: [], success: true, fail: false);
   }
 }
@@ -396,7 +365,7 @@ void main() {
             onRetry: () async {
               failures++;
               // The second read is a re-request the device answers whole.
-              return _lay1Content();
+              return lay1Content();
             },
           ),
         ),

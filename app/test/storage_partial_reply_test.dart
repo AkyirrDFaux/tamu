@@ -33,7 +33,6 @@
 /// 256 missing, 223 received) ... It was asked 1 time(s).`
 library;
 
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -42,12 +41,10 @@ import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 
 import 'support/fake_channel.dart';
+import 'support/storage_fixtures.dart';
 import 'package:tamuapp/core/storage_client.dart';
 
 const int _txId = 0xF321; // the transaction the probe used
-
-List<int> _fixture(String name) =>
-    File('test/fixtures/$name').readAsBytesSync();
 
 /// Replays a captured packet stream the way the app's link does: parse the frames, feed the
 /// reassembler, and close a stream that stopped without its STOP frame.
@@ -135,8 +132,8 @@ class _ReplyChannel extends FakeTolerantChannel {
 }
 
 void main() {
-  final truncated = _fixture('ble_filetable_reply.bin');
-  final whole = _fixture('table_reply_usb.bin');
+  final truncated = fixture('ble_filetable_reply.bin');
+  final whole = fixture('table_reply_usb.bin');
 
   group('the captured BLE reply (223 of 256, no STOP)', () {
     late List<PacketFrame> frames;
@@ -356,35 +353,10 @@ void main() {
   });
 
   group('a file read', () {
-    /// `LAY_1`'s reply: four `[name][content]` fragments of 64 content bytes.
-    PacketResponse layoutReply({bool loseTheLast = false}) {
-      final content = _fixture('lay1.bin');
-      final chunks = <FragmentChunk>[];
-      for (var i = 0; i * 64 < content.length; i++) {
-        chunks.add(
-          FragmentChunk(i, [
-            ...StorageClient.padName('LAY_1'),
-            ...content.sublist(i * 64, math.min((i + 1) * 64, content.length)),
-          ]),
-        );
-      }
-      final kept = loseTheLast ? chunks.sublist(0, chunks.length - 1) : chunks;
-      return PacketResponse(
-        payload: [for (final c in kept) ...c.body],
-        success: true,
-        fail: false,
-        chunks: kept,
-        missing: loseTheLast ? [chunks.length - 1] : const [],
-        // A hole means the stream cannot have ended on a clean STOP either.
-        stopped: !loseTheLast,
-        total: chunks.length,
-      );
-    }
-
     test('a body that lost its tail is reported, never returned', () async {
       final channel = _ReplyChannel([
-        layoutReply(loseTheLast: true),
-        layoutReply(),
+        lay1Reply(loseTheLast: true),
+        lay1Reply(),
       ]);
       installRequestChannel(channel);
       addTearDown(() => installRequestChannel(null));
