@@ -30,7 +30,11 @@ void DeviceLog(const char *Tag, const char *Fmt, ...)
 {
     if (AppConsoleBusy(AppUSBActive(), AppUsbSilent(), AppInterface.TxHead, AppInterface.TxTail))
         return;
-    char Buffer[128];
+    // 192, not 128: the passthrough's own totals line is a diagnosis a rig session reads back, and
+    // at four-digit counts (a full image upload is ~1300 requests) the 128-byte buffer cut its last
+    // field off - a counter the dump cannot finish printing is a counter a card cannot quote
+    // (measured 2026-11-12, card t_5eb19a27: `... rawreply=` with the value gone).
+    char Buffer[192];
     va_list Args;
     va_start(Args, Fmt);
     vsnprintf(Buffer, sizeof(Buffer), Fmt, Args);

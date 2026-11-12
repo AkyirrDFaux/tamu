@@ -669,6 +669,28 @@ are hardware-only.
   transmit. 24 write chunks (run 2) and ~38 (run 1) had to be re-sent for it, which is exactly the
   bucket the app's one correction round rewrites; every read-back chunk matched on the first
   agreeing pair. `bad=8` is the garbled-chunk glitch above, on the same order.)*
+  *(2026-11-12, card `t_5eb19a27`: re-measured with 200 identify+read+write cycles per run, one port
+  session each, and the entry's premise - "~4 % of requests are answered by nothing", spread over the
+  commands - does NOT hold. Four runs, two builds (pre-card `26.11.12 iter 8`, with the card's work
+  `iter 10`), 600 requests per run, silence classified as "no node answer" (a `FLAG_FAIL` carrying no
+  payload is the CORE's own 1 s deadline, not a node's refusal):
+
+  | run | identify OK/FAIL/silent | read OK/FAIL/silent | write OK/FAIL/silent |
+  | --- | --- | --- | --- |
+  | iter 8 #1 | 200/0/0 | 197/3/0 | 199/0/1 |
+  | iter 8 #2 | 197/3/0 | 198/2/0 | 191/0/9 |
+  | iter 10 #1 | 200/0/0 | 199/1/0 | 197/0/3 |
+  | iter 10 #2 | 199/1/0 | 198/2/0 | 194/0/6 |
+
+  So: **0 silent identify answers in 800 samples, 0 silent reads in 800, and the residual silence is
+  write-only** at 0.2-4.5 % per run. The reads lose differently - 1-3 per 200 come back GARBLED (the
+  payload starts at the frame's `0xBC`; the read-path entry below), which is a wrong answer, not
+  silence. Every write silence is the node never answering: `sendfail=0` in every run, so the raw
+  frame left the core and its echo verified. It is now attributable per command instead of inferred -
+  `BLPT: total req=600 ... timeout=6` with `BLPT: counters ... nocid i/r/w/d=0/6/0/0`, i.e. all six
+  deadline settles were writes (`rawstint=0 rawstall=0` say the send was not what timed out). The
+  pre-card build could only say `timeout=`. Write silence for a page-start chunk is also where a page
+  can be left ERASED - see E85.)*
 
 - **E82 One RX read still discards what arrives during a transmit, and it is not counted** (card
   `t_049cbe93`, 2026-11-10, static - no rig run). `BusRxDestroyed` is now the complete account of
@@ -694,6 +716,23 @@ are hardware-only.
   last chunk's echo window, so the reply's head was consumed by the comparison and the send was
   called a collision. The window that remains, and that this entry now describes alone, is the
   packet path's.)*
+  *(2026-11-12, card `t_5eb19a27` - the RING half is CLOSED. `RS485_RX_KEEP_BYTES` was 160, sized for
+  ONE whole frame, while the worst case across one transmit is TWO: a passthrough request carries no
+  address, so it is a broadcast and two nodes in bootloader mode both answer it, and the second
+  answer's head was the byte the ring refused. The requirement is now arithmetic in
+  `Core/Functions/Bus.h` - `RS485_RX_KEEP_REQUIRED = 2 * (1 + 12 + MAX_PAYLOAD_SIZE)` = 258 B - the
+  core's ring is 260, and `static_assert(RS485_RX_KEEP_BYTES >= RS485_RX_KEEP_REQUIRED, "the keep
+  ring must hold the two whole frames one broadcast can provoke")` makes a shrink a compile error.
+  Every byte is counted both ways: `BusRxKept` (one increment, in the ring's ACCEPTANCE branch) beside
+  `BusRxDestroyed` (the refusal branch), printed as `BUSGATE: keep kept=459 dropped=0
+  received=17897` and in the passthrough's own counters line. Measured over the card's runs:
+  `kept=459..966`, `dropped=0`, `received=17.9..35.8 kB` per 600-request run - 2.5 % of the bytes the
+  core took off the line arrived while a transmit blocked and are kept, which is what the counter now
+  says out loud. A FULL ring could not be staged on the rig (the largest burst one broadcast can
+  provoke here is one 39-byte bootloader answer, and 260 B holds 6.7 of them), so the refusal path is
+  pinned by the host instead: `test/native/bus_rx_keep_test.cpp` pushes two whole 129-byte frames and
+  then proves the byte past capacity is refused (624 checks), and `run.sh` asserts the single
+  increment site in each branch - RED against this card's pre-fix `RSBus.h` with 9 FAILs.)*
 
 - **E83 The bootloader's raw transmit is the only send with no stint deadline** (card `t_45490cbe`,
   2026-11-10, host-measured - no rig run). The packet path (`RS485TransmitVerified`) draws every
@@ -709,6 +748,63 @@ are hardware-only.
   firmware update, no app transaction in flight), and clipping it to a stint means deciding what a
   refused attempt does to the passthrough's 1 s reply deadline (`Core/Services/Device.h`) - the
   bootloader card's (`t_334a1347`) territory, not the packet stint's.
+  *(2026-11-12, card `t_5eb19a27` - CLOSED. `RS485SendRaw` now draws every attempt from ONE
+  `RS485_TX_STINT_MS` deadline with the silence window clipped to what is left of it, and its
+  release-to-RX step is a bounded poll of the UART status (`RS485_TX_DONE_TIMEOUT_MS`) that ticks the
+  app link, instead of `while (txfifo_cnt != 0 || st_utx_out != 0) {}` - the one unbounded spin left
+  on the bus, which could hold the line forever if the FIFO never drained. Worst case 383 ms (stint +
+  three echo windows + the drain + the largest backoff), pinned by a `static_assert` in Bus.h and
+  measured in `test/native/tx_stint_test.cpp`: 366 ms on a line that never goes quiet, 1016 link
+  ticks, longest unserved stretch 30 ms (the three echo windows, inside the 50 ms bound). The two
+  timeouts are counted apart from "the node stayed silent", which is the distinction the card asked
+  for: `rawstint=` (an attempt the deadline refused to start) and `rawstall=` (a FIFO that never
+  drained) in the passthrough's counters line, while `Device.h`'s `timeout=`/`nocid` stay the node's
+  silence. Measured `rawstint=0 rawstall=0` over 2400+ requests and a full image upload, with
+  `sendfail=0` - no request in those runs was lost to the send itself.)*
+
+- **E85 A write the node never answers leaves its page ERASED** (card `t_5eb19a27`, 2026-11-12,
+  measured on the rig). The bootloader erases the 64-byte page when it receives the chunk whose
+  offset starts that page, and only then programs it. A page-start chunk whose request the node never
+  answers (the write-only silence of E81: 0.2-4.5 % per run, `timeout=`/`nocid w=`, `sendfail=0`)
+  therefore leaves the page BLANK - the erase happened, the other 32 bytes went with it, and no
+  chunk landed. Two full passes of `binaries/DAS_v0_1.bin` through the passthrough (432 chunks each,
+  ascending, one re-send allowed per chunk) on the card's core:
+  `wrote 431/432 chunks, 21 needed a retry, failures: ['0x2D00']` and
+  `wrote 430/432 chunks, 19 needed a retry, failures: ['0x16E0', '0x3000']`; the read-back then
+  reported `0x16E0` as 32 bytes of `FF` while the rest of the image matched, i.e. the image really was
+  damaged at a page start. Repairing the two chunks of each affected page (`.pio/probe/t5eb_repair.py`,
+  which reads with the established two-consecutive-reads agreement first and then writes only the
+  pages that differ) brought the region back to
+  `round 1: 0/432 chunks differ` - byte-identical to the image - without a second full pass. So the
+  cost of one lost write is not one re-sent chunk but a blank page, and a tool that treats a write
+  failure as "re-send that chunk" must re-send the page's FIRST chunk (the erase) too. Not fixed
+  here: the node-side half is E59's (the bootloader cannot buffer a retried request), and the app's
+  upload loop is the app lane's.
+  *Reading the repair's own first rounds needs care: a chunk accepted from a single good-flags read
+  "differs" 1-3 times per 432 because of the read-path glitch below, which is why every repair round
+  after the first reported NEW offsets - the two-read agreement is what makes a difference real.*
+
+- **E86 `./upload.sh bin tamu` defaults to 0x70000, which is not the app slot** (measured
+  2026-11-12, card `t_5eb19a27`). `upload.sh` says "app @ 0x70000 (ota_0, derived from
+  partitions.csv)", but `firmware/partitions.csv` puts `ota_0` at **0x90000** (size 0x283000) and
+  `factory` at 0x10000 (size 0x7D000) - so 0x70000 is inside the FACTORY partition and 0x20000 below
+  the slot the rig's core boots from. Measured consequence: the write at 0x70000 overran factory's
+  end and landed an image's bytes from offset 0x20000 onward at the start of `ota_0`, after which the
+  core answered nothing at all (a ping probe hung on the port) until the same image was written at
+  0x90000 with `esptool.py --chip esp32c3 write_flash 0x90000` (`Hash of data verified`), which
+  brought it back (`26.11.12 iter 10`, ping 1 in 8 ms). The factory slot now holds the first 0x1D000
+  bytes of a 711600 B image over whatever it carried before; it cannot hold that image (0x7D000 is
+  smaller than 711600), so the fallback slot is not trustworthy until the owner re-provisions it.
+  The address also cannot simply be "the app offset" of a fixed table: use 0x90000 for `ota_0` on
+  this layout, or fix the script's constant (owner's file - not edited here).
+
+- **E87 The console's free-text buffer cut the diagnostics line it exists for** (card `t_5eb19a27`,
+  2026-11-12). `Devices/Tamu_v2.0A/Log.h` formatted every `DeviceLog` line into `char Buffer[128]`,
+  and by the time a full image upload had run (~1300 passthrough requests) the BLPT totals line read
+  `... timeout=65 rawshort=277 rawcoll=0 rawreply=` - the last counter was gone. Raised to 192 in the
+  same card (one more stack line, the core has 236 kB free), and the card's new attribution counters
+  are printed on a SECOND `BLPT` line (`counters kept=... drop=... rawstint=... rawstall=...
+  nocid i/r/w/d=...`) so the totals line keeps its established shape.
 
 ## BLE Settings block (2026-10-28)
 
