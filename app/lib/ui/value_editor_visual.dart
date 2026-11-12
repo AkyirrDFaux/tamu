@@ -51,7 +51,11 @@ Future<List<int>?> _editColour(BuildContext context, List<int> current) {
     r = (c.r * 255).round();
     g = (c.g * 255).round();
     b = (c.b * 255).round();
+    // The slider writes the field, so it owns the field's state in BOTH directions: the text
+    // follows the slider (OK reads the text, not the slider), and a refusal the field was
+    // carrying under it is gone with the text that earned it.
     controller.text = hex();
+    hexError = null;
   }
 
   const presets = {
@@ -164,6 +168,11 @@ Future<List<int>?> _editColour(BuildContext context, List<int> current) {
             channel('A', a.toDouble(), 255, 255, '$a', (v) {
               setState(() {
                 a = v.round();
+                // A writes the field like H/S/V do: OK returns `parseHexBytes(controller.text)`,
+                // so an alpha-only edit that stayed in `a` used to be dropped on OK - the dialog
+                // handed back the alpha it was opened with.
+                controller.text = hex();
+                hexError = null;
                 syncHsv();
               });
             }),
@@ -180,6 +189,7 @@ Future<List<int>?> _editColour(BuildContext context, List<int> current) {
                       b = v[2];
                       a = v[3];
                       controller.text = hex();
+                      hexError = null;
                       syncHsv();
                       setState(() {});
                     },

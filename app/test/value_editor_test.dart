@@ -413,6 +413,63 @@ void main() {
     expect(out.bytes, [0, 255, 0, 255]);
   });
 
+  testWidgets('colour editor carries an alpha-only slider edit through OK', (
+    tester,
+  ) async {
+    // OK reads the FIELD, so every control that changes the colour has to write the field. The
+    // alpha slider was the one that did not: with [255,0,0,128] opened and A dragged to 0, OK
+    // returned ...80 again - the alpha it was opened with, not the one on screen.
+    final out = _Recorder();
+    await _openValueEditor(tester, out, DataType.colour, [255, 0, 0, 128]);
+
+    // Sliders in the editor's own order: H, S, V, A.
+    final alpha = find.byType(Slider).at(3);
+    expect(tester.widget<Slider>(alpha).value, 128);
+
+    await tester.drag(alpha, const Offset(-400, 0));
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<Slider>(alpha).value, 0);
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      'ff000000',
+      reason: 'the field follows the slider, because OK parses the field',
+    );
+
+    await _confirm(tester);
+    expect(out.bytes, [255, 0, 0, 0]);
+  });
+
+  testWidgets('a slider clears the refusal under the colour field', (
+    tester,
+  ) async {
+    // A refusal is about the text that earned it. Once a slider rewrites the field to a whole
+    // four bytes, leaving "eight hex digits" under a valid field would be a lie until OK.
+    final out = _Recorder();
+    await _openValueEditor(tester, out, DataType.colour, [255, 0, 0, 128]);
+
+    await tester.enterText(find.byType(TextField), '00ff00');
+    await tester.pumpAndSettle();
+    await _confirm(tester);
+
+    expect(out.bytes, isNull);
+    expect(
+      find.text('Type all four bytes: eight hex digits (RRGGBBAA)'),
+      findsOneWidget,
+    );
+
+    await tester.drag(find.byType(Slider).at(3), const Offset(-400, 0));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Type all four bytes: eight hex digits (RRGGBBAA)'),
+      findsNothing,
+    );
+
+    await _confirm(tester);
+    expect(out.bytes, [255, 0, 0, 0]);
+  });
+
   testWidgets('a BlockInfo type outside the picker still renders', (
     tester,
   ) async {
