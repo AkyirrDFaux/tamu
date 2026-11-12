@@ -4,8 +4,11 @@
 //
 // Both bootloaders serve the exact same raw frame format: the core over its USB
 // Serial/JTAG port into `ota_0`, the DAS over RS485 into its flash. Only the byte
-// transport and the backing flash differ, so the receive / read-response / dispatch
-// logic lives here and each host supplies small callbacks for its transport.
+// transport and the backing flash differ, so the read-response encoding lives here and
+// each host supplies small callbacks for its transport. Frame reception and dispatch are
+// NOT here: each host owns its transport's frame state machine (Devices/*/Bootloader.cpp),
+// which is why the shared `ReceiveFrame`/`HostLoop` pair was removed - nothing called it
+// (Cleanup pass 3, t_dbfb5bec).
 //
 // The helpers are header-only and templated on those callbacks so, at -Os/-flto, the
 // host's transport inlines into the helper rather than costing an indirect call. The
@@ -18,36 +21,6 @@
 
 namespace BootloaderHost
 {
-    // Reads one raw frame into `out`; returns its length or 0 on timeout/invalid.
-    // `begin` resets the host's per-frame deadline; `read` is bool(uint8_t *): true
-    // when one byte was received. Keeping the deadline reset in `begin` preserves a
-    // whole-frame (not per-byte) timeout for hosts that use one.
-    template <typename BeginFrame, typename ReadByte>
-    inline int ReceiveFrame(uint8_t *Out, size_t Cap, BeginFrame Begin, ReadByte Read)
-    {
-        Begin();
-        uint8_t Byte;
-        for (;;)
-        {
-            if (!Read(&Byte)) return 0;
-            if (Byte == Bootloader::START) break; // skip anything that is not a frame start
-        }
-
-        size_t Got = 0;
-        Out[Got++] = Byte;
-        if (!Read(&Byte)) return 0;
-        Out[Got++] = Byte;
-
-        uint16_t Need = Bootloader::FrameSize((uint8_t)(Byte & 0x07u));
-        if (Need == 0 || Need > Cap) return 0;
-        while (Got < Need)
-        {
-            if (!Read(&Byte)) return 0;
-            Out[Got++] = Byte;
-        }
-        return Bootloader::Decode(Out, Need) != Bootloader::INVALID ? (int)Need : 0;
-    }
-
     // Answers one read-request: reads `PAYLOAD_SIZE` bytes at `offset`, encodes the
     // response and sends it. `read` is bool(uint32_t, uint8_t *): true when the bytes
     // were read, false when `offset` is out of range (the buffer is then 0xFF/erased).
@@ -62,28 +35,5 @@ namespace BootloaderHost
         uint8_t Resp[Bootloader::DATA_SIZE];
         Bootloader::EncodeReadResponse(Offset, Data, Resp);
         SendCb(Resp, sizeof(Resp));
-    }
-
-    // Serves raw frames forever. `OnWrite` is void(uint32_t, const uint8_t *), `OnRead` is
-    // void(uint32_t) and `OnIdentify` is void(); the host's own handlers do the flashing
-    // and send the identify response (its app size/name are build-time constants).
-    template <typename BeginFrame, typename ReadByte, typename OnWrite, typename OnRead, typename OnIdentify>
-    inline void HostLoop(BeginFrame Begin, ReadByte Read, OnWrite OnWriteCb, OnRead OnReadCb, OnIdentify OnIdentifyCb)
-    {
-        for (;;)
-        {
-            uint8_t Frame[Bootloader::MAX_FRAME_SIZE];
-            int Len = ReceiveFrame(Frame, sizeof(Frame), Begin, Read);
-            if (Len <= 0) continue;
-
-            uint8_t Cmd = (uint8_t)(Frame[1] & 0x07u);
-            uint32_t Offset = Bootloader::Offset(Frame);
-            if (Cmd == Bootloader::CMD_IDENTIFY_REQ)
-                OnIdentifyCb();
-            else if (Cmd == Bootloader::CMD_WRITE)
-                OnWriteCb(Offset, Bootloader::Payload(Frame));
-            else if (Cmd == Bootloader::CMD_READ_REQ)
-                OnReadCb(Offset);
-        }
     }
 } // namespace BootloaderHost

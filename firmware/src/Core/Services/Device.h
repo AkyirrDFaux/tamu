@@ -18,8 +18,11 @@ void SubscriptionsRequestReRegister(uint16_t Addr);
 #include "Core/Functions/TimeSync.h"
 #endif
 
-// Device service (Docs/Services/Device Commands.md): Discover, Ping, Identify, Type, SN,
-// Version, Capability, Name, Uptime, Time sync/offset, SNDB and bootloader passthrough.
+// Device service (Docs/Services/System Block and Device Commands.md, Docs/Command ID Table.md):
+// Discover 0x0000, Ping 0x0001, Identify 0x0002, TimeSync 0x0003, Core discover 0x0010, SNDB
+// 0x0011-0x0013 and the bootloader passthrough 0x0020-0x0022 (which the CID table files under
+// Bootloader). Type/SN/Version/Capability/Name/Uptime are System BLOCK fields read through the
+// Register service - they are not Device service commands.
 class DeviceService
 {
 public:
@@ -457,8 +460,8 @@ inline void DeviceService::PollBootloaderPassthrough()
 }
 #endif // TYPE_CORE
 
-// Handles Device service requests (Discover, Ping, Identify, Type, SN, Version, Capability,
-// Name, Uptime, Time sync/offset, SNDB).
+// Handles Device service requests (Discover, Ping, Identify, TimeSync, Core discover, SNDB, and
+// the 0x20-0x22 bootloader passthrough that the CID table files under Bootloader).
 bool DeviceService::Handle(const PacketFrame &Frame)
 {
     uint8_t Cid = GetServiceCID(Frame.Cmd);

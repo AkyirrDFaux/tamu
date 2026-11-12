@@ -1566,9 +1566,6 @@ bool AppBLEActive()
 // it succeeds). RX (assembler + parser) is fed from the NimBLE host task's GATT callbacks.
 void AppBLETick()
 {
-    // Comm LED is a per-burst pulse: RX/TX below turn it on, and this tick turns
-    // it back off at the start so an idle session does not leave it lit.
-
     // A device whose block has the radio disabled has no NimBLE host at all (Enabled was false
     // at boot) - nothing to advertise, nothing to time out.
     if (!BleRadioUp)
@@ -1660,7 +1657,7 @@ void AppBLETick()
 
     // Deferred advertising restart.
     if (!BleConnected && BleOldConnected)
-        BleAdvRestart = true; // s_ble_parser was already reset by onDisconnect (host task)
+        BleAdvRestart = true; // BleParser was already reset by onDisconnect (host task)
     bool WasConnected = BleOldConnected;
     BleOldConnected = BleConnected;
     if (WasConnected && !BleConnected)

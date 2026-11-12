@@ -9,9 +9,8 @@
 // Two shapes, selected by OPTIMIZE_SPEED: the table costs 256 bytes of flash (read-only, so it
 // lands in flash, not RAM) and one lookup per byte; the loop costs eight iterations per byte.
 // The CRC covers every packet and every USB chunk, so the core trades the flash for it, while
-// the DAS keeps the loop. This is the only site where the two targets genuinely diverge - see
-// TODO A9 for why Fnv1a, the fixed-point division and the log/pow10 polynomials have no useful
-// second shape.
+// the DAS keeps the loop. This is the only site where the two targets genuinely diverge - Fnv1a,
+// the fixed-point division and the log/pow10 polynomials have no useful second shape.
 //
 // The table is generated from the same step function by constexpr rather than listed, so the
 // two shapes cannot disagree; test/native/crc_test.cpp additionally checks both against an

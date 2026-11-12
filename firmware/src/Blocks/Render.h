@@ -25,7 +25,9 @@ enum class GeometryKey : uint8_t
     NoiseSeed = 11,   // Integer
 };
 
-// Geometry shapes (docs order); ShapeAlpha implements every entry.
+// Geometry shapes (docs order). ShapeAlpha covers every entry EXCEPT Mesh (12), which has no
+// case there and falls through to its default mask of 0 - see ShapeAlpha's switch in
+// Vysi1Render.h.
 enum class Geometries : uint8_t
 {
     None = 0,

@@ -270,7 +270,7 @@ static inline uint16_t SubEdgeDirectionCount(TriggerType Trigger, uint16_t From,
     return OddOffsets ? (uint16_t)((Delta + 1u) / 2u) : (uint16_t)(Delta / 2u);
 }
 
-// One row's edge accounting. Transient: it is NOT part of the 28 B requester wire entry and NOT
+// One row's edge accounting. Transient: it is NOT part of the 32 B requester wire entry and NOT
 // part of the 24 B `.SUBREQ` file entry (like SubRequesterLease), so every boot, recall and set
 // starts it fresh - which is exactly the reset rule the counter needs.
 //

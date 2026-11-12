@@ -14,10 +14,11 @@
 // writes outside [APP_BASE, APP_LIMIT). The erase/program mode choice (standard 4 KB erase,
 // not the 256-byte fast page) and its manual citations are in the flash section below.
 //
-// Flash driver: the WCH SPL standard-mode helpers (FLASH_ErasePage + FLASH_ProgramWord),
-// i.e. vendor code, rather than a hand-rolled direct-register sequence - the bootloader
-// cannot be exercised without hardware, so vendor code correct by construction beats a
-// guessed register sequence.
+// Flash driver: the WCH SPL's FLASH_ProgramWord for the chunk writes, and a hand-rolled
+// standard-mode sector erase (PER + ADDR + STRT, then a BSY poll) - the SPL's FLASH_ErasePage
+// reported FLASH_TIMEOUT on hardware while the hardware had set EOP, so its exit status cannot be
+// trusted on this part. Vendor code wherever it is correct by construction: the bootloader cannot
+// be exercised without hardware, and a guessed register sequence is worse.
 //
 // Clock: the bootloader runs at the framework SystemInit clock (144 MHz, hsi+pll). Per
 // CH32VRM.pdf RM 32.1 note 2 flash operations are recommended at <=120 MHz (FLASH access
@@ -54,8 +55,9 @@
 
 // The app must not be allowed to eat the storage region. Docs/Devices.md gives the Valu an
 // 8 kB storage region; it lives in the top 8 kB of the 64 kB flash (0xE000..0x10000), so the
-// writable app window is [0x2000, 0xE000) = 48 kB. This mirrors the DAS reserving 0x3E00
-// upward (its storage is 512 B flush against the end).
+// writable app window is [APP_BASE, 0xE000) = [0x3000, 0xE000) = 44 kB (the 12 KB bootloader
+// region above 0x0 is why APP_BASE is 0x3000, not 0x2000). This mirrors the DAS reserving
+// 0x3E00 upward (its storage is 512 B flush against the end).
 //
 // OWNER DECISION TO CONFIRM: 0xE000 (top 8 kB reserved) is inferred from the "Storage: 8kB"
 // line in Docs/Devices.md, not from an explicit address in the spec. If the storage region
@@ -233,12 +235,12 @@ uint16_t const *tud_descriptor_string_cb(uint8_t Index, uint16_t Langid)
 // Sequence per CH32VRM.pdf chapter 32:
 //   - Standard programming (RM 32.2.1, "the default programming method"): erase is done in
 //     4 KB units (RM 32.5.4, CTLR.PER) and programming in 2-byte units (RM 32.5.3, CTLR.PG).
-//     The framework's FLASH_ErasePage issues the 4 KB erase and FLASH_ProgramWord the two
-//     16-bit writes, so the halfword rule (finding #4) is satisfied by vendor code.
+//     The erase is hand-rolled below (SET_PER/ADDR/START + BSY poll); FLASH_ProgramWord does the
+//     two 16-bit writes, so the halfword rule (finding #4) is satisfied by vendor code.
 //   - The 256-byte page in Docs/Devices.md is the FAST path (CTLR.FTER / FTPG, RM 32.5.6-7):
 //     it needs its own unlock (FLASH_MODEKEYR, RM 32.5.5) and programs a whole 256-byte page
-//     at once. This bootloader does NOT use it: the standard SPL pair is a single coherent
-//     mode, needs no page buffer and no read-modify-write.
+//     at once. This bootloader does NOT use it: the standard mode is a single coherent path,
+//     needs no page buffer and no read-modify-write.
 //
 // So the erase unit is 4 KB, not the fast path's 256 B. The 32-byte protocol writes map onto
 // it by erasing the containing 4 KB sector on the first write into it (offset % 4096 == 0),
@@ -376,7 +378,7 @@ static void FlashWrite(uint32_t Addr /* 0x00000000 domain */, const uint8_t *Src
 // does the same scan, byte-at-a-time, on the UART).
 
 static uint8_t FrameBuf[Bootloader::MAX_FRAME_SIZE];
-static uint16_t Have = 0; // bytes currently in s_frame
+static uint16_t Have = 0; // bytes currently in FrameBuf
 static uint16_t TotalNeed = 0; // total bytes the frame needs once known
 
 static void HandleWrite(uint32_t Offset, const uint8_t *Payload);
@@ -390,7 +392,7 @@ static void SendReadResponse(uint32_t Offset)
     uint8_t Data[Bootloader::PAYLOAD_SIZE];
     if (Offset == DIAG_OFFSET)
     {
-        // Diagnostics pseudo-offset (see g_diag): report the flash path's own state.
+        // Diagnostics pseudo-offset (see Diag above): report the flash path's own state.
         memcpy(Data, Diag, sizeof(Data));
     }
     else

@@ -208,9 +208,10 @@ int main(void)
     PinLow(LEDR);
 
     // TimeSync is synchronized-device initiated: this node syncs ITSELF to the core by
-    // sending Device service CID 3 and computing the offset locally from the reply. Repeat
-    // every 2-3 minutes, jittered so devices do not all burst at once
-    // (Docs/Services/System Block and Device Commands.md).
+    // sending Device service CID 3 and computing the offset locally from the reply. Repeated
+    // every 60 s plus up to 15 s of jitter (NODE_TIME_SYNC_INTERVAL_MS, below) - not the docs'
+    // "next 2-3 minutes", which the 30 s warm-up plus this cadence is what the code settled on.
+    // (Docs/Services/System Block and Device Commands.md)
     auto SendTimeSync = []() {
         // NTP-like: send the SYNCHRONIZED local time (Now()), so the reply's offset is a
         // correction (delta) to add to TimeOffsetMs, not an absolute value to overwrite.

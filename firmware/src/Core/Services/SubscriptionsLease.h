@@ -16,7 +16,7 @@
 // cancel, an orphan announcement from the node, or a new setup. The asymmetry is deliberate - a
 // missing provider is a provider problem, and destroying the requester's configuration over it is
 // what made a node that was off for two minutes need a core reboot. The requester entry still
-// CARRIES the 120 s deadline (it is part of the 28 B wire entry and is refreshed on an answer), but
+// CARRIES the 120 s deadline (it is part of the 32 B wire entry and is refreshed on an answer), but
 // nothing expires a row on it; see SubRequesterLease::Interval for what does bound the retries.
 static constexpr uint32_t SUB_TIMEOUT_MS = 120000u;
 
@@ -75,7 +75,7 @@ static inline unsigned SubFormatGaveUp(char *Dst, unsigned Size, uint16_t Trid, 
 // That deadline does not destroy the row any more - it is carried for the wire and the app - so an
 // unanswered install now costs a bounded retry window instead of the subscription.
 //
-// Where the state lives: SubRequesterLease is embedded in RequesterEntry *after* the 28 B wire
+// Where the state lives: SubRequesterLease is embedded in RequesterEntry *after* the 32 B wire
 // prefix (SubscriptionsDefs.h), so it is neither streamed by Get subscriptions nor written to
 // `.SUBREQ` (24 B per entry). It is RAM-only and therefore resets on every boot, recall or Set -
 // a restored row starts unserved with a full fast window, which is exactly what its re-registration

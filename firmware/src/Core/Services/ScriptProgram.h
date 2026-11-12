@@ -485,11 +485,10 @@ inline bool ScriptService::Load(uint16_t FileId, uint16_t Slot) {
         }
     }
 
-    // UI info (version 1) starts with a length-prefixed function name; fall back to the
-    // file name. The remaining names/specs are app-side editor metadata.
+    // UI info v2 starts with the version byte then a length-prefixed function name; the later
+    // sections (enum option labels) are app-side only and ignored here. v1 is no longer
+    // supported - a v1 blob leaves Name empty instead of being read with v1's layout.
     Script->Name[0] = '\0';
-    // UI info v2 starts with the version byte then the function name; the later sections
-    // (enum option labels) are app-side only and ignored here. v1 is no longer supported.
     if (UiLen >= 2 && UiBlob[0] == 2) {
         uint8_t Nlen = UiBlob[1];
         if (2u + Nlen <= UiLen && Nlen < BLOCK_NAME_LEN) {

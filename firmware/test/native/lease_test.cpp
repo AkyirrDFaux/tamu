@@ -12,7 +12,7 @@
 //   3. the fast retries are capped at SUB_FAST_ATTEMPTS (5): past that, the SUB_KEEPALIVE_MS
 //      cadence takes over until an install IS answered, and a confirmation (or a value update)
 //      resets the counter to 0. The counter is SubRequesterLease::Unanswered: it lives in the live
-//      RequesterEntry (after the 28 B wire prefix) and is NOT persisted - the `.SUBREQ` copy is
+//      RequesterEntry (after the 32 B wire prefix) and is NOT persisted - the `.SUBREQ` copy is
 //      24 B per entry, so every boot/recall starts it at 0.
 //
 // The decision under test is the real one the device runs: RequesterEntry embeds SubRequesterLease

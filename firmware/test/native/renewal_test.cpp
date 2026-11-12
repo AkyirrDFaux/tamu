@@ -41,7 +41,7 @@
 
 #include "check.h"
 
-// One requester row's transient state, as the device holds it after the 28 B wire prefix.
+// One requester row's transient state, as the device holds it after the 32 B wire prefix.
 struct Row {
     SubRequesterLease Lease;
     SubEdgeState Edge;

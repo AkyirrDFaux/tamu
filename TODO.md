@@ -611,11 +611,41 @@ Open:
       reply larger than the TX ring can complete instead of losing its tail fragments. Builds +
       native gate pass; **needs a rig run to confirm a whole-file read completes over BLE.**
 
-## Firmware cleanup pass 3 (open, from t_6566051b / commit ecd7e88)
+## Firmware cleanup pass 3 (t_dbfb5bec, from t_6566051b / commit ecd7e88)
 
-Pass 2 shared the tests' CHECK harness and fixture store, merged the script program's two scan
-loops, deleted four dead constants and fixed the stale DAS size comment. What it deliberately left:
+Pass 3 read the files pass 2 had only scanned - every file under `Blocks/`, `Bootloader/`, `Core/`,
+`Devices/{Tamu_v2.0A,DAS_v0.1,Valu_v2.0}` plus `Main.cpp` and `Test/` (142 files at HEAD) - line by
+line, and deleted the one dead definition the scan had found: `BootloaderHost::HostLoop` (nothing
+called it) together with `ReceiveFrame`, its only callee. The dead-symbol scan now reports 0 of 503
+definitions.
 
+Fixed (comment-only unless noted - no behaviour, protocol or size change):
+
+- `Blocks/Render.h`: "ShapeAlpha implements every entry" - it has no `Mesh` case (falls to 0).
+- `Core/Functions/Crc8.h`: dropped the citation of `TODO A9`, which no longer exists.
+- `Core/Services/ScriptProgram.h`: the v1 UI-info note contradicted the next line's "v1 is no longer
+  supported".
+- `Core/Services/SubscriptionsLease.h`, `SubscriptionsEdge.h` and `test/native/{lease,renewal}_test.cpp`:
+  the requester wire entry is 32 B (2+2+16+4+4+4), not 28 B.
+- `Core/Services/Device.h`: the service does not carry Type/SN/Version/Capability/Name/Uptime - those
+  are System-block fields read through Register. The CIDs are Discover/Ping/Identify/TimeSync/0x10/
+  SNDB, plus the 0x20-0x22 passthrough the CID table files under Bootloader.
+- `Devices/DAS_v0.1/Main.h`: TimeSync repeats at 60 s + up to 15 s of jitter, not "every 2-3 min".
+- `Devices/Tamu_v2.0A/Storage.h`: an orphan "returns the size of the storage partition" comment
+  above `Read`.
+- `Devices/Tamu_v2.0A/AppBLE.h`: a "Comm LED is a per-burst pulse" note for LED code the file does
+  not have; `s_ble_parser` -> `BleParser`.
+- `Devices/Valu_v2.0/Bootloader.cpp`: the app window is [0x3000, 0xE000) = 44 kB, not
+  [0x2000, 0xE000) = 48 kB; `s_frame` -> `FrameBuf`, `g_diag` -> `Diag`; the flash section no longer
+  narrates the SPL `FLASH_ErasePage` path the code replaced.
+
+Still open, in the order pass 4 should take them:
+
+- [ ] **The 658 unreferenced-but-recent probe entries.** `firmware/.pio/probe/*` held 658 entries
+      younger than 7 days when pass 2 inventoried them, and they could not be judged then because
+      the cards that own them were paused. Re-run
+      `python3 firmware/.pio/probe/probe_inventory.py` once those cards have closed and decide each
+      entry: keep it as a named recipe, or delete it.
 - **The Valu↔DAS device parallels** (`Measuring.h`, `MeasuringRun.h`, `Storage.h`, `AppUSB.h`):
   jscpd still shows 30-59 duplicated lines per pair. The owner's ruling makes them out of scope
   until the Valu matters; if it ever does, decide them with the same per-pair evidence as the
@@ -628,11 +658,11 @@ loops, deleted four dead constants and fixed the stale DAS size comment. What it
   advertising stop/restart pair in `AppBLE.h`:** both are pinned at each site by `run.sh` source
   guards that assert the ORDER of the calls inside the named function. Merging them would make the
   guard grep a helper instead of the function it protects - a worse trade than the duplicate.
-- **Two stale comments in `Devices/Valu_v2.0`** (left untouched on purpose, the board is out of
-  scope): `Bootloader.cpp` calls the byte buffer `s_frame` (it is `FrameBuf`), and its flash section
-  still narrates the SPL `FLASH_ErasePage` path it replaced.
-- `test/native/align_test.cpp` and `numeric_test.cpp` keep their own counters (they print a
-  different summary shape and count only failures in one case); the other 40 use `check.h`.
+- `test/native/align_test.cpp` and `numeric_test.cpp` keep their own counters - evaluated in pass 3
+  and deliberately left. `align_test` never counts and prints only "align: all checks passed", so
+  adopting `check.h` would either add a count it never printed or change that line; `numeric_test`
+  needs a tolerance comparison and float formatting `check.h` does not carry, and prints its own
+  "== %d checks, %d failures ==" summary.
 
 ## Decisions (locked)
 

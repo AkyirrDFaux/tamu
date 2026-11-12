@@ -26,7 +26,6 @@ bool StorageFlashDevice::Init()
     return true;
 }
 
-// Returns the size of the storage partition in bytes (0 if not initialised).
 // Reads `size` bytes from the flash partition at `offset` into `data`.
 uint32_t StorageFlashDevice::Read(uint32_t Offset, void *Data, uint32_t Size)
 {
