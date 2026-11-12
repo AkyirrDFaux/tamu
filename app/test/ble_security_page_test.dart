@@ -204,6 +204,17 @@ void main() {
     return device;
   }
 
+  /// Sets one bond's label through the panel's rename dialog: open it on the bond, type [label] and
+  /// confirm. Three cases drive that dialog and then assert a different sentence, so the drive lives
+  /// here instead of three times over.
+  Future<void> setBondLabel(WidgetTester tester, String label) async {
+    await tester.tap(find.byTooltip('Rename this bond'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), label);
+    await tester.tap(find.widgetWithText(FilledButton, 'Set label'));
+    await tester.pumpAndSettle();
+  }
+
   group('a device without the block', () {
     testWidgets('the panel draws nothing at all', (tester) async {
       await pump(tester, present: false);
@@ -701,11 +712,7 @@ void main() {
       );
 
       // The claim in the copy, exercised: the write lands over this link.
-      await tester.tap(find.byTooltip('Rename this bond'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'Bench');
-      await tester.tap(find.widgetWithText(FilledButton, 'Set label'));
-      await tester.pumpAndSettle();
+      await setBondLabel(tester, 'Bench');
 
       expect(device.writes.single.field, bleFieldBonds);
       // The reading is still shown: the block is readable over any link.
@@ -760,11 +767,7 @@ void main() {
     testWidgets('a refused bond write is explained too', (tester) async {
       await pump(tester, overUsb: false, secured: false, refuseWrites: true);
 
-      await tester.tap(find.byTooltip('Rename this bond'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'Bench');
-      await tester.tap(find.widgetWithText(FilledButton, 'Set label'));
-      await tester.pumpAndSettle();
+      await setBondLabel(tester, 'Bench');
 
       expect(
         find.textContaining('The device refused the change'),
@@ -779,11 +782,7 @@ void main() {
       // the sentence says so instead of leaving a control that silently did nothing.
       await pump(tester, refuseWrites: true);
 
-      await tester.tap(find.byTooltip('Rename this bond'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'Bench');
-      await tester.tap(find.widgetWithText(FilledButton, 'Set label'));
-      await tester.pumpAndSettle();
+      await setBondLabel(tester, 'Bench');
 
       expect(
         find.textContaining('not the one this panel read'),
