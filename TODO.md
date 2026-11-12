@@ -641,11 +641,16 @@ Fixed (comment-only unless noted - no behaviour, protocol or size change):
 
 Still open, in the order pass 4 should take them:
 
-- [ ] **The 658 unreferenced-but-recent probe entries.** `firmware/.pio/probe/*` held 658 entries
-      younger than 7 days when pass 2 inventoried them, and they could not be judged then because
-      the cards that own them were paused. Re-run
-      `python3 firmware/.pio/probe/probe_inventory.py` once those cards have closed and decide each
-      entry: keep it as a named recipe, or delete it.
+- [ ] **The probe-entry re-evaluation.** `firmware/.pio/probe/*` held 658 entries under 7 days old
+      when pass 2 inventoried them, and they could not be judged then because the cards that own
+      them were paused. Measured again in pass 3
+      (`python3 firmware/.pio/probe/probe_inventory.py`): `corpus files: 572 / entries=766 kept=745
+      unreferenced=21`, `unreferenced bytes: 1117105 (1.1 MB)` - so the 658 no longer reproduces, and
+      all 21 unreferenced entries today are the cleanup passes' own scratch (`build_all_clean.*`,
+      `build_commit_verify.*`, `digest_src.txt`, `file_digest.py`, the `jscpd-p2*`/`jscpd-p3*`
+      reports and three `native_after_*.log`). Nothing was deleted in pass 3 (the item is gated on
+      the paused cards closing); when it runs, those 21 go and the question becomes whether any
+      still-paused card's probe is worth keeping as a named recipe.
 - **The Valu↔DAS device parallels** (`Measuring.h`, `MeasuringRun.h`, `Storage.h`, `AppUSB.h`):
   jscpd still shows 30-59 duplicated lines per pair. The owner's ruling makes them out of scope
   until the Valu matters; if it ever does, decide them with the same per-pair evidence as the
