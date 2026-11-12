@@ -8,6 +8,8 @@ import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/types.dart';
 
+import 'support/fake_bus.dart';
+
 /// Format 2's STRUCTURAL row and the two places it has to work.
 ///
 /// Akyirr's rule (2026-10-22): "The structure of the dynamic block should stay in the archive, but
@@ -165,31 +167,14 @@ RestorePlan _plan(BackupDevice archive, LiveDevice target) {
 
 /// A Register service that accepts dynamic-block creates and entry writes, and refuses everything
 /// else (so the live re-read after a create comes back empty, which is fine for the assertions).
-class _FakeRegisterChannel implements RequestChannel {
-  final sent = <({ServiceType service, int cid, List<int> payload})>[];
-
+class _FakeRegisterChannel extends FakeBus {
   @override
-  bool get isConnected => true;
-
-  int _txId = 0x100;
-
-  @override
-  int takeTxId() => _txId++;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
+  Future<List<int>> plain(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async {
-    sent.add((service: service, cid: functionCid, payload: payload));
+    int functionCid,
+    List<int> payload,
+  ) async {
     // A Register write replies with the address, the accepted ValueInfo and the value bytes.
     if (service == ServiceType.register && functionCid == RegisterCid.write) {
       return payload;
@@ -198,22 +183,18 @@ class _FakeRegisterChannel implements RequestChannel {
   }
 
   @override
-  Future<PacketResponse> requestWithFlags(
+  Future<PacketResponse> flagged(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async {
-    sent.add((service: service, cid: functionCid, payload: payload));
+    int functionCid,
+    List<int> payload,
+  ) async {
     // A Register write echoes the address, the accepted ValueInfo and the value: the reply is the
     // request's own payload, and the flag says the device accepted it.
     if (service == ServiceType.register && functionCid == RegisterCid.write) {
-      return PacketResponse(payload: payload, success: true, fail: false);
+      return registerWriteEcho(payload);
     }
-    return const PacketResponse(payload: [], success: true, fail: false);
+    return busAccepted;
   }
 }
 

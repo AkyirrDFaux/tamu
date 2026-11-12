@@ -5,6 +5,8 @@ import 'package:tamuapp/ui/file_viewers.dart';
 import 'package:tamuapp/ui/theme.dart';
 import 'package:tamuapp/ui/formatters.dart';
 
+import 'support/viewer_pump.dart';
+
 /// Renders the `.SV` / SUBREQ decoders against synthetic bytes matching the
 /// firmware formats (StaticMemory.h / Subscriptions.h), and checks the
 /// system-block capability decoding.
@@ -19,23 +21,6 @@ void main() {
     (v >> 16) & 0xFF,
     (v >> 24) & 0xFF,
   ];
-
-  Future<void> pump(WidgetTester tester, String name, List<int> data) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildTheme(),
-        home: Scaffold(
-          body: MemoryBackupView(fileName: name, data: data),
-        ),
-      ),
-    );
-    await tester.pump();
-    expect(
-      tester.takeException(),
-      isNull,
-      reason: '$name threw while rendering',
-    );
-  }
 
   testWidgets('.SV decodes a node System segment + static fields', (
     tester,
@@ -98,7 +83,7 @@ void main() {
       ];
       // Two entries: a misaligned parser would read garbage from entry 2.
       final data = <int>[2, ...entry(2, 0x1000, 0), ...entry(3, 0x1001, 1.5)];
-      await pump(tester, 'SUBREQ', data);
+      await pumpMemoryBackup(tester, 'SUBREQ', data);
     },
   );
 
@@ -263,12 +248,12 @@ void main() {
       ...u16(DataType.text.value),
       5, 0,
     ];
-    await pump(tester, '.DT_00  ', data);
+    await pumpMemoryBackup(tester, '.DT_00  ', data);
     expect(find.textContaining('Box'), findsWidgets);
     expect(find.textContaining('Number'), findsWidgets);
     // Empty + corrupt tables must not throw.
-    await pump(tester, '.DT_01  ', []);
-    await pump(tester, '.DT_02  ', [9, 1, 2]);
+    await pumpMemoryBackup(tester, '.DT_01  ', []);
+    await pumpMemoryBackup(tester, '.DT_02  ', [9, 1, 2]);
   });
 
   testWidgets('.DV_ opens the value viewer (hex fallback without its table)', (

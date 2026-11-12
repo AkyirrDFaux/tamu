@@ -27,6 +27,8 @@ import 'package:tamuapp/core/subscription_client.dart';
 import 'package:tamuapp/core/transport.dart';
 import 'package:tamuapp/core/types.dart';
 
+import 'support/fake_bus.dart';
+
 const _link = DiscoveredLink(
   id: 'AA:BB:CC:DD:EE:02',
   type: LinkType.ble,
@@ -35,7 +37,7 @@ const _link = DiscoveredLink(
 
 /// A link whose requests never got a slot: it throws the gate's own expiry, or - once
 /// [queueBound] is off - the ordinary transport failure that keeps meaning [noReply].
-class _QueueBoundChannel implements RequestChannel {
+class _QueueBoundChannel extends FakeBus {
   bool queueBound = true;
 
   RequestQueueTimeout _expiry() => const RequestQueueTimeout(
@@ -50,35 +52,20 @@ class _QueueBoundChannel implements RequestChannel {
   }
 
   @override
-  bool get isConnected => true;
-
-  @override
-  int takeTxId() => 1;
-
-  @override
-  Future<List<int>> request(
+  Future<List<int>> plain(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) => _refuse();
+    int functionCid,
+    List<int> payload,
+  ) => _refuse();
 
   @override
-  Future<PacketResponse> requestWithFlags(
+  Future<PacketResponse> flagged(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) => _refuse();
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
+    int functionCid,
+    List<int> payload,
+  ) => _refuse();
 }
 
 /// A device at the other end of a transport that answers NOTHING: every request it is sent stays

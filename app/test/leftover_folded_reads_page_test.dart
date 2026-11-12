@@ -30,6 +30,8 @@ import 'package:tamuapp/ui/register_page.dart';
 import 'package:tamuapp/ui/scripts_page.dart';
 import 'package:tamuapp/ui/theme.dart';
 
+import 'support/fake_core.dart';
+
 /// A fake device for the Scripts page: the slot map, the file table and the load command.
 class _ScriptDevice extends FakeTolerantChannel {
   _ScriptDevice({required this.slotMap});
@@ -76,14 +78,7 @@ class _ScriptDevice extends FakeTolerantChannel {
     if (service == ServiceType.storage && functionCid == 5) {
       final echo = StorageClient.padName('.TABLE');
       final body = [...echo, ...table];
-      return PacketResponse(
-        payload: body,
-        success: true,
-        fail: false,
-        chunks: [FragmentChunk(0, body)],
-        stopped: true,
-        total: 1,
-      );
+      return wholeReply(body);
     }
     return const PacketResponse(payload: [], success: true, fail: false);
   }
@@ -222,30 +217,12 @@ class _SiblingDevice extends FakeTolerantChannel {
         );
       case _DtMode.whole:
         final body = [...echo, ...table];
-        return PacketResponse(
-          payload: body,
-          success: true,
-          fail: false,
-          chunks: [FragmentChunk(0, body)],
-          stopped: true,
-          total: 1,
-        );
+        return wholeReply(body);
     }
   }
 }
 
 List<int> _u16(int v) => [v & 0xFF, (v >> 8) & 0xFF];
-
-/// One 16-byte file-table record: u32 offset, u32 size, 8-byte name.
-List<int> _record(int offset, int size, String name) => [
-  for (final v in [offset, size]) ...[
-    v & 0xFF,
-    (v >> 8) & 0xFF,
-    (v >> 16) & 0xFF,
-    (v >> 24) & 0xFF,
-  ],
-  ...name.padRight(8).codeUnits,
-];
 
 /// The `.DT_00` table the viewer decodes: two persistent entries, 4 + 5 = 9 bytes of values.
 final List<int> _dtTable = [
@@ -269,8 +246,8 @@ void main() {
   setUp(NoticeCenter.instance.reset);
 
   final scriptTable = <int>[
-    ..._record(0x1000, 200, 'SCR_000'),
-    ..._record(0x2000, 300, 'SCR_001'),
+    ...fileRecord(0x1000, 200, 'SCR_000'),
+    ...fileRecord(0x2000, 300, 'SCR_001'),
   ];
 
   // ---------------------------------------------------------------------------

@@ -6,6 +6,8 @@ import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/types.dart';
 
+import 'support/block_reads.dart';
+
 /// A fake Register service that answers the CIDs used by [walkDeviceBlocks] with one
 /// static PWM block and one dynamic block. Every high-level read routes through
 /// `request`, so overriding it exercises the real walker end to end.
@@ -24,13 +26,13 @@ class _FakeRegister extends RegisterClient {
     switch (cid) {
       case RegisterCid.enumerateBlocks:
         // PWM (static, one instance, 10.6 split) + one dynamic bank (8.8 split).
-        return _words([(_pwm << 6) | 0, (0xF0 << 8) | 0]);
+        return u16Words([(_pwm << 6) | 0, (0xF0 << 8) | 0]);
       case RegisterCid.enumerateFields:
         final packed = payload[0] | (payload[1] << 8);
         final type = (packed >> 6) & 0x3FF;
         final inst = packed & 0x3F;
-        if (type == _pwm && inst == 0) return _words([0x0000, 0x0100]);
-        if (type == _dyn && inst == 0) return _words([0x0000]);
+        if (type == _pwm && inst == 0) return u16Words([0x0000, 0x0100]);
+        if (type == _dyn && inst == 0) return u16Words([0x0000]);
         return null;
       case RegisterCid.read:
         final bi =
@@ -45,17 +47,17 @@ class _FakeRegister extends RegisterClient {
         if (field == 0xFF) {
           // Block meta: ValueInfo(size = field count) + 16-char name.
           if (type == _pwm && inst == 0) {
-            return _reply(DataType.none.value, 2, _padded('Fan'));
+            return blockReply(DataType.none.value, 2, paddedText('Fan', 16));
           }
           if (type == _dyn && inst == 0) {
-            return _reply(_dyn, 1, _padded('Panel'));
+            return blockReply(_dyn, 1, paddedText('Panel', 16));
           }
           return null; // no System block in this fixture
         }
         if (type == _pwm && inst == 0 && field == 0) {
           // Frequency is a Persistent setting (kept in flash), Duty is not - it is a live output
           // the firmware resets, so a capture archives the first and drops the second.
-          return _reply(
+          return blockReply(
             DataType.number.value,
             4,
             numberToBytes(25000),
@@ -63,53 +65,24 @@ class _FakeRegister extends RegisterClient {
           );
         }
         if (type == _pwm && inst == 0 && field == 1) {
-          return _reply(DataType.number.value, 4, numberToBytes(50));
+          return blockReply(DataType.number.value, 4, numberToBytes(50));
         }
         if (type == _dyn && inst == 0 && field == 0 && key == 0) {
           // A volatile row of a dynamic block: the row is device structure, the value is a
           // reading the firmware resets at boot and the archive must not carry.
-          return _reply(DataType.number.value, 4, numberToBytes(7));
+          return blockReply(DataType.number.value, 4, numberToBytes(7));
         }
         return null;
       case DynamicCid.getName:
         // The dynamic name (CID 0x12): a raw 16-char name, no header.
         final idx = payload[0] | (payload[1] << 8);
-        if (idx == 0) return _padded('Panel');
+        if (idx == 0) return paddedText('Panel', 16);
         return null;
       default:
         return null;
     }
   }
 
-  /// A reply is a 4-byte echoed BlockInfo, the 4-byte ValueInfo, then the payload.
-  static List<int> _reply(
-    int type,
-    int size,
-    List<int> payload, {
-    int flags = 0,
-  }) => [
-    0,
-    0,
-    0,
-    0,
-    type & 0xFF,
-    (type >> 8) & 0xFF,
-    size,
-    flags,
-    ...payload,
-  ];
-
-  static List<int> _words(List<int> words) => [
-    for (final w in words) ...[w & 0xFF, (w >> 8) & 0xFF],
-  ];
-
-  static List<int> _padded(String s) {
-    final out = s.codeUnits.take(16).toList();
-    while (out.length < 16) {
-      out.add(0x00);
-    }
-    return out;
-  }
 }
 
 void main() {

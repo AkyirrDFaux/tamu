@@ -11,6 +11,7 @@ import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_instructions.dart';
 import 'package:tamuapp/core/storage_client.dart';
 
+import 'support/fake_bus.dart';
 import 'support/fake_core.dart';
 import 'package:tamuapp/core/types.dart';
 
@@ -19,7 +20,7 @@ import 'package:tamuapp/core/types.dart';
 /// slots phase has to survive and measure: the stored file contents (what the device HELD before a
 /// write, which is how "changed" is decided), the report record (`state`), an unload or a load the
 /// device refuses, and a slot map the device will not return.
-class _FakeCore implements RequestChannel {
+class _FakeCore extends FakeBus {
   _FakeCore({Map<int, int> loaded = const {}}) : loaded = {...loaded};
 
   /// loaded slot -> SCR file id. The load/unload commands mutate it, so a test can read the
@@ -42,41 +43,16 @@ class _FakeCore implements RequestChannel {
   /// Never answer the report record (CID 3), as a device that cannot say what it runs.
   bool statesUnreadable = false;
 
-  /// Every request, in the order it was sent.
-  final sent = <({ServiceType service, int cid, List<int> payload})>[];
-
   /// File contents on the device, keyed by the name the writes landed them under.
-  final files = <String, List<int>>{};
-
-  int _txId = 0x100;
-
-  static const _ok = PacketResponse(payload: [], success: true, fail: false);
-  static const _failed = PacketResponse(
-    payload: [],
-    success: false,
-    fail: true,
-  );
+  final Map<String, List<int>> files = {};
 
   @override
-  bool get isConnected => true;
-
-  @override
-  int takeTxId() => _txId++;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
+  Future<List<int>> plain(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async {
-    sent.add((service: service, cid: functionCid, payload: payload));
+    int functionCid,
+    List<int> payload,
+  ) async {
     if (service == ServiceType.script && functionCid == 0) {
       if (slotMapTimesOut) throw StateError('no reply');
       return scriptSlotMap(loaded);
@@ -118,25 +94,21 @@ class _FakeCore implements RequestChannel {
   }
 
   @override
-  Future<PacketResponse> requestWithFlags(
+  Future<PacketResponse> flagged(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async {
-    sent.add((service: service, cid: functionCid, payload: payload));
+    int functionCid,
+    List<int> payload,
+  ) async {
     if (service == ServiceType.script) {
       switch (functionCid) {
         case 1: // load: file id (u16), slot (u8)
           final fileId = payload[0] | (payload[1] << 8);
-          if (refuseLoad.contains(fileId)) return _failed;
+          if (refuseLoad.contains(fileId)) return busRefused;
           final slot = payload.length > 2 ? payload[2] : -1;
           if (slot >= 0) loaded[slot] = fileId;
         case 2: // unload: slot (u8)
-          if (refuseUnload.contains(payload[0])) return _failed;
+          if (refuseUnload.contains(payload[0])) return busRefused;
           loaded.remove(payload[0]);
       }
     }
@@ -147,7 +119,7 @@ class _FakeCore implements RequestChannel {
       final staged = files.remove(from);
       if (staged != null) files[to] = staged;
     }
-    return _ok;
+    return busAccepted;
   }
 
   /// The script commands the restore sent (`cid` followed by its payload), in order.

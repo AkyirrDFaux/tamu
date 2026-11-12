@@ -19,6 +19,8 @@ import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/types.dart';
 
+import 'support/fake_bus.dart';
+
 BackupDevice _archive() => BackupDevice(
   type: 'Tamu v2.0A',
   typeId: 1,
@@ -94,49 +96,28 @@ RestorePlan _plan({required bool overUsb, bool bleLinkSecured = true}) =>
 /// A core that accepts every request, so `applyRestorePlan` can be driven without a rig. The
 /// register write is what this file measures; the sweeps a restore runs afterwards (slot map,
 /// file table, requester table) answer empty, which the app reads as "the device holds none".
-class _AcceptingBus implements RequestChannel {
-  final sent = <({ServiceType service, int cid, List<int> payload})>[];
-
+class _AcceptingBus extends FakeBus {
   @override
-  bool get isConnected => true;
-
-  @override
-  int takeTxId() => 0xF000;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
+  Future<List<int>> plain(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async {
-    sent.add((service: service, cid: functionCid, payload: payload));
-    return const [];
-  }
+    int functionCid,
+    List<int> payload,
+  ) async => const [];
 
   @override
-  Future<PacketResponse> requestWithFlags(
+  Future<PacketResponse> flagged(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async {
-    sent.add((service: service, cid: functionCid, payload: payload));
+    int functionCid,
+    List<int> payload,
+  ) async {
     // An accepted register write echoes the address and the ValueInfo it was sent, then the
     // value: the reply IS the request payload.
     if (service == ServiceType.register && functionCid == RegisterCid.write) {
-      return PacketResponse(payload: payload, success: true, fail: false);
+      return registerWriteEcho(payload);
     }
-    return const PacketResponse(payload: [], success: true, fail: false);
+    return busAccepted;
   }
 }
 
@@ -166,8 +147,12 @@ void main() {
 
     final write = bus.sent.firstWhere(
       (r) => r.service == ServiceType.register && r.cid == RegisterCid.write,
-      orElse: () =>
-          (service: ServiceType.device, cid: -1, payload: const <int>[]),
+      orElse: () => (
+        service: ServiceType.device,
+        cid: -1,
+        payload: const <int>[],
+        trid: null,
+      ),
     );
     expect(write.cid, RegisterCid.write, reason: 'the block write was sent');
     final info = uint32FromBytes(write.payload);

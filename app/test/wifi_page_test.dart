@@ -87,6 +87,22 @@ class _FakeWifiDevice extends RegisterClient {
   }
 }
 
+/// Opens the dialog [tooltip]'s button shows, types [value] and accepts it.
+///
+/// The three write cases in this suite (password twice, SSID once) each spelled the dialog out;
+/// one of them drifting would have tested a different dialog than the others.
+Future<void> _enterInDialog(
+  WidgetTester tester,
+  String tooltip,
+  String value,
+) async {
+  await tester.tap(find.byTooltip(tooltip));
+  await tester.pumpAndSettle();
+  await tester.enterText(find.byType(TextField), value);
+  await tester.tap(find.text('OK'));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -287,11 +303,7 @@ void main() {
       final device = await pump(tester, present: true, fields: fields);
       expect(find.text('not read back by the device'), findsOneWidget);
 
-      await tester.tap(find.byTooltip('Set the password'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'secret123');
-      await tester.tap(find.text('OK'));
-      await tester.pumpAndSettle();
+      await _enterInDialog(tester, 'Set the password', 'secret123');
 
       // The device was given the password...
       final write = device.writes.single;
@@ -327,11 +339,7 @@ void main() {
     ) async {
       final device = await pump(tester, present: true, fields: emptyBlock());
 
-      await tester.tap(find.byTooltip('Set the SSID'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'TamuNet');
-      await tester.tap(find.text('OK'));
-      await tester.pumpAndSettle();
+      await _enterInDialog(tester, 'Set the SSID', 'TamuNet');
 
       final write = device.writes.single;
       expect(write.field, wifiFieldSsid);
@@ -347,11 +355,7 @@ void main() {
     ) async {
       final device = await pump(tester, present: true, fields: emptyBlock());
 
-      await tester.tap(find.byTooltip('Set the password'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'secret123');
-      await tester.tap(find.text('OK'));
-      await tester.pumpAndSettle();
+      await _enterInDialog(tester, 'Set the password', 'secret123');
 
       // The password lives in NVS on the device: its trigger already stored it, so a Save All
       // would be a step that does nothing for this field.

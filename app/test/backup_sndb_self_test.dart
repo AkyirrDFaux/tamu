@@ -5,38 +5,26 @@ import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/types.dart';
 
+import 'support/fake_bus.dart';
+
 /// A core that answers only what a capture of its SNDB needs: the ping, and the roster read
 /// (Device 0x13). Everything else refuses - the block walk, the file table and the requester
 /// table - so the capture comes back carrying exactly the SNDB rows, which is the thing under
 /// test. A core whose roster holds only itself then has nothing to archive at all.
-class _FakeSndbCore implements RequestChannel {
+class _FakeSndbCore extends FakeBus {
   _FakeSndbCore(this.roster);
 
   /// The roster the core reports, as `(id, 28-character hex serial)` - the shape the SNDB reader
   /// hands every caller.
   final List<({int id, String serial})> roster;
 
-  int _txId = 0x100;
-
   @override
-  bool get isConnected => true;
-
-  @override
-  int takeTxId() => _txId++;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
+  Future<List<int>> plain(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async {
+    int functionCid,
+    List<int> payload,
+  ) async {
     if (service == ServiceType.device && functionCid == 1) return const [];
     if (service == ServiceType.device && functionCid == 0x13) {
       final out = <int>[];
@@ -51,15 +39,12 @@ class _FakeSndbCore implements RequestChannel {
   }
 
   @override
-  Future<PacketResponse> requestWithFlags(
+  Future<PacketResponse> flagged(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => throw StateError('$service/$functionCid not answered');
+    int functionCid,
+    List<int> payload,
+  ) async => throw StateError('$service/$functionCid not answered');
 }
 
 /// A 14-byte serial from its 28-character hex form (the shape `idToString`/`serialNumberToHex`

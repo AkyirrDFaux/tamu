@@ -57,3 +57,17 @@ List<int> scriptSlotMap(Map<int, int> loaded, {int slots = 16}) {
     for (final id in map) ...[id & 0xFF, (id >> 8) & 0xFF],
   ];
 }
+
+/// One 16-byte record of a `.TABLE` read: u32 offset, u32 size, the 8-byte padded name.
+///
+/// Four page suites built this record by hand (the file-table read is what "the device answered"
+/// means for every one of them), so the layout lives here once.
+List<int> fileRecord(int offset, int size, String name) => [
+  for (final v in [offset, size]) ...[
+    v & 0xFF,
+    (v >> 8) & 0xFF,
+    (v >> 16) & 0xFF,
+    (v >> 24) & 0xFF,
+  ],
+  ...name.padRight(8).codeUnits,
+];

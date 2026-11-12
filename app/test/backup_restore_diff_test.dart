@@ -134,40 +134,40 @@ RestorePlan _plan(
 /// One row's class, as a word, for a test that prints the whole classification.
 String _word(DiffKind? kind) => kind?.word ?? 'unclassified';
 
+/// The archive/live pair every classification case starts from: `Frequency` at the archive's own
+/// value (same), `Duty` at another (replace), and `Extra`, an address the device does not carry
+/// (add). The two cases that build it differed only in the live inventory they pass.
+RestorePlan _mixedPlan({LiveInventory inventory = const LiveInventory()}) {
+  final archive = _device(
+    blocks: [
+      _pwmArchive([
+        _entry('Frequency', 0, 25000.0),
+        _entry('Duty', 1, 40.0),
+        _entry('Extra', 2, 7.0),
+      ]),
+    ],
+  );
+  final frequency = _liveEntry('Frequency', 0);
+  final live = _live(
+    blocks: [
+      _pwmBlock([
+        _liveEntry(
+          'Frequency',
+          0,
+          value: resolveEntryBytes(archive.blocks.first.entries[0], frequency)!,
+        ),
+        _liveEntry('Duty', 1, value: const [0, 0, 0x20, 0x42]),
+      ]),
+    ],
+  );
+  return _plan(archive, live, inventory: inventory);
+}
+
 void main() {
   test('an entry is an add, a replace or the same by its value bytes', () {
-    final archive = _device(
-      blocks: [
-        _pwmArchive([
-          _entry('Frequency', 0, 25000.0),
-          _entry('Duty', 1, 40.0),
-          _entry('Extra', 2, 7.0),
-        ]),
-      ],
-    );
     // The device holds Frequency at the archive's value and Duty at another one, and carries no
     // address for Extra at all.
-    final frequency = _liveEntry('Frequency', 0);
-    final live = _live(
-      blocks: [
-        _pwmBlock([
-          _liveEntry(
-            'Frequency',
-            0,
-            value: resolveEntryBytes(
-              archive.blocks.first.entries[0],
-              frequency,
-            )!,
-          ),
-          _liveEntry(
-            'Duty',
-            1,
-            value: [0, 0, 0x20, 0x42], // 40.0 would be this; 50.0 is not
-          ),
-        ]),
-      ],
-    );
-    final plan = _plan(archive, live, inventory: const LiveInventory());
+    final plan = _mixedPlan();
     final byField = {
       for (final item in plan.items)
         if (item.kind == RestoreKind.entry) item.entry!.field: item,
@@ -574,38 +574,9 @@ void main() {
   });
 
   group('view filters and class toggles', () {
-    RestorePlan build() {
-      final archive = _device(
-        blocks: [
-          _pwmArchive([
-            _entry('Frequency', 0, 25000.0), // same
-            _entry('Duty', 1, 40.0), // replace
-            _entry('Extra', 2, 7.0), // add
-          ]),
-        ],
-      );
-      final frequency = _liveEntry('Frequency', 0);
-      final live = _live(
-        blocks: [
-          _pwmBlock([
-            _liveEntry(
-              'Frequency',
-              0,
-              value: resolveEntryBytes(
-                archive.blocks.first.entries[0],
-                frequency,
-              )!,
-            ),
-            _liveEntry('Duty', 1, value: const [0, 0, 0x20, 0x42]),
-          ]),
-        ],
-      );
-      return _plan(
-        archive,
-        live,
-        inventory: LiveInventory(loadedSlots: {9: 9}, fileNames: const {}),
-      );
-    }
+    RestorePlan build() => _mixedPlan(
+      inventory: LiveInventory(loadedSlots: {9: 9}, fileNames: const {}),
+    );
 
     test('diff is the default view and hides only the same rows', () {
       final plan = build();

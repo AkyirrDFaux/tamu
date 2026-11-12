@@ -22,6 +22,8 @@ import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/types.dart';
 
+import 'support/block_reads.dart';
+
 import '../tool/rig_link.dart';
 import '../tool/upload_setup.dart';
 import 'support/fake_rig_link.dart';
@@ -491,13 +493,13 @@ class _FakeRig extends ScriptedRigLink {
       case RegisterCid.enumerateBlocks:
         enumerateCalls++;
         if (enumerateCalls <= enumerateFailures) return null;
-        return _words([
+        return u16Words([
           for (final type in types) (type << 6) | (instances[type] ?? 0),
         ]);
       case RegisterCid.enumerateFields:
         final packed = payload[0] | (payload[1] << 8);
         if (!types.contains((packed >> 6) & 0x3FF)) return null;
-        return _words([0x0000]); // field 0, key 0
+        return u16Words([0x0000]); // field 0, key 0
       case RegisterCid.read:
         final bi =
             payload[0] |
@@ -512,21 +514,21 @@ class _FakeRig extends ScriptedRigLink {
         }
         if (field == 0xFF) {
           if (type == systemBlockTypeValue) {
-            return _reply(DataType.none.value, 9, _padded('System'));
+            return blockReply(DataType.none.value, 9, paddedText('System', 16));
           }
           final calls = metaCalls[type] = (metaCalls[type] ?? 0) + 1;
           if (deadTypes.contains(type)) return null;
           if (calls <= (metaFailures[type] ?? 0)) return null;
           if (!types.contains(type)) return null;
-          return _reply(
+          return blockReply(
             DataType.none.value,
             2,
-            _padded(blockTypeDisplayName(type)),
+            paddedText(blockTypeDisplayName(type), 16),
           );
         }
         // The Button's one persistent entry.
         if (type == _button && field == 0 && key == 0) {
-          return _reply(
+          return blockReply(
             DataType.number.value,
             4,
             numberToBytes(25000),
@@ -557,38 +559,9 @@ class _FakeRig extends ScriptedRigLink {
         value[i] = name.codeUnitAt(i);
       }
     }
-    return _reply(DataType.number.value, value.length, value);
+    return blockReply(DataType.number.value, value.length, value);
   }
 
-  /// A reply is a 4-byte echoed BlockInfo, the 4-byte ValueInfo, then the payload.
-  static List<int> _reply(
-    int type,
-    int size,
-    List<int> payload, {
-    int flags = 0,
-  }) => [
-    0,
-    0,
-    0,
-    0,
-    type & 0xFF,
-    (type >> 8) & 0xFF,
-    size,
-    flags,
-    ...payload,
-  ];
-
-  static List<int> _words(List<int> words) => [
-    for (final w in words) ...[w & 0xFF, (w >> 8) & 0xFF],
-  ];
-
-  static List<int> _padded(String s) {
-    final out = s.codeUnits.take(16).toList();
-    while (out.length < 16) {
-      out.add(0x00);
-    }
-    return out;
-  }
 }
 
 /// Captures the CLI's stdout/stderr, so a test asserts on the text a run really prints.

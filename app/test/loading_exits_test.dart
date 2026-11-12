@@ -20,7 +20,6 @@ import 'package:tamuapp/core/backup.dart';
 import 'package:tamuapp/core/backup_format.dart';
 import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/device_db.dart';
-import 'package:tamuapp/core/fragment_reassembler.dart';
 import 'package:tamuapp/core/notice.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/register_client.dart';
@@ -37,6 +36,8 @@ import 'package:tamuapp/ui/scripts_page.dart';
 import 'package:tamuapp/ui/storage_page.dart';
 import 'package:tamuapp/ui/theme.dart';
 import 'package:tamuapp/ui/wait.dart';
+
+import 'support/fake_core.dart';
 
 bool _connected() => true;
 
@@ -57,26 +58,15 @@ Future<void> _drain(
   }
 }
 
-/// One 16-byte file-table record: u32 offset, u32 size, 8-byte name.
-List<int> _record(int offset, int size, String name) => [
-  for (final v in [offset, size]) ...[
-    (v & 0xFF),
-    ((v >> 8) & 0xFF),
-    ((v >> 16) & 0xFF),
-    ((v >> 24) & 0xFF),
-  ],
-  ...name.padRight(8).codeUnits,
-];
-
 final List<int> _scriptImage = ScriptFileBuilder(functionName: 'blink').build();
 
 final List<int> _table = [
-  ..._record(
+  ...fileRecord(
     0x0100,
     32,
     '.TABLE',
   ), // its declared size is the 32 bytes the bus returns
-  ..._record(0x1000, _scriptImage.length, 'SCR_000'),
+  ...fileRecord(0x1000, _scriptImage.length, 'SCR_000'),
 ];
 
 /// A device that answers the reads these screens make, and nothing else: the file table (Storage
@@ -128,26 +118,12 @@ class _Bus extends FakeTolerantChannel {
         return const PacketResponse(payload: [], success: false, fail: true);
       }
       final body = [...StorageClient.padName(name), ...bytes];
-      return PacketResponse(
-        payload: body,
-        success: true,
-        fail: false,
-        chunks: [FragmentChunk(0, body)],
-        stopped: true,
-        total: 1,
-      );
+      return wholeReply(body);
     }
     if (service == ServiceType.script && functionCid == 0) {
       // An empty slot map: every slot free, which is "nothing is loaded".
       final body = List<int>.filled(32, 0xFF);
-      return PacketResponse(
-        payload: body,
-        success: true,
-        fail: false,
-        chunks: [FragmentChunk(0, body)],
-        stopped: true,
-        total: 1,
-      );
+      return wholeReply(body);
     }
     if (service == ServiceType.script && functionCid == 1) {
       return PacketResponse(
@@ -158,14 +134,7 @@ class _Bus extends FakeTolerantChannel {
     }
     if (service == ServiceType.device && functionCid == 0x13) {
       final body = <int>[];
-      return PacketResponse(
-        payload: body,
-        success: true,
-        fail: false,
-        chunks: [FragmentChunk(0, body)],
-        stopped: true,
-        total: 1,
-      );
+      return wholeReply(body);
     }
     return const PacketResponse(payload: [], success: true, fail: false);
   }

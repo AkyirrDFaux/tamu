@@ -33,6 +33,8 @@ import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/types.dart';
 
+import 'support/fake_bus.dart';
+
 /// A dynamic device over the same request surface the restore uses: it answers block meta, the
 /// field/key table and per-row reads from [rows], and applies WRITES the way the firmware does.
 ///
@@ -41,7 +43,7 @@ import 'package:tamuapp/core/types.dart';
 /// write is refused (`ValueUpdateApplicable`/`ValueMarkerCreatable`), a rejected address answers
 /// `FLAG_FAIL` with no payload, and an accepted write stores the row's new type and length - which
 /// is what re-creates a row that was left at the wrong size.
-class _DynamicDevice implements RequestChannel {
+class _DynamicDevice extends FakeBus {
   /// `'global:field:key'` -> the row the device holds.
   final rows = <String, ({int type, List<int> value, int flags})>{};
 
@@ -49,9 +51,6 @@ class _DynamicDevice implements RequestChannel {
 
   /// The addresses whose value write the device refuses, as `'global:field:key'`.
   final refuse = <String>{};
-
-  /// Every request, in the order it was sent.
-  final sent = <({ServiceType service, int cid, List<int> payload})>[];
 
   /// Empty writes the device REFUSED: not a dictionary type, or a row that holds bytes.
   int zeroLengthValueWrites = 0;
@@ -61,15 +60,6 @@ class _DynamicDevice implements RequestChannel {
 
   /// Writes that carried no bytes ON PURPOSE (type None = delete).
   int deletions = 0;
-
-  int _txId = 0x100;
-
-  static const _failed = PacketResponse(
-    payload: [],
-    success: false,
-    fail: true,
-  );
-  static const _ok = PacketResponse(payload: [], success: true, fail: false);
 
   static String _key(int global, int field, int key) => '$global:$field:$key';
 
@@ -109,44 +99,12 @@ class _DynamicDevice implements RequestChannel {
   }
 
   @override
-  bool get isConnected => true;
-
-  @override
-  int takeTxId() => _txId++;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
+  Future<PacketResponse> flagged(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => (await requestWithFlags(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-    requestFrag: requestFrag,
-    transactionId: transactionId,
-  )).payload;
-
-  @override
-  Future<PacketResponse> requestWithFlags(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async {
-    sent.add((service: service, cid: functionCid, payload: payload));
+    int functionCid,
+    List<int> payload,
+  ) async {
     if (service == ServiceType.register) {
       // The Dynamic management commands are Register CIDs 0x10-0x13.
       if (functionCid == DynamicCid.getName) {
@@ -183,9 +141,9 @@ class _DynamicDevice implements RequestChannel {
         case DynamicCid.create:
         case DynamicCid.delete:
         case DynamicCid.setName:
-          return _ok;
+          return busAccepted;
       }
-      return _ok;
+      return busAccepted;
     }
     if (service == ServiceType.script && functionCid == 0) {
       // No script slot occupied: the sweeps find nothing to unload.
@@ -216,9 +174,9 @@ class _DynamicDevice implements RequestChannel {
           fail: false,
         );
       }
-      return _failed;
+      return busRefused;
     }
-    return _ok;
+    return busAccepted;
   }
 
   PacketResponse _read(List<int> payload) {
@@ -250,7 +208,7 @@ class _DynamicDevice implements RequestChannel {
       );
     }
     final row = rows[_key(global, field, key)];
-    if (row == null) return _failed;
+    if (row == null) return busRefused;
     return PacketResponse(
       payload: [
         ...payload.sublist(0, 4),
@@ -294,7 +252,7 @@ class _DynamicDevice implements RequestChannel {
       final held = rows[address];
       if (!marker || (held != null && held.value.isNotEmpty)) {
         zeroLengthValueWrites++;
-        return _failed;
+        return busRefused;
       }
       markerCreates.add(address);
       rows[address] = (
@@ -305,7 +263,7 @@ class _DynamicDevice implements RequestChannel {
       // An accepted write echoes the request payload: BlockInfo + ValueInfo, no value bytes.
       return PacketResponse(payload: payload, success: true, fail: false);
     }
-    if (refuse.contains(address)) return _failed;
+    if (refuse.contains(address)) return busRefused;
     // `SetEntry`: the stored length is the bytes present, so a row left at the wrong size is
     // re-created by the next write that carries one.
     rows[address] = (type: meta.type, value: value, flags: meta.flags);
@@ -456,6 +414,15 @@ void _install(_DynamicDevice device) {
   addTearDown(() => installRequestChannel(null));
 }
 
+
+/// The register WRITES the run sent, in order.
+///
+/// A write's payload is the address, the `ValueInfo` the run declared and the value bytes, which
+/// is what a repair case asserts on - so six cases asked the same question of the same log.
+List<BusRequest> _writes(_DynamicDevice device) => device.sent
+    .where((c) => c.service == ServiceType.register && c.cid == RegisterCid.write)
+    .toList();
+
 void main() {
   tearDown(RestoreSession.clear);
 
@@ -521,12 +488,7 @@ void main() {
     // NOTHING with an empty value ever reached the bus, and the value rows beside the markers
     // did - including the 28-byte Matrix, at its declared size.
     expect(device.zeroLengthValueWrites, 0);
-    final writes = device.sent
-        .where(
-          (c) =>
-              c.service == ServiceType.register && c.cid == RegisterCid.write,
-        )
-        .toList();
+    final writes = _writes(device);
     expect(writes, hasLength(20));
     for (final write in writes) {
       expect(write.payload.sublist(8), isNotEmpty);
@@ -651,12 +613,7 @@ void main() {
       _install(device);
       await prepareDynamicBlocks(plan);
 
-      final writes = device.sent
-          .where(
-            (c) =>
-                c.service == ServiceType.register && c.cid == RegisterCid.write,
-          )
-          .toList();
+      final writes = _writes(device);
       expect(writes, hasLength(1));
       final meta = ValueInfo.fromBytes(writes.single.payload, 4);
       expect(meta.type, DataType.number.value);
@@ -944,12 +901,7 @@ void main() {
       expect(device.rows['0:4:0']!.type, DataType.number.value);
       expect(device.rows['0:4:0']!.value, [0, 0, 0, 0]);
       // Exactly one write reached the bus and it is the CREATE: no value write followed it.
-      final writes = device.sent
-          .where(
-            (c) =>
-                c.service == ServiceType.register && c.cid == RegisterCid.write,
-          )
-          .toList();
+      final writes = _writes(device);
       expect(writes, hasLength(1));
       expect(writes.single.payload.sublist(8), [0, 0, 0, 0]);
       expect(device.zeroLengthValueWrites, 0);
@@ -1055,12 +1007,7 @@ void main() {
     expect(fixed.line, contains('re-created as Bool, 1 byte(s)'));
     expect(fixed.line, contains('where it held Number, 1 byte(s)'));
     // The repair reached the bus as ONE write carrying the declared type and length.
-    final writes = device.sent
-        .where(
-          (c) =>
-              c.service == ServiceType.register && c.cid == RegisterCid.write,
-        )
-        .toList();
+    final writes = _writes(device);
     for (final write in writes) {
       final meta = ValueInfo.fromBytes(write.payload, 4);
       expect(meta.type, DataType.bool_.value);
@@ -1136,12 +1083,7 @@ void main() {
         containsPair('shape', 'Bool, 1 byte(s)'),
       );
       // The create carried the declared type and length, and no Number default ever went out.
-      final writes = device.sent
-          .where(
-            (c) =>
-                c.service == ServiceType.register && c.cid == RegisterCid.write,
-          )
-          .toList();
+      final writes = _writes(device);
       expect(writes, hasLength(2));
       for (final write in writes) {
         expect(
@@ -1282,12 +1224,7 @@ void main() {
     // The structure phase made nothing (the plan thought the row was fine), and the ONE write
     // that went out carried the declared type.
     expect(report.structure, isEmpty);
-    final writes = device.sent
-        .where(
-          (c) =>
-              c.service == ServiceType.register && c.cid == RegisterCid.write,
-        )
-        .toList();
+    final writes = _writes(device);
     expect(writes, hasLength(1));
     expect(
       ValueInfo.fromBytes(writes.single.payload, 4).type,

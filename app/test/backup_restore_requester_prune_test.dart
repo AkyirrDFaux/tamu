@@ -5,18 +5,18 @@ import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/types.dart';
 
+import 'support/fake_bus.dart';
+
 /// A device's requester table that answers the Subscriptions CIDs a restore uses - Get (0x10),
 /// Set (0x11, a None trigger cancels) and Save-all (0x13) - so the prune can be driven without a
 /// rig. `entries` is the live table: the commands mutate it, so a test reads the state the restore
 /// left behind.
-class _FakeTable implements RequestChannel {
-  _FakeTable(List<RequesterSubscription> entries) : entries = [...entries];
+class _FakeTable extends FakeBus {
+  _FakeTable(List<RequesterSubscription> entries)
+    : entries = [...entries],
+      super(firstTxId: 0x40);
 
   final List<RequesterSubscription> entries;
-
-  /// Every request, in the order it was sent.
-  final sent =
-      <({ServiceType service, int cid, List<int> payload, int? trid})>[];
 
   /// Refuse every cancel, as a device that answers FAIL would.
   bool refuseCancel = false;
@@ -44,15 +44,6 @@ class _FakeTable implements RequestChannel {
   /// How many Save-all requests the run sent.
   int saves = 0;
 
-  int _txId = 0x40;
-
-  static const _ok = PacketResponse(payload: [], success: true, fail: false);
-  static const _failed = PacketResponse(
-    payload: [],
-    success: false,
-    fail: true,
-  );
-
   /// The TRIDs the table holds, in order.
   List<int> get trids => [for (final e in entries) e.trid];
 
@@ -66,30 +57,12 @@ class _FakeTable implements RequestChannel {
   ];
 
   @override
-  bool get isConnected => true;
-
-  @override
-  int takeTxId() => _txId++;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
+  Future<List<int>> plain(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async {
-    sent.add((
-      service: service,
-      cid: functionCid,
-      payload: payload,
-      trid: transactionId,
-    ));
+    int functionCid,
+    List<int> payload,
+  ) async {
     // A register write echoes BlockInfo + ValueInfo + the value, so the reply IS the request's own
     // payload. The device answers it; a fake that answered nothing would make every entry write
     // fail and drown the requester table this test is about.
@@ -100,34 +73,25 @@ class _FakeTable implements RequestChannel {
   }
 
   @override
-  Future<PacketResponse> requestWithFlags(
+  Future<PacketResponse> flagged(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async {
-    sent.add((
-      service: service,
-      cid: functionCid,
-      payload: payload,
-      trid: transactionId,
-    ));
+    int functionCid,
+    List<int> payload,
+  ) async {
     // A register write echoes the address, the accepted ValueInfo and the value - the same reply
     // the payload path returns, now carrying the SUCCESS flag the write is judged by.
     if (service == ServiceType.register && functionCid == RegisterCid.write) {
-      return PacketResponse(payload: payload, success: true, fail: false);
+      return registerWriteEcho(payload);
     }
-    if (service != ServiceType.subscriptions) return _ok;
+    if (service != ServiceType.subscriptions) return busAccepted;
     switch (functionCid) {
       case 0x10: // Get subscriptions: the table, 32-byte entries (hash at offset 28), no count
         // prefix in the payload.
         reads++;
         if (getTimesOut) throw StateError('no reply');
         if (_unreadable || (failGetFrom > 0 && reads >= failGetFrom)) {
-          return _failed;
+          return busRefused;
         }
         return PacketResponse(
           payload: [for (final e in entries) ...e.toWireBytes()],
@@ -137,12 +101,12 @@ class _FakeTable implements RequestChannel {
       case 0x11: // Set subscription: a None trigger is a cancel. The payload is the 28 B prefix.
         final entry = RequesterSubscription.fromBytes(0, payload);
         if (entry.trigger == TriggerType.none) {
-          if (refuseCancel) return _failed;
+          if (refuseCancel) return busRefused;
           entries.removeWhere((e) => e.trid == entry.trid);
           if (failGetAfterCancel) {
             _unreadable = true;
           }
-          return _ok;
+          return busAccepted;
         }
         final at = entries.indexWhere((e) => e.trid == entry.trid);
         if (at >= 0) {
@@ -150,12 +114,12 @@ class _FakeTable implements RequestChannel {
         } else {
           entries.add(entry);
         }
-        return _ok;
+        return busAccepted;
       case 0x13: // Save all subscriptions.
         saves++;
-        return failSave ? _failed : _ok;
+        return failSave ? busRefused : busAccepted;
     }
-    return _ok;
+    return busAccepted;
   }
 }
 

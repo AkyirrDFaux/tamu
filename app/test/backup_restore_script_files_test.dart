@@ -8,13 +8,14 @@ import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_instructions.dart';
 import 'package:tamuapp/core/storage_client.dart';
 
+import 'support/fake_bus.dart';
 import 'support/fake_core.dart';
 import 'package:tamuapp/core/types.dart';
 
 /// A core that answers the service requests a restore sends, with a FILE TABLE the sweep can
 /// read and delete from - the thing the slot sweep's fake did not have, and the reason `SCR_000`
 /// survived a restore: the slot was unloaded, the file stayed.
-class _FakeCore implements RequestChannel {
+class _FakeCore extends FakeBus {
   _FakeCore({
     Map<int, int> loaded = const {},
     Map<String, int> table = const {},
@@ -40,38 +41,13 @@ class _FakeCore implements RequestChannel {
   /// Answer the file-table read with nothing, as a device that cannot say what it stores.
   bool tableUnreadable = false;
 
-  /// Every request, in the order it was sent.
-  final sent = <({ServiceType service, int cid, List<int> payload})>[];
-
-  int _txId = 0x100;
-
-  static const _ok = PacketResponse(payload: [], success: true, fail: false);
-  static const _failed = PacketResponse(
-    payload: [],
-    success: false,
-    fail: true,
-  );
-
   @override
-  bool get isConnected => true;
-
-  @override
-  int takeTxId() => _txId++;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
+  Future<List<int>> plain(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async {
-    sent.add((service: service, cid: functionCid, payload: payload));
+    int functionCid,
+    List<int> payload,
+  ) async {
     if (service == ServiceType.script && functionCid == 0) {
       return scriptSlotMap(loaded);
     }
@@ -102,16 +78,12 @@ class _FakeCore implements RequestChannel {
   }
 
   @override
-  Future<PacketResponse> requestWithFlags(
+  Future<PacketResponse> flagged(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async {
-    sent.add((service: service, cid: functionCid, payload: payload));
+    int functionCid,
+    List<int> payload,
+  ) async {
     if (service == ServiceType.script) {
       switch (functionCid) {
         case 1: // load: file id (u16), slot (u8)
@@ -119,7 +91,7 @@ class _FakeCore implements RequestChannel {
           final slot = payload.length > 2 ? payload[2] : -1;
           if (slot >= 0) loaded[slot] = fileId;
         case 2: // unload: slot (u8)
-          if (refuseUnload.contains(payload[0])) return _failed;
+          if (refuseUnload.contains(payload[0])) return busRefused;
           loaded.remove(payload[0]);
       }
     }
@@ -132,7 +104,7 @@ class _FakeCore implements RequestChannel {
           files[name] = [];
         case 2: // delete: name (8)
           final name = StorageClient.unpadName(payload.sublist(0, 8));
-          if (refuseDelete.contains(name)) return _failed;
+          if (refuseDelete.contains(name)) return busRefused;
           table.remove(name);
           files.remove(name);
         case 4: // rename: old (8), new (8)
@@ -144,7 +116,7 @@ class _FakeCore implements RequestChannel {
           if (bytes != null) files[to] = bytes;
       }
     }
-    return _ok;
+    return busAccepted;
   }
 
   /// The `SCR_XXX` files the restore asked the device to DELETE, in order. The staging name a

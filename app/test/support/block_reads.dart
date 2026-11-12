@@ -33,3 +33,23 @@ List<int> paddedText(String value, int width) {
   }
   return bytes;
 }
+
+/// The reply `RegisterClient.readBlockField` parses: the 4-byte BlockInfo echo, the field's
+/// `ValueInfo`, then its bytes.
+///
+/// Two fakes built this by hand (`backup_walk_test`, `upload_setup_block_read_test`) and a third
+/// spelled the same bytes out as literals; a fixture that got the ValueInfo layout wrong would
+/// model a reply the client decodes as another field's.
+List<int> blockReply(int type, int size, List<int> value, {int flags = 0}) => [
+  0,
+  0,
+  0,
+  0,
+  ...ValueInfo(type: type, size: size, flags: flags).toBytes(),
+  ...value,
+];
+
+/// [words] as the little-endian u16 run the device packs them into.
+List<int> u16Words(List<int> words) => [
+  for (final w in words) ...[w & 0xFF, (w >> 8) & 0xFF],
+];

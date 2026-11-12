@@ -31,6 +31,8 @@ import 'package:tamuapp/ui/register_page.dart';
 import 'package:tamuapp/ui/scripts_page.dart';
 import 'package:tamuapp/ui/theme.dart';
 
+import 'support/fake_core.dart';
+
 /// What the fake device answers for a `.TABLE` read.
 enum _Mode {
   /// FLAG_FAIL with no payload: the name is not in its file table (absent).
@@ -105,17 +107,6 @@ class _TableDevice extends FakeTolerantChannel {
   }
 }
 
-/// One 16-byte file-table record: u32 offset, u32 size, 8-byte name.
-List<int> _record(int offset, int size, String name) => [
-  for (final v in [offset, size]) ...[
-    (v & 0xFF),
-    ((v >> 8) & 0xFF),
-    ((v >> 16) & 0xFF),
-    ((v >> 24) & 0xFF),
-  ],
-  ...name.padRight(8).codeUnits,
-];
-
 /// A Register client that only needs to report the topology: the Backup view decodes the stored
 /// `.SV` against it.
 class _TopologyClient extends RegisterClient {
@@ -142,13 +133,13 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   final scriptTable = <int>[
-    ..._record(0x1000, 200, 'SCR_000'),
-    ..._record(0x2000, 300, 'SCR_001'),
+    ...fileRecord(0x1000, 200, 'SCR_000'),
+    ...fileRecord(0x2000, 300, 'SCR_001'),
   ];
 
   /// The table the Register Backup view decodes: no `.SV`, so every row is "not backed up" -
   /// which is the legitimate empty backup this test contrasts with a failed read.
-  final backupTable = <int>[..._record(0x1000, 16384, '.TABLE')];
+  final backupTable = <int>[...fileRecord(0x1000, 16384, '.TABLE')];
 
   Future<void> pumpScripts(WidgetTester tester) async {
     await tester.pumpWidget(

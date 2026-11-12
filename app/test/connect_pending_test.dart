@@ -23,6 +23,20 @@ import 'package:tamuapp/ui/theme.dart';
 Widget _app(Widget home) =>
     MaterialApp(theme: buildTheme(), builder: noticeHostBuilder, home: home);
 
+
+/// Mounts the connection page in the tall window its panel needs, on the [manager] the case built.
+///
+/// Every case in this group repeats this - the panel's cards are laid out, not scrolled, so the
+/// default 800x600 window puts the Cancel control out of reach.
+Future<void> _mountPage(WidgetTester tester, ConnectionManager manager) async {
+  tester.view.physicalSize = const Size(900, 1600);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  await tester.pumpWidget(_app(ConnectionPage(manager: manager)));
+  await tester.pump();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -183,12 +197,7 @@ void main() {
       final transport = _FakeTransport();
       manager.transportFactory = (_) => transport;
       // A tall window: the panel's cards are laid out, not scrolled.
-      tester.view.physicalSize = const Size(900, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-
-      await tester.pumpWidget(_app(ConnectionPage(manager: manager)));
-      await tester.pump();
+      await _mountPage(tester, manager);
 
       unawaited(manager.connectTo(bleLink));
       await tester.pump();
@@ -221,12 +230,7 @@ void main() {
         ..connectTimeout = const Duration(milliseconds: 50);
       final transport = _FakeTransport();
       manager.transportFactory = (_) => transport;
-      tester.view.physicalSize = const Size(900, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-
-      await tester.pumpWidget(_app(ConnectionPage(manager: manager)));
-      await tester.pump();
+      await _mountPage(tester, manager);
 
       unawaited(manager.connectTo(bleLink));
       await tester.pump();
@@ -248,12 +252,7 @@ void main() {
       final manager = ConnectionManager.forTest();
       final transport = _FakeTransport();
       manager.transportFactory = (_) => transport;
-      tester.view.physicalSize = const Size(900, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-
-      await tester.pumpWidget(_app(ConnectionPage(manager: manager)));
-      await tester.pump();
+      await _mountPage(tester, manager);
 
       // First attempt, cancelled by hand.
       unawaited(manager.connectTo(bleLink));
@@ -295,12 +294,7 @@ void main() {
         ..connectTimeout = const Duration(milliseconds: 50);
       final transport = _FakeTransport();
       manager.transportFactory = (_) => transport;
-      tester.view.physicalSize = const Size(900, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-
-      await tester.pumpWidget(_app(ConnectionPage(manager: manager)));
-      await tester.pump();
+      await _mountPage(tester, manager);
 
       unawaited(manager.connectTo(bleLink));
       await tester.pump();
@@ -336,12 +330,7 @@ void main() {
       manager.transportFactory = (_) => _FakeTransport(
         failure: 'GATT_INSUFFICIENT_AUTHENTICATION (status 5)',
       );
-      tester.view.physicalSize = const Size(900, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-
-      await tester.pumpWidget(_app(ConnectionPage(manager: manager)));
-      await tester.pump();
+      await _mountPage(tester, manager);
 
       await tester.tap(find.text('Tamu core'));
       await tester.pump();

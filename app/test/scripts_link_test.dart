@@ -9,7 +9,6 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tamuapp/core/fragment_reassembler.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 
@@ -55,14 +54,7 @@ class _Device extends FakeTolerantChannel {
       if (!link.up) throw const TransportException('Not connected');
       // An empty slot map: every slot free, which is "nothing is loaded".
       final body = List<int>.filled(32, 0xFF);
-      return PacketResponse(
-        payload: body,
-        success: true,
-        fail: false,
-        chunks: [FragmentChunk(0, body)],
-        stopped: true,
-        total: 1,
-      );
+      return wholeReply(body);
     }
     throw const TransportException('Not connected');
   }

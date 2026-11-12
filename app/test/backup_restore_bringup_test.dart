@@ -7,47 +7,30 @@ import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/script_client.dart';
 import 'package:tamuapp/core/storage_client.dart';
 
+import 'support/fake_bus.dart';
 import 'support/fake_core.dart';
 import 'package:tamuapp/core/types.dart';
 
 /// A core that answers the service requests a restore sends, so `applyRestorePlan` can be driven
 /// without a rig. It models only what the script bring-up touches: the slot map, the load/unload
 /// commands, the storage file writes and the save.
-class _FakeCore implements RequestChannel {
+class _FakeCore extends FakeBus {
   _FakeCore({Map<int, int> loaded = const {}}) : loaded = {...loaded};
 
   /// loaded slot -> SCR file id. The load/unload commands mutate it, so a test can read the
   /// device state the restore left behind.
   final Map<int, int> loaded;
 
-  /// Every request, in the order it was sent.
-  final sent = <({ServiceType service, int cid, List<int> payload})>[];
-
   /// File contents staged by the storage writes, keyed by the name the rename landed them under.
-  final files = <String, List<int>>{};
-
-  int _txId = 0x100;
+  final Map<String, List<int>> files = {};
 
   @override
-  bool get isConnected => true;
-
-  @override
-  int takeTxId() => _txId++;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
+  Future<List<int>> plain(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async {
-    sent.add((service: service, cid: functionCid, payload: payload));
+    int functionCid,
+    List<int> payload,
+  ) async {
     if (service == ServiceType.script && functionCid == 0) {
       return scriptSlotMap(loaded);
     }
@@ -72,16 +55,12 @@ class _FakeCore implements RequestChannel {
   }
 
   @override
-  Future<PacketResponse> requestWithFlags(
+  Future<PacketResponse> flagged(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async {
-    sent.add((service: service, cid: functionCid, payload: payload));
+    int functionCid,
+    List<int> payload,
+  ) async {
     if (service == ServiceType.script) {
       switch (functionCid) {
         case 1: // load: file id (u16), slot (u8)
@@ -99,7 +78,7 @@ class _FakeCore implements RequestChannel {
       final staged = files.remove(from);
       if (staged != null) files[to] = staged;
     }
-    return const PacketResponse(payload: [], success: true, fail: false);
+    return busAccepted;
   }
 
   /// The script commands the restore sent (`cid` followed by its payload), in order.

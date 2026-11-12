@@ -12,7 +12,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/device_db.dart';
-import 'package:tamuapp/core/fragment_reassembler.dart';
 import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/request_channel.dart';
@@ -30,22 +29,13 @@ import 'package:tamuapp/ui/storage_page.dart';
 import 'package:tamuapp/ui/theme.dart';
 import 'package:tamuapp/ui/wait.dart';
 
-/// One 16-byte file-table record: u32 offset, u32 size, 8-byte name.
-List<int> _record(int offset, int size, String name) => [
-  for (final v in [offset, size]) ...[
-    (v & 0xFF),
-    ((v >> 8) & 0xFF),
-    ((v >> 16) & 0xFF),
-    ((v >> 24) & 0xFF),
-  ],
-  ...name.padRight(8).codeUnits,
-];
+import 'support/fake_core.dart';
 
 final List<int> _table = [
   // The table's own record is the FIRST live record (`FileRecord.isFiletable` is `index == 0`),
   // and it holds a real offset like any other file.
-  ..._record(0x0100, 16384, '.TABLE'),
-  ..._record(0x1000, 64, 'SCR_000'),
+  ...fileRecord(0x0100, 16384, '.TABLE'),
+  ...fileRecord(0x1000, 64, 'SCR_000'),
 ];
 
 /// The rig's roster, as the core answers Device CID 0x13: 16 bytes per record
@@ -109,42 +99,21 @@ class _Device extends FakeTolerantChannel {
         return const PacketResponse(payload: [], success: false, fail: true);
       }
       final body = [...StorageClient.padName(name), ...bytes];
-      return PacketResponse(
-        payload: body,
-        success: true,
-        fail: false,
-        chunks: [FragmentChunk(0, body)],
-        stopped: true,
-        total: 1,
-      );
+      return wholeReply(body);
     }
     if (service == ServiceType.script && functionCid == 0) {
       if (slots != _Answer.whole) {
         throw StateError('the slot map did not answer');
       }
       // An empty slot map: every slot free, which is "nothing is loaded".
-      return PacketResponse(
-        payload: List<int>.filled(32, 0xFF),
-        success: true,
-        fail: false,
-        chunks: [FragmentChunk(0, List<int>.filled(32, 0xFF))],
-        stopped: true,
-        total: 1,
-      );
+      return wholeReply(List<int>.filled(32, 0xFF));
     }
     if (service == ServiceType.device && functionCid == _rosterCid) {
       if (roster != _Answer.whole) {
         throw StateError('the roster did not answer');
       }
       final body = _roster(nodes);
-      return PacketResponse(
-        payload: body,
-        success: true,
-        fail: false,
-        chunks: [FragmentChunk(0, body)],
-        stopped: true,
-        total: 1,
-      );
+      return wholeReply(body);
     }
     return const PacketResponse(payload: [], success: true, fail: false);
   }
@@ -198,14 +167,7 @@ class _ProgressDevice extends _Device implements ProgressReportingChannel {
         ),
       );
       await Future<void>.delayed(const Duration(milliseconds: 1));
-      return PacketResponse(
-        payload: body,
-        success: true,
-        fail: false,
-        chunks: [FragmentChunk(0, body)],
-        stopped: true,
-        total: 1,
-      );
+      return wholeReply(body);
     }
     return super.requestTolerant(
       targetId,

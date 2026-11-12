@@ -4,45 +4,32 @@ import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/subscription_client.dart';
 import 'package:tamuapp/core/types.dart';
 
+import 'support/fake_bus.dart';
+
 /// A link that answers every request with one canned payload - enough for a table read, which is a
 /// single 0x10 request whose reply carries the whole table.
-class _TableChannel implements RequestChannel {
-  _TableChannel(this.reply);
+class _TableChannel extends FakeBus {
+  _TableChannel(this.reply) : super(firstTxId: 1);
 
   /// The table the device streams back. Named distinctly from the request's `payload` parameter,
   /// which would otherwise shadow it inside the overrides.
   final List<int> reply;
 
   @override
-  bool get isConnected => true;
-
-  @override
-  int takeTxId() => 1;
-
-  @override
-  Future<List<int>> request(
+  Future<List<int>> plain(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => reply;
+    int functionCid,
+    List<int> payload,
+  ) async => reply;
 
   @override
-  Future<PacketResponse> requestWithFlags(
+  Future<PacketResponse> flagged(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => PacketResponse(payload: reply, success: true, fail: false);
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
+    int functionCid,
+    List<int> payload,
+  ) async => PacketResponse(payload: reply, success: true, fail: false);
 }
 
 RequesterSubscription _row({

@@ -22,6 +22,7 @@ import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 import 'package:tamuapp/core/storage_client.dart';
 
+import 'support/fake_bus.dart';
 import 'support/fake_core.dart';
 import 'package:tamuapp/core/types.dart';
 
@@ -31,7 +32,7 @@ import 'package:tamuapp/core/types.dart';
 /// A refusal is the firmware's: `FLAG_FAIL` with no payload. [refuse] names the commands to refuse
 /// as `service/cid` (e.g. `register/3`, `storage/1`), and everything else is answered the way the
 /// device answers it.
-class _RefusingBus implements RequestChannel {
+class _RefusingBus extends FakeBus {
   _RefusingBus({
     Map<int, int> loaded = const {},
     Map<String, List<int>> files = const {},
@@ -56,11 +57,7 @@ class _RefusingBus implements RequestChannel {
   final requesterWriteAnswers = <PacketResponse?>[];
 
   /// The firmware's refusal, to queue in [requesterWriteAnswers]: FLAG_FAIL and no payload.
-  static const refusal = PacketResponse(
-    payload: [],
-    success: false,
-    fail: true,
-  );
+  static const refusal = busRefused;
 
   /// Loaded script slots: slot -> SCR file id.
   final Map<int, int> loaded;
@@ -71,60 +68,16 @@ class _RefusingBus implements RequestChannel {
   /// The files the device stores.
   final Map<String, List<int>> files;
 
-  /// Every request, in the order it was sent.
-  final sent = <({ServiceType service, int cid, List<int> payload})>[];
-
-  int _txId = 0x100;
-
-  static const _ok = PacketResponse(payload: [], success: true, fail: false);
-  static const _failed = PacketResponse(
-    payload: [],
-    success: false,
-    fail: true,
-  );
-
   bool _refuses(ServiceType service, int cid) =>
       refuse.contains('${service.name}/$cid');
 
   @override
-  bool get isConnected => true;
-
-  @override
-  int takeTxId() => _txId++;
-
-  @override
-  void setSubscriptionListener(Function(List<int>)? listener) {}
-
-  @override
-  Future<List<int>> request(
+  Future<PacketResponse> flagged(
     int targetId,
     ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async => (await requestWithFlags(
-    targetId,
-    service,
-    functionCid,
-    payload: payload,
-    timeout: timeout,
-    requestFrag: requestFrag,
-    transactionId: transactionId,
-  )).payload;
-
-  @override
-  Future<PacketResponse> requestWithFlags(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-    bool requestFrag = false,
-    int? transactionId,
-  }) async {
-    sent.add((service: service, cid: functionCid, payload: payload));
+    int functionCid,
+    List<int> payload,
+  ) async {
     // A command the device never answers is a timeout, not a refusal: the two arrive at the app
     // as different reasons, so a case can tell them apart.
     final command = '${service.name}/$functionCid';
@@ -139,17 +92,17 @@ class _RefusingBus implements RequestChannel {
       if (answer == null) throw TimeoutException('$command: no reply');
       return answer;
     }
-    if (_refuses(service, functionCid)) return _failed;
+    if (_refuses(service, functionCid)) return busRefused;
     if (service == ServiceType.register) {
       switch (functionCid) {
         case RegisterCid.write:
           // An accepted write echoes the address, the ValueInfo and the value.
-          return PacketResponse(payload: payload, success: true, fail: false);
+          return registerWriteEcho(payload);
         case RegisterCid.saveAll:
         case RegisterCid.recallAll:
-          return _ok;
+          return busAccepted;
       }
-      return _ok;
+      return busAccepted;
     }
     if (service == ServiceType.storage) {
       switch (functionCid) {
@@ -165,7 +118,7 @@ class _RefusingBus implements RequestChannel {
             );
           }
           final content = files[name];
-          if (content == null) return _failed;
+          if (content == null) return busRefused;
           final out = <int>[];
           for (var off = 0; off < content.length; off += 64) {
             final end = off + 64 > content.length ? content.length : off + 64;
@@ -181,7 +134,7 @@ class _RefusingBus implements RequestChannel {
             fail: false,
           );
         default:
-          return _ok;
+          return busAccepted;
       }
     }
     if (service == ServiceType.script) {
@@ -192,9 +145,9 @@ class _RefusingBus implements RequestChannel {
           fail: false,
         );
       }
-      return _ok;
+      return busAccepted;
     }
-    return _ok;
+    return busAccepted;
   }
 }
 
