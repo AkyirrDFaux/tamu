@@ -376,7 +376,6 @@ class _WifiConditionBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final condition = snapshot.condition;
     final color = switch (wifiConditionTone(condition)) {
       WifiTone.success => kSuccess,
@@ -396,34 +395,11 @@ class _WifiConditionBanner extends StatelessWidget {
       WifiCondition.idle => Icons.wifi_tethering,
       WifiCondition.unknownState => Icons.question_mark,
     };
-    return Card(
-      color: kSurfaceAlt,
-      child: Padding(
-        padding: const EdgeInsets.all(Spacing.lg),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: color, size: IconSize.lg),
-            const SizedBox(width: Spacing.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    wifiConditionHeadline(condition),
-                    style: theme.textTheme.titleSmall?.copyWith(color: color),
-                  ),
-                  const SizedBox(height: Spacing.xs),
-                  Text(
-                    wifiConditionDetail(condition, snapshot),
-                    style: theme.textTheme.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+    return ConditionBanner(
+      color: color,
+      icon: icon,
+      headline: wifiConditionHeadline(condition),
+      detail: wifiConditionDetail(condition, snapshot),
     );
   }
 }

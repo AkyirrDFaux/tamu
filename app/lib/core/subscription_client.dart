@@ -324,10 +324,11 @@ class SubscriptionClient {
     return setRequesterSubscriptionEntry(e);
   }
 
-  // The persisting recall CID (0x12) and the direct provider-set CID (0x21) are firmware
-  // management commands the app does not currently expose: the Subscriptions page only edits the
-  // requester table, and only the restore persists it (see [saveRequesterSubscriptions]). Add
-  // them here if a UI needs table persistence or direct provider management.
+  // The persisting recall CID (0x12) is a firmware management command the app does not currently
+  // expose: the Subscriptions page only edits the requester table, and only the restore persists
+  // it (see [saveRequesterSubscriptions]). Direct provider management is here
+  // ([setProviderTableEntry], CID 0x21) because a restore rebuilds entries for remote requesters.
+  // Add the recall here if a UI needs table persistence.
 
   void dispose() {
     _valueUpdateController.close();

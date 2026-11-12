@@ -83,6 +83,12 @@ class _DeviceViewPageState extends State<DeviceViewPage>
 
   String _formatUptime(int? ms) => ms == null ? '-' : formatUptimeMs(ms);
 
+  /// The device's capability names, or `-` when it reports none.
+  static String _capabilitiesText(int capabilities) {
+    final names = Capability.describe(capabilities);
+    return names.isEmpty ? '-' : names.join(', ');
+  }
+
   @override
   Widget build(BuildContext context) {
     final entry = _db.byId(widget.deviceId);
@@ -177,11 +183,7 @@ class _DeviceViewPageState extends State<DeviceViewPage>
                       ),
                       InfoRow(
                         'Capabilities',
-                        Capability.describe(entry.capabilities).isEmpty
-                            ? '-'
-                            : Capability.describe(
-                                entry.capabilities,
-                              ).join(', '),
+                        _capabilitiesText(entry.capabilities),
                       ),
                     ],
                   ),

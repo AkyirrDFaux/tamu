@@ -126,8 +126,8 @@ class _SubscriptionsPageState extends State<SubscriptionsPage>
     final db = DeviceDatabase.instance;
     final device = db.byId(widget.deviceId);
     final hasProviderCapability =
-        device?.capabilities != null &&
-        (device!.capabilities & Capability.subscriptionProvide) != 0;
+        device != null &&
+        (device.capabilities & Capability.subscriptionProvide) != 0;
 
     if (!hasProviderCapability) {
       return _unavailable(
@@ -309,10 +309,8 @@ class _SubscriptionsPageState extends State<SubscriptionsPage>
   }
 
   Future<void> _deleteRequesterSubscription(int index) async {
-    // NOTE: setRequesterSubscription() treats a non-null reply as success, but a FAIL reply
-    // also carries a payload (Issues.md "App (subscriptions)"); surfacing failure needs the
-    // core request() to expose the response flags. Until then a provider-only DAS can
-    // report a delete as successful.
+    // The client reads the packet flags (`reply?.ok`), so a FAIL reply is a false here rather
+    // than a delete that silently did not land.
     final ok = await _client.setRequesterSubscription(index, entry: null);
     if (ok) {
       await _loadSubscriptions();

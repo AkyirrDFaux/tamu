@@ -116,13 +116,18 @@ class _LogViewerPageState extends State<LogViewerPage>
             LogEntry.fromBytes(reply.sublist(offset, offset + 16)),
         ];
         _deviceIds = (_logs!.map((l) => l.deviceId).toSet().toList())..sort();
-        final groups = <int, List<LogEntry>>{};
-        for (final l in _logs!) {
-          (groups[l.deviceId] ??= []).add(l);
-        }
-        _groups = groups;
+        _groups = _groupByDevice(_logs!);
       }
     });
+  }
+
+  /// The log entries grouped by the device that logged them, in the order they were read.
+  static Map<int, List<LogEntry>> _groupByDevice(Iterable<LogEntry> logs) {
+    final groups = <int, List<LogEntry>>{};
+    for (final l in logs) {
+      (groups[l.deviceId] ??= []).add(l);
+    }
+    return groups;
   }
 
   Future<void> _clearAll() async {
@@ -263,15 +268,7 @@ class _LogViewerPageState extends State<LogViewerPage>
     }
     // Group the entries by source device so each device reads as one section. The no-filter
     // case reuses the grouping computed when the log was read.
-    final byDevice = _deviceFilter == null
-        ? _groups
-        : (() {
-            final groups = <int, List<LogEntry>>{};
-            for (final l in logs) {
-              (groups[l.deviceId] ??= []).add(l);
-            }
-            return groups;
-          })();
+    final byDevice = _deviceFilter == null ? _groups : _groupByDevice(logs);
     final groupIds = byDevice.keys.toList()..sort();
 
     final children = <Widget>[];

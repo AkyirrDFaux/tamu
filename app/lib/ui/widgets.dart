@@ -332,6 +332,56 @@ class InfoRow extends StatelessWidget {
   }
 }
 
+/// A tinted card stating the state a block reports: an icon and a tone, a headline and a
+/// detail line. The two block panels (Bluetooth, WiFi) draw exactly this card; what differs
+/// between them is only which condition each enum maps to, so the card itself is here once.
+class ConditionBanner extends StatelessWidget {
+  /// The headline's and icon's ink.
+  final Color color;
+  final IconData icon;
+  final String headline;
+  final String detail;
+
+  const ConditionBanner({
+    super.key,
+    required this.color,
+    required this.icon,
+    required this.headline,
+    required this.detail,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      color: kSurfaceAlt,
+      child: Padding(
+        padding: const EdgeInsets.all(Spacing.lg),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: color, size: IconSize.lg),
+            const SizedBox(width: Spacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    headline,
+                    style: theme.textTheme.titleSmall?.copyWith(color: color),
+                  ),
+                  const SizedBox(height: Spacing.xs),
+                  Text(detail, style: theme.textTheme.bodySmall),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// True when [body] fills the box it is handed instead of sizing to its content:
 /// a viewport that scrolls itself ([ScrollView], [SingleChildScrollView]) or a
 /// [Flex] that distributes the box through an [Expanded]/[Flexible] child (the

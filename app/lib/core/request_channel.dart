@@ -386,8 +386,8 @@ class RequestTrace {
 /// The installed channel, or null when nothing has installed one.
 ///
 /// The app installs its connection (`connection.dart`); a CLI tool installs its own serial
-/// channel. With no channel installed a request has nowhere to go, and the clients report the
-/// same "no reply" they report for an unreachable device.
+/// channel. With no channel installed a request has nowhere to go, and every client reports it
+/// as [RequestFaultKind.noLink] - never as a device that did not answer.
 RequestChannel? get requestChannel => _active;
 
 RequestChannel? _active;

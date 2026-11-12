@@ -146,12 +146,7 @@ extension on _RegisterPageState {
       isExpanded ? Icons.folder_open : Icons.folder,
       color: kOrange,
     );
-    final dragHandle = dragIndex == null
-        ? null
-        : ReorderableDragStartListener(
-            index: dragIndex,
-            child: const Icon(Icons.drag_handle, color: kTextDisabled),
-          );
+    final dragHandle = _dragHandle(dragIndex);
 
     return Card(
       key: cardKey,
@@ -355,12 +350,7 @@ extension on _RegisterPageState {
         return ListTile(
           key: cardKey,
           dense: true,
-          leading: dragIndex == null
-              ? null
-              : ReorderableDragStartListener(
-                  index: dragIndex,
-                  child: const Icon(Icons.drag_handle, color: kTextDisabled),
-                ),
+          leading: _dragHandle(dragIndex),
           title: Row(
             children: [
               SizedBox(
@@ -441,12 +431,7 @@ extension on _RegisterPageState {
       return ExpansionTile(
         key: cardKey,
         dense: true,
-        leading: dragIndex == null
-            ? null
-            : ReorderableDragStartListener(
-                index: dragIndex,
-                child: const Icon(Icons.drag_handle, color: kTextDisabled),
-              ),
+        leading: _dragHandle(dragIndex),
         title: Row(
           children: [
             SizedBox(
@@ -677,13 +662,8 @@ extension on _RegisterPageState {
           keyedEntries.add((key: key, field: extraField));
         }
       }
-      if (!keyedEntries.any(
-        (e) => e.key == systemKeysForField(fieldIndex).first,
-      )) {
-        keyedEntries.insert(0, (
-          key: systemKeysForField(fieldIndex).first,
-          field: field,
-        ));
+      if (!keyedEntries.any((e) => e.key == keys.first)) {
+        keyedEntries.insert(0, (key: keys.first, field: field));
       }
     }
 
@@ -827,6 +807,17 @@ extension on _RegisterPageState {
           : null,
     );
   }
+
+  /// The drag handle of a reorderable row, or null when the row is not being reordered.
+  ///
+  /// Three rows draw it (the block card's header, a dynamic field, a dictionary field) and the
+  /// only thing that ever differed was where it sits, so the listener lives here once.
+  Widget? _dragHandle(int? dragIndex) => dragIndex == null
+      ? null
+      : ReorderableDragStartListener(
+          index: dragIndex,
+          child: const Icon(Icons.drag_handle, color: kTextDisabled),
+        );
 
   /// The row drawn for a value that has not been read yet: the small spinner and the label, in the
   /// disabled ink. Three tiles showed this shape by hand (a script entry, a dynamic field, a static

@@ -245,10 +245,6 @@ Future<List<int>?> _editTransformMatrix(
     tc['skew']!.text = formatNumber3(t.skew);
   }
 
-  void syncFromRaw() {
-    syncTc();
-  }
-
   void syncRaw() {
     // transform -> raw (called on every transform/mirror edit).
     t
@@ -349,7 +345,7 @@ Future<List<int>?> _editTransformMatrix(
                 if (toRaw) {
                   syncTc();
                 } else {
-                  syncFromRaw();
+                  syncTc();
                 }
                 setState(() => rawMode = toRaw);
               },
@@ -390,7 +386,7 @@ Future<List<int>?> _editTransformMatrix(
                 controllers: raw,
                 labels: cellNames,
                 signed: true,
-                onCellChanged: syncFromRaw,
+                onCellChanged: syncTc,
               ),
             ],
           ],

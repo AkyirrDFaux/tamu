@@ -22,58 +22,46 @@ Widget _editorCard(List<Widget> children) => Card(
 extension on _ScriptEditorPageState {
   Widget _controlsCard() {
     final theme = Theme.of(context);
-    return Card(
-      margin: Insets.cardGap,
-      child: Padding(
-        padding: Insets.cardBody,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                ScriptStateDot(_state),
-                const SizedBox(width: Spacing.md),
-                Text(
-                  ScriptState.label(_state),
-                  style: theme.textTheme.titleSmall,
-                ),
-                const Spacer(),
-                Text(
-                  _callDepth > 0
-                      ? 'IC $_instructionCounter · depth $_callDepth'
-                      : 'IC $_instructionCounter',
-                  style: theme.textTheme.bodySmall,
-                ),
-              ],
-            ),
-            if (_fault() case final fault?)
-              Padding(
-                padding: const EdgeInsets.only(top: Spacing.sm),
-                child: ScriptFaultRow(fault),
-              ),
-            const SizedBox(height: Spacing.lg),
-            ScriptControlBar(
-              state: _state,
-              onStart: () => _control(ScriptAction.start),
-              onPauseToggle: () => _control(
-                _state == ScriptState.paused
-                    ? ScriptAction.resume
-                    : ScriptAction.pause,
-              ),
-              onStop: () => _control(ScriptAction.stop, reset: true),
-              onRestart: () => _control(ScriptAction.start, reset: true),
-              extra: [
-                OutlinedButton.icon(
-                  onPressed: _moveToLine,
-                  icon: const Icon(Icons.alt_route, size: IconSize.md),
-                  label: const Text('Move to line'),
-                ),
-              ],
-            ),
-          ],
-        ),
+    return _editorCard([
+      Row(
+        children: [
+          ScriptStateDot(_state),
+          const SizedBox(width: Spacing.md),
+          Text(ScriptState.label(_state), style: theme.textTheme.titleSmall),
+          const Spacer(),
+          Text(
+            _callDepth > 0
+                ? 'IC $_instructionCounter · depth $_callDepth'
+                : 'IC $_instructionCounter',
+            style: theme.textTheme.bodySmall,
+          ),
+        ],
       ),
-    );
+      if (_fault() case final fault?)
+        Padding(
+          padding: const EdgeInsets.only(top: Spacing.sm),
+          child: ScriptFaultRow(fault),
+        ),
+      const SizedBox(height: Spacing.lg),
+      ScriptControlBar(
+        state: _state,
+        onStart: () => _control(ScriptAction.start),
+        onPauseToggle: () => _control(
+          _state == ScriptState.paused
+              ? ScriptAction.resume
+              : ScriptAction.pause,
+        ),
+        onStop: () => _control(ScriptAction.stop, reset: true),
+        onRestart: () => _control(ScriptAction.start, reset: true),
+        extra: [
+          OutlinedButton.icon(
+            onPressed: _moveToLine,
+            icon: const Icon(Icons.alt_route, size: IconSize.md),
+            label: const Text('Move to line'),
+          ),
+        ],
+      ),
+    ]);
   }
 
   /// The current fault, decoded: the report record's `instruction | error` pair turned into a
