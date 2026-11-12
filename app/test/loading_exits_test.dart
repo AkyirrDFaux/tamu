@@ -21,12 +21,9 @@ import 'package:tamuapp/core/backup_format.dart';
 import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/notice.dart';
-import 'package:tamuapp/core/protocol.dart';
 import 'package:tamuapp/core/request_channel.dart';
 
-import 'support/fake_channel.dart';
 import 'package:tamuapp/core/script_file.dart';
-import 'package:tamuapp/core/storage_client.dart';
 import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/backup_page.dart';
 import 'package:tamuapp/ui/notice_host.dart';
@@ -37,6 +34,7 @@ import 'package:tamuapp/ui/theme.dart';
 import 'package:tamuapp/ui/wait.dart';
 
 import 'support/fake_core.dart';
+import 'support/read_device.dart';
 import 'support/topology_client.dart';
 
 bool _connected() => true;
@@ -68,77 +66,6 @@ final List<int> _table = [
   ), // its declared size is the 32 bytes the bus returns
   ...fileRecord(0x1000, _scriptImage.length, 'SCR_000'),
 ];
-
-/// A device that answers the reads these screens make, and nothing else: the file table (Storage
-/// CID 5), the script slot map (Script CID 0), the roster (Device 0x13). Every other request - a
-/// register field, a write - answers an empty success, which is what the clients treat as "the
-/// device said nothing usable" rather than as a lost reply.
-class _Bus extends FakeTolerantChannel {
-  _Bus({
-    this.delay = Duration.zero,
-    this.tableLost = false,
-    this.loadFails = false,
-  });
-
-  final Duration delay;
-
-  /// The file table read fails (two re-requests, then the reader's failure sentence).
-  bool tableLost;
-
-  /// Script CID 1 (load into a slot) answers FAIL, which is a load the device refused.
-  bool loadFails;
-
-  int _nextTxId = 0xF700;
-
-  @override
-  int takeTxId() => ++_nextTxId;
-
-  Future<void> _pause() async {
-    if (delay > Duration.zero) await Future<void>.delayed(delay);
-  }
-
-  @override
-  Future<PacketResponse> answer(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-  }) async {
-    await _pause();
-    if (service == ServiceType.storage && functionCid == 5) {
-      if (tableLost) throw StateError('the device did not answer');
-      final name = StorageClient.unpadName(payload.sublist(0, 8));
-      final bytes = switch (name) {
-        '.TABLE' => _table,
-        'SCR_000' => _scriptImage,
-        _ => const <int>[],
-      };
-      if (bytes.isEmpty) {
-        return const PacketResponse(payload: [], success: false, fail: true);
-      }
-      final body = [...StorageClient.padName(name), ...bytes];
-      return wholeReply(body);
-    }
-    if (service == ServiceType.script && functionCid == 0) {
-      // An empty slot map: every slot free, which is "nothing is loaded".
-      final body = List<int>.filled(32, 0xFF);
-      return wholeReply(body);
-    }
-    if (service == ServiceType.script && functionCid == 1) {
-      return PacketResponse(
-        payload: const [],
-        success: !loadFails,
-        fail: loadFails,
-      );
-    }
-    if (service == ServiceType.device && functionCid == 0x13) {
-      final body = <int>[];
-      return wholeReply(body);
-    }
-    return const PacketResponse(payload: [], success: true, fail: false);
-  }
-}
 
 // --- A restore plan with rows a live device can take -------------------------------------------
 
@@ -258,7 +185,11 @@ void main() {
     testWidgets(
       'popping a Storage page mid-read does not use its wait after dispose',
       (tester) async {
-        final bus = _Bus(delay: const Duration(milliseconds: 100));
+        final bus = ReadDevice(
+          table: _table,
+          script: _scriptImage,
+          delay: const Duration(milliseconds: 100),
+        );
         installRequestChannel(bus);
         addTearDown(() => installRequestChannel(null));
 
@@ -283,7 +214,7 @@ void main() {
 
   group('the Scripts page load', () {
     /// The page, with its Stored list read, about to tap `Load` on SCR_000.
-    Future<void> openStored(WidgetTester tester, _Bus bus) async {
+    Future<void> openStored(WidgetTester tester, ReadDevice bus) async {
       installRequestChannel(bus);
       addTearDown(() => installRequestChannel(null));
       await tester.pumpWidget(
@@ -302,7 +233,11 @@ void main() {
     testWidgets('the load modal names the operation, then the load lands', (
       tester,
     ) async {
-      final bus = _Bus(delay: const Duration(milliseconds: 100));
+      final bus = ReadDevice(
+        table: _table,
+        script: _scriptImage,
+        delay: const Duration(milliseconds: 100),
+      );
       await openStored(tester, bus);
 
       await tester.tap(find.widgetWithText(TextButton, 'Load'));
@@ -326,7 +261,9 @@ void main() {
     testWidgets('a refused load says so instead of leaving the modal up', (
       tester,
     ) async {
-      final bus = _Bus(
+      final bus = ReadDevice(
+        table: _table,
+        script: _scriptImage,
         delay: const Duration(milliseconds: 100),
         loadFails: true,
       );
@@ -350,7 +287,7 @@ void main() {
   });
 
   group('the Register page stored backup', () {
-    Future<void> openBackupView(WidgetTester tester, _Bus bus) async {
+    Future<void> openBackupView(WidgetTester tester, ReadDevice bus) async {
       installRequestChannel(bus);
       addTearDown(() => installRequestChannel(null));
       final client = TopologyClient(
@@ -375,7 +312,11 @@ void main() {
     testWidgets(
       'the read names what it is doing, then the stored table arrives',
       (tester) async {
-        final bus = _Bus(delay: const Duration(milliseconds: 100));
+        final bus = ReadDevice(
+          table: _table,
+          script: _scriptImage,
+          delay: const Duration(milliseconds: 100),
+        );
         await openBackupView(tester, bus);
 
         expect(find.text('Reading the stored backup'), findsOneWidget);
@@ -393,9 +334,11 @@ void main() {
     testWidgets('a failed read says why, and the Retry ENDS its wait', (
       tester,
     ) async {
-      final bus = _Bus(
+      final bus = ReadDevice(
+        table: _table,
+        script: _scriptImage,
         delay: const Duration(milliseconds: 100),
-        tableLost: true,
+        tableAnswer: ReadAnswer.lost,
       );
       await openBackupView(tester, bus);
 
@@ -405,7 +348,7 @@ void main() {
 
       // The reader answers now; the error state's own Retry calls _loadBackup directly, which is
       // the path that used to leave the band up for ever.
-      bus.tableLost = false;
+      bus.tableAnswer = ReadAnswer.whole;
       await tester.tap(find.widgetWithText(FilledButton, 'Try again'));
       await tester.pump();
       expect(find.text('Reading the stored backup'), findsOneWidget);
@@ -423,7 +366,11 @@ void main() {
     testWidgets('the capture counts its devices, then the archive is saved', (
       tester,
     ) async {
-      final bus = _Bus(delay: const Duration(milliseconds: 20));
+      final bus = ReadDevice(
+        table: _table,
+        script: _scriptImage,
+        delay: const Duration(milliseconds: 20),
+      );
       ConnectionManager.instance; // installs the app's own channel
       installRequestChannel(bus);
       addTearDown(() => installRequestChannel(null));
@@ -460,9 +407,11 @@ void main() {
     testWidgets('a device that answers nothing is a message, not a stuck bar', (
       tester,
     ) async {
-      final bus = _Bus(
+      final bus = ReadDevice(
+        table: _table,
+        script: _scriptImage,
         delay: const Duration(milliseconds: 20),
-        tableLost: true,
+        tableAnswer: ReadAnswer.lost,
       );
       ConnectionManager.instance;
       installRequestChannel(bus);
@@ -501,7 +450,11 @@ void main() {
     testWidgets(
       'the build names its phase and its counter, then the plan opens',
       (tester) async {
-        final bus = _Bus(delay: const Duration(milliseconds: 20));
+        final bus = ReadDevice(
+          table: _table,
+          script: _scriptImage,
+          delay: const Duration(milliseconds: 20),
+        );
         ConnectionManager.instance;
         installRequestChannel(bus);
         addTearDown(() => installRequestChannel(null));
@@ -529,7 +482,7 @@ void main() {
       tester,
     ) async {
       ConnectionManager.instance;
-      installRequestChannel(_Bus());
+      installRequestChannel(ReadDevice(table: _table, script: _scriptImage));
       addTearDown(() => installRequestChannel(null));
       final zip = buildBackupZip([_archive()]);
 
@@ -559,7 +512,11 @@ void main() {
     testWidgets('the run counts items of N and ends with its report', (
       tester,
     ) async {
-      final bus = _Bus(delay: const Duration(milliseconds: 20));
+      final bus = ReadDevice(
+        table: _table,
+        script: _scriptImage,
+        delay: const Duration(milliseconds: 20),
+      );
       installRequestChannel(bus);
       addTearDown(() => installRequestChannel(null));
 
@@ -593,7 +550,11 @@ void main() {
     testWidgets('Stop ends the run and the report says what was never written', (
       tester,
     ) async {
-      final bus = _Bus(delay: const Duration(milliseconds: 20));
+      final bus = ReadDevice(
+        table: _table,
+        script: _scriptImage,
+        delay: const Duration(milliseconds: 20),
+      );
       installRequestChannel(bus);
       addTearDown(() => installRequestChannel(null));
 

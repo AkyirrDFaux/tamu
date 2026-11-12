@@ -28,6 +28,7 @@ import 'package:tamuapp/ui/theme.dart';
 import 'package:tamuapp/ui/wait.dart';
 
 import 'support/fake_core.dart';
+import 'support/read_device.dart';
 import 'support/topology_client.dart';
 
 final List<int> _table = [
@@ -37,90 +38,9 @@ final List<int> _table = [
   ...fileRecord(0x1000, 64, 'SCR_000'),
 ];
 
-/// The rig's roster, as the core answers Device CID 0x13: 16 bytes per record
-/// (14 serial bytes + the node id, little endian).
-List<int> _roster(List<({String serial, int id})> nodes) => [
-  for (final node in nodes) ...[
-    for (var i = 0; i < 14; i++)
-      int.parse(node.serial.substring(i * 2, i * 2 + 2), radix: 16),
-    node.id & 0xFF,
-    (node.id >> 8) & 0xFF,
-  ],
-];
-
-/// What a device answers. `null` is "nothing came back" (the request throws), which is the shape a
-/// lost reply and a timeout both take at this layer.
-enum _Answer { whole, lost }
-
-/// A device for the three read paths these pages use: the file table (Storage CID 5), the loaded
-/// script slot map (Script CID 0) and the roster (Device CID 0x13). Everything else answers empty.
-class _Device extends FakeTolerantChannel {
-  _Device({
-    this.table = _Answer.whole,
-    this.slots = _Answer.whole,
-    this.roster = _Answer.whole,
-    this.nodes = const [],
-    this.delay = Duration.zero,
-    this.script,
-  });
-
-  _Answer table;
-  _Answer slots;
-  _Answer roster;
-  List<({String serial, int id})> nodes;
-  Duration delay;
-
-  /// The bytes a `SCR_XXX` read answers with, or null for "this device holds no such file".
-  List<int>? script;
-
-  int tableSends = 0;
-
-  static const int _rosterCid = 0x13;
-
-  @override
-  Future<PacketResponse> answer(
-    int targetId,
-    ServiceType service,
-    int functionCid, {
-    List<int> payload = const [],
-    Duration timeout = const Duration(seconds: 2),
-  }) async {
-    if (delay > Duration.zero) await Future<void>.delayed(delay);
-    if (service == ServiceType.storage && functionCid == 5) {
-      tableSends++;
-      if (table != _Answer.whole) throw StateError('the device did not answer');
-      final name = StorageClient.unpadName(payload.sublist(0, 8));
-      final bytes = name == '.TABLE'
-          ? _table
-          : (name == 'SCR_000' ? (script ?? const <int>[]) : const <int>[]);
-      if (bytes.isEmpty) {
-        // FLAG_FAIL with no payload: the name is not in its file table.
-        return const PacketResponse(payload: [], success: false, fail: true);
-      }
-      final body = [...StorageClient.padName(name), ...bytes];
-      return wholeReply(body);
-    }
-    if (service == ServiceType.script && functionCid == 0) {
-      if (slots != _Answer.whole) {
-        throw StateError('the slot map did not answer');
-      }
-      // An empty slot map: every slot free, which is "nothing is loaded".
-      return wholeReply(List<int>.filled(32, 0xFF));
-    }
-    if (service == ServiceType.device && functionCid == _rosterCid) {
-      if (roster != _Answer.whole) {
-        throw StateError('the roster did not answer');
-      }
-      final body = _roster(nodes);
-      return wholeReply(body);
-    }
-    return const PacketResponse(payload: [], success: true, fail: false);
-  }
-}
-
 /// A channel that reports fragment arrivals while a read streams, as the app's connection does.
-class _ProgressDevice extends _Device implements ProgressReportingChannel {
-  _ProgressDevice();
+class _ProgressDevice extends ReadDevice implements ProgressReportingChannel {
+  _ProgressDevice() : super(table: _table);
 
   final _progress = StreamController<ReplyStreamProgress>.broadcast();
 
@@ -345,7 +265,10 @@ void main() {
     testWidgets('loading names the read, then the list arrives', (
       tester,
     ) async {
-      final device = _Device(delay: const Duration(milliseconds: 100));
+      final device = ReadDevice(
+        table: _table,
+        delay: const Duration(milliseconds: 100),
+      );
       installRequestChannel(device);
       addTearDown(() => installRequestChannel(null));
 
@@ -366,7 +289,7 @@ void main() {
     });
 
     testWidgets('a failed read says why and offers the retry', (tester) async {
-      final device = _Device(table: _Answer.lost);
+      final device = ReadDevice(table: _table, tableAnswer: ReadAnswer.lost);
       installRequestChannel(device);
       addTearDown(() => installRequestChannel(null));
 
@@ -410,7 +333,10 @@ void main() {
     testWidgets(
       'a file read behind the dialog reports fragments received of expected',
       (tester) async {
-        final device = _Device(delay: const Duration(milliseconds: 100));
+        final device = ReadDevice(
+          table: _table,
+          delay: const Duration(milliseconds: 100),
+        );
         installRequestChannel(device);
         addTearDown(() => installRequestChannel(null));
 
@@ -442,9 +368,10 @@ void main() {
     testWidgets('loading names the list, then an empty list is a device state', (
       tester,
     ) async {
-      final device = _Device(
+      final device = ReadDevice(
+        table: _table,
         delay: const Duration(milliseconds: 100),
-        slots: _Answer.whole,
+        slotsAnswer: ReadAnswer.whole,
       );
       installRequestChannel(device);
       addTearDown(() => installRequestChannel(null));
@@ -470,7 +397,7 @@ void main() {
     testWidgets(
       'a lost slot map is a failure with a retry, never "nothing loaded"',
       (tester) async {
-        final device = _Device(slots: _Answer.lost);
+        final device = ReadDevice(table: _table, slotsAnswer: ReadAnswer.lost);
         installRequestChannel(device);
         addTearDown(() => installRequestChannel(null));
 
@@ -501,7 +428,8 @@ void main() {
       tester,
     ) async {
       final image = ScriptFileBuilder(functionName: 'blink').build();
-      final device = _Device(
+      final device = ReadDevice(
+        table: _table,
         delay: const Duration(milliseconds: 100),
         script: image,
       );
@@ -539,7 +467,7 @@ void main() {
     });
 
     testWidgets('a failed read is a load error with a retry', (tester) async {
-      final device = _Device(table: _Answer.lost);
+      final device = ReadDevice(table: _table, tableAnswer: ReadAnswer.lost);
       installRequestChannel(device);
       addTearDown(() => installRequestChannel(null));
 
@@ -624,7 +552,8 @@ void main() {
     testWidgets(
       'a sweep in flight names the roster instead of claiming it is empty',
       (tester) async {
-        final device = _Device(
+        final device = ReadDevice(
+          table: _table,
           delay: const Duration(milliseconds: 100),
           nodes: const [(serial: 'CDABA26400000000000000000000', id: 2)],
         );
@@ -655,7 +584,7 @@ void main() {
     testWidgets('a failed roster read is an error with a retry', (
       tester,
     ) async {
-      final device = _Device(roster: _Answer.lost);
+      final device = ReadDevice(table: _table, rosterAnswer: ReadAnswer.lost);
       installRequestChannel(device);
       addTearDown(() => installRequestChannel(null));
       final db = DeviceDatabase.forTest()..linkIsUpOverride = true;
