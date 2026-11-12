@@ -22,7 +22,6 @@ import 'package:tamuapp/core/connection.dart';
 import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/notice.dart';
 import 'package:tamuapp/core/protocol.dart';
-import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/request_channel.dart';
 
 import 'support/fake_channel.dart';
@@ -38,6 +37,7 @@ import 'package:tamuapp/ui/theme.dart';
 import 'package:tamuapp/ui/wait.dart';
 
 import 'support/fake_core.dart';
+import 'support/topology_client.dart';
 
 bool _connected() => true;
 
@@ -138,32 +138,6 @@ class _Bus extends FakeTolerantChannel {
     }
     return const PacketResponse(payload: [], success: true, fail: false);
   }
-}
-
-/// A Register client that answers the topology the register page needs, slowly or not at all.
-class _TopologyClient extends RegisterClient {
-  _TopologyClient({required super.deviceId, this.delay = Duration.zero});
-
-  final Duration delay;
-
-  @override
-  Future<BlocksRead?> readBlocks({List<int>? scriptSlots}) async {
-    if (delay > Duration.zero) await Future<void>.delayed(delay);
-    return (
-      blocks: <ReportedBlock>[
-        (
-          type: 0,
-          inst: 0,
-          meta: const ValueInfo(type: 0, size: 9),
-          name: 'System',
-        ),
-      ],
-      unreadTypes: const <int>{},
-    );
-  }
-
-  @override
-  Future<StaticFieldLayout> readStaticFieldLayout() async => const {};
 }
 
 // --- A restore plan with rows a live device can take -------------------------------------------
@@ -379,7 +353,7 @@ void main() {
     Future<void> openBackupView(WidgetTester tester, _Bus bus) async {
       installRequestChannel(bus);
       addTearDown(() => installRequestChannel(null));
-      final client = _TopologyClient(
+      final client = TopologyClient(
         deviceId: 1,
         delay: const Duration(milliseconds: 100),
       );

@@ -13,13 +13,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/device_db.dart';
 import 'package:tamuapp/core/protocol.dart';
-import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/request_channel.dart';
 
 import 'support/fake_channel.dart';
 import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/storage_client.dart';
-import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/devices_page.dart';
 import 'package:tamuapp/ui/loading.dart';
 import 'package:tamuapp/ui/register_page.dart';
@@ -30,6 +28,7 @@ import 'package:tamuapp/ui/theme.dart';
 import 'package:tamuapp/ui/wait.dart';
 
 import 'support/fake_core.dart';
+import 'support/topology_client.dart';
 
 final List<int> _table = [
   // The table's own record is the FIRST live record (`FileRecord.isFiletable` is
@@ -568,7 +567,7 @@ void main() {
     testWidgets('loading names the tree read, then the tree arrives', (
       tester,
     ) async {
-      final client = _TopologyClient(
+      final client = TopologyClient(
         deviceId: 1,
         delay: const Duration(milliseconds: 100),
       );
@@ -600,7 +599,7 @@ void main() {
     testWidgets('a failed topology read is an error with a retry', (
       tester,
     ) async {
-      final client = _TopologyClient(deviceId: 1, fail: true);
+      final client = TopologyClient(deviceId: 1, fail: true);
       await tester.pumpWidget(
         _app(
           RegisterPage(
@@ -681,35 +680,3 @@ void main() {
 }
 
 bool _isConnected() => true;
-
-/// A Register client that answers the topology the page needs, slowly or not at all.
-class _TopologyClient extends RegisterClient {
-  _TopologyClient({
-    required super.deviceId,
-    this.delay = Duration.zero,
-    this.fail = false,
-  });
-
-  final Duration delay;
-  final bool fail;
-
-  @override
-  Future<BlocksRead?> readBlocks({List<int>? scriptSlots}) async {
-    if (delay > Duration.zero) await Future<void>.delayed(delay);
-    if (fail) return null;
-    return (
-      blocks: <ReportedBlock>[
-        (
-          type: 0,
-          inst: 0,
-          meta: const ValueInfo(type: 0, size: 9),
-          name: 'System',
-        ),
-      ],
-      unreadTypes: const <int>{},
-    );
-  }
-
-  @override
-  Future<StaticFieldLayout> readStaticFieldLayout() async => const {};
-}

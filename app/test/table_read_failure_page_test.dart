@@ -21,17 +21,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/fragment_reassembler.dart';
 import 'package:tamuapp/core/protocol.dart';
-import 'package:tamuapp/core/register_client.dart';
 import 'package:tamuapp/core/request_channel.dart';
 
 import 'support/fake_channel.dart';
 import 'package:tamuapp/core/storage_client.dart';
-import 'package:tamuapp/core/types.dart';
 import 'package:tamuapp/ui/register_page.dart';
 import 'package:tamuapp/ui/scripts_page.dart';
 import 'package:tamuapp/ui/theme.dart';
 
 import 'support/fake_core.dart';
+import 'support/topology_client.dart';
 
 /// What the fake device answers for a `.TABLE` read.
 enum _Mode {
@@ -105,28 +104,6 @@ class _TableDevice extends FakeTolerantChannel {
         );
     }
   }
-}
-
-/// A Register client that only needs to report the topology: the Backup view decodes the stored
-/// `.SV` against it.
-class _TopologyClient extends RegisterClient {
-  _TopologyClient({required super.deviceId});
-
-  @override
-  Future<BlocksRead?> readBlocks({List<int>? scriptSlots}) async => (
-    blocks: <ReportedBlock>[
-      (
-        type: 0,
-        inst: 0,
-        meta: const ValueInfo(type: 0, size: 9),
-        name: 'System',
-      ),
-    ],
-    unreadTypes: const <int>{},
-  );
-
-  @override
-  Future<StaticFieldLayout> readStaticFieldLayout() async => const {};
 }
 
 void main() {
@@ -258,7 +235,7 @@ void main() {
   group('the Register page, Backup view', () {
     /// Mounts the page (Current view) and switches it to Backup, whose rows are the stored data.
     Future<void> pumpBackup(WidgetTester tester) async {
-      final client = _TopologyClient(deviceId: 1);
+      final client = TopologyClient(deviceId: 1);
       await tester.pumpWidget(
         MaterialApp(
           theme: buildTheme(),
