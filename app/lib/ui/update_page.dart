@@ -92,8 +92,8 @@ class _UpdatePageState extends State<UpdatePage> {
     setState(() => _log.add(line));
   }
 
-  /// Asks the flash to stop. The run checks this between chunks (and between corrections), so it
-  /// ends after the chunk in flight rather than at the next pass.
+  /// Asks the flash to stop. The run checks this between chunks (and before the verification), so
+  /// it ends after the chunk in flight rather than at the next pass.
   void _cancelUpdate() {
     setState(() => _cancelRequested = true);
     _addLog('Stopping after the chunk in flight...');
@@ -213,8 +213,7 @@ class _UpdatePageState extends State<UpdatePage> {
       );
       setState(() => _result = result);
       _addLog(
-        'Verified: ${result.readBacks} read-back(s), '
-        '${result.corrections} correction(s). '
+        'Verified: ${result.note}. '
         'Power-cycle the device to run the new firmware.',
       );
     } on FlashAborted catch (aborted) {
@@ -244,8 +243,7 @@ class _UpdatePageState extends State<UpdatePage> {
 
   String _phaseLabel(FlashProgress p) => switch (p.phase) {
     FlashPhase.writing => 'Writing',
-    FlashPhase.verifying => 'Verifying (read-back)',
-    FlashPhase.correcting => 'Correcting',
+    FlashPhase.verifying => 'Verifying (digest)',
     FlashPhase.done => 'Done',
   };
 
@@ -410,10 +408,7 @@ class _UpdatePageState extends State<UpdatePage> {
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    'Verified: ${result.readBacks} read-back(s), '
-                    '${result.corrections} correction(s)',
-                  ),
+                  child: Text('Verified: ${result.note}'),
                 ),
               ],
             ),

@@ -11,6 +11,9 @@ import 'package:tamuapp/core/bootloader.dart';
 String hex(List<int> b) =>
     b.map((x) => x.toRadixString(16).padLeft(2, '0').toUpperCase()).join();
 
+/// 100 bytes of `i & 0xFF`: 4 chunks once padded, i.e. 28 bytes of 0xFF tail.
+final List<int> testImage100 = List<int>.generate(100, (i) => i);
+
 void main() {
   test('write frame matches the firmware KAT', () {
     final payload = List<int>.generate(Bootloader.payloadSize, (i) => i);
@@ -84,6 +87,55 @@ void main() {
     expect(Bootloader.decode(f), Bootloader.cmdIdentifyResponse);
     expect(Bootloader.appSize(f), 0x2A0000);
     expect(Bootloader.name(f), 'Tamu core v2.0A');
+  });
+
+  test('digest request matches the firmware KAT', () {
+    final f = Bootloader.encodeDigestRequest(0x1200, 0x1000);
+    expect(f.length, Bootloader.digestRequestSize);
+    expect(hex(f), 'CA0E001200000010BC');
+    expect(Bootloader.decode(f), Bootloader.cmdDigestRequest);
+    expect(Bootloader.offset(f), 0x1200);
+    expect(Bootloader.digestLength(f), 0x1000);
+  });
+
+  test('digest response matches the firmware KAT', () {
+    final f = Bootloader.encodeDigestResponse(0x1200, 0xDEADBEEF);
+    expect(f.length, Bootloader.digestResponseSize);
+    expect(hex(f), 'CA0F00120000EFBEADDEBC');
+    expect(Bootloader.decode(f), Bootloader.cmdDigestResponse);
+    expect(Bootloader.offset(f), 0x1200); // echoed
+    expect(Bootloader.digestCrc(f), 0xDEADBEEF);
+  });
+
+  test('a digest frame of the other length is rejected', () {
+    final req = Bootloader.encodeDigestRequest(0x1200, 0x1000);
+    final resp = Bootloader.encodeDigestResponse(0x1200, 0xDEADBEEF);
+    expect(Bootloader.decode(req), Bootloader.cmdDigestRequest);
+    expect(Bootloader.decode(resp), Bootloader.cmdDigestResponse);
+    // The two are 9 and 11 bytes: each must fail the other's size.
+    expect(
+      Bootloader.decode(resp.sublist(0, Bootloader.digestRequestSize)),
+      Bootloader.invalid,
+    );
+    expect(
+      Bootloader.decode([...req, 0x00]),
+      Bootloader.invalid,
+    );
+  });
+
+  test('crc32 is CRC-32/ISO-HDLC (zlib.crc32)', () {
+    // The value the device's digest command returns and the manifest records. "123456789" is the
+    // standard check string: 0xCBF43926.
+    expect(Bootloader.crc32('123456789'.codeUnits), 0xCBF43926);
+    expect(Bootloader.crc32(<int>[]), 0);
+    // The app region's tail reads back as erased 0xFF, so the padded range is what is asked about.
+    expect(Bootloader.paddedLength(100), 128);
+    expect(Bootloader.paddedLength(128), 128);
+    expect(Bootloader.paddedLength(0), 0);
+    expect(
+      Bootloader.crc32Padded(testImage100),
+      Bootloader.crc32([...testImage100, ...List.filled(28, 0xFF)]),
+    );
   });
 
   test('every single-bit flip is rejected', () {

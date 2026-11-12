@@ -1,14 +1,18 @@
 /// Bootloader flashing client (Docs/Services/Bootloader.md).
 ///
-/// The update is written first, then confirmed by reading it back. Writes are acknowledged:
+/// The update is written first, then confirmed by ONE digest request. Writes are acknowledged:
 /// every write request draws a write-response carrying the offset of the last successfully
 /// written chunk, so the client can reconcile a chunk against the device's acknowledged progress
-/// and end the run at the first chunk the node does not take. Final verification of the image is
-/// the app's job too, and it is READ-ONLY: one read-back of the whole image, never a correction
-/// loop. A read timeout (or a relay `FAIL`) is retried with a growing timeout and never counts as
-/// a mismatch; only a successful read whose bytes differ is a mistake, and a mistake ends the run
-/// - the one exception is a chunk whose write was never confirmed, which one correction round may
-/// rewrite (see [BootloaderClient.flash] and [FlashFault]).
+/// and end the run at the first chunk the node does not take.
+///
+/// Final verification is the app's job too, and it is READ-ONLY: one digest request over the
+/// whole padded image and one comparison against the expected CRC32 (the package manifest's
+/// `crc32_padded`, or the CRC of the image handed in). A node whose bootloader predates the
+/// digest command answers nothing, so the client falls back to ONE read-back pass and says so
+/// in the result. Either way the run never loops and never rewrites on a failed verify: a
+/// mismatch only buys one read-back pass to name the first differing offset, and then the run
+/// stops. A read timeout (or a relay `FAIL`) is retried with a growing timeout and never counts
+/// as a mismatch; only a successful read whose bytes differ is a mistake.
 ///
 /// The low-level channel lives behind [BootloaderTransport] so the same algorithm drives both
 /// a node over the core's Device passthrough ([PassthroughTransport]) and the core over its
@@ -25,14 +29,14 @@ import 'transport.dart';
 import 'types.dart';
 
 /// Which stage of [BootloaderClient.flash] is running.
-enum FlashPhase { writing, verifying, correcting, done }
+enum FlashPhase { writing, verifying, done }
 
 /// A progress snapshot emitted by [BootloaderClient.flash].
 class FlashProgress {
   final FlashPhase phase;
 
-  /// Chunks finished in this phase (out of [total]; `total` is the mistake count while
-  /// [phase] is [FlashPhase.correcting]).
+  /// Steps finished in this phase: image chunks while writing, and `0`/`1` while verifying (a
+  /// digest request is one step; a read-back pass reports its chunks instead).
   final int completed;
   final int total;
 
@@ -49,30 +53,108 @@ class FlashProgress {
   double get fraction => total == 0 ? 1.0 : completed / total;
 }
 
+/// Which pass confirmed the device's image.
+enum FlashVerify {
+  /// One digest request over the whole padded image, compared against the expected CRC32.
+  digest,
+
+  /// No digest from the node (a bootloader older than the digest command): one read-back pass,
+  /// which is also why [FlashResult.note] names that fallback.
+  readBackNoDigest;
+
+  String get label => switch (this) {
+    FlashVerify.digest => 'one digest',
+    FlashVerify.readBackNoDigest => 'one read-back pass (no digest from the node)',
+  };
+}
+
 /// The outcome of [BootloaderClient.flash]: the image the device holds is the image that was
-/// handed in, read back and identical. A run that cannot confirm that throws [FlashAborted]
-/// instead of returning a result.
+/// handed in, confirmed by one digest request (or, for a bootloader without the digest command,
+/// by one read-back pass). A run that cannot confirm that throws [FlashAborted] instead of
+/// returning a result.
 class FlashResult {
-  /// Read-backs of the image, and nothing else: 1 for an image that read back clean, 2 when one
-  /// correction round ran (that second read covers only the corrected chunks).
-  final int readBacks;
+  /// Which pass confirmed the image.
+  final FlashVerify method;
 
-  /// Chunks rewritten by a correction round.
-  final int corrections;
+  /// The digest the node answered with, when it has the digest command.
+  final int? digest;
 
-  /// Write operations issued (the initial pass plus corrections).
+  /// The value the digest was compared against: the caller's expected CRC32 (the package
+  /// manifest's `crc32_padded`) or the client's own CRC of the padded image.
+  final int expectedDigest;
+
+  /// Write operations issued (the initial pass only: nothing is rewritten).
   final int writes;
 
-  /// Chunk reads issued (the read-back plus the re-read of corrected chunks).
+  /// Chunk reads issued: 0 on the digest path, the image's chunk count on the fallback.
   final int reads;
 
   const FlashResult({
-    required this.readBacks,
-    required this.corrections,
+    required this.method,
+    this.digest,
+    required this.expectedDigest,
     required this.writes,
     required this.reads,
   });
+
+  /// One line stating how the image was confirmed, for a log or a page.
+  String get note => switch (method) {
+    FlashVerify.digest =>
+      'confirmed by ${method.label} over ${_hex32(expectedDigest)} '
+          '(${_hex32(digest ?? 0)})',
+    FlashVerify.readBackNoDigest =>
+      'the node answered no digest - its bootloader predates the digest command - '
+          'so the image was confirmed by ${method.label} ($reads chunks)',
+  };
 }
+
+/// The outcome of [BootloaderClient.verify], which never writes: either the device holds the
+/// image, or the first chunk that differs from it.
+class FlashVerifyResult {
+  /// Which pass looked.
+  final FlashVerify method;
+
+  /// The digest the node answered with, or null when it has no digest command.
+  final int? digest;
+
+  /// The value compared against (see [FlashResult.expectedDigest]).
+  final int expectedDigest;
+
+  /// Read-back passes over the image: 0 when the digest confirmed it.
+  final int readBacks;
+
+  /// Chunk reads issued.
+  final int reads;
+
+  /// The first differing chunk, when the image does not match. Null when it does.
+  final FlashVerifyReport? mismatches;
+
+  const FlashVerifyResult({
+    required this.method,
+    this.digest,
+    required this.expectedDigest,
+    required this.readBacks,
+    required this.reads,
+    this.mismatches,
+  });
+
+  /// True when the device holds exactly the image that was handed in: the digests agree, or -
+  /// when the node has no digest command - the read-back found no difference.
+  bool get clean => method == FlashVerify.digest
+      ? digest == expectedDigest
+      : (mismatches == null || mismatches!.count == 0);
+
+  /// `digest 0x1234abcd, expected 0x1234abce` - the pair a mismatch is reported with.
+  String get digestPair => method == FlashVerify.digest
+      ? '${_hex32(digest ?? 0)} (expected ${_hex32(expectedDigest)})'
+      : 'none (the node has no digest command)';
+
+  /// `1` on the digest path, `0` when the node had no digest.
+  int get digests => method == FlashVerify.digest ? 1 : 0;
+}
+
+String _hex32(int value) =>
+    '0x${value.toUnsigned(32).toRadixString(16).padLeft(8, '0')}';
 
 /// A device's identity: the size of its main-binary space and its name.
 class BootloaderIdentity {
@@ -115,6 +197,11 @@ abstract class BootloaderTransport {
   /// missed; throws [TransportException] on timeout.
   Future<Uint8List?> readChunk(int offset, Duration timeout);
 
+  /// Asks for the CRC32 of `[offset, offset + length)` of the device's app region (the digest
+  /// command). Returns the CRC, or null when no digest came back: the node answered FAIL, the
+  /// request was missed, or its bootloader predates the digest command and stayed silent.
+  Future<int?> digest(int offset, int length, Duration timeout);
+
   /// Asks the device to identify itself. Returns null when it did not answer.
   Future<BootloaderIdentity?> identify(Duration timeout);
 }
@@ -127,12 +214,15 @@ const int coreBootWrite =
     0x21; // send write packet      (request: offset + payload; response: last-written offset)
 const int coreBootRead =
     0x22; // request read           (request: offset; response: offset + payload)
+const int coreBootDigest =
+    0x23; // request digest         (request: offset + length; response: the node's frame as-is)
 
-/// The core's Device `0020/0021/0022` passthrough: the core relays each raw bootloader frame
-/// onto its RSBus, so the app reaches whatever node is in bootloader mode without knowing its
-/// address. A write reply carries the node's last-written offset (the flag is SUCCESS only when
-/// that offset names the requested chunk); reads return `offset + payload`; identification
-/// returns `app size + name`.
+/// The core's Device `0020/0021/0022/0023` passthrough: the core relays each raw bootloader
+/// frame onto its RSBus, so the app reaches whatever node is in bootloader mode without knowing
+/// its address. A write reply carries the node's last-written offset (the flag is SUCCESS only
+/// when that offset names the requested chunk); reads return `offset + payload`; identification
+/// returns `app size + name`; the digest returns the node's 11-byte digest response verbatim,
+/// so this client decodes and compares it.
 class PassthroughTransport implements BootloaderTransport {
   /// The core that relays our raw frames onto its RSBus.
   final int coreId;
@@ -175,6 +265,32 @@ class PassthroughTransport implements BootloaderTransport {
     );
     if (reply.length < 4 + Bootloader.payloadSize) return null;
     return Uint8List.fromList(reply.sublist(4, 4 + Bootloader.payloadSize));
+  }
+
+  @override
+  Future<int?> digest(int offset, int length, Duration timeout) async {
+    final payload = <int>[
+      ...uint32ToBytes(offset),
+      length & 0xFF,
+      (length >> 8) & 0xFF,
+    ];
+    final reply = await _link.requestWithFlags(
+      coreId,
+      ServiceType.device,
+      coreBootDigest,
+      payload: payload,
+      timeout: timeout,
+    );
+    // The core forwards the node's digest response verbatim, framing included, so the frame
+    // itself says whether it is this request's answer: the digest command, a valid parity, and
+    // the offset that was asked about.
+    if (!reply.ok || reply.payload.length < Bootloader.digestResponseSize) {
+      return null;
+    }
+    final frame = reply.payload.sublist(0, Bootloader.digestResponseSize);
+    if (Bootloader.decode(frame) != Bootloader.cmdDigestResponse) return null;
+    if (Bootloader.offset(frame) != offset) return null;
+    return Bootloader.digestCrc(frame);
   }
 
   @override
@@ -241,6 +357,19 @@ class DirectUsbTransport implements BootloaderTransport {
         Bootloader.headerSize + Bootloader.payloadSize,
       ),
     );
+  }
+
+  @override
+  Future<int?> digest(int offset, int length, Duration timeout) async {
+    final reply = await _requestFrame(
+      Bootloader.encodeDigestRequest(offset, length),
+      command: Bootloader.cmdDigestResponse,
+      size: Bootloader.digestResponseSize,
+      matchOffset: offset,
+      timeout: timeout,
+    );
+    if (reply == null) return null;
+    return Bootloader.digestCrc(reply);
   }
 
   @override
@@ -326,8 +455,8 @@ enum FlashFault {
   writeRefused,
 
   /// The node accepted the chunk - and, for a confirmed write, named it in the write response -
-  /// but the bytes do not read back identical. The erase/program cycle or the read path is at
-  /// fault, not the link.
+  /// but the image it holds does not digest to what was sent. The erase/program cycle or the
+  /// read path is at fault, not the link.
   verifyMismatch,
 
   /// The caller's `isCancelled` said stop.
@@ -409,35 +538,55 @@ class FlashMismatch {
   static String _hex(int b) => '0x${b.toRadixString(16).padLeft(2, '0')}';
 }
 
-/// What one read-back of the whole image found: how many chunks differ, the first few of them,
-/// and how many of those the write pass itself had confirmed.
+/// What the locating read-back found: the first chunk whose bytes differ from the image, and
+/// whether the pass read the whole image or stopped at that first difference.
 class FlashVerifyReport {
   /// How many offsets [summary] names.
   static const int named = 8;
 
-  /// The image's chunk count, so the summary can say how much of it is wrong.
+  /// The image's chunk count, so the summary can say how much of it was looked at.
   final int total;
 
   /// Every differing chunk, in image order.
   final List<FlashMismatch> all;
 
-  const FlashVerifyReport({required this.total, required this.all});
+  /// True when the pass read the whole image (the no-digest fallback, where the read-back is
+  /// the only evidence). False when it stopped at the first difference - the digest already said
+  /// the image is wrong, so the pass only had to name an offset.
+  final bool complete;
+
+  const FlashVerifyReport({
+    required this.total,
+    required this.all,
+    this.complete = true,
+  });
 
   int get count => all.length;
 
-  /// Chunks the write pass acknowledged per chunk and that still do not read back: the device
-  /// took the data and lost it, which no rewrite can fix.
+  /// Chunks the write pass acknowledged per chunk and that still do not match: the device took
+  /// the data and lost it, which no rewrite can fix.
   int get confirmed => all.where((m) => m.writeConfirmed).length;
 
-  /// Chunks whose write the channel only accepted without confirming it: a rewrite can still land
-  /// these, which is what the one correction round is for.
+  /// Chunks whose write the channel only accepted without confirming it: the device may never
+  /// have seen them.
   int get unconfirmed => count - confirmed;
 
   /// The first [named] offsets, in image order.
   List<FlashMismatch> get first => all.take(named).toList();
 
-  /// `2 of 100 chunks differ (0 confirmed by the write pass, 2 not confirmed); first: 0x0, 0x40`
+  /// The first difference, which is the one a stopped pass found.
+  FlashMismatch? get firstDifference => all.isEmpty ? null : all.first;
+
+  /// `first differing chunk: 0x40 (byte 3: wrote 0x00, read 0x4e)` when the pass stopped at the
+  /// first difference, or `2 of 100 chunks differ (...); first: 0x0, 0x40` when it read the
+  /// whole image.
   String get summary {
+    if (!complete) {
+      final only = firstDifference;
+      return only == null
+          ? 'no chunk differs'
+          : 'first differing chunk: ${only.description}';
+    }
     final shown = first.map((m) => m.description).join(', ');
     final rest = count > named ? ' (+${count - named} more)' : '';
     return '$count of $total chunks differ ($confirmed confirmed by the write pass, '
@@ -489,8 +638,8 @@ class FlashAborted implements Exception {
   String toString() => message;
 }
 
-/// Flashes a device's main binary: write it all, then read it back once and confirm it. A
-/// verification read never writes and never re-runs; see [flash].
+/// Flashes a device's main binary: write it all, then confirm it with one digest request. A
+/// verification never writes and never re-runs; see [flash] and [verify].
 class BootloaderClient {
   /// The low-level channel (passthrough by default, so [coreId] selects the relay core).
   final BootloaderTransport transport;
@@ -498,8 +647,8 @@ class BootloaderClient {
   /// Delay between write requests. A node erases the 64-byte page on the first half of a
   /// chunk and programs both halves; that cycle outlasts a request (measured ~40 ms), so a
   /// frame arriving too soon is lost. Writes are paced past it; with the write acknowledgement
-  /// a dropped write is retried immediately, and the read-back catches any that slipped through
-  /// with an acknowledgement that did not name the chunk.
+  /// a dropped write is retried immediately, and the digest at the end catches any that slipped
+  /// through with an acknowledgement that did not name the chunk.
   final Duration writePacing;
 
   /// Timeout growth factor applied on each retry ("dynamic adjustment").
@@ -512,12 +661,16 @@ class BootloaderClient {
   /// Attempts for a write before it is dropped.
   final int writeAttempts;
 
+  /// Attempts for a digest request before the client concludes the node has no digest command
+  /// (an older bootloader stays silent) and falls back to one read-back pass. Two: a lost digest
+  /// request gets a second, longer window, and the fallback still costs the image's reads.
+  final int digestAttempts;
+
   /// How long one [flash] run may take as a whole. The app space is 32-byte chunks and the
   /// passthrough paces writes 50 ms apart, so a full image is ~11 minutes of paced writes alone,
-  /// plus one read-back and at most one correction round. Forty-five minutes is past any run that
-  /// is making progress, and far short of the hours a node that left bootloader mode used to
-  /// cost - that case is stopped at the first chunk that does not land, so this is the backstop,
-  /// not the fix.
+  /// plus one digest request. Forty-five minutes is past any run that is making progress, and far
+  /// short of the hours a node that left bootloader mode used to cost - that case is stopped at
+  /// the first chunk that does not land, so this is the backstop, not the fix.
   static const Duration flashDeadline = Duration(minutes: 45);
 
   BootloaderClient({
@@ -527,6 +680,7 @@ class BootloaderClient {
     this.timeoutGrowth = 1.5,
     this.readAttempts = 5,
     this.writeAttempts = 3,
+    this.digestAttempts = 2,
   }) : transport = transport ?? PassthroughTransport(coreId: coreId);
 
   Duration _grow(Duration timeout) {
@@ -606,37 +760,35 @@ class BootloaderClient {
     return null;
   }
 
-  /// Flashes [image] and confirms it with ONE read-back.
+  /// Flashes [image] and confirms it with ONE digest request.
   ///
-  /// Three stages, and none of them repeats:
+  /// Two stages, and neither repeats:
   ///
   /// 1. One write pass over the image, each chunk confirmed against the device's write
   ///    acknowledgement. The first chunk the node does not take ends the run
   ///    ([FlashFault.writeRefused]) instead of walking the rest of the image into a node that has
   ///    left bootloader mode.
-  /// 2. One read-back of every chunk. It only reads - it never writes a chunk, and it is never
-  ///    re-run because it found a mistake. A chunk that reads back different ends the run
-  ///    ([FlashFault.verifyMismatch]) with a [FlashVerifyReport] carrying the count, the first
-  ///    offsets and whether the write pass itself had acknowledged them: a chunk the device
-  ///    confirmed and that still does not read back is a flash or read-path fault, not a lost
-  ///    write, and rewriting it cannot make it hold.
-  /// 3. At most one correction round, covering only the chunks whose write the channel accepted
-  ///    WITHOUT confirming it (a passthrough relay timeout carries no last-written offset, so the
-  ///    device may never have seen the chunk). Those get one rewrite and one re-read; one that
-  ///    still differs aborts with [FlashFault.verifyMismatch].
+  /// 2. One verification, which never writes ([_verify]): a single digest request over
+  ///    `[0, padded length)` and one comparison against [expectedDigest] (the package manifest's
+  ///    `crc32_padded`) or, when the caller has none, the client's own CRC of the padded image.
+  ///    A mismatch ends the run ([FlashFault.verifyMismatch]) naming the digest pair and the
+  ///    first differing offset, which one read-back pass locates - it does not rewrite anything.
+  ///    A node whose bootloader predates the digest command answers nothing, so the image is
+  ///    confirmed by ONE read-back pass instead and the result says so.
   ///
-  /// The bound, and why it replaced `maxPasses = 20`: writes are at most 2 x the image (only when
-  /// a correction round runs), reads are at most the image plus the corrected chunks, and no pass
-  /// is repeated. The old loop read the whole image back, rewrote every mismatched chunk and
-  /// verified again up to twenty times, so a link failing at the core - where every read comes
-  /// back wrong - landed twenty erase/write cycles of the whole image on the node and made the
-  /// owner's "it gets worse with each verification pass" true.
+  /// The bound, and why it replaced `maxPasses = 20`: writes are exactly the image, reads are at
+  /// most the image (and none on the digest path), and no pass is repeated. The old loop read the
+  /// whole image back, rewrote every mismatched chunk and verified again up to twenty times, so a
+  /// link failing at the core - where every read comes back wrong - landed twenty erase/write
+  /// cycles of the whole image on the node and made the owner's "it gets worse with each
+  /// verification pass" true.
   ///
   /// [deadline] bounds the run as a whole and [isCancelled] is the user's way out; both are
   /// checked between chunks, so neither waits for a stage to finish.
   Future<FlashResult> flash(
     Uint8List image, {
     int? maxImageSize,
+    int? expectedDigest,
     void Function(FlashProgress progress)? onProgress,
     Duration deadline = flashDeadline,
     bool Function()? isCancelled,
@@ -651,7 +803,8 @@ class BootloaderClient {
     }
     final chunks = _chunk(image);
     final total = chunks.length;
-    var writes = 0, reads = 0, corrections = 0;
+    final expected = expectedDigest ?? Bootloader.crc32Padded(image);
+    var writes = 0;
     final started = DateTime.now();
 
     /// The two ways out that are not the device's fault, checked between chunks.
@@ -677,7 +830,7 @@ class BootloaderClient {
     // 1. One write pass. Each write is acknowledged, so a rejected chunk is retried right here;
     //    a chunk the node never takes ends the run. A chunk the channel accepted without naming
     //    it in the acknowledgement is remembered: the device may never have seen it, so the
-    //    read-back is allowed to rewrite that one - and only that one - once.
+    //    verification below can say whether the device had confirmed the chunk it finds wrong.
     final unconfirmed = <int>{};
     for (var i = 0; i < total; i++) {
       checkRun(i + 1, 'writing');
@@ -702,16 +855,183 @@ class BootloaderClient {
       );
     }
 
-    // 2. The one read-back. Read-only by construction: nothing in this loop writes, and it is not
-    //    wrapped in a retry - a read-back that finds a mistake has done its job.
+    // 2. The one verification: a digest request and a comparison, or - for a node without the
+    //    digest command - one read-back pass. Read-only by construction, and never re-run.
+    final verify = await _verify(
+      chunks,
+      expected: expected,
+      unconfirmed: unconfirmed,
+      checkRun: checkRun,
+      onProgress: onProgress,
+    );
+
+    if (verify.clean) {
+      onProgress?.call(
+        FlashProgress(phase: FlashPhase.done, completed: total, total: total),
+      );
+      return FlashResult(
+        method: verify.method,
+        digest: verify.digest,
+        expectedDigest: expected,
+        writes: writes,
+        reads: verify.reads,
+      );
+    }
+
+    // A mismatch ends the run: the write pass is not repeated, and nothing is rewritten. The
+    // report names the first differing offset; the digest pair says the whole image is wrong.
+    final report = verify.mismatches!;
+    final first = report.firstDifference;
+    throw FlashAborted(
+      verify.method == FlashVerify.digest
+          ? 'the image does not match: digest ${_hex32(verify.digest ?? 0)} '
+                '!= expected ${_hex32(expected)}; ${report.summary}'
+          : 'the image does not match: ${report.summary}',
+      fault: FlashFault.verifyMismatch,
+      chunk: first == null ? null : first.offset ~/ _payloadSize + 1,
+      total: total,
+      mismatches: report,
+    );
+  }
+
+  /// Verifies the device's image against [image] WITHOUT writing a byte: one digest request over
+  /// `[0, padded length)` and one comparison against [expectedDigest] (or the client's own CRC of
+  /// the padded image). A mismatch costs one read-back pass, which stops at the first chunk that
+  /// differs, and then the answer is returned - it is never re-run. A node whose bootloader has
+  /// no digest command is confirmed by one read-back pass instead and the result says so.
+  Future<FlashVerifyResult> verify(Uint8List image, {int? expectedDigest}) =>
+      _verify(
+        _chunk(image),
+        expected: expectedDigest ?? Bootloader.crc32Padded(image),
+        unconfirmed: const <int>{},
+      );
+
+  /// Asks for the CRC32 of `[offset, offset + length)` of the device's image, retrying a miss with
+  /// a growing window. Returns null when no digest came back after [digestAttempts] - a node whose
+  /// bootloader predates the digest command never answers, which is what the caller falls back on.
+  Future<int?> digest(int offset, int length) async {
+    var timeout = const Duration(seconds: 1);
+    for (var attempt = 0; attempt < digestAttempts; attempt++) {
+      try {
+        final crc = await transport.digest(offset, length, timeout);
+        if (crc != null) return crc;
+      } on TransportException {
+        // Timeout: retry with a longer window, then let the caller fall back.
+      }
+      timeout = _grow(timeout);
+    }
+    return null;
+  }
+
+  /// The whole verification: one digest request and one comparison, one read-back pass to locate a
+  /// mismatch, or one read-back pass when the node has no digest command. Reads only.
+  Future<FlashVerifyResult> _verify(
+    List<_Chunk> chunks, {
+    required int expected,
+    required Set<int> unconfirmed,
+    void Function(int chunk, String phase)? checkRun,
+    void Function(FlashProgress)? onProgress,
+  }) async {
+    final total = chunks.length;
+    var reads = 0;
+    void onRead() => reads++;
+
+    checkRun?.call(0, 'verifying');
+    onProgress?.call(
+      const FlashProgress(
+        phase: FlashPhase.verifying,
+        completed: 0,
+        total: 1,
+      ),
+    );
+
+    // One digest over the whole padded image: the app region's bytes past the image read as
+    // erased 0xFF, so the padded range is what a correct image digests to.
+    final digest = await this.digest(0, total * _payloadSize);
+    onProgress?.call(
+      const FlashProgress(
+        phase: FlashPhase.verifying,
+        completed: 1,
+        total: 1,
+      ),
+    );
+
+    if (digest != null) {
+      if (digest == expected) {
+        return FlashVerifyResult(
+          method: FlashVerify.digest,
+          digest: digest,
+          expectedDigest: expected,
+          readBacks: 0,
+          reads: 0,
+        );
+      }
+      // One read-back pass, stopping at the first differing chunk, to name the offset the digest
+      // cannot. It never writes and it is not re-run.
+      final found = await _readBack(
+        chunks,
+        stopAtFirst: true,
+        unconfirmed: unconfirmed,
+        onRead: onRead,
+        checkRun: checkRun,
+      );
+      return FlashVerifyResult(
+        method: FlashVerify.digest,
+        digest: digest,
+        expectedDigest: expected,
+        readBacks: 1,
+        reads: reads,
+        mismatches: FlashVerifyReport(
+          total: total,
+          all: found,
+          complete: false,
+        ),
+      );
+    }
+
+    // No digest: a bootloader without the digest command stays silent, so the image is confirmed
+    // the old way - ONE read-back pass over every chunk - and the result names that reason.
+    final found = await _readBack(
+      chunks,
+      stopAtFirst: false,
+      unconfirmed: unconfirmed,
+      onRead: onRead,
+      checkRun: checkRun,
+      onProgress: onProgress,
+    );
+    return FlashVerifyResult(
+      method: FlashVerify.readBackNoDigest,
+      expectedDigest: expected,
+      readBacks: 1,
+      reads: reads,
+      mismatches: found.isEmpty
+          ? null
+          : FlashVerifyReport(total: total, all: found),
+    );
+  }
+
+  /// Reads the image back, chunk by chunk, and returns the chunks whose bytes differ. Never writes.
+  ///
+  /// [stopAtFirst] ends the pass at the first difference (the digest has already said the image is
+  /// wrong, so this only names an offset); false reads every chunk, which is the fallback path
+  /// where the read-back is the only evidence. A chunk that exhausts its own attempts is a node
+  /// that stopped answering, not a mismatch, so that ends the run ([FlashFault.nodeSilent]).
+  Future<List<FlashMismatch>> _readBack(
+    List<_Chunk> chunks, {
+    required bool stopAtFirst,
+    required Set<int> unconfirmed,
+    required void Function() onRead,
+    void Function(int chunk, String phase)? checkRun,
+    void Function(FlashProgress)? onProgress,
+  }) async {
+    final total = chunks.length;
     final found = <FlashMismatch>[];
     for (var i = 0; i < total; i++) {
-      checkRun(i + 1, 'verifying');
+      checkRun?.call(i + 1, 'verifying');
       final data = await readChunk(chunks[i].offset);
-      reads++;
+      onRead();
       // A read that exhausted its own attempts (5 tries with growing windows, ~8 s of silence) is
-      // the node being gone, not a mismatch: end the run here instead of reading the rest of the
-      // image.
+      // the node being gone, not a mismatch: end the run here instead of reading the rest.
       if (data == null) {
         throw FlashAborted(
           'the node stopped answering (offset 0x'
@@ -725,6 +1045,7 @@ class BootloaderClient {
         found.add(
           _compare(chunks[i], data, writeConfirmed: !unconfirmed.contains(i)),
         );
+        if (stopAtFirst) break;
       }
       onProgress?.call(
         FlashProgress(
@@ -735,105 +1056,9 @@ class BootloaderClient {
         ),
       );
     }
-
-    if (found.isEmpty) {
-      onProgress?.call(
-        FlashProgress(phase: FlashPhase.done, completed: total, total: total),
-      );
-      return FlashResult(
-        readBacks: 1,
-        corrections: 0,
-        writes: writes,
-        reads: reads,
-      );
-    }
-
-    final report = FlashVerifyReport(total: total, all: found);
-
-    // A chunk the write pass acknowledged per chunk and that still reads back different is the
-    // node's flash (or its read path) failing, not a lost write: rewriting it cannot make it
-    // hold, and rewriting it is exactly the multiplication the card is about. Report and stop.
-    if (report.confirmed > 0) {
-      throw FlashAborted(
-        'the write pass acknowledged ${report.confirmed} of the differing chunks with their '
-        'own offset and they still do not read back - ${report.summary}',
-        fault: FlashFault.verifyMismatch,
-        chunk: found.first.offset ~/ _payloadSize + 1,
-        total: total,
-        mismatches: report,
-      );
-    }
-
-    // 3. The one correction round, for the chunks whose write was never confirmed - nothing else
-    //    is rewritten. The re-read below decides; there is no second round.
-    final byOffset = <int, _Chunk>{
-      for (final chunk in chunks) chunk.offset: chunk,
-    };
-    for (var i = 0; i < found.length; i++) {
-      final chunk = byOffset[found[i].offset]!;
-      checkRun(chunk.offset ~/ _payloadSize + 1, 'correcting');
-      final ack = await writeChunkAck(chunk.offset, chunk.data);
-      if (!ack.accepted) {
-        throw FlashAborted(
-          'the node never took the correction for the chunk at offset 0x'
-          '${chunk.offset.toRadixString(16)} after $writeAttempts attempts',
-          fault: FlashFault.writeRefused,
-          // The image's chunk index, not the correction's: one field, one meaning.
-          chunk: chunk.offset ~/ _payloadSize + 1,
-          total: total,
-          mismatches: report,
-        );
-      }
-      writes++;
-      corrections++;
-      onProgress?.call(
-        FlashProgress(
-          phase: FlashPhase.correcting,
-          completed: i + 1,
-          total: found.length,
-          mismatches: found.length,
-        ),
-      );
-    }
-
-    // One re-read of the corrected chunks, not another pass over the image.
-    for (var i = 0; i < found.length; i++) {
-      final chunk = byOffset[found[i].offset]!;
-      checkRun(chunk.offset ~/ _payloadSize + 1, 're-reading the corrections');
-      final data = await readChunk(chunk.offset);
-      reads++;
-      if (data == null) {
-        throw FlashAborted(
-          'the node stopped answering while the corrections were read back (offset 0x'
-          '${chunk.offset.toRadixString(16)}, $readAttempts read attempts)',
-          fault: FlashFault.nodeSilent,
-          chunk: chunk.offset ~/ _payloadSize + 1,
-          total: total,
-          mismatches: report,
-        );
-      }
-      if (!sameBytes(data, chunk.data)) {
-        final again = _compare(chunk, data, writeConfirmed: true);
-        throw FlashAborted(
-          'the corrected chunk still does not read back (${again.description})',
-          fault: FlashFault.verifyMismatch,
-          chunk: chunk.offset ~/ _payloadSize + 1,
-          total: total,
-          mismatches: FlashVerifyReport(total: total, all: [again]),
-        );
-      }
-    }
-
-    onProgress?.call(
-      FlashProgress(phase: FlashPhase.done, completed: total, total: total),
-    );
-    return FlashResult(
-      readBacks: 2,
-      corrections: corrections,
-      writes: writes,
-      reads: reads,
-    );
+    return found;
   }
+
 
   // --- helpers ---------------------------------------------------------------
 

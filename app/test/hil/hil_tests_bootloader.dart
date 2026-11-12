@@ -169,15 +169,15 @@ final List<HilTest> bootloaderTests = <HilTest>[
             }
           },
         );
-        // flash() returns only once one read-back confirmed every chunk; a chunk that does not
-        // read back throws FlashAborted instead, which fails this test with its own sentence.
+        // flash() returns only once the digest confirmed the whole image; a mismatch throws
+        // FlashAborted instead, which fails this test with its own sentence.
         expect(phases, contains(FlashPhase.writing));
         expect(phases, contains(FlashPhase.verifying));
         expect(phases.last, FlashPhase.done);
         ctx.note(
           'the device: rewrote ${image.length} bytes, '
-          'readBacks=${result.readBacks} corrections=${result.corrections} '
-          'writes=${result.writes} reads=${result.reads}',
+          'verified by ${result.method.label} '
+          'writes=${result.writes} reads=${result.reads} - ${result.note}',
         );
       }
     },

@@ -11,11 +11,18 @@
 ///
 /// Header-only frames (no payload) are start + control + offset + end = 7 bytes.
 /// Commands: 0b000 identify-request, 0b001 identify-response, 0b010 write-request,
-/// 0b011 write-response, 0b100 read-request, 0b101 read-response. The write-response carries
-/// the offset of the last successfully written chunk (0xFFFFFFFF = nothing written yet); the
-/// identify-response carries the app-space size (u32) in the offset slot and the device name
-/// as the 32-byte, null-padded payload. [decode] returns [invalid] (not 0) for a bad frame,
-/// because 0 is the valid identify-request command.
+/// 0b011 write-response, 0b100 read-request, 0b101 read-response, 0b110 digest-request,
+/// 0b111 digest-response. The write-response carries the offset of the last successfully
+/// written chunk (0xFFFFFFFF = nothing written yet); the identify-response carries the
+/// app-space size (u32) in the offset slot and the device name as the 32-byte, null-padded
+/// payload. [decode] returns [invalid] (not 0) for a bad frame, because 0 is the valid
+/// identify-request command.
+///
+/// The digest request carries the range in place of a payload - the offset in the header's own
+/// slot followed by a u16 length - and its 9-byte frame is start | control | offset | length |
+/// end; the 11-byte response is start | control | offset | crc32 | end, the offset echoed. Bytes
+/// past the end of the app region read as 0xFF, so a padded length still matches a correct
+/// image, and the CRC is the same CRC-32/ISO-HDLC the package manifest records.
 ///
 /// Parity is even over the "rest of the packet" after the control byte's padding/parity: the
 /// command (3 bits), the offset and the payload (when present); the markers and the padding
@@ -37,6 +44,8 @@ class Bootloader {
   static const int cmdWriteResponse = 0x3; // 0b011
   static const int cmdReadRequest = 0x4; // 0b100
   static const int cmdReadResponse = 0x5; // 0b101
+  static const int cmdDigestRequest = 0x6; // 0b110 - CRC32 of a range of the app region
+  static const int cmdDigestResponse = 0x7; // 0b111 - the CRC, offset echoed
 
   /// [decode]'s result for a bad frame. 0 is a valid command (identify-request), so it
   /// cannot be used as the "invalid" sentinel.
@@ -49,6 +58,8 @@ class Bootloader {
   static const int headerSize = 6; // start + control + offset
   static const int readRequestSize = 7; // header + end
   static const int dataSize = 39; // header + payload + end
+  static const int digestRequestSize = 9; // header + length(u16) + end
+  static const int digestResponseSize = 11; // header + crc32(u32) + end
 
   /// Even parity over the command (3 bits), the offset and the payload (bytes 2..len-2).
   static int parity(List<int> frame) {
@@ -113,6 +124,31 @@ class Bootloader {
   static Uint8List encodeIdentifyRequest() =>
       _headerFrame(0, cmdIdentifyRequest);
 
+  /// Digest request: the range's offset in the header's own slot and its length as a u16 after
+  /// it. The node answers with the CRC32 of `[offset, offset + length)`; bytes past the end of
+  /// the app region read as 0xFF, so [paddedLength] is the length to ask with.
+  static Uint8List encodeDigestRequest(int offset, int length) {
+    final f = Uint8List(digestRequestSize);
+    f[0] = start;
+    f.setRange(2, 6, uint32ToBytes(offset));
+    f[6] = length & 0xFF;
+    f[7] = (length >> 8) & 0xFF;
+    f[digestRequestSize - 1] = end;
+    _writeControl(f, cmdDigestRequest);
+    return f;
+  }
+
+  /// Digest response: the offset echoed in the header's slot, then the CRC32 (u32).
+  static Uint8List encodeDigestResponse(int offset, int crc) {
+    final f = Uint8List(digestResponseSize);
+    f[0] = start;
+    f.setRange(2, 6, uint32ToBytes(offset));
+    f.setRange(6, 10, uint32ToBytes(crc));
+    f[digestResponseSize - 1] = end;
+    _writeControl(f, cmdDigestResponse);
+    return f;
+  }
+
   /// Identify response: app-space size (u32) in the offset slot, device name as the 32-byte,
   /// null-padded payload.
   static Uint8List encodeIdentifyResponse(int appSize, List<int> name) =>
@@ -137,6 +173,49 @@ class Bootloader {
   static List<int> payload(List<int> frame) =>
       frame.sublist(headerSize, headerSize + payloadSize);
 
+  /// The length carried by a digest request.
+  static int digestLength(List<int> frame) => frame[6] | (frame[7] << 8);
+
+  /// The CRC32 carried by a digest response.
+  static int digestCrc(List<int> frame) => uint32FromBytes(frame, 6);
+
+  /// The padded length of an image: the whole number of 32-byte chunks the bootloader covers,
+  /// which is the range a digest request asks about (the tail reads back as erased 0xFF).
+  static int paddedLength(int length) =>
+      ((length + payloadSize - 1) ~/ payloadSize) * payloadSize;
+
+  /// One step of CRC-32/ISO-HDLC (reflected poly 0xEDB88320) - the value the device's digest
+  /// command returns, how zlib.crc32 computes, and what the package manifest carries.
+  static int _crcStep(int crc, int byte) {
+    var c = crc ^ (byte & 0xFF);
+    for (var bit = 0; bit < 8; bit++) {
+      c = (c >> 1) ^ ((c & 1) != 0 ? 0xEDB88320 : 0);
+    }
+    return c;
+  }
+
+  /// CRC32 over [data].
+  static int crc32(List<int> data) {
+    var crc = 0xFFFFFFFF;
+    for (final b in data) {
+      crc = _crcStep(crc, b);
+    }
+    return (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF;
+  }
+
+  /// CRC32 over [image] padded with 0xFF to [paddedLength] - the digest a device holding
+  /// exactly these bytes answers with, and the manifest's `crc32_padded`.
+  static int crc32Padded(List<int> image) {
+    var crc = 0xFFFFFFFF;
+    for (final b in image) {
+      crc = _crcStep(crc, b);
+    }
+    for (var i = image.length; i < paddedLength(image.length); i++) {
+      crc = _crcStep(crc, 0xFF);
+    }
+    return (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF;
+  }
+
   /// The device name carried in an identify-response's payload, with the trailing
   /// null padding trimmed.
   static String name(List<int> frame) {
@@ -160,6 +239,8 @@ class Bootloader {
         cmd == cmdReadResponse) {
       return dataSize;
     }
+    if (cmd == cmdDigestRequest) return digestRequestSize;
+    if (cmd == cmdDigestResponse) return digestResponseSize;
     return 0;
   }
 

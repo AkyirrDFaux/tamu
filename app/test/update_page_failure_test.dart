@@ -84,7 +84,7 @@ void main() {
   });
 
   testWidgets(
-    'a write that does not read back is named, with its count and offsets',
+    'a write that does not match is named, with the first differing offset',
     (tester) async {
       final t = FakeBootloaderTransport()..corruptAll = true;
       await _runUpdate(tester, t);
@@ -94,14 +94,14 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.textContaining('4 of 4 chunks differ'),
+        find.textContaining('first differing chunk: 0x0'),
         findsOneWidget,
-        reason: 'the report quotes the count and the offsets it found',
+        reason: 'the report names the offset the digest could not',
       );
       expect(
-        find.textContaining('confirmed by the write pass'),
+        find.textContaining('!= expected'),
         findsOneWidget,
-        reason: 'the device took the data and lost it',
+        reason: 'the digest pair is named first',
       );
       expect(
         find.textContaining('Power-cycle the node:'),

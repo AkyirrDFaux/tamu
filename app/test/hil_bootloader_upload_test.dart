@@ -85,9 +85,8 @@ void main() {
 
     // ignore: avoid_print
     print(
-      'RESULT readBacks=${result.readBacks} '
-      'corrections=${result.corrections} writes=${result.writes} '
-      'reads=${result.reads}',
+      'RESULT verified by ${result.method.label} (digest=${result.digest}) '
+      'writes=${result.writes} reads=${result.reads} - ${result.note}',
     );
   }, timeout: Timeout.none);
 }

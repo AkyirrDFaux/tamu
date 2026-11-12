@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/bootloader.dart';
 import 'package:tamuapp/core/bootloader_client.dart';
@@ -8,64 +10,86 @@ BootloaderClient _client(FakeBootloaderTransport t) =>
     BootloaderClient(transport: t, writePacing: Duration.zero);
 
 void main() {
-  test('a clean write is confirmed by one read-back, no corrections', () async {
+  test('a clean write is confirmed by ONE digest request', () async {
     final t = FakeBootloaderTransport();
     final result = await _client(t).flash(testImage(100));
 
-    expect(result.readBacks, 1);
-    expect(result.corrections, 0);
+    expect(result.method, FlashVerify.digest);
     // 100 bytes -> 4 chunks (the tail padded).
     expect(result.writes, 4);
-    expect(result.reads, 4);
+    expect(t.digests, 1, reason: 'one digest request, not one read per chunk');
+    expect(result.reads, 0, reason: 'the digest replaces every read-back');
+    expect(result.digest, Bootloader.crc32Padded(testImage(100)));
+    expect(result.digest, result.expectedDigest);
+    expect(result.note, contains('one digest'));
+  });
+
+  test('the expected digest comes from the caller when it has one', () async {
+    // The package manifest's crc32_padded is what the app compares against; a value that does not
+    // match the device's image is a mismatch even when the bytes were written correctly.
+    final t = FakeBootloaderTransport();
+    final image = testImage(100);
+
+    await expectLater(
+      _client(t).flash(image, expectedDigest: 0x1234ABCD),
+      throwsA(
+        isA<FlashAborted>()
+            .having((a) => a.fault, 'fault', FlashFault.verifyMismatch)
+            .having(
+              (a) => a.message,
+              'message',
+              contains('0x1234abcd'),
+            ),
+      ),
+    );
   });
 
   test(
     'the write response lets a rejected chunk be retried immediately',
     () async {
       // A rejected write is reported with a stale last-written offset, so the client retries it
-      // inside the write loop instead of waiting for the read-back.
+      // inside the write loop instead of waiting for the verification.
       final t = FakeBootloaderTransport()..rejectOnce.add(64);
       final result = await _client(t).flash(testImage(100));
 
-      expect(result.readBacks, 1);
-      expect(result.corrections, 0);
+      expect(result.method, FlashVerify.digest);
       // 4 chunks issued, plus one retry of the rejected chunk.
       expect(t.writes, 5);
       expect(t.flash[64], isNotNull);
     },
   );
 
-  test('a dropped write the channel did not confirm is rewritten once', () async {
-    // The passthrough ACKs without a last-written offset, so a dropped write only shows up as a
-    // read-back mismatch - and only that kind of chunk may be rewritten.
+  test('a dropped write is caught by the digest and located by one read', () async {
+    // The passthrough ACKs without a last-written offset, so a dropped write only shows up in the
+    // digest. The locating read-back stops at the first difference: nothing is rewritten.
     final t = FakeBootloaderTransport()
       ..nullOffsetAcks = true
       ..dropOnce.addAll({0, 64});
-    final result = await _client(t).flash(testImage(100));
 
-    expect(result.readBacks, 2, reason: 'the faults plus one re-read of them');
-    expect(result.corrections, 2);
-    expect(t.writes, 6, reason: '4 chunks written, 2 of them rewritten once');
-    expect(t.reads, 6, reason: '4 chunks read back, then the 2 corrected ones');
+    await expectLater(
+      _client(t).flash(testImage(100)),
+      throwsA(
+        isA<FlashAborted>()
+            .having((a) => a.fault, 'fault', FlashFault.verifyMismatch)
+            .having(
+              (a) => a.message,
+              'message',
+              allOf(contains('!='), contains('first differing chunk: 0x0')),
+            )
+            .having((a) => a.mismatches?.count, 'count', 1)
+            .having((a) => a.mismatches?.unconfirmed, 'unconfirmed', 1)
+            .having((a) => a.chunk, 'chunk', 1),
+      ),
+    );
+    expect(t.writes, 4, reason: 'one write pass, and no correction round');
+    expect(t.reads, 1, reason: 'the pass stops at the first differing chunk');
   });
 
-  test('a read timeout is retried, not treated as a mismatch', () async {
-    final t = FakeBootloaderTransport()..timeoutOnce.add(32);
-    final result = await _client(t).flash(testImage(100));
-
-    expect(result.corrections, 0);
-    // The timed-out chunk was re-read by the transport within the same read-back.
-    expect(t.reads, greaterThan(t.writes));
-  });
-
-  group('a verification read is read-only and never repeats', () {
-    // The card's case: the transport acknowledges every write (with the chunk's own offset) but
-    // returns wrong data on read. The old loop read the image back, rewrote every chunk that did
-    // not match and verified again, up to 20 passes. The run must now stop after the first
-    // read-back, having written the image exactly once.
-    test('an acknowledged chunk that reads back wrong stops the run', () async {
+  group('a verification never writes and never repeats', () {
+    // The device takes every write and loses the data: the digest disagrees with the image, one
+    // read-back names the first differing chunk, and the run stops.
+    test('a lost chunk stops the run after one locating read', () async {
       final t = FakeBootloaderTransport()..corruptAll = true;
-      const total = 4; // 100 bytes at the 32-byte payload
 
       await expectLater(
         _client(t).flash(testImage(100)),
@@ -73,68 +97,77 @@ void main() {
           isA<FlashAborted>()
               .having((a) => a.fault, 'fault', FlashFault.verifyMismatch)
               .having((a) => a.fault.label, 'label', 'image does not read back')
-              .having((a) => a.mismatches?.count, 'count', total)
-              .having((a) => a.mismatches?.confirmed, 'confirmed', total)
-              .having((a) => a.mismatches?.unconfirmed, 'unconfirmed', 0)
               .having(
                 (a) => a.mismatches?.summary,
                 'summary',
-                allOf(
-                  contains('$total of $total chunks differ'),
-                  contains('first: 0x0 (byte 0: wrote 0x00, read 0xff)'),
-                ),
-              )
-              .having(
-                (a) => a.message,
-                'message',
-                contains('acknowledged $total of the differing chunks'),
+                'first differing chunk: 0x0 (byte 0: wrote 0x00, read 0xff)',
               )
               .having((a) => a.remedy, 'remedy', contains('Power-cycle')),
         ),
       );
       expect(
         t.writes,
-        total,
+        4,
         reason:
             'the image written exactly once: a chunk the device confirmed is not '
             'rewritten while it is failing to hold the data',
       );
-      expect(t.reads, total, reason: 'one read-back of the image, then stop');
+      expect(t.reads, 1, reason: 'one read, at the first difference, then stop');
     });
 
-    test('wrong and unconfirmed everywhere: one correction, then stop', () async {
-      // Every write is ACKed without an offset and every read comes back wrong, so every chunk is
-      // a correction candidate. The old bound was 20 read-verify-correct passes; the run gets one
-      // correction round and one re-read, then aborts.
-      final t = FakeBootloaderTransport()
-        ..nullOffsetAcks = true
-        ..corruptAll = true;
-      const total = 4;
+    test('the digest pair is named in the message', () async {
+      final t = FakeBootloaderTransport()..corruptAll = true;
+      final image = testImage(100);
 
       await expectLater(
-        _client(t).flash(testImage(100)),
+        _client(t).flash(image),
         throwsA(
-          isA<FlashAborted>()
-              .having((a) => a.fault, 'fault', FlashFault.verifyMismatch)
-              .having(
-                (a) => a.message,
-                'message',
-                contains('corrected chunk still does not read back'),
+          isA<FlashAborted>().having(
+            (a) => a.message,
+            'message',
+            allOf(
+              contains(
+                Bootloader.crc32Padded(image).toRadixString(16).padLeft(8, '0'),
               ),
+              contains('first differing chunk'),
+            ),
+          ),
         ),
       );
-      expect(
-        t.writes,
-        total * 2,
-        reason: 'one write pass, one correction round',
-      );
-      expect(
-        t.reads,
-        total + 1,
-        reason:
-            'one read-back, then the re-read stops at the first chunk still '
-            'wrong',
-      );
+    });
+
+    test('a verify on its own writes nothing', () async {
+      // The device holds another image: verify() reports the first difference and programs no
+      // byte - that is the read-only pass the Update page and the rig run.
+      final t = FakeBootloaderTransport();
+      final client = _client(t);
+      final held = Uint8List.fromList(List.generate(100, (i) => (i * 3) & 0xFF));
+      await client.flash(held);
+      final writesBefore = t.writes;
+
+      final result = await client.verify(testImage(100));
+
+      expect(result.clean, isFalse);
+      expect(result.method, FlashVerify.digest);
+      expect(result.mismatches?.firstDifference?.offset, 0);
+      // byte 0 of both images is 0, so the first differing byte is index 1
+      expect(result.mismatches?.firstDifference?.at, 1);
+      expect(t.writes, writesBefore, reason: 'a verify is read-only by construction');
+      expect(result.digest, isNot(Bootloader.crc32Padded(testImage(100))));
+    });
+
+    test('a verify of the image the device holds is clean', () async {
+      final t = FakeBootloaderTransport();
+      final client = _client(t);
+      final image = testImage(100);
+      await client.flash(image);
+
+      final readsBefore = t.reads;
+      final result = await client.verify(image);
+
+      expect(result.clean, isTrue);
+      expect(result.reads, 0);
+      expect(t.reads, readsBefore, reason: 'the digest answered: no read-back ran');
     });
   });
 
@@ -163,6 +196,7 @@ void main() {
         reason: 'three attempts on ONE chunk, not one attempt on every chunk',
       );
       expect(t.reads, 0, reason: 'there is nothing to read back');
+      expect(t.digests, 0, reason: 'nothing was verified');
     });
 
     test('a node that stops answering ends the read-back pass', () async {
@@ -246,6 +280,52 @@ void main() {
     });
   });
 
+  group('a bootloader without the digest command', () {
+    test('falls back to ONE read-back pass and says why', () async {
+      final t = FakeBootloaderTransport()..noDigest = true;
+      final result = await _client(t).flash(testImage(100));
+
+      expect(result.method, FlashVerify.readBackNoDigest);
+      expect(result.digest, isNull);
+      expect(t.digests, 2, reason: 'the digest is retried once, then given up on');
+      expect(result.reads, 4, reason: 'one read-back pass over the image');
+      expect(
+        result.note,
+        allOf(contains('no digest'), contains('read-back')),
+      );
+    });
+
+    test('a difference found by the fallback pass is named with its offset', () async {
+      // The passthrough ACKs without a last-written offset, so the dropped chunk is silent until
+      // the read-back finds it.
+      final t = FakeBootloaderTransport()
+        ..noDigest = true
+        ..nullOffsetAcks = true
+        ..dropOnce.add(32);
+
+      await expectLater(
+        _client(t).flash(testImage(100)),
+        throwsA(
+          isA<FlashAborted>()
+              .having((a) => a.fault, 'fault', FlashFault.verifyMismatch)
+              .having((a) => a.mismatches?.summary, 'summary', contains('0x20'))
+              .having((a) => a.chunk, 'chunk', 2),
+        ),
+      );
+      expect(t.reads, 4, reason: 'the fallback reads the whole image once');
+    });
+
+    test('a verify on its own also falls back, without writing', () async {
+      final t = FakeBootloaderTransport()..noDigest = true;
+      final result = await _client(t).verify(testImage(100));
+
+      expect(result.method, FlashVerify.readBackNoDigest);
+      expect(result.readBacks, 1);
+      expect(result.reads, 4);
+      expect(t.writes, 0);
+    });
+  });
+
   test('identify exposes the app size and name', () async {
     final t = FakeBootloaderTransport()
       ..identity = const BootloaderIdentity(
@@ -276,7 +356,7 @@ void main() {
 
       // The same image fits when the app space is large enough.
       final ok = await _client(t).flash(testImage(100), maxImageSize: 100);
-      expect(ok.readBacks, 1);
+      expect(ok.method, FlashVerify.digest);
     },
   );
 
@@ -285,17 +365,18 @@ void main() {
   // but nothing pinned these). Docs/Services/Bootloader.md "Core Bootloader Passthrough
   // Commands (002x)".
   group('passthrough command IDs match the firmware', () {
-    test('0x20 identification, 0x21 write, 0x22 read', () {
+    test('0x20 identification, 0x21 write, 0x22 read, 0x23 digest', () {
       expect(coreBootIdentify, 0x20);
       expect(coreBootWrite, 0x21);
       expect(coreBootRead, 0x22);
+      expect(coreBootDigest, 0x23);
     });
 
-    test('the three IDs are distinct and inside the 002x range', () {
-      final ids = {coreBootIdentify, coreBootWrite, coreBootRead};
-      expect(ids.length, 3);
+    test('the four IDs are distinct and inside the 002x range', () {
+      final ids = {coreBootIdentify, coreBootWrite, coreBootRead, coreBootDigest};
+      expect(ids.length, 4);
       for (final id in ids) {
-        expect(id, inInclusiveRange(0x20, 0x22));
+        expect(id, inInclusiveRange(0x20, 0x23));
       }
     });
   });

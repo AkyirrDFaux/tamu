@@ -41,6 +41,21 @@ class _HeldWriteTransport implements BootloaderTransport {
       flash[offset];
 
   @override
+  Future<int?> digest(int offset, int length, Duration timeout) async {
+    // Hold the whole padded range: what the page's run would verify if it got that far.
+    var crc = 0xFFFFFFFF;
+    for (var i = offset; i < offset + length; i++) {
+      final held = flash[i - i % 32];
+      final b = held == null ? 0xFF : held[i % 32];
+      crc ^= b;
+      for (var bit = 0; bit < 8; bit++) {
+        crc = (crc >> 1) ^ ((crc & 1) != 0 ? 0xEDB88320 : 0);
+      }
+    }
+    return crc ^ 0xFFFFFFFF;
+  }
+
+  @override
   Future<BootloaderIdentity?> identify(Duration timeout) async =>
       const BootloaderIdentity(appSize: 0x4000, name: 'Tamu v2.0A');
 }

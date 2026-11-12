@@ -20,7 +20,7 @@ void SubscriptionsRequestReRegister(uint16_t Addr);
 
 // Device service (Docs/Services/System Block and Device Commands.md, Docs/Command ID Table.md):
 // Discover 0x0000, Ping 0x0001, Identify 0x0002, TimeSync 0x0003, Core discover 0x0010, SNDB
-// 0x0011-0x0013 and the bootloader passthrough 0x0020-0x0022 (which the CID table files under
+// 0x0011-0x0013 and the bootloader passthrough 0x0020-0x0023 (which the CID table files under
 // Bootloader). Type/SN/Version/Capability/Name/Uptime are System BLOCK fields read through the
 // Register service - they are not Device service commands.
 class DeviceService
@@ -29,7 +29,7 @@ public:
     bool Handle(const PacketFrame &Frame); // CID dispatch; true if consumed
 
 #ifdef TYPE_CORE
-    // Main-loop tick for the asynchronous bootloader passthrough (CIDs 0x20/0x21/0x22):
+    // Main-loop tick for the asynchronous bootloader passthrough (CIDs 0x20/0x21/0x22/0x23):
     // returns immediately unless a request is outstanding, settles the awaited reply into a
     // Device response, or fails it on the 1 s deadline. Call next to the other service ticks.
     void PollBootloaderPassthrough();
@@ -41,9 +41,9 @@ private:
     void HandleSNDB(const PacketFrame &Frame);
 
     // Bootloader passthrough (Docs/Services/Bootloader.md "Core bootloader passthrough
-    // commands", CIDs 0x20 identify / 0x21 write / 0x22 read). Asynchronous: Handle* encodes
-    // the raw frame, RS485SendRaw's it, records the pending request and returns; the main
-    // loop's PollBootloaderPassthrough collects the reply.
+    // commands", CIDs 0x20 identify / 0x21 write / 0x22 read / 0x23 digest). Asynchronous:
+    // Handle* encodes the raw frame, RS485SendRaw's it, records the pending request and returns;
+    // the main loop's PollBootloaderPassthrough collects the reply.
     void HandleBootloaderPassthrough(const PacketFrame &Frame, uint8_t Cid);
     // Answers a passthrough request whose payload is too short to encode with FLAG_FAIL instead of
     // returning silently: an unanswered request is indistinguishable from a dead node to the app,
@@ -60,7 +60,7 @@ private:
     static constexpr uint32_t KPtTimeoutMs = 1000; // reply deadline (ms)
     static constexpr uint32_t KPtDumpAfterMs = 10000; // idle before the totals line is printed
     bool PtPending    = false;                    // a request is issued and not yet settled
-    uint8_t PtCid     = 0;                        // passthrough CID (0x20/0x21/0x22)
+    uint8_t PtCid     = 0;                        // passthrough CID (0x20/0x21/0x22/0x23)
     uint16_t PtSrc    = 0;                        // reply routing: original request IdSrc
     uint16_t PtCmd    = 0;                        // reply routing: original request Cmd
     uint16_t PtTrid   = 0;                        // reply routing: original request Trid
@@ -233,9 +233,9 @@ void DeviceService::HandleSNDB(const PacketFrame &Frame)
 // The app sends these to the connected core; the core relays the raw frame onto its RSBus.
 // The frame carries no address, so this is a broadcast: every node currently in bootloader
 // mode on that bus receives it. CIDs (Docs/Services/Bootloader.md): 0x20 identify, 0x21 write,
-// 0x22 read. The handler only ISSUES the raw request and returns; PollBootloaderPassthrough
-// (main loop) collects the reply and builds the Device response. One request is outstanding at
-// a time - a second one while pending is refused, never queued.
+// 0x22 read, 0x23 digest. The handler only ISSUES the raw request and returns;
+// PollBootloaderPassthrough (main loop) collects the reply and builds the Device response. One
+// request is outstanding at a time - a second one while pending is refused, never queued.
 inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame, uint8_t Cid)
 {
     PtReqCount = (uint16_t)(PtReqCount + 1);
@@ -271,6 +271,17 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
         Offset = LoadUnaligned<uint32_t>(Frame.Payload);
         Bootloader::EncodeWrite(Offset, Frame.Payload + 4, Raw);
         Len = Bootloader::DATA_SIZE;
+    }
+    else if (Cid == 0x23)
+    { // Digest: Offset (4) + Length (2), relayed as the bootloader's digest request.
+        if (PayloadBytes(Frame) < 6)
+        {
+            RefuseShortRequest(Frame, 6);
+            return;
+        }
+        Offset = LoadUnaligned<uint32_t>(Frame.Payload);
+        Bootloader::EncodeDigestRequest(Offset, LoadUnaligned<uint16_t>(Frame.Payload + 4), Raw);
+        Len = Bootloader::DIGEST_REQ_SIZE;
     }
     else
     { // Request read -> Offset (4).
@@ -438,6 +449,22 @@ inline void DeviceService::PollBootloaderPassthrough()
             memcpy(Out, &Last, 4);
             OutLen = 4;
             Flags |= (Last == PtOffset) ? FLAG_SUCCESS : FLAG_FAIL;
+        }
+        else if (PtCid == 0x23)
+        { // Digest: the node's 11-byte response goes back to the app VERBATIM - offset echoed,
+          // CRC32, framing and all. The core forwards bytes and owns no comparison; the app
+          // compares the CRC against the image it holds. A valid frame of any OTHER command met
+          // in the echo window belongs to an earlier transaction, so it is dropped and the poll
+          // keeps waiting for the answer this request asked for (the deadline still bounds it).
+            if ((PtRx[1] & 0x07u) != Bootloader::CMD_DIGEST_RESP)
+            {
+                PtRxReady = false;
+                PtRxLen = 0;
+                return;
+            }
+            memcpy(Out, PtRx, Bootloader::DIGEST_RESP_SIZE);
+            OutLen = Bootloader::DIGEST_RESP_SIZE;
+            Flags |= FLAG_SUCCESS;
         }
         else
         { // Read: echo the requested offset + the 32-byte payload.
@@ -696,6 +723,7 @@ bool DeviceService::Handle(const PacketFrame &Frame)
         case 0x20: // Bootloader passthrough: request identification
         case 0x21: // Bootloader passthrough: send write packet
         case 0x22: // Bootloader passthrough: request read
+        case 0x23: // Bootloader passthrough: request digest
         {
             HandleBootloaderPassthrough(Frame, Cid);
             break;
