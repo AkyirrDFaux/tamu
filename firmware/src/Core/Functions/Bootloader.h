@@ -174,6 +174,58 @@ namespace Bootloader
     inline const uint8_t *Payload(const uint8_t *Frame) { return Frame + 6; }
 
     // -----------------------------------------------------------------------
+    // Writing one chunk (card t_5195d4bc: the erase decision and the ack rule)
+    // -----------------------------------------------------------------------
+    //
+    // An upload sends 32-byte chunks in order (Docs/Services/Bootloader.md), so the SECOND chunk of
+    // every 64-byte flash page lands in a page the first chunk just programmed.
+    //
+    // The erase decision is POSITIONAL, never content-based: only the chunk whose offset starts a
+    // page erases that page, and it erases it whatever the page already holds - a page carrying an
+    // older image is exactly what a re-flash has to replace, and a blank page only costs the erase.
+    // A chunk inside a page never erases, because the erase unit is the whole page and clearing it
+    // would take the chunk that just landed in the other half with it.
+    //
+    // The ack rule IS the verification: the write response names `Offset` only when the 32 bytes
+    // read back as sent. Flash programming can only clear bits, so a chunk arriving in a slot that
+    // was never erased reads back different and is refused (the response keeps the previous
+    // offset, which is how the tool tells a refusal from an ack - Docs: "Success only if the offset
+    // matches the request"), while a re-sent identical chunk verifies and is acked, so the
+    // protocol stays idempotent for the app's retry round.
+    //
+    // `Flash` is the device's flash adapter (Unlock/Lock, ErasePage, ProgramWord, ReadWord). It is
+    // a template parameter so the host test drives THIS function against a NOR model (program only
+    // clears bits) instead of a copy of the rule.
+    constexpr uint32_t PAGE_SIZE = 64; // the CH32V003 CR_PAGE_ER erase page
+
+    template <class Flash>
+    inline bool WriteChunk(uint32_t Offset, const uint8_t *Payload, uint32_t AppSize,
+                           uint32_t &LastWritten)
+    {
+        if ((Offset & (PAYLOAD_SIZE - 1u)) != 0) return false; // 32-byte aligned
+        // Bounds are checked on the offset, not the computed address: `AppSize - Offset` under an
+        // `Offset <= AppSize` guard cannot wrap.
+        if (Offset > AppSize || AppSize - Offset < PAYLOAD_SIZE) return false;
+        if ((Offset & (PAGE_SIZE - 1u)) == 0 && !Flash::ErasePage(Offset)) return false;
+
+        // Program and read back in ONE loop: the words are compared while the chunk is still in
+        // hand, so the ack above costs no second pass over the payload.
+        bool Landed = true;
+        Flash::Unlock();
+        for (uint8_t i = 0; i < PAYLOAD_SIZE; i += 4)
+        {
+            uint32_t Word;
+            memcpy(&Word, Payload + i, sizeof(Word));
+            Flash::ProgramWord(Offset + i, Word);
+            if (Flash::ReadWord(Offset + i) != Word) Landed = false;
+        }
+        Flash::Lock();
+        if (!Landed) return false;
+        LastWritten = Offset;
+        return true;
+    }
+
+    // -----------------------------------------------------------------------
     // CRC32 (the digest command)
     // -----------------------------------------------------------------------
     //

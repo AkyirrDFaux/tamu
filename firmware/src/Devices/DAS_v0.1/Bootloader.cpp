@@ -11,9 +11,11 @@
 // the last successfully written offset, an identify request returns the app size and name, and a
 // digest request (0b110) answers with the CRC32 of the requested range of the app region.
 //
-// Flash rules: writes are 32-byte aligned (per the doc); the bootloader erases the 64-byte
-// page on the first half (offset % 64 == 0) and programs both halves. It never touches the
-// storage region at 0x3E00 (the app's `.SV`/table live there).
+// Flash rules: writes are 32-byte aligned (per the doc); the chunk that starts a 64-byte page
+// (offset % 64 == 0) erases that page first, whatever it holds, and no other chunk erases. A write
+// is acked (its offset echoed back) only when its 32 bytes read back as sent - see
+// Bootloader::WriteChunk. It never touches the storage region at 0x3E00 (the app's `.SV`/table
+// live there).
 //
 // It is written with direct register access (no SPL GPIO/USART/RCC/FLASH) to fit the 2 KB
 // region alongside the framework startup/SystemInit. The clock is already 48 MHz: the
@@ -82,10 +84,11 @@ static void GpioInPU(GPIO_TypeDef *Port, uint32_t Pin)
 // Flash (direct registers)
 // ---------------------------------------------------------------------------
 //
-// The SPL flash helpers are not used: under LTO their unlock/lock sequences get inlined into
-// both the erase and the program paths (duplicated - the driver's cost is per call site, not
-// per function). Writing the sequences here once, `noinline`, keeps a single copy of each and
-// drops the SPL flash driver entirely. Register bit values mirror ch32v00x_flash.c.
+// The SPL flash helpers are not used: the driver's cost is per call site, not per function, so
+// the two sequences with a call site each (the 64-byte page erase, the word program) are plain
+// inline functions, and the unlock/lock pairs - two call sites each - are written once and marked
+// `noinline`, which keeps a single copy of each and drops the SPL flash driver entirely. Register
+// bit values mirror ch32v00x_flash.c.
 
 #define FLASH_KEY1 0x45670123u
 #define FLASH_KEY2 0xCDEF89ABu
@@ -112,7 +115,7 @@ __attribute__((noinline)) static void FlashLock()
 }
 
 // Erases the 64-byte page containing `addr` (the 0x08000000 alias).
-__attribute__((noinline)) static void FlashErasePageFast(uint32_t Addr)
+static void FlashErasePageFast(uint32_t Addr)
 {
     FLASH->CTLR |= FCR_PAGE_ER;
     FLASH->ADDR = Addr;
@@ -123,7 +126,7 @@ __attribute__((noinline)) static void FlashErasePageFast(uint32_t Addr)
 
 // Programs one 32-bit word with the standard two-half-word sequence (FCR_PG); the fast
 // controller (FCR_PAGE_ER) is used only by the 64-byte page erase.
-__attribute__((noinline)) static void FlashProgramWord(uint32_t Addr, uint32_t Data)
+static void FlashProgramWord(uint32_t Addr, uint32_t Data)
 {
     FLASH->CTLR |= FCR_PG;
     *(volatile uint16_t *)Addr = (uint16_t)Data;
@@ -141,18 +144,6 @@ static bool FlashErasePage(uint32_t Addr)
     uint32_t Check = *(volatile uint32_t *)Addr;
     FlashLock();
     return Check == 0xFFFFFFFFu;
-}
-
-static void FlashWrite(uint32_t Addr, const uint8_t *Src, uint32_t Len)
-{
-    FlashUnlock();
-    for (uint32_t Off = 0; Off < Len; Off += 4)
-    {
-        uint32_t Word;
-        memcpy(&Word, Src + Off, sizeof(Word));
-        FlashProgramWord(FLASH_CTRL_BASE + Addr + Off, Word);
-    }
-    FlashLock();
 }
 
 // ---------------------------------------------------------------------------
@@ -265,22 +256,27 @@ static void SendRaw(const uint8_t *Data, size_t Len)
 // on every write so the app resynchronises after a rejected chunk instead of guessing.
 static uint32_t LastWritten = 0xFFFFFFFFu;
 
+// The register-level side of a chunk: unlock, erase the page, program one word, read a word back.
+// The erase decision and the program-and-verify rule live in Bootloader::WriteChunk (host-tested),
+// so there is one copy of each rule and this adapter only touches the flash controller.
+struct DasFlash
+{
+    static void Unlock() { FlashUnlock(); }
+    static void Lock() { FlashLock(); }
+    static bool ErasePage(uint32_t Offset) { return FlashErasePage(APP_BASE + Offset); }
+    static void ProgramWord(uint32_t Offset, uint32_t Data)
+    {
+        FlashProgramWord(FLASH_CTRL_BASE + APP_BASE + Offset, Data);
+    }
+    static uint32_t ReadWord(uint32_t Offset) { return *(volatile uint32_t *)(APP_BASE + Offset); }
+};
+
 static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
 {
-    uint32_t Addr = APP_BASE + Offset;
-    bool Ok = (Offset & 31u) == 0; // 32-byte aligned per the doc
-    if (Ok) Ok = Offset <= APP_SIZE && APP_SIZE - Offset >= Bootloader::PAYLOAD_SIZE;
-
-    // Erase the 64-byte page on its first half; the second half programs the erased page.
-    if (Ok && (Addr & 63u) == 0)
-    {
-        Ok = FlashErasePage(Addr);
-    }
-    if (Ok)
-    {
-        FlashWrite(Addr, Payload, Bootloader::PAYLOAD_SIZE);
-        LastWritten = Offset;
-    }
+    // Erase positionally, program, and verify - see Bootloader::WriteChunk. `LastWritten` only
+    // moves when the 32 bytes read back as sent, so the response's offset is the whole answer: it
+    // names the chunk when the write landed and keeps the previous offset when it did not.
+    Bootloader::WriteChunk<DasFlash>(Offset, Payload, APP_SIZE, LastWritten);
 
     uint8_t Resp[Bootloader::READ_REQ_SIZE];
     Bootloader::EncodeWriteResponse(LastWritten, Resp);

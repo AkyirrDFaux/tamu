@@ -308,6 +308,60 @@ echo "### native bootloader packet tests (codec layout + even parity)"
 build_run "bootloader" "bootloader_test.cpp"
 echo
 
+echo "### native bootloader write-path tests (positional erase + the ack-only-when-landed rule)"
+build_run "blwrite" "bootloader_write_test.cpp"
+echo
+
+# t_5195d4bc: a write is only acked when its 32 bytes are in flash, and the page erase is decided
+# by the OFFSET. An upload sends 32-byte chunks in order, so the second chunk of every 64-byte page
+# lands in a page the first chunk just programmed: erasing there would take the first chunk with
+# it, never erasing means a re-flash cannot replace an old image, and acking a chunk that did not
+# land (the measured defect: a write into a programmed page acked and the bytes never changed) is
+# what made the tool lose chunks silently. The rule itself - Bootloader::WriteChunk - is driven by
+# the test above against a NOR model, so this guard only pins that the node still runs THAT rule
+# and that its two decisions keep their shape:
+#   - the page erase is gated on the offset starting a page (never on what the page holds);
+#   - every programmed word is read back before the chunk can be acked;
+#   - the device's write handler goes through WriteChunk and does not touch LastWritten itself.
+echo "### source guard: the bootloader ack rule (positional erase + read-back)"
+BL_HDR=${BL_HDR:-$ROOT/src/Core/Functions/Bootloader.h}
+DAS_BL=${DAS_BL:-$ROOT/src/Devices/DAS_v0.1/Bootloader.cpp}
+CHUNK_FN=$(sed -n '/inline bool WriteChunk(/,/^    }/p' "$BL_HDR")
+chunk_fail=0
+if [ -z "$CHUNK_FN" ]; then
+    echo "FAIL $BL_HDR: Bootloader::WriteChunk was not found - this guard cannot see the ack rule"
+    chunk_fail=1
+fi
+if ! printf '%s\n' "$CHUNK_FN" | grep -q 'PAGE_SIZE - 1u)) == 0 && !Flash::ErasePage'; then
+    echo "FAIL $BL_HDR: the page erase is not gated on the offset starting a page"
+    chunk_fail=1
+fi
+if printf '%s\n' "$CHUNK_FN" | grep -q 'IsErased\|IsBlank\|AllErased'; then
+    echo "FAIL $BL_HDR: the erase decision looks at the page's content again (must be positional)"
+    chunk_fail=1
+fi
+if ! printf '%s\n' "$CHUNK_FN" | grep -q 'Flash::ReadWord(Offset + i) != Word'; then
+    echo "FAIL $BL_HDR: a programmed word is not read back - a chunk could be acked without landing"
+    chunk_fail=1
+fi
+LAST_REFUSE=$(printf '%s\n' "$CHUNK_FN" | grep -n 'if (!Landed) return false;' | head -1 | cut -d: -f1)
+LAST_ACK=$(printf '%s\n' "$CHUNK_FN" | grep -n 'LastWritten = Offset;' | head -1 | cut -d: -f1)
+if [ -z "$LAST_REFUSE" ] || [ -z "$LAST_ACK" ] || [ "$LAST_REFUSE" -ge "$LAST_ACK" ]; then
+    echo "FAIL $BL_HDR: the refusal must come before the ack in WriteChunk"
+    chunk_fail=1
+fi
+if ! grep -q 'Bootloader::WriteChunk<DasFlash>' "$DAS_BL"; then
+    echo "FAIL $DAS_BL: the write handler does not use the tested rule (Bootloader::WriteChunk)"
+    chunk_fail=1
+fi
+if grep -q 'LastWritten = Offset' "$DAS_BL"; then
+    echo "FAIL $DAS_BL: the write handler acks by itself again - only WriteChunk may name an offset"
+    chunk_fail=1
+fi
+[ $chunk_fail = 0 ] && echo "PASS: the bootloader erases positionally, reads every word back, and acks only through WriteChunk"
+fail=$((fail + chunk_fail))
+echo
+
 # t_79a194d5: the pairing-free BLE updater's recovery path. The factory image's boot decision
 # and the update window are pure functions, so "a bad image stays recoverable" is run here as a
 # sequence of resets rather than only being read off the source.
