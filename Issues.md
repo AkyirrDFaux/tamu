@@ -1459,6 +1459,8 @@ it: the next boot after such a write prints `I (342) BLESEC: passkey source: non
 (`.pio/probe/boot_displayname_empty.log:141`), matching `BlePasskeyStoreSave`'s `nvs_erase_key`
 (`BlePasskeyStore.h:98-101`).
 
+**Owner ruling 2026-11-12: closed as designed behaviour, option A.** The firmware keeps the save contract (a `Persistent` write is RAM until Save All), and **the app owns the dirty bit** — it must know a change is unsaved, block or warn on leaving/disconnect, and clear the flag only after a Save All confirmed by a read-back. Card `t_7250e6b2`. No firmware change; the entry stays as the measured record of why the read-back cannot show durability.
+
 **E72 `Action = 0`/`Action = 1` looked refused on the `BLE Settings` block - the probe was sending
 the ASCII character `'0'`/`'1'` (0x30/0x31), not the number.** *(Resolved 2026-10-29: probe defect;
 the whole `Action` field has since been removed - the block's six fields open the pairing window with
