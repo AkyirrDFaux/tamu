@@ -590,6 +590,48 @@ are hardware-only.
   `lost` 0 -> 3 on the totals line) - i.e. bytes the keep ring refused appear only once the core's own
   subscriptions are live again, ~11 per restore out of ~330 forwards. That is the E82/BusRxKeepRing
   area the card excludes, recorded here so the next card starts from the number.
+  **Attributed and fixed 2026-11-12** (card `t_82c3dc59`; the cause was measured on core
+  `2026.11.12` iter 2 - the delivered RX path plus this gate's new diagnostics, retry disarmed - and
+  the fix on core `2026.11.12` iter 4, `firmware.bin` sha256
+  `25ba50b5206bf6d6181012ad6e1d030c9bc95dec84f29998d34f8819a603a7ac`, written as 710,912 B at
+  0x90000 with `Hash of data verified`; all three DAS untouched at `2026.11.10` iter 8). Probe:
+  `.pio/probe/e79_cause.py`, one `Register` CID 3 write at a time to `Meas1 Filter Coefficient` on
+  0.2/0.3/0.4 with the value alternating so every write must change the stored value - and encoded
+  as Q16.16, because a `DataType::Number` sent as an IEEE float is accepted by the node and clamped,
+  which makes every write look like it took. **The write-level loss is a lost REQUEST:** a write that
+  answers does so in 13-14 ms (median 13, p90 14, min 12, max 75), and 50 of 882 single-shot writes
+  (5.7 %, per run 13/113, 11/143, 7/141, 6/117, 6/97, 6/99, 4/76, 3/96) were answered by nothing at
+  all for 3.02-3.05 s while 5 of 120 reads (4.2 %) were lost the same way. When the field was read
+  back afterwards it still held its OLD value in **47 of 48** cases (one had landed, so a lost reply
+  is real but 1-in-48 rare): the node never ran the request, so there was no reply to lose and
+  nothing for the node to retransmit. The gate ring names each of those windows - six of six in one
+  run: `cmd=0x0103 hold=602..605ms rx=106..140 rej=0 asm=0/0/0 EXPIRED` - 106-140 bytes of OTHER
+  nodes' traffic on the line, no CRC reject, no partial frame in the assembler, `rxdestroyed=0` in
+  every session, `late=0`. **The other three candidates are excluded by measurement:** the window is
+  600 ms against a 13 ms answer, and a late answer is still forwarded (a 615 ms answer reached the
+  app); a write sent immediately after a node's `Save All` loses LESS than the baseline (1/57 =
+  1.8 %); and a read-only probe with no app, no read-back and no flash write loses the same share
+  (5/120 = 4.2 %) at every gap (5.1 % at 10 ms, 6.2 % at 50 ms, 5.3 % at 250 ms of silence before
+  each request). **Fix (firmware):** the core re-sends the forwarded write - up to
+  `APP_BUS_WRITE_RETRIES` (2) more sends - when its window expires unanswered, only for an
+  app-forwarded `Register` CID 3 (the one kind whose execution is a set-to-value), with the app's
+  own TRID so the app accepts the answer, and `retries=` in the BUSGATE totals line. On the
+  delivered image 98 of 98 writes were answered, 8 of them repaired at 615-681 ms (eight red lines
+  before), the other 90 unchanged at 13 ms (`forwards=253 replies=241 expired=12 late=0 clash=0
+  lost=0 retries=8 rxdestroyed=0`). **Restores on the delivered image:** eight consecutive, every
+  one `written=132 skipped=27 failed=0` and ending "OK: the setup is on the rig and the read-back
+  agrees": 38.0, 73.8, 36.8, 24.4, 27.7, 21.4, 27.1, 26.1 s (the 73.8 s run overlapped a host load
+  average of 3.7 - the app profile's HIL suites run on the same machine; the other seven are
+  21-38 s against the 52 s baseline). The fix's own cost is the retry count: `retries=17`
+  cumulative for the eight restores plus one 98-write probe run, i.e. ~1.1 retries and ~0.7 s per
+  restore. **Was any stored value actually stale?** Yes in the measurements - every unanswered write
+  left its field on the old value until a later request carried it (that is what makes this a state
+  loss, not only a red line) - and no, inside the eight restores: 0 read-back mismatches, because
+  the archive's values were already on the rig. **Remaining, not this card:** the mechanism that
+  destroys the request at the node is the E59 half (the DAS drains its own RX ring while it waits
+  for the bus, and has no room for a keep ring), and a DAS still answers the `Script` service with
+  silence instead of `FLAG_FAIL` (the other half above) - the relay's retry covers app writes, not
+  the read-back's script reads, which is what the app-side capability gate removed.
 
 - **E80 The retry backoff still has one address class that cannot be separated** (card `t_d7802076`,
   2026-11-10, host-verified only - no rig run in that card). The delay is now `2 + (phase ^ draw) ms`
