@@ -10,6 +10,7 @@ library;
 import 'dart:typed_data';
 
 import 'backup_value.dart';
+import 'hex_bytes.dart';
 import 'script_draft.dart';
 import 'script_file.dart';
 import 'script_instructions.dart';
@@ -357,6 +358,16 @@ const List<int> _propertyBits = [
   ScriptProperties.functionLibrary,
 ];
 
+/// The script as the restore plan names it: its function name and the `SCR_XXX` file / slot it
+/// occupies.
+///
+/// Shared by [BackupScript.toDraft]'s hex-warning attribution and by `restoreItemSubject`, so a
+/// warning line and the plan row it belongs to cannot name the same script two different ways.
+String backupScriptSubject(BackupScript script) =>
+    '${script.functionName.isEmpty ? 'Script' : script.functionName} '
+    '(${scriptFileName(script.slot)}'
+    '${script.slot < 0 ? ', no slot' : ', slot ${script.slot}'})';
+
 class BackupScript {
   final int slot; // SCR file id (0..4095), or -1 when unknown
   final String functionName;
@@ -477,10 +488,32 @@ class BackupScript {
   }
 
   /// Rebuilds the editable draft (and thus the `SCR_XXX` image via `toImage`).
-  ScriptDraft toDraft() {
-    ScriptDraftValue value(BackupScriptValue v) {
+  ///
+  /// [warnings] is the archive-import side of the hex ruling (`hex_bytes.dart`), the same list
+  /// `decodeSemantic` takes: a hex-carrying value whose digits do not pair up still decodes - a
+  /// script that restores today keeps restoring - and every dropped digit is appended here,
+  /// attributed to this script's slot and to the value it was read from. The restore's script
+  /// write path passes a list and reports what it collected; a caller that is only re-encoding or
+  /// comparing images passes nothing and pays nothing.
+  ScriptDraft toDraft({List<HexTruncation>? warnings}) {
+    ScriptDraftValue value(
+      BackupScriptValue v,
+      String section, {
+      bool isInput = false,
+    }) {
       final type = dataTypeFromWord(v.type) ?? DataType.number;
-      final bytes = decodeSemantic(type, v.value, size: v.size);
+      final rowWarnings = <HexTruncation>[];
+      final bytes = decodeSemantic(
+        type,
+        v.value,
+        size: v.size,
+        warnings: rowWarnings,
+      );
+      for (final warning in rowWarnings) {
+        warnings?.add(
+          warning.at('${backupScriptSubject(this)} / $section "${v.name}"'),
+        );
+      }
       return ScriptDraftValue(
         name: v.name,
         type: type,
@@ -508,16 +541,16 @@ class BackupScript {
     // A draft never carries a literal a predefine can carry (`script_literals.dart`), so the
     // archive's semantic form and the image rebuilt from it agree on the constant table.
     final literals = convertScriptLiterals(
-      constants: [for (final v in constants) value(v)],
+      constants: [for (final v in constants) value(v, 'constant')],
       lines: [for (final l in lines) l.toLine()],
       functions: [for (final f in functions) f.toFunction()],
     );
     return ScriptDraft(
       functionName: functionName,
       properties: props,
-      inputs: [for (final v in inputs) value(v)],
-      outputs: [for (final v in outputs) value(v)],
-      variables: [for (final v in variables) value(v)],
+      inputs: [for (final v in inputs) value(v, 'input', isInput: true)],
+      outputs: [for (final v in outputs) value(v, 'output')],
+      variables: [for (final v in variables) value(v, 'variable')],
       constants: literals.constants,
       lines: literals.lines,
       functions: literals.functions,

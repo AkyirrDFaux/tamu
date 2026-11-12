@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/backup_script.dart';
+import 'package:tamuapp/core/hex_bytes.dart';
 import 'package:tamuapp/core/script_draft.dart';
 import 'package:tamuapp/core/script_file.dart';
 import 'package:tamuapp/core/script_instructions.dart';
@@ -76,6 +77,26 @@ List<int> _imageFor(ScriptDraft draft, int slot) {
   return image;
 }
 
+/// A script whose one constant is a raw hex value: `Undefined` is the hex-carrying type
+/// (`encodeSemantic` writes `{'hex': ...}` for it), so a digit left over is visible in the bytes.
+BackupScript _hexConstantScript(String hex) => BackupScript(
+  slot: 3,
+  functionName: 'Beacon',
+  properties: const [],
+  inputs: const [],
+  outputs: const [],
+  variables: const [],
+  constants: [
+    BackupScriptValue(
+      name: 'Payload',
+      type: DataType.undefined.word,
+      size: 2,
+      value: {'hex': hex},
+    ),
+  ],
+  lines: const [],
+);
+
 void main() {
   test('script serialises semantically and re-serialises identically', () {
     final draft = _draft();
@@ -119,5 +140,46 @@ void main() {
     final parsed = ScriptFileData.parse(image);
     final backup = BackupScript.fromDraft(0, ScriptDraft.fromFile(parsed));
     expect(backup.toDraft().toImage(), image);
+  });
+
+  // The script half of Akyirr's hex ruling (2026-11-12): the archive import stays LENIENT - a
+  // script that restores today keeps restoring - and every dropped digit is a warning line naming
+  // the slot and the value it came from, instead of vanishing with the nibble.
+  test('a script constant read short keeps its bytes and says which value', () {
+    final backup = _hexConstantScript('12345');
+    final warnings = <HexTruncation>[];
+
+    final draft = backup.toDraft(warnings: warnings);
+
+    // LENIENT: `12345` still makes `0x12 0x34`, which is what this script has always written.
+    expect(draft.constants.single.value, [0x12, 0x34]);
+    expect(
+      draft.toImage(),
+      backup.toDraft().toImage(),
+      reason: 'a warning is not a change to the bytes',
+    );
+
+    // COUNTED: one line, naming the script slot and the constant it was read from.
+    expect(warnings, hasLength(1));
+    final warning = warnings.single;
+    expect(warning.where, 'Beacon (SCR_003, slot 3) / constant "Payload"');
+    expect(warning.text, '12345');
+    expect(warning.offset, 4, reason: 'the `5` at index 4 has no pair');
+    expect(warning.byteCount, 2);
+    expect(
+      warning.line,
+      'Beacon (SCR_003, slot 3) / constant "Payload" - "12345": odd hex '
+      'digit count; the digit at character 4 has no pair, so the value is '
+      '2 bytes',
+    );
+  });
+
+  test('a well-formed script constant produces no warning', () {
+    final warnings = <HexTruncation>[];
+
+    final draft = _hexConstantScript('1234').toDraft(warnings: warnings);
+
+    expect(draft.constants.single.value, [0x12, 0x34]);
+    expect(warnings, isEmpty);
   });
 }

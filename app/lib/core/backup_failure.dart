@@ -37,10 +37,7 @@ String restoreEntrySubject(BackupBlock block, BackupEntry entry) =>
 /// at a row the owner can find on screen.
 String restoreItemSubject(RestoreItem item) => switch (item.kind) {
   RestoreKind.entry => restoreEntrySubject(item.block!, item.entry!),
-  RestoreKind.script =>
-    '${item.script!.functionName.isEmpty ? 'Script' : item.script!.functionName} '
-        '(${scriptFileName(item.script!.slot)}'
-        '${item.script!.slot < 0 ? ', no slot' : ', slot ${item.script!.slot}'})',
+  RestoreKind.script => backupScriptSubject(item.script!),
   RestoreKind.subscription =>
     'from ${item.subscription!.provider} '
         '(${item.subscription!.source.block} / ${item.subscription!.source.field}) '

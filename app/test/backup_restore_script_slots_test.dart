@@ -182,6 +182,27 @@ BackupScript _script(
   lines: const [],
 );
 
+/// A script whose one constant is a raw hex value: `Undefined` is the hex-carrying type, so the
+/// archive's own text decides the bytes (`12345` -> `0x12 0x34`, one digit dropped).
+BackupScript _hexConstantScript(int slot, String name, String hex) =>
+    BackupScript(
+      slot: slot,
+      functionName: name,
+      properties: const [],
+      inputs: const [],
+      outputs: const [],
+      variables: const [],
+      constants: [
+        BackupScriptValue(
+          name: 'Payload',
+          type: DataType.undefined.word,
+          size: 2,
+          value: {'hex': hex},
+        ),
+      ],
+      lines: const [],
+    );
+
 /// The image a script item writes, so a test can seed the device with the SAME bytes (unchanged) or
 /// different ones (changed).
 List<int> _image(BackupScript script) => script.toDraft().toImage();
@@ -919,5 +940,52 @@ void main() {
     expect(swept.prunes.single.unloaded, {9: 9});
     expect(swept.failures, isEmpty);
     expect(core.unloads, [9]);
+  });
+
+  // The script half of Akyirr's hex ruling (2026-11-12): a script value read with a hex digit left
+  // over still becomes the bytes it always did, and the dropped digit is now a report line naming
+  // the slot and the value - the same treatment the SNDB serial gets.
+  test('a script value read short is written as before and reported', () async {
+    final script = _hexConstantScript(1, 'Beacon', '12345');
+    final plan = _plan(_device([script]), _live());
+    expect(plan.items.single.ready, isTrue);
+
+    final result = await applyRestorePlan(plan);
+
+    // LENIENT: the file on the device is the image this script has always written. Read it back
+    // through the codec so the assertion is about the BYTES, not about rebuilding them the same
+    // way the write did.
+    expect(core.files['SCR_001'], script.toDraft().toImage());
+    expect(
+      BackupScript.fromImage(1, core.files['SCR_001']!).constants.single.value,
+      {'hex': '1234'},
+      reason: 'the odd digit is dropped, as before - it is not a refusal',
+    );
+
+    // COUNTED: one line, naming the script slot and the constant it was read from, and no failure.
+    expect(result.hexWarnings, hasLength(1));
+    expect(
+      result.hexWarnings.single.where,
+      'Beacon (SCR_001, slot 1) / constant "Payload"',
+    );
+    expect(
+      result.hexWarningLines.single,
+      'Beacon (SCR_001, slot 1) / constant "Payload" - "12345": odd hex '
+      'digit count; the digit at character 4 has no pair, so the value is '
+      '2 bytes',
+    );
+    expect(result.failed, 0);
+    expect(result.written, 1);
+    expect(result.counts, contains('1 read short (a hex digit had no pair)'));
+  });
+
+  test('a well-formed script value is written without a warning', () async {
+    final script = _hexConstantScript(1, 'Beacon', '1234');
+
+    final result = await applyRestorePlan(_plan(_device([script]), _live()));
+
+    expect(core.files['SCR_001'], script.toDraft().toImage());
+    expect(result.hexWarnings, isEmpty);
+    expect(result.counts, isNot(contains('read short')));
   });
 }

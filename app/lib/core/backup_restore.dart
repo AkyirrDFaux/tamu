@@ -4300,8 +4300,9 @@ Future<RestoreReport> applyRestorePlan(
   // The SNDB is written once per record, through a free function rather than a client: give it a
   // trace of its own so a refused row is reported with its code like every other kind.
   final sndbTrace = RequestTrace();
-  // The hex values this run read SHORT while writing (the SNDB serial, whose decode happens here
-  // rather than in the plan). The plan's own rows are already on `plan.hexWarnings`.
+  // The hex values this run read SHORT while writing (the SNDB serial and a script's constants,
+  // whose decodes happen here rather than in the plan). The plan's own rows are already on
+  // `plan.hexWarnings`.
   final runWarnings = <HexTruncation>[];
   // What this run measured about the script images it wrote (see [ScriptChanges]): the reload phase
   // acts on the difference between what the device HELD and what was written, not on the fact that
@@ -4519,7 +4520,16 @@ Future<RestoreReport> applyRestorePlan(
         final slot = item.script!.slot;
         final name = scriptFileName(slot);
         try {
-          final image = item.script!.toDraft().toImage();
+          final scriptWarnings = <HexTruncation>[];
+          final image = item.script!
+              .toDraft(warnings: scriptWarnings)
+              .toImage();
+          // A script value read with a hex digit left over still becomes the bytes it always did
+          // (the import stays lenient), and the dropped digit is now a report line naming this
+          // script's slot and the value - the same treatment the SNDB serial gets below. Collected
+          // AFTER the image built, so a script whose semantic form cannot be rebuilt at all reports
+          // its failure and no warning about bytes nobody wrote.
+          runWarnings.addAll(scriptWarnings);
           // Measure BEFORE the write, so "changed" is a fact about this device rather than an
           // assumption about restores: what it held now against what is about to be written.
           final held = await store.readFile(name);
