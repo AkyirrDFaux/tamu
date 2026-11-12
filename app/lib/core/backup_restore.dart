@@ -2844,9 +2844,6 @@ class ScriptChanges {
       _links[targetId] ?? const {};
 }
 
-/// Whether two script images are byte-identical.
-bool sameImage(List<int> a, List<int> b) => sameBytes(a, b);
-
 /// Whether the archive's semantic script and the script file the device holds describe the same
 /// script; null when the archive's own script cannot be rebuilt into an image at all (the apply
 /// reports that, so there is nothing to classify).
@@ -2955,6 +2952,47 @@ class ScriptReloadReport {
   String get refusedText => ScriptSlotPrune.slotText(refused);
 }
 
+/// The live targets a restore's script phases work on, grouped per target node.
+///
+/// A slot and a file belong to the NODE, so two archive devices remapped onto one target share
+/// one slot table and one file table, and a phase that walks sources has to union their needs
+/// against that target. A source with no target is not swept at all (the plan already reported
+/// its items as unplaceable), and a target without the script role has no slots or files to
+/// sweep. [reloadChangedScripts], [pruneScriptSlots] and [pruneScriptFiles] all start from this
+/// map, so the grouping (and what it leaves out) is decided in one place.
+({Map<int, List<BackupDevice>> sourcesByTarget, Map<int, LiveDevice> targets})
+scriptTargets(RestorePlan plan) {
+  final sourcesByTarget = <int, List<BackupDevice>>{};
+  final targets = <int, LiveDevice>{};
+  for (final source in plan.devices) {
+    final target = plan.deviceTargets[source.id];
+    if (target == null) continue;
+    if (target.capabilities & Capability.scripts == 0) continue;
+    targets[target.id] = target;
+    sourcesByTarget.putIfAbsent(target.id, () => []).add(source);
+  }
+  return (sourcesByTarget: sourcesByTarget, targets: targets);
+}
+
+/// The failure a phase reports when the read its decision rests on did not answer.
+///
+/// Every sweep and reload phase below declines on a table or a slot map it could not read -
+/// "could not look" is not "holds nothing" - and the row it declines with has the same shape:
+/// the node, the read as its subject, and no code from the device. [kindWord] names what was
+/// being read and [meaning] says what the caller could not decide without it.
+RestoreFailure _failedRead(
+  LiveDevice target,
+  String kindWord,
+  RequestTrace trace,
+  String meaning,
+) => RestoreFailure.device(
+  target,
+  kindWord: kindWord,
+  subject: 'read',
+  fault: trace.fault,
+  meaning: meaning,
+);
+
 /// Reloads every loaded script slot whose backing script this restore changed, and reports what it
 /// did with every loaded slot - reloaded, refused, or deliberately left alone.
 ///
@@ -2998,28 +3036,6 @@ class ScriptReloadReport {
 /// so a slot it is about to load is not in the loaded map here and cannot be loaded twice. A target
 /// whose slot map cannot be read is reported as a skipped phase and a failure, never as "nothing
 /// changed".
-/// The live targets a restore's script phases work on, grouped per target node.
-///
-/// A slot and a file belong to the NODE, so two archive devices remapped onto one target share
-/// one slot table and one file table, and a phase that walks sources has to union their needs
-/// against that target. A source with no target is not swept at all (the plan already reported
-/// its items as unplaceable), and a target without the script role has no slots or files to
-/// sweep. [reloadChangedScripts], [pruneScriptSlots] and [pruneScriptFiles] all start from this
-/// map, so the grouping (and what it leaves out) is decided in one place.
-({Map<int, List<BackupDevice>> sourcesByTarget, Map<int, LiveDevice> targets})
-scriptTargets(RestorePlan plan) {
-  final sourcesByTarget = <int, List<BackupDevice>>{};
-  final targets = <int, LiveDevice>{};
-  for (final source in plan.devices) {
-    final target = plan.deviceTargets[source.id];
-    if (target == null) continue;
-    if (target.capabilities & Capability.scripts == 0) continue;
-    targets[target.id] = target;
-    sourcesByTarget.putIfAbsent(target.id, () => []).add(source);
-  }
-  return (sourcesByTarget: sourcesByTarget, targets: targets);
-}
-
 Future<({List<ScriptReloadReport> reports, List<RestoreFailure> failures})>
 reloadChangedScripts(RestorePlan plan, ScriptChanges changes) async {
   final reports = <ScriptReloadReport>[];
@@ -3074,13 +3090,11 @@ reloadChangedScripts(RestorePlan plan, ScriptChanges changes) async {
         ),
       );
       failures.add(
-        RestoreFailure.device(
+        _failedRead(
           target,
-          kindWord: 'script slots',
-          subject: 'read',
-          fault: client.trace.fault,
-          meaning:
-              'the target did not return its slot map, so a script this run '
+          'script slots',
+          client.trace,
+          'the target did not return its slot map, so a script this run '
               'changed may still run its old image',
         ),
       );
@@ -3480,13 +3494,11 @@ pruneScriptSlots(RestorePlan plan) async {
         ),
       );
       failures.add(
-        RestoreFailure.device(
+        _failedRead(
           target,
-          kindWord: 'script slots',
-          subject: 'read',
-          fault: client.trace.fault,
-          meaning:
-              'the target did not return its slot map (no reply or FAIL), so a '
+          'script slots',
+          client.trace,
+          'the target did not return its slot map (no reply or FAIL), so a '
               'script the archive does not carry may still be loaded and running',
         ),
       );
@@ -3766,13 +3778,11 @@ pruneScriptFiles(RestorePlan plan) async {
         ),
       );
       failures.add(
-        RestoreFailure.device(
+        _failedRead(
           target,
-          kindWord: 'script files',
-          subject: 'read',
-          fault: storage.trace.fault,
-          meaning:
-              'the target did not return its file table (no reply or FAIL), so a '
+          'script files',
+          storage.trace,
+          'the target did not return its file table (no reply or FAIL), so a '
               'stored script the archive does not carry may still be loadable',
         ),
       );
@@ -3805,13 +3815,11 @@ pruneScriptFiles(RestorePlan plan) async {
         ),
       );
       failures.add(
-        RestoreFailure.device(
+        _failedRead(
           target,
-          kindWord: 'script files',
-          subject: 'read',
-          fault: scripts.trace.fault,
-          meaning:
-              'the target did not return its slot map, so a file a slot still '
+          'script files',
+          scripts.trace,
+          'the target did not return its slot map, so a file a slot still '
               'holds cannot be told from a stale one',
         ),
       );
@@ -4124,13 +4132,11 @@ pruneRequesterTable(RestorePlan plan) async {
         ),
       );
       failures.add(
-        RestoreFailure.device(
+        _failedRead(
           target,
-          kindWord: 'requester table',
-          subject: 'read',
-          fault: subs.trace.fault,
-          meaning:
-              'the target did not return its requester table (no reply or '
+          'requester table',
+          subs.trace,
+          'the target did not return its requester table (no reply or '
               'FAIL), so the entries the archive does not name are still there',
         ),
       );
@@ -4537,7 +4543,7 @@ Future<RestoreReport> applyRestorePlan(
                 slot,
                 'the device did not return $name, so its old image is unknown',
               );
-            } else if (!sameImage(held, image)) {
+            } else if (!sameBytes(held, image)) {
               changes.note(
                 target.id,
                 slot,
@@ -4718,7 +4724,7 @@ Future<RestoreReport> applyRestorePlan(
                 'the device did not return ${item.file!.name}, so its old '
                 'image is unknown',
               );
-            } else if (!sameImage(held, item.file!.bytes)) {
+            } else if (!sameBytes(held, item.file!.bytes)) {
               changes.note(
                 target.id,
                 fileId,
