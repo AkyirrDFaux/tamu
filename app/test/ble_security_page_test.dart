@@ -10,11 +10,12 @@ import 'support/block_reads.dart';
 
 /// The Bluetooth panel, served by a fake device so every state is reachable off the rig.
 ///
-/// The block is six fields and USB-only for writes, so the cases that matter are: a device without
-/// the block (the panel draws NOTHING), a reading shown as the device reported it, the bond list
-/// decoded from its one array (rename, delete, and the empty slot that says "pair it instead"),
-/// the window as a command, the display name as a live setting, and a refused write over Bluetooth
-/// answered with the reason rather than a silent no-op.
+/// The block is six fields and writable over USB or a secured Bluetooth link, so the cases that
+/// matter are: a device without the block (the panel draws NOTHING), a reading shown as the device
+/// reported it, the bond list decoded from its one array (rename, delete, and the empty slot that
+/// says "pair it instead"), the window as a command, the display name as a live setting, a write
+/// over a secured Bluetooth link that lands, and a link the device will not write from answered
+/// with the reason rather than a silent no-op.
 class _FakeBleDevice extends RegisterClient {
   _FakeBleDevice({
     required super.deviceId,
@@ -26,8 +27,9 @@ class _FakeBleDevice extends RegisterClient {
   /// Whether the enumeration reports the BLE Settings block.
   final bool present;
 
-  /// Models the firmware's rule that every write to this block is refused unless it arrived over
-  /// USB: the device answers `FLAG_FAIL`, which the client reports as a null reply.
+  /// Models a device that refuses the write (the firmware answers `FLAG_FAIL`, which the client
+  /// reports as a null reply). Refusal is what a link that cannot write the block - one that is not
+  /// a secured session - gets; a secured Bluetooth link writes it like USB does.
   final bool refuseWrites;
 
   /// The block's live values, keyed by `(field, key)`; a write lands here so a re-read shows it.
@@ -163,6 +165,7 @@ void main() {
     bool present = true,
     Map<(int, int), ({ValueInfo meta, List<int> value})>? fields,
     bool overUsb = true,
+    bool secured = true,
     bool refuseWrites = false,
     Size size = const Size(900, 1600),
   }) async {
@@ -187,6 +190,7 @@ void main() {
           deviceId: 1,
           isConnected: () => true,
           isUsbLink: () => overUsb,
+          isSecuredLink: () => secured,
           clientFactory: (_) => device,
         ),
       ),
@@ -298,8 +302,8 @@ void main() {
       expect(find.text('Bonded phones only'), findsOneWidget);
       expect(
         find.text(
-          'Bonded devices can reconnect at any time. New pairings need a window, which only '
-          'USB can open.',
+          'Bonded devices can reconnect at any time. New pairings need a window, which the '
+          'panel opens over USB or from a secured Bluetooth link.',
         ),
         findsOneWidget,
       );
@@ -666,27 +670,68 @@ void main() {
   });
 
   group('over a Bluetooth link', () {
-    testWidgets('the panel says the block is read-only before the form', (
+    // The firmware accepts a write from the SECURED session the radio admitted
+    // (`Blocks/BleWritePolicy.h` `BleWriteAllowed`), so the panel states that rule: a secured link
+    // changes these settings like the cable does, and only a link that is not a secured session is
+    // refused - with the way out. The retired copy ('Bluetooth settings can only be changed over a
+    // USB link') is gone, not reworded.
+    testWidgets('a secured link may change the block, and says so', (
       tester,
     ) async {
-      await pump(tester, overUsb: false);
+      final device = await pump(tester, overUsb: false);
 
       expect(
-        find.textContaining('can only be changed over a USB link'),
+        find.textContaining('The link is a secured session'),
         findsOneWidget,
       );
+      expect(
+        find.textContaining('only be changed over a USB link'),
+        findsNothing,
+      );
+
+      // The claim in the copy, exercised: the write lands over this link.
+      await tester.tap(find.byTooltip('Rename this bond'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'Bench');
+      await tester.tap(find.widgetWithText(FilledButton, 'Set label'));
+      await tester.pumpAndSettle();
+
+      expect(device.writes.single.field, bleFieldBonds);
       // The reading is still shown: the block is readable over any link.
       expect(find.text('C4:7F:51:AA:BB:CC'), findsOneWidget);
     });
 
+    testWidgets('a link that is not a secured session is told why', (
+      tester,
+    ) async {
+      await pump(tester, overUsb: false, secured: false);
+
+      expect(
+        find.textContaining('not a secured session, so the device refuses'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Pair this phone with the device again'),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('a refused write is explained, not dropped', (tester) async {
-      final device = await pump(tester, overUsb: false, refuseWrites: true);
+      final device = await pump(
+        tester,
+        overUsb: false,
+        secured: false,
+        refuseWrites: true,
+      );
 
       await tester.tap(find.byTooltip('Set the passkey'));
       await tester.pumpAndSettle();
       // The dialog says it before the code is typed, not only after the refusal.
       expect(
-        find.textContaining('the device will refuse the write'),
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.textContaining('not a secured session'),
+        ),
         findsOneWidget,
       );
       await tester.enterText(find.byType(TextField), '123456');
@@ -702,7 +747,7 @@ void main() {
     });
 
     testWidgets('a refused bond write is explained too', (tester) async {
-      await pump(tester, overUsb: false, refuseWrites: true);
+      await pump(tester, overUsb: false, secured: false, refuseWrites: true);
 
       await tester.tap(find.byTooltip('Rename this bond'));
       await tester.pumpAndSettle();

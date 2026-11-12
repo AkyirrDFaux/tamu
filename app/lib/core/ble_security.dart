@@ -463,7 +463,8 @@ String bleSecurityDetail(
 ) => switch (condition) {
   BleSecurityCondition.radioOff =>
     'The device is not using its radio at all: nothing is advertised and no connection is '
-        'accepted. Switch it back on over USB.',
+        'accepted. Nothing can reach it over Bluetooth in that state, so switch it back on '
+        'over USB.',
   BleSecurityCondition.windowOpen =>
     snapshot.bondCount == 0
         ? 'The device holds no bonds, so it is waiting for its first phone to pair. '
@@ -472,12 +473,12 @@ String bleSecurityDetail(
   // E64 ruling C: advertising does not depend on the window, so a closed window is about
   // strangers, never about the phone that already paired.
   BleSecurityCondition.closedBonded =>
-    'Bonded devices can reconnect at any time. New pairings need a window, which only USB '
-        'can open.',
+    'Bonded devices can reconnect at any time. New pairings need a window, which the panel '
+        'opens over USB or from a secured Bluetooth link.',
   BleSecurityCondition.closedNoBonds =>
     'The device holds no bonds, so any phone may pair with it: pair from your phone\'s '
         'Bluetooth settings. It opens a five-minute window by itself when it boots, and a '
-        'window can also be opened over USB at any time.',
+        'window can also be opened at any time, over USB or from a secured Bluetooth link.',
   BleSecurityCondition.noRadio =>
     'The block reports no passkey, no bonds, no window and no name, which is a block a build '
         'reports without driving a radio.',
@@ -554,15 +555,27 @@ bool bleLinkWritesSettings({
 /// Why a control on the panel cannot work over this link, in one sentence — or null when it can.
 ///
 /// The panel says it before the user fills a form rather than after a rejected write. The rule is
-/// the firmware's `BleWriteAllowed` (`Blocks/BleWritePolicy.h`): USB always, and a BLE frame only
-/// on a secured session — NOT "USB only", which is what this sentence below still says and what
-/// the panel still shows on every Bluetooth link. That copy is user-visible wording, so it is
-/// reported for a card rather than rewritten by a cleanup (see [bleLinkWritesSettings] for the
-/// rule the code actually asks).
-String? bleWriteRestriction({required bool overUsb}) => overUsb
+/// the firmware's `BleWriteAllowed` (`Blocks/BleWritePolicy.h`): a frame that arrived over USB, or
+/// a BLE frame whose link is the secured session. A secured Bluetooth link therefore changes the
+/// block like the cable does, and the one case left for this sentence is a BLE link that is not a
+/// secured session — [bleLinkWritesSettings] decides that, never "is this USB". The sentence a
+/// secured link gets is [bleSecuredLinkNotice], so the panel states the rule either way.
+String? bleWriteRestriction({
+  required bool overUsb,
+  bool bleLinkSecured = true,
+}) => bleLinkWritesSettings(overUsb: overUsb, bleLinkSecured: bleLinkSecured)
     ? null
-    : 'Bluetooth settings can only be changed over a USB link to the device. A phone cannot '
-          'change the key, wipe the bonds, rename the device or switch its radio off.';
+    : 'This Bluetooth link is not a secured session, so the device refuses every change to '
+          'these settings. Pair this phone with the device again and reconnect - the device '
+          'takes a change from a USB link or from a secured Bluetooth link, and this one is '
+          'neither.';
+
+/// What a panel says about a Bluetooth link that MAY write the block: the same rule, stated for
+/// the link the user is actually on instead of as a refusal.
+const String bleSecuredLinkNotice =
+    'This app is connected over Bluetooth. The link is a secured session - encrypted and '
+    'bonded, and authenticated too while a passkey is set - so these settings can be changed '
+    'from here just like over the cable.';
 
 /// Why a write the panel sent was refused, as a sentence the user can act on.
 ///
@@ -766,9 +779,9 @@ BleLinkGuidance bleLinkGuidance({
           "Open your phone's Bluetooth settings and find this device in the paired list.",
           'Choose "Forget" (or "Unpair") for it.',
           'Come back here and connect again. Pairing again is a new pairing, so it needs a '
-              'pairing window: open one from the device\'s Bluetooth panel over USB, and on a '
-              'device whose bond list is now empty a power cycle opens a five-minute one by '
-              'itself.',
+              'pairing window: open one from the device\'s Bluetooth panel - over USB, or from '
+              'a secured Bluetooth link - and on a device whose bond list is now empty a power '
+              'cycle opens a five-minute one by itself.',
         ],
         likelyStaleBond: true,
       );
@@ -788,7 +801,8 @@ BleLinkGuidance bleLinkGuidance({
           'If this app can reach the device over USB, its Bluetooth panel says whether it holds '
               'bonds and whether a pairing window is open.',
           'A phone the device holds no bond for needs a pairing window: open one from that panel '
-              '(only USB can) and connect again within the time it shows.',
+              '- over USB, or from a secured Bluetooth link - and connect again within the time '
+              'it shows.',
           'A device whose bond list is empty admits any phone, and opens a five-minute window by '
               'itself on every boot, so pairing still failing there means the device is off, out '
               'of range, or its radio is switched off.',
@@ -808,9 +822,9 @@ BleLinkGuidance bleLinkGuidance({
         steps: [
           'If this app can reach the device over USB, its Bluetooth panel says which of the two '
               'it is.',
-          'Open a pairing window from that panel (only USB can) and connect again within the '
-              'time it shows: pairing is the only way in for a phone the device holds no bond '
-              'for.',
+          'Open a pairing window from that panel - over USB, or from a secured Bluetooth link - '
+              'and connect again within the time it shows: pairing is the only way in for a '
+              'phone the device holds no bond for.',
           "Otherwise open your phone's Bluetooth settings, choose \"Forget\" for this device and "
               'connect again - that clears a bond the device no longer has. It is the normal step '
               'after a firmware update, and pairing again then needs a window too.',

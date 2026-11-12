@@ -280,7 +280,7 @@ class _WifiPageState extends State<WifiPage>
           // The device refuses a write that arrived over BLE (firmware WifiSettingsGlue.h), so
           // say it before the form is filled rather than after a rejected write.
           if (!_overUsb)
-            ...usbOnlyNotice(
+            ...linkNotice(
               context,
               'Changing these settings needs a USB link to the device; over any other link the '
               'device refuses the write.',

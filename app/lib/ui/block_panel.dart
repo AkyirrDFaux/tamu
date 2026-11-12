@@ -10,15 +10,24 @@ import 'widgets.dart';
 /// [BleFieldRead]; a block panel does not have to be the BLE one to read a field.)
 typedef BlockFieldRead = ({ValueInfo meta, List<int> value})?;
 
-/// The up-front line a panel shows about a block that only takes a write over USB: the usb mark in
-/// the warning ink and one sentence. Returned as a list so the caller can spread it into a column
-/// (both block panels draw it the same way, and the sentence is the caller's).
-List<Widget> usbOnlyNotice(BuildContext context, String message) => [
+/// The up-front line a panel shows about the link this app is on: a mark and one sentence. Returned
+/// as a list so the caller can spread it into a column (both block panels draw it the same way, and
+/// the sentence is the caller's).
+///
+/// The defaults are the WiFi panel's shape - the usb mark in the warning ink, because that block
+/// takes a write only over USB. A panel whose link may write the block passes its own mark and ink
+/// instead of reading as a warning (`BleSecurityPage` does, over a secured Bluetooth link).
+List<Widget> linkNotice(
+  BuildContext context,
+  String message, {
+  IconData icon = Icons.usb,
+  Color color = kWarning,
+}) => [
   const SizedBox(height: Spacing.md),
   Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const Icon(Icons.usb, size: IconSize.sm, color: kWarning),
+      Icon(icon, size: IconSize.sm, color: color),
       const SizedBox(width: Spacing.sm),
       Expanded(
         child: Text(message, style: Theme.of(context).textTheme.bodySmall),

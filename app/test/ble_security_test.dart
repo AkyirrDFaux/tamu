@@ -505,8 +505,8 @@ void main() {
       expect(bleSecurityHeadline(snapshot.condition), 'Bonded phones only');
       expect(
         bleSecurityDetail(snapshot.condition, snapshot),
-        'Bonded devices can reconnect at any time. New pairings need a window, which only USB '
-        'can open.',
+        'Bonded devices can reconnect at any time. New pairings need a window, which the panel '
+        'opens over USB or from a secured Bluetooth link.',
       );
     });
 
@@ -601,10 +601,23 @@ void main() {
       expect(bleWriteRestriction(overUsb: true), isNull);
     });
 
-    test('any other link is told before the form is filled', () {
-      final restriction = bleWriteRestriction(overUsb: false)!;
-      expect(restriction, contains('USB'));
-      expect(restriction, contains('change'));
+    test('a secured Bluetooth link may change the block', () {
+      // `BleWriteAllowed(AppFrameCameOverUsb(), AppFrameCameOverBle(), AppBLELinkSecured())`:
+      // the radio's secured session writes the block like the cable does, and every link this app
+      // holds is one, which is the default `bleLinkWritesSettings` takes.
+      expect(bleWriteRestriction(overUsb: false, bleLinkSecured: true), isNull);
+      expect(bleWriteRestriction(overUsb: false), isNull);
+    });
+
+    test('a link that is not a secured session is told the rule', () {
+      final restriction = bleWriteRestriction(
+        overUsb: false,
+        bleLinkSecured: false,
+      )!;
+      // What is wrong, and the two ways out of it.
+      expect(restriction, contains('not a secured session'));
+      expect(restriction, contains('USB link'));
+      expect(restriction, contains('Pair this phone'));
     });
 
     test('a refusal names the link, or the value the device would not take', () {

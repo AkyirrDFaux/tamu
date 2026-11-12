@@ -57,6 +57,16 @@ class BleSecurityPage extends StatefulWidget {
   /// `bleLinkWritesSettings` is the app's half of that rule.
   final bool Function()? isUsbLink;
 
+  /// Test seam: whether that link is a SECURED Bluetooth session (`bleLinkSecured` in
+  /// `core/ble_security.dart`'s rule).
+  ///
+  /// The default is the app's real state, and it is the same default `bleLinkWritesSettings` takes:
+  /// every link this app holds is such a session, because the device's characteristics demand an
+  /// encrypted link (authenticated too once a passkey is set) and its admission gate lets the peer
+  /// in only after that - a link the app can send a request on IS the secured session. The seam
+  /// exists so a test can reach the one case the firmware still refuses.
+  final bool Function()? isSecuredLink;
+
   /// Test seam: how the page builds its register client. Defaults to a real [RegisterClient].
   final RegisterClient Function(int deviceId)? clientFactory;
 
@@ -65,6 +75,7 @@ class BleSecurityPage extends StatefulWidget {
     required this.deviceId,
     this.isConnected,
     this.isUsbLink,
+    this.isSecuredLink,
     this.clientFactory,
   });
 
@@ -99,6 +110,16 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   bool get _overUsb =>
       (widget.isUsbLink ??
       () => ConnectionManager.instance.transport is UsbTransport)();
+
+  /// Whether this app's link is a secured Bluetooth session - the second half of the firmware's
+  /// write gate, beside [bleLinkWritesSettings]'s own default for the same reason.
+  bool get _linkSecured => (widget.isSecuredLink ?? () => true)();
+
+  /// Why this link is refused a change to the block, or null when it may write: every notice below
+  /// asks the one predicate (`bleWriteRestriction`) so the panel and the device agree about which
+  /// links write.
+  String? get _restriction =>
+      bleWriteRestriction(overUsb: _overUsb, bleLinkSecured: _linkSecured);
 
   // What this panel is, for the shared refresh ([BlockPanelRefresh]): the `BLE Settings` block,
   // six fields, and a reading that knows which of them the device answered.
@@ -239,7 +260,11 @@ class _BleSecurityPageState extends State<BleSecurityPage>
     });
     showNotice(
       !wrote
-          ? bleWriteRefusal(overUsb: _overUsb, valueHint: valueHint)
+          ? bleWriteRefusal(
+              overUsb: _overUsb,
+              bleLinkSecured: _linkSecured,
+              valueHint: valueHint,
+            )
           : !persist
           ? done
           : saved
@@ -314,6 +339,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
         currentMs: currentMs,
         enabled: blockSnapshot?.enabled ?? true,
         overUsb: _overUsb,
+        secured: _linkSecured,
       ),
     );
     if (ms == null || !mounted) return;
@@ -351,7 +377,12 @@ class _BleSecurityPageState extends State<BleSecurityPage>
     showNotice(
       reply != null
           ? done
-          : bleBondsRefusal(overUsb: _overUsb, sent: bytes, held: held),
+          : bleBondsRefusal(
+              overUsb: _overUsb,
+              bleLinkSecured: _linkSecured,
+              sent: bytes,
+              held: held,
+            ),
     );
     await _refresh();
   }
@@ -389,8 +420,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
           'own Bluetooth settings, and then pair again - which needs a pairing window.'
           '${last ? '\n\nThis is the last bond, so the store is emptied, and the device opens a '
                     'five-minute pairing window by itself afterwards.' : ''}'
-          '${_overUsb ? '' : '\n\nThis app is connected over Bluetooth, so the device will refuse '
-                    'the write. Connect over USB to delete a bond.'}',
+          '${_restriction == null ? '' : '\n\n$_restriction'}',
       confirmLabel: 'Delete bond',
     );
     if (!ok || !mounted || slot < 0) return;
@@ -404,13 +434,16 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   }
 
   /// The passkey editor: six digits, with the consequences in plain words above the field. The
-  /// dialog is the confirmation - it states what the phone will ask, what `000000` means, and
-  /// that the code can only be set again over USB.
+  /// dialog is the confirmation - it states what the phone will ask, what `000000` means, and that
+  /// a code is replaced over USB when the phone that forgot it can no longer pair.
   Future<void> _askPasskey({required bool currentSet}) async {
     final digits = await showDialog<String>(
       context: context,
-      builder: (context) =>
-          _PasskeyDialog(currentSet: currentSet, overUsb: _overUsb),
+      builder: (context) => _PasskeyDialog(
+        currentSet: currentSet,
+        overUsb: _overUsb,
+        secured: _linkSecured,
+      ),
     );
     if (digits == null || !mounted) return;
     await _setPasskey(digits);
@@ -694,7 +727,7 @@ class _BleSecurityPageState extends State<BleSecurityPage>
             'If this phone stops connecting: the device may no longer hold a bond for it, and a '
             'device that holds bonds ignores phones it has no bond for. Forget the device in '
             "your phone's Bluetooth settings, then pair again from a pairing window - open one "
-            'here over USB.',
+            'here, over USB or from a secured Bluetooth link.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
@@ -714,9 +747,17 @@ class _BleSecurityPageState extends State<BleSecurityPage>
   }
 
   /// The up-front statement about the link this app is on. What the device ACCEPTS is decided by
-  /// [bleWriteRefusal]; this line only says that the panel is being read over Bluetooth.
-  List<Widget> _overBleNotice(BuildContext context) =>
-      usbOnlyNotice(context, bleWriteRestriction(overUsb: false)!);
+  /// [bleWriteRestriction]; this row states that rule in the words for the link the user is on - the
+  /// secured session's own line, or the sentence naming why this link is refused.
+  List<Widget> _overBleNotice(BuildContext context) {
+    final restriction = _restriction;
+    return linkNotice(
+      context,
+      restriction ?? bleSecuredLinkNotice,
+      icon: Icons.bluetooth,
+      color: restriction == null ? kTextSecondary : kWarning,
+    );
+  }
 }
 
 /// The state the panel is in, stated plainly: what the device reports about its radio and its
@@ -908,6 +949,7 @@ class _WindowDialog extends StatefulWidget {
     required this.currentMs,
     required this.enabled,
     required this.overUsb,
+    required this.secured,
   });
 
   /// The countdown the device reported when the dialog opened, offered as the starting value.
@@ -916,9 +958,13 @@ class _WindowDialog extends StatefulWidget {
   /// Whether the radio is on: a non-zero window cannot open with it off.
   final bool enabled;
 
-  /// Whether this app's link is USB. A write is refused on any other link, so the dialog says so
-  /// before a length is typed.
+  /// Whether this app's link is USB - the first half of the firmware's write gate.
   final bool overUsb;
+
+  /// Whether this app's link is a secured Bluetooth session - the other half. Together with
+  /// [overUsb] it decides, through [bleWriteRestriction], whether the dialog says the write will be
+  /// refused before a length is typed.
+  final bool secured;
 
   @override
   State<_WindowDialog> createState() => _WindowDialogState();
@@ -946,6 +992,10 @@ class _WindowDialogState extends State<_WindowDialog> {
     final problem = ms == null
         ? 'enter the length in milliseconds (0 closes the window)'
         : bleWindowProblem(ms, enabled: widget.enabled);
+    final restriction = bleWriteRestriction(
+      overUsb: widget.overUsb,
+      bleLinkSecured: widget.secured,
+    );
     return AlertDialog(
       title: const Text('Pairing window'),
       content: _PanelDialogBody(
@@ -961,12 +1011,8 @@ class _WindowDialogState extends State<_WindowDialog> {
             'now.',
             style: theme.textTheme.bodySmall,
           ),
-          if (!widget.overUsb)
-            ...usbOnlyNotice(
-              context,
-              'This app is connected over Bluetooth: the device will refuse the write. '
-              'Connect over USB to open a window.',
-            ),
+          if (restriction != null)
+            ...linkNotice(context, restriction, icon: Icons.bluetooth),
           const SizedBox(height: Spacing.lg),
           TextField(
             controller: _controller,
@@ -1115,16 +1161,24 @@ class _TextEditDialogState extends State<_TextEditDialog> {
 
 /// The passkey editor: six digits, and the consequences stated in plain words above the field.
 /// The dialog IS the confirmation - it says what the phone will ask, what `000000` means, and
-/// that a forgotten code can only be replaced over USB.
+/// that a forgotten code needs a USB link.
 class _PasskeyDialog extends StatefulWidget {
-  const _PasskeyDialog({required this.currentSet, required this.overUsb});
+  const _PasskeyDialog({
+    required this.currentSet,
+    required this.overUsb,
+    required this.secured,
+  });
 
   /// Whether a code is set now, so the copy can say the old one stops working.
   final bool currentSet;
 
-  /// Whether this app's link to the device is USB. The device refuses the write from any other
-  /// link, so the dialog says so before the code is typed instead of after a refusal.
+  /// Whether this app's link to the device is USB - the first half of the firmware's write gate.
   final bool overUsb;
+
+  /// Whether that link is a secured Bluetooth session - the other half. Together they decide,
+  /// through [bleWriteRestriction], whether the dialog says the write will be refused before the
+  /// code is typed instead of after a refusal.
+  final bool secured;
 
   @override
   State<_PasskeyDialog> createState() => _PasskeyDialogState();
@@ -1143,6 +1197,10 @@ class _PasskeyDialogState extends State<_PasskeyDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final digits = _controller.text;
+    final restriction = bleWriteRestriction(
+      overUsb: widget.overUsb,
+      bleLinkSecured: widget.secured,
+    );
     return AlertDialog(
       title: const Text('Set the passkey'),
       content: _PanelDialogBody(
@@ -1163,16 +1221,12 @@ class _PasskeyDialogState extends State<_PasskeyDialog> {
           ),
           const SizedBox(height: Spacing.md),
           Text(
-            'If you forget the code you must set a new one over USB: a phone that cannot pair '
-            'cannot change it.',
+            'If you forget the code you must set a new one over USB: a phone that can no '
+            'longer pair holds no secured link to write it over.',
             style: theme.textTheme.bodySmall,
           ),
-          if (!widget.overUsb)
-            ...usbOnlyNotice(
-              context,
-              'This app is connected over Bluetooth: the device will refuse the write. '
-              'Connect over USB to set the code.',
-            ),
+          if (restriction != null)
+            ...linkNotice(context, restriction, icon: Icons.bluetooth),
           const SizedBox(height: Spacing.lg),
           TextField(
             controller: _controller,
