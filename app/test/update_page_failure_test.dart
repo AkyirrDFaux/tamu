@@ -12,6 +12,7 @@ import 'package:tamuapp/core/bootloader_client.dart';
 import 'package:tamuapp/ui/update_page.dart';
 
 import 'support/bootloader_transport.dart';
+import 'support/fw_package.dart';
 
 /// Mounts the page over [transport] with four chunks (128 bytes) to write, taps Update, and lets
 /// the run finish. Every request answers immediately: the fake has no timers, and the client's
@@ -29,11 +30,13 @@ Future<void> _runUpdate(
     appSize: 0x4000,
     name: 'Tamu v2.0A',
   );
+  final fakePackage = PackageForTest(target: 'DAS_v0_1', image: testImage(128));
   await tester.pumpWidget(
     MaterialApp(
       home: UpdatePage(
         isConnected: () => true,
-        initialImage: testImage(128),
+        initialPackage: fakePackage.build(),
+        initialPackageName: fakePackage.name,
         clientFactory: () =>
             BootloaderClient(transport: transport, writePacing: Duration.zero),
       ),
@@ -101,7 +104,7 @@ void main() {
         reason: 'the offset and the count are named',
       );
       expect(
-        find.textContaining('digest '),
+        find.textContaining('digest 0x'),
         findsOneWidget,
         reason: 'both measures are reported, the digest first',
       );

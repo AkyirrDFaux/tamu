@@ -2062,3 +2062,35 @@ own CRC), so on a *correct* image it can produce a false difference - measured: 
 when the real difference was at `0x200`, and the same sweep reported 1, 2, 3 and 7 differing chunks
 on images whose digest matched. A follow-up card should chase the frame alignment on the half-duplex
 read path.
+
+## The update path takes a package now, and three facts around it (2026-11-12, card t_06e248bd)
+
+**Doc/code conflicts, reported not edited.** The Update page accepts only a `.fw.zip` and refuses a
+bare image (`app/lib/core/firmware_package.dart`), so two documents describe the old behaviour:
+
+- `Docs/App/Update.md` still says to choose "the device's main binary"; the page now offers the
+  package and says why, and a `.bin` picked anyway is refused by name
+  (`binaries/<target>-<version>.fw.zip`). Proposed replacement for that bullet:
+
+  > - Choose the device's firmware package (.fw.zip). A bare .bin is refused: the package carries
+  >   the image's address and digests in its manifest, and those are what the flash is checked
+  >   against.
+
+- **The package format is in no document at all.** Format 1 (entries, `manifest.json` fields,
+  `crc32`/`crc32_padded`, the 32-byte 0xFF padding) is specified only by
+  `firmware/tools/pack_firmware.py`'s docstring. A package is now the app's input, so
+  `Docs/Services/Bootloader.md` (or a new `Docs/Data Formats.md` section) should carry it — the
+  field list and the two digests, since a third reader would otherwise re-invent them.
+
+**The manifest's `sha256` is not compared by the app.** `pack_firmware.py` records it per image and
+`--verify` checks it, but the app has no hash dependency and checks `crc32`/`crc32_padded` instead —
+which are the two values the flash path needs anyway (the device's digest answers the padded one).
+The entry is therefore carried and unverified by the app: either the packer's contract for the app
+drops it, or `crypto` is added as a dependency. Owner decision, not an app-side guess.
+
+**Two of the four targets have no route.** `Tamu_bootloader` (`0x10000`) and `DAS_bootloader`
+(`0x08000000`) are in the app's address table (they are in `pack_firmware.py: TARGETS`), but neither
+flash route can reach them: the bootloader protocol's offsets are relative to the app-space start,
+and both bootloaders are only replaceable another way (E25/E26 for the DAS). A package naming one is
+refused as the wrong target, with both addresses in the sentence, rather than as an unknown target.
+Should a route ever exist, `routeTarget()` in `firmware_package.dart` is the one place to extend.

@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/ble_security.dart';
 import 'package:tamuapp/core/block_registry.dart';
+import 'package:tamuapp/core/bootloader.dart';
+import 'package:tamuapp/core/firmware_package.dart';
 import 'package:tamuapp/core/render_dict.dart';
 import 'package:tamuapp/core/script_errors.dart';
 import 'package:tamuapp/core/script_file.dart';
@@ -34,6 +36,29 @@ File? _firmwareFile(String relativePath) {
     if (file.existsSync()) return file;
   }
   return null;
+}
+
+/// The packager's `TARGETS` table: the address and image name per target.
+///
+/// `firmware/tools/pack_firmware.py` is the other half of a package's identity, so a target that
+/// moves (or a new one) has to be seen from here rather than discovered at a flash.
+Map<String, ({int address, String image})> _packerTargets() {
+  final file = _firmwareFile('tools/pack_firmware.py');
+  if (file == null) return const {};
+  final source = file.readAsStringSync();
+  final targets = <String, ({int address, String image})>{};
+  final block = RegExp(r'"(\w+)":\s*\{([^}]*)\}');
+  for (final match in block.allMatches(source)) {
+    final body = match.group(2)!;
+    final address = RegExp(r'"address":\s*"(0x[0-9A-Fa-f]+)"').firstMatch(body);
+    final image = RegExp(r'"image":\s*"([^"]+)"').firstMatch(body);
+    if (address == null || image == null) continue;
+    targets[match.group(1)!] = (
+      address: int.parse(address.group(1)!.substring(2), radix: 16),
+      image: image.group(1)!,
+    );
+  }
+  return targets;
 }
 
 Map<String, int> _firmwareDefines() {
@@ -842,4 +867,49 @@ void main() {
       );
     });
   }, skip: skipReason);
+
+  // The package the Update page verifies is `pack_firmware.py`'s output: its TARGETS table is
+  // where a target's address and image name come from, and PAD_TO is the chunk the app pads to.
+  final packer = _packerTargets();
+  group(
+    'firmware package contract (app vs packer)',
+    () {
+      test(
+        'every target sits at the packer\'s address with its image name',
+        () {
+          expect(packer.keys.toSet(), firmwareTargets.keys.toSet());
+          for (final entry in firmwareTargets.entries) {
+            expect(
+              packer[entry.key]?.address,
+              entry.value.address,
+              reason: '${entry.key} address',
+            );
+            expect(
+              packer[entry.key]?.image,
+              entry.value.image,
+              reason: '${entry.key} image name',
+            );
+          }
+        },
+      );
+
+      test('the padding the app digests is the packer\'s chunk', () {
+        final source = _firmwareFile(
+          'tools/pack_firmware.py',
+        )!.readAsStringSync();
+        final padTo = RegExp(
+          r'^PAD_TO\s*=\s*(\d+)',
+          multiLine: true,
+        ).firstMatch(source);
+        expect(padTo, isNotNull, reason: 'PAD_TO is the chunk the app pads to');
+        expect(int.parse(padTo!.group(1)!), Bootloader.payloadSize);
+        final format = RegExp(
+          r'^FORMAT\s*=\s*(\d+)',
+          multiLine: true,
+        ).firstMatch(source);
+        expect(int.parse(format!.group(1)!), 1, reason: 'the format we read');
+      });
+    },
+    skip: packer.isEmpty ? 'packer source not available next to the app' : null,
+  );
 }

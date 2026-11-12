@@ -6,20 +6,37 @@ import 'package:flutter/material.dart';
 import '../core/bootloader_client.dart';
 import '../core/connection.dart';
 import '../core/device_db.dart';
+import '../core/firmware_package.dart';
 import '../core/transport.dart';
 import '../core/notice.dart';
+import 'formatters.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
-/// Update page (Docs/Services/Bootloader.md): pick a main binary from the host, flash it to a
-/// device sitting in bootloader mode, and see the write/verify progress. Doubles as the user
-/// guide for entering bootloader mode and for what the progress means.
+/// One file the user picked, before it is checked: the name the picker reported and its bytes.
+class PickedFirmwareFile {
+  const PickedFirmwareFile(this.name, this.bytes);
+
+  final String name;
+  final Uint8List bytes;
+}
+
+/// Update page (Docs/Services/Bootloader.md): pick a `.fw.zip` package from the host, check it
+/// against its own manifest, flash the image inside it to a device sitting in bootloader mode, and
+/// see the write/verify progress. Doubles as the user guide for entering bootloader mode and for
+/// what the progress means.
+///
+/// The page writes nothing from a file it has not checked ([verifyFirmwarePackage]): a bare `.bin`
+/// is refused by name, and a package whose manifest disagrees with its bytes never becomes
+/// [_package], which is the only source of bytes a flash has.
 class UpdatePage extends StatefulWidget {
   const UpdatePage({
     super.key,
     this.isConnected,
     this.clientFactory,
-    this.initialImage,
+    this.pickFile,
+    this.initialPackage,
+    this.initialPackageName = 'package.fw.zip',
   });
 
   /// Whether the app has a link, for a test that mounts the page with no manager (the app passes
@@ -29,8 +46,14 @@ class UpdatePage extends StatefulWidget {
   /// Builds the bootloader channel; a test supplies a client over its own transport.
   final BootloaderClient Function()? clientFactory;
 
-  /// A firmware image already chosen, for a test that cannot open a file picker.
-  final Uint8List? initialImage;
+  /// Opens the file picker; a test supplies the file instead of the platform dialog.
+  final Future<PickedFirmwareFile?> Function()? pickFile;
+
+  /// A package already chosen (the `.fw.zip` bytes), for a test that cannot open a picker.
+  final Uint8List? initialPackage;
+
+  /// The name [initialPackage] was picked under.
+  final String initialPackageName;
 
   @override
   State<UpdatePage> createState() => _UpdatePageState();
@@ -39,8 +62,16 @@ class UpdatePage extends StatefulWidget {
 class _UpdatePageState extends State<UpdatePage> {
   final _db = DeviceDatabase.instance;
 
-  Uint8List? _image;
+  /// The checked package: the page's only source of flashable bytes.
+  FirmwarePackage? _package;
+
+  /// The chosen file's bytes, kept so a route change re-checks the same file.
+  Uint8List? _packageBytes;
+
   String _fileName = '';
+
+  /// Why the chosen file was refused. A non-null value always means [_package] is null.
+  String? _refusal;
 
   bool _probing = false;
   bool _busy = false;
@@ -54,13 +85,15 @@ class _UpdatePageState extends State<UpdatePage> {
 
   ConnectionManager get _link => ConnectionManager.instance;
 
+  /// The target the chosen route writes; the package's manifest has to name it.
+  String get _target => routeTarget(directToCore: _directToCore);
+
   @override
   void initState() {
     super.initState();
-    final image = widget.initialImage;
-    if (image != null) {
-      _image = image;
-      _fileName = 'image.bin';
+    final bytes = widget.initialPackage;
+    if (bytes != null) {
+      _adopt(widget.initialPackageName, bytes, announce: false);
     }
   }
 
@@ -92,6 +125,50 @@ class _UpdatePageState extends State<UpdatePage> {
     setState(() => _log.add(line));
   }
 
+  /// Checks [bytes] against the route's target, then adopts the package or records the refusal.
+  ///
+  /// This is the gate the page is about: a refusal leaves [_package] null, so nothing can be
+  /// written from the file at all. Synchronous - a package's digests are computed over its bytes,
+  /// not over a stream - so a pick, a route change and a test all go through one path.
+  void _adopt(String name, Uint8List bytes, {bool announce = true}) {
+    FirmwarePackage? package;
+    String? refusal;
+    try {
+      package = verifyFirmwarePackage(
+        bytes: bytes,
+        expectedTarget: _target,
+        name: name,
+      );
+    } on PackageRefused catch (refused) {
+      refusal = refused.text;
+    }
+    void apply() {
+      _packageBytes = bytes;
+      _fileName = name;
+      _package = package;
+      _refusal = refusal;
+      _result = null;
+      _progress = null;
+      _probeOk = null;
+      _identity = null;
+      _log.clear();
+      if (package != null) {
+        _log.add(
+          'Package "$name" for ${package.target} ${package.version}: '
+          '${_formatBytes(package.size)} at ${hex32(package.address)}, '
+          'crc32_padded ${hex32(package.crc32Padded)}. Checked against its '
+          'manifest - nothing written yet.',
+        );
+      }
+    }
+
+    if (announce && mounted) {
+      setState(apply);
+    } else {
+      apply();
+    }
+  }
+
   /// Asks the flash to stop. The run checks this between chunks (and before the verification), so
   /// it ends after the chunk in flight rather than at the next pass.
   void _cancelUpdate() {
@@ -100,28 +177,33 @@ class _UpdatePageState extends State<UpdatePage> {
   }
 
   Future<void> _chooseFile() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['bin', 'img'],
-    );
-    if (!mounted) return;
-    final file = result.singleOrNull;
-    if (file == null) return;
-    final bytes = await file.readAsBytes();
-    if (!mounted) return;
-    if (bytes.isEmpty) {
+    final picked = await (widget.pickFile?.call() ?? _pickPackage());
+    if (!mounted || picked == null) return;
+    if (picked.bytes.isEmpty) {
       showNotice('That file is empty');
       return;
     }
-    setState(() {
-      _image = Uint8List.fromList(bytes);
-      _fileName = file.name;
-      _result = null;
-      _progress = null;
-      _probeOk = null;
-      _identity = null;
-      _log.clear();
-    });
+    _adopt(picked.name, picked.bytes);
+  }
+
+  /// The platform picker. `.bin` is offered on purpose: a bare image has to be refused with a
+  /// sentence that names the package, not filtered out of the dialog without a word.
+  Future<PickedFirmwareFile?> _pickPackage() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['zip', 'bin'],
+    );
+    final file = result.singleOrNull;
+    if (file == null) return null;
+    return PickedFirmwareFile(file.name, await file.readAsBytes());
+  }
+
+  /// Switches the route and re-checks the chosen file against the new target, so a package for
+  /// the other route cannot stay selected and be written by mistake.
+  void _setRoute(bool directToCore) {
+    setState(() => _directToCore = directToCore);
+    final bytes = _packageBytes;
+    if (bytes != null) _adopt(_fileName, bytes);
   }
 
   /// Probes with an identify request: only a device in bootloader mode answers, and it replies
@@ -158,11 +240,12 @@ class _UpdatePageState extends State<UpdatePage> {
   }
 
   Future<void> _startUpdate() async {
-    final image = _image;
-    if (image == null) {
-      showNotice('Choose a firmware file first');
+    final package = _package;
+    if (package == null) {
+      showNotice(_refusal ?? 'Choose a firmware package first');
       return;
     }
+    final image = package.image;
     if (!_connected) {
       showNotice('Connect to the core first');
       return;
@@ -177,7 +260,10 @@ class _UpdatePageState extends State<UpdatePage> {
       _identity = null;
     });
     _log.clear();
-    _addLog('Image "$_fileName" (${_formatBytes(image.length)}).');
+    _addLog(
+      'Package "$_fileName" for ${package.target} ${package.version}: '
+      '${_formatBytes(image.length)} at ${hex32(package.address)}.',
+    );
     _addLog('Probing for a device in bootloader mode...');
 
     final client = _client();
@@ -200,11 +286,13 @@ class _UpdatePageState extends State<UpdatePage> {
       _addLog(
         'Bootloader identified: ${id.name} '
         '(${_formatBytes(id.appSize)} app space). Writing '
-        '${_formatBytes(image.length)}...',
+        '${_formatBytes(image.length)}; the device\'s own CRC is compared '
+        'with the package\'s crc32_padded ${hex32(package.crc32Padded)}.',
       );
       final result = await client.flash(
         image,
         maxImageSize: id.appSize,
+        expectedDigest: package.crc32Padded,
         deadline: BootloaderClient.flashDeadline,
         isCancelled: () => _cancelRequested,
         onProgress: (p) {
@@ -264,7 +352,7 @@ class _UpdatePageState extends State<UpdatePage> {
             const SizedBox(height: 12),
             _targetCard(context),
             const SizedBox(height: 12),
-            _imageCard(context),
+            _packageCard(context),
             const SizedBox(height: 12),
             _actionCard(context),
             const SizedBox(height: 12),
@@ -280,25 +368,39 @@ class _UpdatePageState extends State<UpdatePage> {
   Widget _guideCard(BuildContext context) => InfoCard(
     title: 'How to update',
     children: [
-      _bullet(context, 'Choose the device\'s main binary (.bin) below.'),
       _bullet(
         context,
-        'Put the target in bootloader mode: hold its button while resetting or '
-        'powering it on. The DAS shows its white LED; the core shows its red '
-        'notification LED.',
+        'Choose the device\'s firmware package (.fw.zip) below. A bare '
+        '.bin is refused: the package carries the image\'s address and '
+        'digests in its manifest, and those are what the flash is checked '
+        'against.',
       ),
       _bullet(
         context,
-        'Tap Update. Every write is acknowledged by the target (it reports the '
-        'last successfully written chunk), then the image is read back once. A '
-        'chunk that does not read back stops the run - the log names the count, '
-        'the offsets and what to do.',
+        'The package is checked before anything is written: format, '
+        'target, address, size, crc32 and the padded crc32 the device '
+        'answers with, and no extra file inside it. A file that fails any '
+        'check is refused by name and nothing is sent.',
       ),
       _bullet(
         context,
-        'Power-cycle the device to run the new firmware. A failed update leaves '
-        'it in its bootloader, which only a power cycle leaves; retrying after '
-        'that is safe.',
+        'Put the target in bootloader mode: hold its button while resetting '
+        'or powering it on. The DAS shows its white LED; the core shows its '
+        'red notification LED.',
+      ),
+      _bullet(
+        context,
+        'Tap Update. Every write is acknowledged by the target (it reports '
+        'the last successfully written chunk), then the image is verified '
+        'with the device\'s digest and a read-back pass. A chunk that does '
+        'not read back stops the run - the log names the count, the offsets '
+        'and what to do.',
+      ),
+      _bullet(
+        context,
+        'Power-cycle the device to run the new firmware. A failed update '
+        'leaves it in its bootloader, which only a power cycle leaves; '
+        'retrying after that is safe.',
       ),
     ],
   );
@@ -306,11 +408,13 @@ class _UpdatePageState extends State<UpdatePage> {
   Widget _targetCard(BuildContext context) {
     final core = _db.byId(coreId);
     final connected = _connected;
+    final target = firmwareTargets[_target]!;
     return InfoCard(
       title: 'Target',
       children: [
         InfoRow('Link', connected ? 'Connected' : 'Not connected'),
         InfoRow('Core', core?.displayName ?? 'Core 0.1'),
+        InfoRow('Package target', '${target.name} at ${hex32(target.address)}'),
         InfoRow(
           'Bootloader probe',
           _probeOk == null
@@ -347,30 +451,68 @@ class _UpdatePageState extends State<UpdatePage> {
             "enter its bootloader by holding the button at reset.",
           ),
           value: _directToCore,
-          onChanged: _busy ? null : (v) => setState(() => _directToCore = v),
+          onChanged: _busy ? null : _setRoute,
         ),
       ],
     );
   }
 
-  Widget _imageCard(BuildContext context) => InfoCard(
-    title: 'Image',
-    children: [
-      InfoRow('File', _fileName.isEmpty ? 'none chosen' : _fileName),
-      InfoRow('Size', _image == null ? '-' : _formatBytes(_image!.length)),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: OutlinedButton.icon(
-            icon: const Icon(Icons.folder_open),
-            label: const Text('Choose file'),
-            onPressed: _busy ? null : _chooseFile,
+  Widget _packageCard(BuildContext context) {
+    final package = _package;
+    final refusal = _refusal;
+    return InfoCard(
+      title: 'Package',
+      children: [
+        InfoRow('File', _fileName.isEmpty ? 'none chosen' : _fileName),
+        if (package != null) ...[
+          InfoRow('Target', package.target),
+          InfoRow('Address', hex32(package.address)),
+          InfoRow(
+            'Version',
+            package.buildCommit.isEmpty
+                ? package.version
+                : '${package.version} · ${package.buildCommit}',
+          ),
+          InfoRow(
+            'Size',
+            '${_formatBytes(package.size)} '
+                '(${package.paddedSize} B padded)',
+          ),
+          InfoRow(
+            'crc32_padded',
+            '${hex32(package.crc32Padded)} (crc32 ${hex32(package.crc32)})',
+          ),
+        ] else
+          InfoRow(
+            'State',
+            refusal == null ? 'no package chosen' : 'refused - see below',
+          ),
+        if (refusal != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.error_outline, size: 18, color: kError),
+                const SizedBox(width: 8),
+                Expanded(child: Text(refusal)),
+              ],
+            ),
+          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.folder_open),
+              label: const Text('Choose package'),
+              onPressed: _busy ? null : _chooseFile,
+            ),
           ),
         ),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 
   Widget _actionCard(BuildContext context) {
     final p = _progress;
@@ -408,9 +550,7 @@ class _UpdatePageState extends State<UpdatePage> {
                   size: 18,
                 ),
                 const SizedBox(width: 8),
-                Expanded(
-                  child: Text('Verified: ${result.note}'),
-                ),
+                Expanded(child: Text('Verified: ${result.note}')),
               ],
             ),
           ),
@@ -429,7 +569,7 @@ class _UpdatePageState extends State<UpdatePage> {
                         )
                       : const Icon(Icons.system_update_alt),
                   label: Text(_busy ? 'Updating...' : 'Update'),
-                  onPressed: (_busy || _image == null || !_connected)
+                  onPressed: (_busy || _package == null || !_connected)
                       ? null
                       : _startUpdate,
                 ),

@@ -15,6 +15,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/bootloader_client.dart';
 import 'package:tamuapp/ui/update_page.dart';
 
+import 'support/fw_package.dart';
+
 /// A bootloader channel whose first write is held open until the test lets it finish: the chunk
 /// in flight when the user cancels.
 class _HeldWriteTransport implements BootloaderTransport {
@@ -71,14 +73,18 @@ void main() {
 
     final hold = Completer<void>();
     final transport = _HeldWriteTransport(hold);
-    // Four chunks: 128 bytes at the bootloader's 32-byte payload.
-    final image = Uint8List.fromList(List.generate(128, (i) => i & 0xFF));
+    // Four chunks: 128 bytes at the bootloader's 32-byte payload, in the node's package.
+    final fakePackage = PackageForTest(
+      target: 'DAS_v0_1',
+      image: Uint8List.fromList(List.generate(128, (i) => i & 0xFF)),
+    );
 
     await tester.pumpWidget(
       MaterialApp(
         home: UpdatePage(
           isConnected: () => true,
-          initialImage: image,
+          initialPackage: fakePackage.build(),
+          initialPackageName: fakePackage.name,
           clientFactory: () => BootloaderClient(
             transport: transport,
             writePacing: Duration.zero,

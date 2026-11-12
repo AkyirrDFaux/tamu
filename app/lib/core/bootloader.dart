@@ -194,6 +194,11 @@ class Bootloader {
     return c;
   }
 
+  /// One byte of CRC-32/ISO-HDLC from a RAW state - no init, no final XOR - so a caller can walk
+  /// two digests byte by byte ([firmware_package.dart] localises a single differing byte with it).
+  /// Equal to one entry of the classic 256-word table when [crc] is 0.
+  static int crc32Step(int crc, int byte) => _crcStep(crc, byte);
+
   /// CRC32 over [data].
   static int crc32(List<int> data) {
     var crc = 0xFFFFFFFF;
