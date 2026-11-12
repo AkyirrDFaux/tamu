@@ -2117,4 +2117,19 @@ fi
 fail=$((fail + raw_fail))
 echo
 
+# Tool test: the packaging layer. tools/pack_firmware.py turns a built image plus its metadata
+# into binaries/<target>-<version>.fw.zip - the image and a manifest.json naming its address,
+# sha256, crc32 and padded length - and `--verify` re-checks a package against its own bytes. It
+# packages synthetic images here, so it needs no build and no rig; what it pins is determinism
+# (the same inputs give the same package bytes), the manifest's digests, and every refusal the
+# tool must make: a tampered byte, the wrong target, a missing/empty/over-region image, and a
+# stamp that cannot be read from (or no longer matches) the sources.
+echo "### tool test: firmware packaging (deterministic .fw.zip + verifier)"
+if python3 "$ROOT/test/tools/pack_firmware_test.py"; then
+    echo "PASS: tools/pack_firmware.py packages deterministically and its verifier names a damaged package"
+else
+    fail=$((fail + 1))
+fi
+echo
+
 exit $fail

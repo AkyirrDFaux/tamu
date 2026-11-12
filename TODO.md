@@ -496,6 +496,17 @@ Open:
 
 ## Open work
 
+- **Packaged images with a manifest — tooling done 2026-11-12 (kanban t_676cffeb); the flashers do
+  not read it yet.** `firmware/tools/pack_firmware.py` writes `binaries/<env>-<version>.fw.zip` next
+  to the loose `.bin`: the image plus a `manifest.json` (format 1) naming its address, size, sha256,
+  crc32 and the padded length/crc32 of the 32-byte-`0xFF`-padded image the loaders actually write.
+  Packages are deterministic (stored, sorted, 1980-01-01 timestamps) and `--verify` re-checks a
+  package against its own bytes (a mismatch names the file and, with the loose `.bin` beside it, the
+  byte offset). `collect_binaries.sh` produces them in the same one command as the `.bin`s, and
+  `MANIFEST.txt` carries each package's full sha256. Open: neither `upload.sh` nor the app's flashing
+  paths require a package yet — that is the next layer (other workers' areas), and `binaries/` stays
+  git-ignored, so a package is a build output, not a committed artifact.
+
 - **Pairing-free BLE updater in the `factory` image - implemented and demonstrated on the rig
   2026-11-06 (kanban t_3d74f8d1; the measurement was t_79a194d5).** The factory image
   (`Bootloader/CoreBootloader.cpp`, `[env:Tamu_bootloader]`) now carries both transports: the USB
