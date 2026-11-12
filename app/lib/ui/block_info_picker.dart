@@ -60,10 +60,10 @@ class _BlockInfoDialogState extends State<_BlockInfoDialog> {
   Future<void> _load() async {
     try {
       final list = await fetchBlockSelections(widget.deviceId);
-      final curType = (_bi >> 22) & 0x3FF;
-      final curInst = (_bi >> 16) & 0x3F;
-      final curField = (_bi >> 8) & 0xFF;
-      final curKey = _bi & 0xFF;
+      final curType = blockInfoType(_bi);
+      final curInst = blockInfoInstance(_bi);
+      final curField = blockInfoField(_bi);
+      final curKey = blockInfoKey(_bi);
       BlockSelection? sel;
       for (final b in list) {
         if (b.type == curType && b.inst == curInst) {

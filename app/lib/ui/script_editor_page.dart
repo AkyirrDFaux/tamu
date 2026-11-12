@@ -296,19 +296,22 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
     }
   }
 
-  /// Runs the assemble-time validation (Docs/Services/Script.md "Validation": block-end
-  /// matching and type/size correctness). Returns true when clean; otherwise records the
-  /// problems, surfaces them, and returns false so the script is not assembled/uploaded.
+  /// The assemble-time validation (Docs/Services/Script.md "Validation": block-end matching and
+  /// type/size correctness, plus the assembly-time function checks - a cyclic call graph or
+  /// nesting past the call-depth cap, Docs "Functions and Macros"). One list for both callers: the
+  /// Check action that reports it and the upload path that refuses on it.
+  List<String> _validate(ScriptDraft draft) => [
+    ...validateScriptLines(draft.lines, draft.validationContext),
+    ...validateScriptFunctions(
+      mainLines: draft.lines,
+      functions: draft.functions,
+    ),
+  ];
+
+  /// Runs [_validate]. Returns true when clean; otherwise records the problems, surfaces them,
+  /// and returns false so the script is not assembled/uploaded.
   Future<bool> _ensureValid(ScriptDraft draft) async {
-    final errors = [
-      ...validateScriptLines(draft.lines, draft.validationContext),
-      // Assembly-time function checks: a cyclic call graph or nesting past the call-depth cap
-      // (Docs/Services/Script.md "Functions and Macros").
-      ...validateScriptFunctions(
-        mainLines: draft.lines,
-        functions: draft.functions,
-      ),
-    ];
+    final errors = _validate(draft);
     setState(() => _errors = errors);
     if (errors.isEmpty) return true;
     if (!mounted) return false;
@@ -365,13 +368,7 @@ class _ScriptEditorPageState extends State<ScriptEditorPage>
   void _check() {
     final draft = _draft;
     if (draft == null) return;
-    final errors = [
-      ...validateScriptLines(draft.lines, draft.validationContext),
-      ...validateScriptFunctions(
-        mainLines: draft.lines,
-        functions: draft.functions,
-      ),
-    ];
+    final errors = _validate(draft);
     setState(() => _errors = errors);
     showNotice(
       errors.isEmpty ? 'Script is valid' : '${errors.length} problem(s) found',

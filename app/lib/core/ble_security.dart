@@ -20,11 +20,15 @@
 /// Three properties shape everything the panel does, and all come from the firmware
 /// (`Devices/Tamu_v2.0A/BleSettingsGlue.h`, `Devices/Tamu_v2.0A/AppBLE.h`):
 ///
-///  - **Every write to this block is refused unless the frame arrived over USB.** A phone that
-///    could rotate the key, delete the bonds, rename the device or switch its radio off would defeat
-///    the passkey it is protecting. So over a BLE link the panel is a read-out plus an explanation
-///    of why the controls cannot work — and a refused write is a normal `FLAG_FAIL` reply, which
-///    the app surfaces as a sentence rather than leaving a control that silently does nothing.
+///  - **A write is accepted over USB, or from a SECURED Bluetooth session.** The gate is
+///    `BleWriteAllowed` (`Blocks/BleWritePolicy.h`): a USB frame always, a BLE frame only while
+///    the link it arrived on met the session policy - encrypted, bonded, and authenticated while a
+///    passkey is set. The rule used to be USB-only, because a phone that could rotate the key,
+///    delete the bonds, rename the device or switch its radio off would lock the owner out of the
+///    radio it was reaching the device through; the GPIO8 reset hold is the way back, so the gate
+///    follows the LINK now (owner ruling 2026-11-05). An unsecured BLE frame is still refused, and
+///    a refusal is a normal `FLAG_FAIL` reply, which the app surfaces as a sentence rather than
+///    leaving a control that silently does nothing.
 ///  - **`Window` reads the milliseconds LEFT and a write sets the deadline** (0 closes it). The old
 ///    `Action` enum carried the same command; it is gone, so opening a window is one field write.
 ///  - **`Display name` IS the advertised name.** A write re-advertises in the same loop pass, so
@@ -403,7 +407,8 @@ enum BleSecurityCondition {
   windowOpen,
 
   /// The window is closed and the device holds bonds: its bonded phones still connect at any
-  /// time, and only a new pairing needs a window (which only USB can open).
+  /// time, and only a new pairing needs a window (which a USB link or a secured Bluetooth
+  /// session can open).
   closedBonded,
 
   /// The window is closed and the store is empty: the device holds no bonds, so any phone may

@@ -321,10 +321,10 @@ Future<List<int>?> _editMatrix(
 /// block type and the instance/field/key, showing the registry field name where known.
 Future<List<int>?> _editBlockInfo(BuildContext context, List<int> current) {
   var bi = current.length >= 4 ? uint32FromBytes(current) : 0;
-  var type = (bi >> 22) & 0x3FF;
-  final inst = (bi >> 16) & 0x3F;
-  final field = (bi >> 8) & 0xFF;
-  final key = bi & 0xFF;
+  var type = blockInfoType(bi);
+  final inst = blockInfoInstance(bi);
+  final field = blockInfoField(bi);
+  final key = blockInfoKey(bi);
   final instC = TextEditingController(text: '$inst');
   final fieldC = TextEditingController(text: '$field');
   final keyC = TextEditingController(text: '$key');

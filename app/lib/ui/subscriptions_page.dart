@@ -150,7 +150,7 @@ class _SubscriptionsPageState extends State<SubscriptionsPage>
       child: ExpansionTile(
         title: Text('Sub #${sub.index}'),
         subtitle: Text(
-          'Requester: ${sub.requesterAddr} → Source: ${_formatBlockInfo(sub.sourceReg)}',
+          'Requester: ${sub.requesterAddr} → Source: ${blockInfoLabel(sub.sourceReg)}',
         ),
         children: [
           Padding(
@@ -226,7 +226,7 @@ class _SubscriptionsPageState extends State<SubscriptionsPage>
           'Sub #${sub.index} (TRID: 0x${sub.trid.toRadixString(16).padLeft(4, '0')})',
         ),
         subtitle: Text(
-          'Target: ${_formatBlockInfo(sub.targetReg)} ← Source: ${_formatBlockInfo(sub.sourceReg)}',
+          'Target: ${blockInfoLabel(sub.targetReg)} ← Source: ${blockInfoLabel(sub.sourceReg)}',
         ),
         trailing: IconButton(
           icon: const Icon(Icons.delete, size: IconSize.lg, color: kError),
@@ -293,8 +293,6 @@ class _SubscriptionsPageState extends State<SubscriptionsPage>
     ],
     rows: fields,
   );
-
-  String _formatBlockInfo(int bi) => blockInfoLabel(bi);
 
   /// Opens the create/edit dialog: `existing` selects edit mode, null creates.
   void _showSubscriptionDialog([RequesterSubscription? existing]) {

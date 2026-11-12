@@ -241,9 +241,9 @@ class SectionLabel extends StatelessWidget {
   }
 }
 
-/// A small orange section label used by the Settings and info pages. The one
-/// section heading once phase 1c lands; its size and spacing come from the
-/// theme, not from a literal.
+/// A small orange section label used by the Settings and info pages - the one
+/// section heading. Its size and spacing come from the theme, not from a
+/// literal.
 class SectionHeader extends StatelessWidget {
   final String text;
 
@@ -301,8 +301,7 @@ class InfoCard extends StatelessWidget {
   }
 }
 
-/// A label/value row used inside an [InfoCard]. The one label:value row once
-/// phase 1c lands.
+/// A label/value row used inside an [InfoCard] - the one label:value row.
 class InfoRow extends StatelessWidget {
   final String label;
   final String value;
@@ -594,8 +593,8 @@ class RefreshButton extends StatelessWidget {
 enum StateKind { loading, empty, error }
 
 /// The single rendering of a page's loading / empty / error state; the one
-/// place those states are drawn once phase 1c lands. Everything reads the
-/// theme and the tokens, so a page carries no colour or size of its own.
+/// place those states are drawn. Everything reads the theme and the tokens, so
+/// a page carries no colour or size of its own.
 class StateMessage extends StatelessWidget {
   const StateMessage({
     super.key,
@@ -730,9 +729,27 @@ class StateMessage extends StatelessWidget {
   }
 }
 
+/// A read that ended in a failure, as a page draws it: the headline, the reason the reader gave,
+/// and the one retry that re-asks the device.
+///
+/// The retry control is the part that makes the state an END state rather than a bare message
+/// ("a page must end in data or an action"), and every page that reported a failed read drew the
+/// same button by hand - seven of them, in four files. It lives here so the label and the shape
+/// cannot drift from page to page; a page whose retry control shows a spinner while it re-reads
+/// (the file viewer) still builds its own, because the progress lives in its state.
+StateMessage readFailed(
+  String message,
+  String details, {
+  required VoidCallback onRetry,
+}) => StateMessage.error(
+  message: message,
+  details: details,
+  action: FilledButton(onPressed: onRetry, child: const Text('Try again')),
+);
+
 /// The standard page scaffold: a [PageAppBar] plus a body, with the loading /
-/// empty / error situation drawn through [StateMessage]. The one page shell
-/// once phase 1c lands; a page keeps to it so no scaffold is hand-rolled.
+/// empty / error situation drawn through [StateMessage]. The one page shell; a
+/// page keeps to it so no scaffold is hand-rolled.
 class TamuPage extends StatelessWidget {
   const TamuPage({
     super.key,
@@ -1004,8 +1021,8 @@ abstract final class PageActions {
 }
 
 /// One device row: type icon, name, `id - type` subtext, a stale marker, an
-/// optional badge and trailing widget. The one device row once phase 1c lands;
-/// it replaces the per-page rows in Connection / Devices / SNDB / Backup.
+/// optional badge and trailing widget. The one device row - it is what the
+/// Connection / Devices / SNDB / Backup pages list their devices with.
 class DeviceTile extends StatelessWidget {
   const DeviceTile({
     super.key,
@@ -1123,8 +1140,8 @@ class DeviceTile extends StatelessWidget {
 /// How a long task ended, for the status line of a [TaskProgress].
 enum TaskStatus { running, success, failure }
 
-/// One phase/progress display for update / backup / restore / upload. The one
-/// progress display once phase 1c lands.
+/// One phase/progress display for update / backup / restore / upload - the one
+/// progress display.
 class TaskProgress extends StatelessWidget {
   const TaskProgress({
     super.key,

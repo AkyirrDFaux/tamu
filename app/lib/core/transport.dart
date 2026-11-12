@@ -95,9 +95,9 @@ class TransportException implements Exception {
 // USB serial transport
 // ---------------------------------------------------------------------------
 
-/// The ESP32-C3 USB Serial/JTAG appears as a CDC device; the baud is advisory
-/// (matches the console speed; the RSBus itself runs at 460.8 kbaud).
-const int busBaudRate = 115200;
+// `busBaudRate` (the ESP32-C3 USB Serial/JTAG appears as a CDC device; the baud is advisory,
+// matching the console speed while the RSBus itself runs at 460.8 kbaud) is declared in
+// `usb_frame.dart` with the rest of the USB link framing, which this file re-exports.
 
 class UsbPortEntry {
   final String portName;

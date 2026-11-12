@@ -163,13 +163,10 @@ class _DevicesPageState extends State<DevicesPage>
         );
       }
       if (error != null) {
-        return StateMessage.error(
-          message: 'The device roster could not be read',
-          details: error,
-          action: FilledButton(
-            onPressed: _refresh,
-            child: const Text('Try again'),
-          ),
+        return readFailed(
+          'The device roster could not be read',
+          error,
+          onRetry: _refresh,
         );
       }
       return const StateMessage.empty(

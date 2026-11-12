@@ -1401,11 +1401,7 @@ class RestorePlan {
     for (final item in items) {
       final target = deviceTargets[item.device.id];
       if (target == null) continue;
-      final slot = switch (item.kind) {
-        RestoreKind.script => item.script!.slot >= 0 ? item.script!.slot : null,
-        RestoreKind.file => scriptFileId(item.file!.name),
-        _ => null,
-      };
+      final slot = _scriptIdOf(item);
       if (slot == null) continue;
       named.putIfAbsent(target.id, () => <int>{}).add(slot);
       if (!item.selected || !item.ready) {
@@ -1588,6 +1584,19 @@ class RestorePlan {
   }
 }
 
+/// The `SCR_XXX` file id a script item addresses: the slot a semantic script loads into, or the
+/// id a raw script file's name carries - null for any other kind, and for a semantic script the
+/// archive could not place in a slot.
+///
+/// One predicate for both readers of the script files (the slot sweep's per-target sets and the
+/// file-table mirror of it, [archiveScriptFiles]), so "which file does this item own" cannot mean
+/// two different things.
+int? _scriptIdOf(RestoreItem item) => switch (item.kind) {
+  RestoreKind.script => item.script!.slot >= 0 ? item.script!.slot : null,
+  RestoreKind.file => scriptFileId(item.file!.name),
+  _ => null,
+};
+
 /// The script FILES a run needs on live node [targetId], the ones it was told to leave out, and
 /// the archive scripts no item of this run accounts for.
 ///
@@ -1619,11 +1628,7 @@ class RestorePlan {
     final covered = <int>{};
     for (final item in plan.items) {
       if (item.device.id != source.id) continue;
-      final id = switch (item.kind) {
-        RestoreKind.script => item.script!.slot >= 0 ? item.script!.slot : null,
-        RestoreKind.file => scriptFileId(item.file!.name),
-        _ => null,
-      };
+      final id = _scriptIdOf(item);
       if (id == null) continue;
       covered.add(id);
       if (item.selected && item.ready) {

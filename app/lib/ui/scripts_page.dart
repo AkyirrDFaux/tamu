@@ -547,13 +547,10 @@ class _ScriptsPageState extends State<ScriptsPage>
     // and offers the retry that re-asks the device.
     final error = _error;
     if (error != null) {
-      return StateMessage.error(
-        message: 'The loaded scripts could not be read',
-        details: error,
-        action: FilledButton(
-          onPressed: _refresh,
-          child: const Text('Try again'),
-        ),
+      return readFailed(
+        'The loaded scripts could not be read',
+        error,
+        onRetry: _refresh,
       );
     }
     if (_loaded.isEmpty) {
@@ -664,13 +661,10 @@ class _ScriptsPageState extends State<ScriptsPage>
     // table arrived and simply has no SCR_XXX record in it.
     final error = _error;
     if (error != null) {
-      return StateMessage.error(
-        message: 'The stored script list could not be read',
-        details: error,
-        action: FilledButton(
-          onPressed: _refresh,
-          child: const Text('Try again'),
-        ),
+      return readFailed(
+        'The stored script list could not be read',
+        error,
+        onRetry: _refresh,
       );
     }
     final table = _table;

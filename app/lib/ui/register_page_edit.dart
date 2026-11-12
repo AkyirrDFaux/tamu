@@ -33,6 +33,19 @@ Future<int?> _promptIntIndex(
 }
 
 extension on _RegisterPageState {
+  /// The cached reading of one dynamic entry, or null when the page's cache does not hold it (the
+  /// last read did not cover that block, or that key is not there).
+  ///
+  /// The cache is one map per block, keyed `(type << 8) | inst`, and each map is keyed
+  /// `field * 256 + key` - every dynamic-entry editor reads the entry through this one accessor so
+  /// the two halves of that key cannot be spelled differently in one of them.
+  ({ValueInfo meta, List<int> value})? _dynamicEntryAt(
+    int blockType,
+    int inst,
+    int fieldIndex,
+    int key,
+  ) => _fieldCache[(blockType << 8) | inst]?[fieldIndex * 256 + key];
+
   Future<void> _editBlock(
     int blockIndex,
     ({int type, int inst, ValueInfo meta, String name})? block,
@@ -282,10 +295,9 @@ extension on _RegisterPageState {
     int key,
   ) async {
     if (block == null || !mounted) return;
-    final cache = _fieldCache[(blockType << 8) | inst];
-    final entry = cache?[fieldIndex * 256 + key];
+    final entry = _dynamicEntryAt(blockType, inst, fieldIndex, key);
     if (entry == null || entry.meta.readOnly) return;
-    final head = cache?[fieldIndex * 256 + 0];
+    final head = _fieldCache[(blockType << 8) | inst]?[fieldIndex * 256];
     final dictType = (head != null && isRenderDictType(head.meta.type))
         ? head.meta.type
         : entry.meta.type;
@@ -385,8 +397,7 @@ extension on _RegisterPageState {
     int key,
   ) async {
     if (block == null || !mounted) return;
-    final cache = _fieldCache[(blockType << 8) | inst];
-    final entry = cache?[fieldIndex * 256 + key];
+    final entry = _dynamicEntryAt(blockType, inst, fieldIndex, key);
     if (entry == null) return;
     var ro = entry.meta.readOnly;
     var per = entry.meta.persistent;
@@ -598,8 +609,7 @@ extension on _RegisterPageState {
     int key,
   ) async {
     if (block == null || !mounted) return;
-    final cache = _fieldCache[(blockType << 8) | inst];
-    final entry = cache?[fieldIndex * 256 + key];
+    final entry = _dynamicEntryAt(blockType, inst, fieldIndex, key);
     if (entry == null) return;
     final dataType = await _pickDataType(selected: entry.meta.dataType);
     if (dataType == null || !mounted) return;
@@ -632,8 +642,7 @@ extension on _RegisterPageState {
     int key,
   ) async {
     if (block == null || !mounted) return;
-    final cache = _fieldCache[(blockType << 8) | inst];
-    final entry = cache?[fieldIndex * 256 + key];
+    final entry = _dynamicEntryAt(blockType, inst, fieldIndex, key);
     if (entry == null) return;
     final keys = _dynamicKeys[inst]?[fieldIndex] ?? <int>[];
     final shape = _dictShape(blockType, inst, fieldIndex);

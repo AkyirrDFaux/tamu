@@ -145,7 +145,6 @@ abstract final class Spacing {
   static const double lg = 12;
   static const double xl = 16;
   static const double xxl = 24;
-  static const double xxxl = 32;
 
   /// One nesting level inside a list (a row inside another list's row).
   static const double indent = 40;

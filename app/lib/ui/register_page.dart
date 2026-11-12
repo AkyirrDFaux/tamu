@@ -15,6 +15,7 @@ import '../core/render_dict.dart'
         renderKeyFieldInfo,
         textureKeysForType;
 import '../core/script_file.dart' show ScriptField;
+import '../core/system_schema.dart';
 import '../core/storage_client.dart'
     show FileRead, FileReadFault, StorageClient, normalizeFileName;
 import '../core/types.dart';
@@ -26,7 +27,6 @@ import 'loading.dart';
 import 'register_backup_view.dart';
 import 'theme.dart';
 import 'value_editor.dart' show showValueEditor;
-import 'system_block_view.dart';
 import 'viewer_kit.dart';
 import 'wait.dart';
 import 'widgets.dart';
@@ -956,13 +956,10 @@ class _RegisterPageState extends State<RegisterPage>
       }
       // A block list that could not be read is an error with the reason and the retry, never an
       // empty tree ("No blocks found" would read as a device with nothing in it).
-      return StateMessage.error(
-        message: 'The register could not be read',
-        details: error,
-        action: FilledButton(
-          onPressed: _refreshAll,
-          child: const Text('Try again'),
-        ),
+      return readFailed(
+        'The register could not be read',
+        error,
+        onRetry: _refreshAll,
       );
     }
     if (blocks.isEmpty) {
@@ -1002,13 +999,10 @@ class _RegisterPageState extends State<RegisterPage>
     if (error != null) {
       // A backup that could not be read is an error with the reason and a retry - never an empty
       // table, which would read as "this device has nothing saved".
-      return StateMessage.error(
-        message: 'The stored backup could not be read',
-        details: error,
-        action: FilledButton(
-          onPressed: _loadBackup,
-          child: const Text('Try again'),
-        ),
+      return readFailed(
+        'The stored backup could not be read',
+        error,
+        onRetry: _loadBackup,
       );
     }
     final backup = _backup;

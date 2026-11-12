@@ -267,13 +267,10 @@ class _StoragePageState extends State<StoragePage>
       }
       // A file-table read that could not be completed is a visible, actionable error: the page
       // says what the device answered and offers the retry that the client already bounded.
-      return StateMessage.error(
-        message: 'The file table could not be read',
-        details: error,
-        action: FilledButton(
-          onPressed: _refresh,
-          child: const Text('Try again'),
-        ),
+      return readFailed(
+        'The file table could not be read',
+        error,
+        onRetry: _refresh,
       );
     }
     // The list is the toolkit's table shell: a type icon, the name, the type/size/
