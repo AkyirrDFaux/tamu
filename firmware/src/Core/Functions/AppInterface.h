@@ -400,7 +400,7 @@ extern uint32_t RS485TxStintWorstMs; // defined in Devices/Tamu_v2.0A/RSBus.h (l
 //            other traffic on the line, or a frame cut short (the record carries `asm=`).
 //
 // A write that was answered inside its window produces no record at all - `answered=` counts it,
-// so `writes = answered + lost` and a rig capture can be reconciled.
+// so `writes = answered + refused + lost` and a rig capture reconciles to the digit.
 enum AppBusWriteCause : uint8_t
 {
     ABW_NONE = 0,
@@ -722,7 +722,7 @@ inline void AppBusGateDrain()
                   (unsigned long)AppBusRetryTotal, (unsigned long)AppBusGateStrayTotal);
         // The app's writes, named (card t_e707d153, E79). A repair hides the loss from the app, so
         // these are the only figures that say a write was lost at all - and the five causes say
-        // WHICH mechanism. `writes = answered + lost`; every lost one has a record below.
+        // WHICH mechanism. `writes = answered + refused + lost`; every lost one has a record below.
         DeviceLog("BUSGATE", "appwrite writes=%lu answered=%lu refused=%lu lost=%lu repaired=%lu",
                   (unsigned long)AppBusWriteTotal, (unsigned long)AppBusWriteAnswered,
                   (unsigned long)AppBusWriteRefused, (unsigned long)AppBusWriteLost,

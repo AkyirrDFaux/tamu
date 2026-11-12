@@ -217,7 +217,7 @@ fi
 
 if [ "$fail" = 0 ]; then
     echo "PASS: a forwarded Register CID 3 write whose answer never came is re-sent within APP_BUS_WRITE_RETRIES sends, with the app's own TRID, and retries= reports it"
-    echo "PASS: every lost write is named - refused (a FLAG_FAIL answer), notsent, keepdrop, late or silent/stray - with the numbers it was read from, and writes = answered + lost"
+    echo "PASS: every lost write is named - refused (a FLAG_FAIL answer), notsent, keepdrop, late or silent/stray - with the numbers it was read from, and writes = answered + refused + lost"
 fi
 exit "$fail"
 
