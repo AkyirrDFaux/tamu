@@ -695,22 +695,10 @@ class ProviderSubscription {
   /// Wire layout for the provider-change request: the subscription table alone (16 B). The
   /// device takes the TRID from the packet header and the requester's address from the packet's
   /// source, so neither is in the payload. A trigger of None cancels the entry.
+  ///
+  /// There is no full-entry encoder (the 32 B form ProviderSet 0x21 carries): the app does not
+  /// send that command - see [SubscriptionClient]'s note beside `_cidSetProvider`.
   List<int> toChangePayload() => table.toBytes();
-
-  /// The full 32-byte entry (Docs "Provider table entry") for the provider-set command
-  /// (CID 0x21), which carries the requester's address in the payload and takes the TRID from
-  /// the packet header. Unlike [toChangePayload], this can name a requester other than the
-  /// packet's source, so it is how the app reaches an entry for a requester that is not here.
-  List<int> toBytes() {
-    final buf = <int>[];
-    buf.addAll([requesterAddr & 0xFF, (requesterAddr >> 8) & 0xFF]);
-    buf.addAll([trid & 0xFF, (trid >> 8) & 0xFF]);
-    buf.addAll(table.toBytes());
-    buf.addAll(uint32ToBytes(lastSentMs));
-    buf.addAll(uint32ToBytes(hash));
-    buf.addAll(uint32ToBytes(timeout));
-    return buf;
-  }
 }
 
 /// Requester-side subscription entry (Docs "Requester table entry", 32 B wire: providerAddr,

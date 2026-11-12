@@ -37,15 +37,17 @@ class SubscriptionClient {
   static const int _cidGetProvider = 0x20;
 
   /// SubCid::Change (0x01): the requester installs/cancels a provider entry on a node. This is
-  /// the install command - `ProviderSet` (0x21) is a different one and is not it.
+  /// the install command the app uses.
   static const int _cidSetProvider = 0x01;
 
-  /// SubCid::ProviderSet (0x21): installs a FULL provider-table entry on a node, carrying the
-  /// requester's address in the payload (the payload is the 32-byte entry, and the TRID rides the
-  /// packet header). Change (0x01) is the requester's own install - its requester address is the
-  /// packet source, so the app cannot name a requester that is not on the link; ProviderSet is
-  /// what lets a restore rebuild a provider entry for a remote requester.
-  static const int _cidProviderSet = 0x21;
+  // SubCid::ProviderSet (0x21) is deliberately NOT exposed to the app (Akyirr, 2026-11-12). It
+  // installs a FULL provider-table entry for a requester that is not on the link, which is what a
+  // restore would need to rebuild the provider half - but that half belongs to the CORE: the
+  // requester puts the provider entry in place from its own rows (the E79 rule, one writer - the
+  // core), and that install travels as Change (0x01) above, with the requester's address taken
+  // from the packet source. An app-side ProviderSet would be a second writer for the same row,
+  // and a node's provider table is RAM-only besides (`Docs/Services/Subscriptions.md` "Provider").
+  // The comment on the recall CID below records the same decision for the persistence half.
 
   /// Registers the client as the receiver of firmware-pushed subscription value
   /// updates (service Subscriptions CID 0). Must be called while connected; call
@@ -197,10 +199,11 @@ class SubscriptionClient {
         ProviderSubscription.fromBytes,
       );
 
-  /// CID 0x21: change a provider subscription on a node, telling it to send [entry]'s source
-  /// register to the requester that asked. The entry is keyed by its TRID, and a table whose
+  /// SubCid::Change (0x01): change a provider subscription on a node, telling it to send [entry]'s
+  /// source register to the requester that asked. The entry is keyed by its TRID, and a table whose
   /// trigger is None cancels it. This is the half that makes a restored subscription live: the
-  /// requester table alone leaves the node with nothing to send.
+  /// requester table alone leaves the node with nothing to send. It is NOT ProviderSet (0x21), which
+  /// the app deliberately does not send - see the note beside [_cidSetProvider].
   /// Reads the reply as acceptance. The device answers a provider change with the source's
   /// CURRENT VALUE (so the requester starts from a known state), or with a short ack when the
   /// source does not resolve - either way a reply means the entry was accepted; only a timeout
@@ -212,20 +215,6 @@ class SubscriptionClient {
       transactionId: entry.trid,
     );
     return reply != null;
-  }
-
-  /// CID 0x21 (ProviderSet): installs a full provider-table [entry] on the node, addressed by
-  /// its TRID (in the packet header) and its requester's address (in the payload). Unlike
-  /// [setProviderSubscriptionEntry], the requester's address is carried rather than taken from
-  /// the packet source, so the app can rebuild the entry a remote requester installed. The node
-  /// answers with the SUCCESS/FAIL flag, so `ok` is the acceptance signal.
-  Future<bool> setProviderTableEntry(ProviderSubscription entry) async {
-    final reply = await _request(
-      _cidProviderSet,
-      payload: entry.toBytes(),
-      transactionId: entry.trid,
-    );
-    return reply?.ok ?? false;
   }
 
   /// CID 0x10: Get requester subscriptions (device as requester - Tamu only). Empty when the read
@@ -326,9 +315,9 @@ class SubscriptionClient {
 
   // The persisting recall CID (0x12) is a firmware management command the app does not currently
   // expose: the Subscriptions page only edits the requester table, and only the restore persists
-  // it (see [saveRequesterSubscriptions]). Direct provider management is here
-  // ([setProviderTableEntry], CID 0x21) because a restore rebuilds entries for remote requesters.
-  // Add the recall here if a UI needs table persistence.
+  // it (see [saveRequesterSubscriptions]). Provider management is READ here (0x20) and installed
+  // by the CORE, never by the app: ProviderSet (0x21) is deliberately absent - see the note beside
+  // [_cidSetProvider]. Add the recall here if a UI needs table persistence.
 
   void dispose() {
     _valueUpdateController.close();
