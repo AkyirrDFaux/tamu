@@ -197,6 +197,30 @@ int main()
         PrintHex("identifyresp", id, DATA_SIZE);
     }
 
+    // --- the echo window's three outcomes (card t_d9feed1d) -------------------
+    // A raw send verifies its frame by the echo, but the node's answer legitimately starts
+    // inside the LAST chunk's echo window (~704 us after our last byte: its own 32-byte silence
+    // wait). Reading chunk-wise and memcmp-ing made that answer look like a collision and threw
+    // it away, so read/write could never complete. Each byte is classified instead.
+    {
+        // Our own byte back: keep verifying, byte for byte, including a byte that happens to be
+        // the start marker (a request's first byte IS 0xCA).
+        CHECK(ClassifyEchoByte(0xCA, 0xCA) == EchoByte::Echo);
+        CHECK(ClassifyEchoByte(0xAA, 0xAA) == EchoByte::Echo);
+        CHECK(ClassifyEchoByte(0x00, 0x00) == EchoByte::Echo);
+
+        // The answer beginning where our echo was expected: the expected case for read/write.
+        // Every start-marker arrival is a reply whatever we had expected in that slot.
+        CHECK(ClassifyEchoByte(0xBC, START) == EchoByte::Reply);
+        CHECK(ClassifyEchoByte(0x00, START) == EchoByte::Reply);
+        CHECK(ClassifyEchoByte(0xFF, START) == EchoByte::Reply);
+
+        // Neither our echo nor the start marker: a real collision, caught mid-frame.
+        CHECK(ClassifyEchoByte(0x00, 0xAA) == EchoByte::Collision);
+        CHECK(ClassifyEchoByte(0xCA, 0x00) == EchoByte::Collision);
+        CHECK(ClassifyEchoByte(0xBC, 0xBC) == EchoByte::Echo); // the END marker echoing is ours
+    }
+
     std::printf("== bootloader packet tests: %d checks, %d failures ==\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

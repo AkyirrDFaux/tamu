@@ -397,12 +397,20 @@ inline void DeviceService::PollBootloaderPassthrough()
             // zero with `sinkbytes` flat is a node that never answered; both flat is a request
             // that never left. Printed 10 s after the last request, and DeviceLog keeps it off a
             // link the app is still using.
+            //
+            // short/coll/reply are the raw send's own echo verdicts (RSBus.h): `reply` counts the
+            // sends the node answered INSIDE the echo window - the case that used to be reported
+            // as a collision and threw the answer away - and `coll` a byte that was neither our
+            // echo nor the node's start marker (a genuine collision). A run with sendfail=0 and
+            // reply>0 is the fixed path doing its job.
             DeviceLog("BLPT",
                       "total req=%u busy=%u short=%u sendfail=%u sinkbytes=%u frames=%u bad=%u "
-                      "ok=%u timeout=%u",
+                      "ok=%u timeout=%u rawshort=%lu rawcoll=%lu rawreply=%lu",
                       (unsigned)PtReqCount, (unsigned)PtBusyRefused, (unsigned)PtShortRefused,
                       (unsigned)PtSendFail, (unsigned)PtSinkBytes, (unsigned)PtSinkFrames,
-                      (unsigned)PtSinkBad, (unsigned)PtOkCount, (unsigned)PtTimeouts);
+                      (unsigned)PtSinkBad, (unsigned)PtOkCount, (unsigned)PtTimeouts,
+                      (unsigned long)RS485RawShortEcho, (unsigned long)RS485RawCollisions,
+                      (unsigned long)RS485RawEarlyReplies);
         }
         return; // not expecting a reply: one bool test, no bus access
     }

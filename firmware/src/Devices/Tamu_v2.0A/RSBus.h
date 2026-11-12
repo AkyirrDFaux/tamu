@@ -2,6 +2,7 @@
 #include "soc/uart_struct.h" // UART1 register struct (rxfifo_full_thrhd)
 #include <string.h>
 #include "Core/Functions/Bus.h"
+#include "Core/Functions/Bootloader.h" // Bootloader::ClassifyEchoByte: echo vs early reply vs collision
 
 #define TXD_PIN (GPIO_NUM_21) // RS-485 transceiver TX (to DI)
 #define RXD_PIN (GPIO_NUM_20) // RS-485 transceiver RX (from RO)
@@ -326,14 +327,45 @@ bool SendAndVerifyPacket(const PacketFrame &Data)
     return false;
 }
 
+// While a Device bootloader passthrough is outstanding the Device service installs a sink here:
+// the shared reader offers every byte to it first, so a raw 0xCA reply is stored for the
+// passthrough instead of being discarded as non-0xAA noise by the packet assembler. One pass
+// over the UART therefore serves both packet types. Null when nothing is expected, so the
+// normal path is byte-for-byte unchanged.
+//
+// Declared before RS485SendRaw, which uses it: the node starts answering inside the raw send's
+// own echo window (see the send below), and that start byte is handed straight to the sink so
+// the reply is never lost between the send and the main loop.
+bool (*BootloaderRxSink)(uint8_t Byte) = nullptr;
+
+// What a raw send's echo window turned out to hold (card t_d9feed1d). One "collision" used to
+// mean three different things, and the interesting one - the node answering inside the window -
+// was the one that made read/write impossible. They are counted apart so a rig read-back can
+// tell them apart without a rebuild (BLPT totals line, Core/Services/Device.h):
+//   RawShortEcho   an echo byte never came inside the window: the line was held or the frame was
+//                  cut short (a real failure);
+//   RawCollisions  a byte that was neither our echo nor the node's start marker: another station
+//                  was driving the line;
+//   RawEarlyReplies the node answered before the echo window closed - the expected case for this
+//                  protocol (it replies one silence window, ~704 us, after our last byte).
+uint32_t RS485RawShortEcho = 0;
+uint32_t RS485RawCollisions = 0;
+uint32_t RS485RawEarlyReplies = 0;
+
 // Raw bootloader send (Docs/Services/Bootloader.md): the frame is NOT a PacketFrame and
 // carries no 0xAA sync, so normal nodes (which wait for 0xAA) ignore it while a bootloader
-// waiting for 0xCA receives it. Same CSMA/echo discipline as SendAndVerifyPacket - and the same
-// rule about received bytes: they are kept, never flushed.
+// waiting for 0xCA receives it. Same CSMA discipline as SendAndVerifyPacket, and the same rule
+// about received bytes: they are kept, never flushed.
+//
+// The echo is read ONE BYTE AT A TIME and classified (Bootloader::ClassifyEchoByte), because a
+// chunk-wide read cannot tell our echo from the reply that legitimately begins inside the same
+// window: a node in bootloader answers ~704 us after our last byte (its own 32-byte silence
+// wait), so for read/write the reply's leading bytes land in the final chunk's echo read. The
+// old code memcmp'd the whole chunk, threw the reply away with it and reported a collision.
 bool RS485SendRaw(const uint8_t *Data, size_t Len)
 {
     const size_t CHUNK = 16; // ~1.4 ms of line time per chunk
-    uint8_t RxChunk[CHUNK];
+    uint8_t RxByte;
 
     for (int Attempt = 0; Attempt < RS485_RETRIES; Attempt++) {
         RS485WaitForSilence(0, RS485_SILENCE_TIMEOUT_MS); // bootloader traffic is the highest priority
@@ -341,16 +373,45 @@ bool RS485SendRaw(const uint8_t *Data, size_t Len)
         gpio_set_level(RS485_EN_PIN, 1);
 
         bool Collided = false;
+        bool Answered = false;
         size_t Verified = 0;
-        for (size_t Off = 0; !Collided && Off < Len; Off += CHUNK) {
+        for (size_t Off = 0; !Collided && !Answered && Off < Len; Off += CHUNK) {
             size_t ChunkLen = (Len - Off < CHUNK) ? (Len - Off) : CHUNK;
             uart_write_bytes(UART_NUM_1, (const char *)(Data + Off), ChunkLen);
-            int Got = uart_read_bytes(UART_NUM_1, RxChunk, ChunkLen, pdMS_TO_TICKS(RS485_ECHO_TIMEOUT_MS));
-            if (Got != (int)ChunkLen || memcmp(Data + Off, RxChunk, ChunkLen) != 0) {
-                Collided = true;
+
+            // The whole chunk's echo still has ONE window (RS485_ECHO_TIMEOUT_MS), so the send's
+            // stint arithmetic (Core/Functions/Bus.h) is unchanged; the window is simply spent
+            // byte by byte so nothing that is not our echo is destroyed by the comparison.
+            const int64_t EchoDeadline = esp_timer_get_time() + (int64_t)RS485_ECHO_TIMEOUT_MS * 1000;
+            for (size_t Echoed = 0; Echoed < ChunkLen; Echoed++) {
+                const int64_t LeftUs = EchoDeadline - esp_timer_get_time();
+                if (LeftUs <= 0 ||
+                    uart_read_bytes(UART_NUM_1, &RxByte, 1,
+                                    pdMS_TO_TICKS((LeftUs + 999) / 1000)) != 1) {
+                    RS485RawShortEcho = RS485RawShortEcho + 1;
+                    Collided = true; // echo incomplete: this attempt is dead, retry it
+                    break;
+                }
+                const Bootloader::EchoByte What =
+                    Bootloader::ClassifyEchoByte(Data[Off + Echoed], RxByte);
+                if (What == Bootloader::EchoByte::Echo) {
+                    Verified++;
+                    continue;
+                }
+                if (What == Bootloader::EchoByte::Reply) {
+                    // The node has the whole frame and is answering. Its start byte is ours to
+                    // keep: the sink assembles the reply, and the rest of it is read by the
+                    // shared reader on the next pass (it is in the driver ring, in order).
+                    RS485RawEarlyReplies = RS485RawEarlyReplies + 1;
+                    if (BootloaderRxSink != nullptr)
+                        (void)BootloaderRxSink(RxByte);
+                    Answered = true;
+                } else {
+                    RS485RawCollisions = RS485RawCollisions + 1;
+                }
+                Collided = true; // neither case continues this attempt's verification
                 break;
             }
-            Verified += ChunkLen;
         }
         // Release TX-enable as soon as the last bit is out. uart_wait_tx_done() wakes on a
         // FreeRTOS notification (~a tick of latency), and the bootloader replies fast enough
@@ -359,7 +420,10 @@ bool RS485SendRaw(const uint8_t *Data, size_t Len)
         while (UART1.status.txfifo_cnt != 0 || UART1.fsm_status.st_utx_out != 0) {}
         gpio_set_level(RS485_EN_PIN, 0);
 
-        if (!Collided && Verified == Len)
+        // An early reply is a SUCCESS, not a collision: the node answered a frame it accepted
+        // (a corrupted one is discarded by its own decoder and never answered). The reply itself
+        // is settled by the passthrough's poll, which is what decides ok/fail.
+        if (Answered || (!Collided && Verified == Len))
             return true;
         // Same frame-or-longer, address-decorrelated backoff as the packet path (Bus.h).
         RS485BackoffSleep(RS485BackoffMs(DeviceStatus.ShortAddress, (uint8_t)Attempt, RawRand()));
@@ -367,12 +431,6 @@ bool RS485SendRaw(const uint8_t *Data, size_t Len)
     return false;
 }
 
-// While a Device bootloader passthrough is outstanding the Device service installs a sink here:
-// the shared reader offers every byte to it first, so a raw 0xCA reply is stored for the
-// passthrough instead of being discarded as non-0xAA noise by the packet assembler. One pass
-// over the UART therefore serves both packet types. Null when nothing is expected, so the
-// normal path is byte-for-byte unchanged.
-bool (*BootloaderRxSink)(uint8_t Byte) = nullptr;
 
 // Receives and validates a full PacketFrame using the shared bus assembler
 // (Core/Functions/Bus.h); the byte source pulls from the ESP32 UART driver.

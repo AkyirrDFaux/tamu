@@ -1665,7 +1665,7 @@ echo
 #     reads that keep ring BEFORE the UART (byte order: the kept bytes are the older ones);
 #   - the drop counter exists and is reported in the BUSGATE totals line beside rxrejects.
 echo "### source guard: RSBus keeps received bytes, drops none silently, and reports what it loses"
-TAMU_RSBUS="$ROOT/src/Devices/Tamu_v2.0A/RSBus.h"
+TAMU_RSBUS=${TAMU_RSBUS:-$ROOT/src/Devices/Tamu_v2.0A/RSBus.h}
 BUS_H="$ROOT/src/Core/Functions/Bus.h"
 APP_IFACE="$ROOT/src/Core/Functions/AppInterface.h"
 rxbus_fail=0
@@ -2056,6 +2056,65 @@ if grep -q 'AppBLERadioStart(); // first enable' "$BLE_SRC"; then
 fi
 [ $ls_fail = 0 ] && echo "PASS: the latch is supervised, the assembler bounded and timed, the USB pass capped and skipped, the radio start backed off"
 fail=$((fail + ls_fail))
+echo
+
+# t_d9feed1d: a raw bootloader send must never destroy the reply it meets in its own echo window.
+# A node in bootloader answers one silence window (~704 us) after our last byte, so for read/write
+# the reply's leading bytes land inside the LAST chunk's echo read. Reading the chunk and
+# memcmp-ing it against what was sent turned that answer into a "collision", threw the bytes away
+# and declared the send failed - so no DAS could be flashed. The echo is read byte by byte and
+# classified (Bootloader::ClassifyEchoByte) instead, and the start of a reply is handed to the
+# sink, so the guard pins the four things that make that true:
+#   - no chunk-wide compare in the raw send (a memcmp is the defect coming back);
+#   - the echo read is one byte, and every byte goes through the classifier;
+#   - a reply byte is handed to BootloaderRxSink instead of being dropped;
+#   - the three outcomes are counted apart (short / collision / early reply) and reported in the
+#     passthrough's totals line, so a rig read-back can tell them apart without a rebuild.
+echo "### source guard: a raw bootloader send keeps the reply it meets in its own echo window"
+TAMU_RSBUS=${TAMU_RSBUS:-$ROOT/src/Devices/Tamu_v2.0A/RSBus.h}
+DEVSVC_SRC=${DEVSVC_SRC:-$ROOT/src/Core/Services/Device.h}
+RAW_SEND=$(sed -n '/^bool RS485SendRaw(const uint8_t \*Data, size_t Len)/,/^}/p' "$TAMU_RSBUS")
+raw_fail=0
+if [ -z "$RAW_SEND" ]; then
+    echo "FAIL $TAMU_RSBUS: RS485SendRaw was not found - this guard cannot see the raw send"
+    raw_fail=1
+fi
+if printf '%s\n' "$RAW_SEND" | grep -q 'memcmp'; then
+    echo "FAIL $TAMU_RSBUS: the raw send compares a whole chunk again - an early reply fails the compare and is discarded"
+    raw_fail=1
+fi
+if ! printf '%s\n' "$RAW_SEND" | grep -q 'uart_read_bytes(UART_NUM_1, &RxByte, 1,'; then
+    echo "FAIL $TAMU_RSBUS: the raw send's echo must be read one byte at a time"
+    raw_fail=1
+fi
+if ! printf '%s\n' "$RAW_SEND" | grep -q 'ClassifyEchoByte(Data\[Off + Echoed\], RxByte)'; then
+    echo "FAIL $TAMU_RSBUS: every echo byte must be classified (echo / reply / collision)"
+    raw_fail=1
+fi
+if ! printf '%s\n' "$RAW_SEND" | grep -q 'BootloaderRxSink(RxByte)'; then
+    echo "FAIL $TAMU_RSBUS: a reply byte met in the echo window must be handed to the bootloader sink"
+    raw_fail=1
+fi
+for raw_counter in RS485RawShortEcho RS485RawCollisions RS485RawEarlyReplies; do
+    if ! grep -q "uint32_t $raw_counter = 0;" "$TAMU_RSBUS"; then
+        echo "FAIL $TAMU_RSBUS: $raw_counter is gone - the three echo outcomes would merge into one again"
+        raw_fail=1
+    fi
+done
+if ! grep -q 'rawreply=%lu' "$DEVSVC_SRC"; then
+    echo "FAIL $DEVSVC_SRC: the passthrough totals line must report rawshort/rawcoll/rawreply"
+    raw_fail=1
+fi
+# The sink has to exist WHEN the send classifies a reply, and the node can answer inside the
+# send: arming it after RS485SendRaw returns is the race that loses the answer to the assembler.
+ARM_LINE=$(grep -n 'BootloaderRxSink = \[\]' "$DEVSVC_SRC" | head -1 | cut -d: -f1)
+SEND_LINE=$(grep -n 'if (!RS485SendRaw(Raw, Len))' "$DEVSVC_SRC" | head -1 | cut -d: -f1)
+if [ -z "$ARM_LINE" ] || [ -z "$SEND_LINE" ] || [ "$ARM_LINE" -ge "$SEND_LINE" ]; then
+    echo "FAIL $DEVSVC_SRC: the bootloader sink must be armed BEFORE the raw request goes out"
+    raw_fail=1
+fi
+[ $raw_fail = 0 ] && echo "PASS: the raw send reads the echo byte by byte, classifies it, and hands an early reply to the sink instead of discarding it"
+fail=$((fail + raw_fail))
 echo
 
 exit $fail

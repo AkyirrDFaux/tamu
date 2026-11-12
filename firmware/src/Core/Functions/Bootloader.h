@@ -171,4 +171,31 @@ namespace Bootloader
         uint8_t Got = (uint8_t)((Frame[1] >> 3) & 1u);
         return (Got == Parity(Frame, Len)) ? Cmd : INVALID;
     }
+
+    // What one byte read back during a raw send actually is (card t_d9feed1d).
+    //
+    // A raw request is verified by its echo on the half-duplex line, but a node in bootloader
+    // answers ONE SILENCE WINDOW after our last byte - BL_SILENCE_BYTES = 32 byte times, ~704 us
+    // at 460800 - and that reply begins inside the echo window of the last chunk. A chunk-wide
+    // read compared against what was sent therefore compares the START of the node's reply
+    // against our own bytes: it mismatches, the reply's head is thrown away with the chunk, and
+    // the request is reported as a collision - which is why read/write never completed while
+    // identify (a longer answer) did.
+    //
+    // Classifying each byte instead keeps the reply: a byte that is not our echo but IS the
+    // start marker means the node has already accepted the whole frame and is answering, which
+    // is the expected case here, not an error. Only a byte that is neither is a real collision.
+    enum class EchoByte : uint8_t
+    {
+        Echo,     // our own byte came back: keep verifying
+        Reply,    // START: the node is answering - hand it, and everything after it, to the sink
+        Collision // neither: another station is driving the line
+    };
+
+    constexpr EchoByte ClassifyEchoByte(uint8_t Sent, uint8_t Got)
+    {
+        if (Got == Sent)
+            return EchoByte::Echo;
+        return Got == START ? EchoByte::Reply : EchoByte::Collision;
+    }
 }
