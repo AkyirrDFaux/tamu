@@ -503,8 +503,10 @@ Open:
   Packages are deterministic (stored, sorted, 1980-01-01 timestamps) and `--verify` re-checks a
   package against its own bytes (a mismatch names the file and, with the loose `.bin` beside it, the
   byte offset). `collect_binaries.sh` produces them in the same one command as the `.bin`s, and
-  `MANIFEST.txt` carries each package's full sha256. Open: neither `upload.sh` nor the app's flashing
-  paths require a package yet — that is the next layer (other workers' areas), and `binaries/` stays
+  `MANIFEST.txt` carries each package's full sha256. `upload.sh bin tamu` reads the manifest now
+  (`scripts/load_address.py`, card `t_9c6dbc90`): it flashes the packaged image at the address the
+  manifest names and refuses an offset the manifest does not. Open: the app's flashing paths still
+  do not require a package — that is the next layer (other workers' areas) — and `binaries/` stays
   git-ignored, so a package is a build output, not a committed artifact.
 
 - **Pairing-free BLE updater in the `factory` image - implemented and demonstrated on the rig

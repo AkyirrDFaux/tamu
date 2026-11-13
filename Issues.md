@@ -852,19 +852,15 @@ are hardware-only.
   "differs" 1-3 times per 432 because of the read-path glitch below, which is why every repair round
   after the first reported NEW offsets - the two-read agreement is what makes a difference real.*
 
-- **E86 `./upload.sh bin tamu` defaults to 0x70000, which is not the app slot** (measured
-  2026-11-12, card `t_5eb19a27`). `upload.sh` says "app @ 0x70000 (ota_0, derived from
-  partitions.csv)", but `firmware/partitions.csv` puts `ota_0` at **0x90000** (size 0x283000) and
-  `factory` at 0x10000 (size 0x7D000) - so 0x70000 is inside the FACTORY partition and 0x20000 below
-  the slot the rig's core boots from. Measured consequence: the write at 0x70000 overran factory's
-  end and landed an image's bytes from offset 0x20000 onward at the start of `ota_0`, after which the
-  core answered nothing at all (a ping probe hung on the port) until the same image was written at
-  0x90000 with `esptool.py --chip esp32c3 write_flash 0x90000` (`Hash of data verified`), which
-  brought it back (`26.11.12 iter 10`, ping 1 in 8 ms). The factory slot now holds the first 0x1D000
-  bytes of a 711600 B image over whatever it carried before; it cannot hold that image (0x7D000 is
-  smaller than 711600), so the fallback slot is not trustworthy until the owner re-provisions it.
-  The address also cannot simply be "the app offset" of a fixed table: use 0x90000 for `ota_0` on
-  this layout, or fix the script's constant (owner's file - not edited here).
+- **E86 (code fixed 2026-11-13, card `t_9c6dbc90`) - the rig's `factory` slot is still damaged.**
+  The `0x70000` default that wrote an app image *inside* `factory` (measured 2026-11-12, card
+  `t_5eb19a27`: the core answered nothing until the same image was written at 0x90000) is gone:
+  `upload.sh` now reads the load address from the package manifest (`manifest.json` ->
+  `images[].address`) through `scripts/load_address.py`, refuses an offset the manifest does not
+  name, and names the partition (from `partitions.csv`) in the refusal. What is left is device
+  state, not code: the 2026-11-12 write left the first 0x1D000 bytes of a 711600 B image over
+  whatever `factory` carried, and that slot cannot hold the image (0x7D000 < 711600), so the
+  fallback slot is not trustworthy until the owner re-provisions it.
 
 - **E87 The console's free-text buffer cut the diagnostics line it exists for** (card `t_5eb19a27`,
   2026-11-12). `Devices/Tamu_v2.0A/Log.h` formatted every `DeviceLog` line into `char Buffer[128]`,
@@ -2060,16 +2056,6 @@ refresh `BleFallbackName` from the register-write hook of `System` field 6. The 
 live (`e71` pass, and the 2026-11-06 rename measurement above).
 
 ## Open (2026-11-06): the BLE updater shipped - three things around it
-
-**F63 `upload.sh`'s raw-bin offsets are stale, and the default one lands inside `factory`.** The
-script (`upload.sh`, owned by the app lane since the 2026-11-13 ruling) still carries `TAMU_APP_OFFSET=0x70000` and prints
-`bootloader.bin 0x10000` in its help, both from before the 2026-11-06 repartition
-(`17e5259`): `ota_0` is at **0x90000** and `factory` is the app partition at 0x10000
-(0x10000..0x8D000). So `./upload.sh bin tamu` with no offset writes the main app **into the factory
-image**, and the factory then no longer validates. Measured working commands are
-`./upload.sh bin tamu <file> 0x90000` (the offset has to be given) and `pio run -e Tamu_v2_0A
--t upload` (its `post:scripts/core_app_offset.py` hook repoints correctly, and the write landed at
-0x00090000 in the 2026-11-06 demo). Fixing the constant and the help text is the owner's edit.
 
 **F64 A raw esptool write into `ota_0` clears neither the boot budget nor a rollback state.** The
 factory image keeps the attempt counter in NVS (`updater/attempts`) and the rollback lives in

@@ -6,7 +6,9 @@
 #   ./upload.sh boot [tamu|das|valu] [-y]  build + upload the bootloader(s)   (default: both)
 #   ./upload.sh all [tamu|das|valu] [-y]   build + upload bootloader(s) then application(s)
 #   ./upload.sh build [tamu|das|valu]      build only, no upload              (default: both)
-#   ./upload.sh bin tamu [file] [off]      flash a raw .bin via esptool     (default: app @ 0x70000)
+#   ./upload.sh bin tamu [file] [off]      flash an image via esptool; the address is read from the
+#                                          package manifest (a loose .bin no manifest names falls
+#                                          back to 0x90000, and says so)
 #   ./upload.sh bin das  [file] [off]      flash a raw .bin via minichlink  (default: app @ 0x800)
 #   ./upload.sh bin valu [file] [off]      flash a raw .bin via wlink       (default: bootloader @ 0x0)
 #   ./upload.sh rsbus das [core-port]      build + upload the DAS app over the RSBus, relayed by the
@@ -53,18 +55,33 @@ DAS_BOOT_ENV=DAS_bootloader
 VALU_APP_ENV=Valu_v2_0
 VALU_BOOT_ENV=Valu_bootloader
 
-# Raw-bin defaults (the address each app image is linked/flashed at; the bootloaders are
-# never touched by these defaults).
-TAMU_APP_OFFSET=0x70000   # ota_0, derived from partitions.csv (scripts/core_app_offset.py)
+# Raw-image defaults. The Tamu core's address is normally READ, not defaulted: the package
+# manifest (`manifest.json` -> `images[].address`) names where its image belongs, and
+# scripts/load_address.py refuses an offset that disagrees with it. TAMU_APP_OFFSET is only what
+# a loose .bin that no manifest names falls back to, and the output says the address was assumed.
+# It is `ota_0` (firmware/partitions.csv: ota_0, app, ota_0, 0x90000, 0x283000) - NOT 0x70000,
+# which is inside `factory` (0x10000..0x8D000) and took the core off the bus (Issues.md E86).
+TAMU_APP_OFFSET=0x90000
 DAS_APP_OFFSET=0x800      # app base; the DAS bootloader owns 0x0-0x800
 VALU_BOOT_OFFSET=0x0      # bootloader at the bottom of flash (12 KB: 0x0-0x3000)
 VALU_APP_OFFSET=0x3000    # app base; the Valu bootloader owns 0x0-0x3000
+
+# Load-address resolver: the manifest first, `partitions.csv` for the partition names.
+LOAD_ADDRESS="$ROOT/scripts/load_address.py"
 
 # The Valu has no PlatformIO uploader: its images go in over the WCH-Link probe (SWD), which is
 # also the only way to get the very first bootloader onto the chip.
 VALU_UPLOAD="$FW/scripts/valu_upload.py"
 
 die() { echo "error: $*" >&2; exit 1; }
+
+# Directories a packaged image was extracted into; removed on exit, whatever the outcome.
+_cleanup_dirs=()
+cleanup_temp() {
+    local d
+    for d in "${_cleanup_dirs[@]:-}"; do [ -n "$d" ] && rm -rf "$d"; done
+}
+trap cleanup_temp EXIT
 
 usage() {
     cat <<'EOF'
@@ -78,9 +95,12 @@ Commands:
   all   [tamu|das|valu] [-y]  Build and upload the bootloader(s) then the application(s).
   build [tamu|das|valu]       Build only, no upload.                      (default: both)
   bin   <tamu|das|valu> [file] [offset]
-                              Flash a raw image. `file` defaults to the built image, `offset`
-                              to the device's default (tamu app 0x70000, DAS app 0x800,
-                              valu bootloader 0x0).
+                              Flash an image. `file` defaults to the built image. For tamu the
+                              load address is read from the package manifest (`file` may be the
+                              .fw.zip itself), and an `offset` that disagrees with the manifest is
+                              refused, not corrected. A loose .bin that no manifest names falls
+                              back to the documented default (tamu app 0x90000, DAS app 0x800,
+                              valu bootloader 0x0) and says the address was assumed.
   rsbus <das> [core-port]     Build the DAS app and upload it over the relay core's RSBus
                               bootloader passthrough (Docs/Services/Bootloader.md, 002x). The
                               node must already be in bootloader mode. The port defaults to
@@ -108,8 +128,8 @@ Examples:
   ./upload.sh build valu          # compile the Valu app + bootloader, no upload
   ./upload.sh bin valu out.bin 0x2000
   ./upload.sh bin das             # flash the built DAS app image
-  ./upload.sh bin tamu app.bin 0x70000
-  ./upload.sh bin tamu bootloader.bin 0x10000
+  ./upload.sh bin tamu binaries/Tamu_v2_0A-26.11.12.6.fw.zip   # 0x90000, from its manifest
+  ./upload.sh bin tamu bootloader.bin 0x10000                 # factory, the row in partitions.csv
 
 Port overrides (else autodetected):
   TAMU_PORT=/dev/ttyACM1      Tamu core USB-serial port
@@ -190,8 +210,31 @@ do_bin() { # <tamu|das> [file] [offset]
     case "$dev" in
         tamu)
             file="${1:-$FW/.pio/build/$TAMU_APP_ENV/firmware.bin}"
-            off="${2:-$TAMU_APP_OFFSET}"
+            local want="${2:-}" resolved tmpdir key value load_args=()
             [ -f "$file" ] || die "no binary '$file' (build it first: ./upload.sh app tamu)"
+            [ -f "$LOAD_ADDRESS" ] || die "load_address.py not found at $LOAD_ADDRESS"
+            command -v python3 >/dev/null 2>&1 \
+                || die "python3 is needed to read the package manifest (load_address.py)"
+            # Where this image belongs, and from where: the package manifest when it names one,
+            # the documented default otherwise. An offset that disagrees with the manifest is
+            # refused before esptool runs - never patched to the "right" one.
+            tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/tamu-upload.XXXXXX")"
+            _cleanup_dirs+=("$tmpdir")
+            load_args=("$file" --default "$TAMU_APP_OFFSET" --partitions "$FW/partitions.csv"
+                       --extract-dir "$tmpdir")
+            [ -n "$want" ] && load_args+=(--offset "$want")
+            if ! resolved="$(python3 "$LOAD_ADDRESS" "${load_args[@]}")"; then
+                echo "refused: nothing was written" >&2
+                exit 2
+            fi
+            while IFS='=' read -r key value; do
+                case "$key" in
+                    ADDRESS) off="$value" ;;
+                    IMAGE) file="$value" ;;
+                esac
+            done <<<"$resolved"
+            [ -n "${off:-}" ] || die "no load address for $file"
+            [ -f "$file" ] || die "no binary '$file' (the resolver named a file that is not there)"
             local args=(--chip esp32c3 --baud 921600)
             [ -n "$TAMU_PORT" ] && args+=(--port "$TAMU_PORT")
             args+=(write_flash "$off" "$file")
