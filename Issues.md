@@ -851,6 +851,31 @@ are hardware-only.
   *Reading the repair's own first rounds needs care: a chunk accepted from a single good-flags read
   "differs" 1-3 times per 432 because of the read-path glitch below, which is why every repair round
   after the first reported NEW offsets - the two-read agreement is what makes a difference real.*
+  *(2026-11-13, card `t_cb8bd722`: the write path now NAMES the page instead of one chunk. Two rules,
+  both decided by the offset: the page-start chunk still erases positionally (E84), and a chunk
+  inside a page is only programmed when the page's first half is known to be there - it follows the
+  page start directly (`LastWritten` names it) or the half already holds data (the app's
+  correction round) - so a lone second half over a blank page is REFUSED instead of being written
+  into a page nobody erased. A page that could not be written is answered with the page address and
+  **bit 0 set as the failure flag** (every real offset is 32-byte aligned), which is what keeps a
+  failed PAGE-START chunk from being read as a success; the core compares the offset it asked for
+  and relays `FLAG_FAIL` with the page in its payload (`Bootloader::WriteAck`, host-tested with the
+  rest of the rule: 62 checks). Measured: bootloader 2044/2048 B (99.8 %, 4 B spare) - the rule is
+  paid for by `-mcmodel=medany` + `-fno-jump-tables`, which took the same source from 2036 to 2012 B
+  on their own.
+  What this does NOT do: the page-start chunk still erases all 64 bytes, so the page's second half is
+  blank until its own chunk lands. The full prevention - hold the first half in RAM, erase and
+  program both halves only when the page is complete - was implemented and measured on this card at
+  **+250 B** (a second program loop, the held-half copy, the flush that writes a tail page whose
+  image ends mid-page), i.e. it does not fit the 2 KB region: the image came to 2264 B, 216 B over
+  (`firmware/.pio/probe/bl_holdpair_overflow.map`). It needs a size card first, or an owner decision
+  on the bootloader region.
+  Residual on the tooling side: the app retries the chunk it sent (3 attempts) and aborts the run
+  when the answer names a page, so a lost page-start request still ends the run rather than being
+  repaired in place - re-sending the page's FIRST chunk then the second is the app lane's follow-up
+  (`bootloader_client.dart` `writeChunkAck`). The rig acceptance for this card (the SWD dump of a
+  page whose page-start request is dropped, and a full 432-chunk upload + digest) is written and
+  unrun: `firmware/.pio/probe/tcb8_page_loss.py` (`lost <page> [--drop]`, `full <image>`, `dump`).)*
 
 - **E86 (code fixed 2026-11-13, card `t_9c6dbc90`) - the rig's `factory` slot is still damaged.**
   The `0x70000` default that wrote an app image *inside* `factory` (measured 2026-11-12, card
