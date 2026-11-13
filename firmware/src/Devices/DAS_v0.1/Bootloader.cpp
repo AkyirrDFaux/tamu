@@ -11,11 +11,12 @@
 // the last successfully written offset, an identify request returns the app size and name, and a
 // digest request (0b110) answers with the CRC32 of the requested range of the app region.
 //
-// Flash rules: writes are 32-byte aligned (per the doc); the chunk that starts a 64-byte page
-// (offset % 64 == 0) erases that page first, whatever it holds, and no other chunk erases. A write
-// is acked (its offset echoed back) only when its 32 bytes read back as sent - see
-// Bootloader::WriteChunk. It never touches the storage region at 0x3E00 (the app's `.SV`/table
-// live there).
+// Flash rules: writes are 32-byte aligned (per the doc). The erase unit is the 64-byte page, so the
+// chunk that starts a page erases it (positionally, whatever it holds) and no other chunk erases; a
+// chunk inside a page is only programmed when that page's first half is known to be there, and is
+// otherwise REFUSED with the PAGE named in the reply, so a tool re-sends the page's first chunk
+// instead of leaving a 32-byte hole (Bootloader::WriteChunk). It never touches the storage region at
+// 0x3E00 (the app's `.SV`/table live there).
 //
 // It is written with direct register access (no SPL GPIO/USART/RCC/FLASH) to fit the 2 KB
 // region alongside the framework startup/SystemInit. The clock is already 48 MHz: the
@@ -194,8 +195,12 @@ static uint8_t ReceiveFrame(uint8_t *Out, size_t Cap, uint32_t TimeoutUs)
         Out[Got++] = Byte;
         if (Got == 2)
         {
+            // FrameSize() is a table over the 3 command bits whose largest entry is DATA_SIZE,
+            // i.e. exactly `Cap`: the size is bounded by construction, so only a command that has
+            // no size at all (0) can be rejected here. Keeping the comparison out is 8 B of the
+            // 2 KB this image has to live in.
             Need = Bootloader::FrameSize((uint8_t)(Byte & 0x07u));
-            if (Need == 0 || Need > Cap) return Bootloader::INVALID;
+            if (Need == 0) return Bootloader::INVALID;
         }
         else if (Need != 0 && Got == Need)
         {
@@ -274,12 +279,21 @@ struct DasFlash
 static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
 {
     // Erase positionally, program, and verify - see Bootloader::WriteChunk. `LastWritten` only
-    // moves when the 32 bytes read back as sent, so the response's offset is the whole answer: it
-    // names the chunk when the write landed and keeps the previous offset when it did not.
-    Bootloader::WriteChunk<DasFlash>(Offset, Payload, APP_SIZE, LastWritten);
+    // moves when the bytes read back as sent, so the response's offset is the whole answer: it
+    // names the chunk when the write landed and keeps the previous offset when a refusal touched
+    // nothing.
+    //
+    // A page that could not be written is answered with the PAGE, flagged: the erase covers 64
+    // bytes, so the tooling has to re-send the page's first chunk as well, and the page address is
+    // what says which one. The flag is bit 0 of the offset - every real offset is 32-byte aligned,
+    // so bit 0 is never set in an ack - and it is what keeps a failed PAGE-START chunk from being
+    // read as a success (its page address IS its own offset). The core relays this offset in its
+    // write reply with FLAG_FAIL because it does not equal the offset it asked for.
+    const Bootloader::ChunkResult Result =
+        Bootloader::WriteChunk<DasFlash>(Offset, Payload, APP_SIZE, LastWritten);
 
     uint8_t Resp[Bootloader::READ_REQ_SIZE];
-    Bootloader::EncodeWriteResponse(LastWritten, Resp);
+    Bootloader::EncodeWriteResponse(Bootloader::WriteAck(Result, Offset, LastWritten), Resp);
     SendRaw(Resp, sizeof(Resp));
 }
 

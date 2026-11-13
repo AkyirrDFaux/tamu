@@ -174,39 +174,70 @@ namespace Bootloader
     inline const uint8_t *Payload(const uint8_t *Frame) { return Frame + 6; }
 
     // -----------------------------------------------------------------------
-    // Writing one chunk (card t_5195d4bc: the erase decision and the ack rule)
+    // Writing one chunk (cards t_5195d4bc and t_cb8bd722: the erase decision, the ack rule, and the
+    // page a chunk has to belong to before it may be programmed)
     // -----------------------------------------------------------------------
     //
     // An upload sends 32-byte chunks in order (Docs/Services/Bootloader.md), so the SECOND chunk of
-    // every 64-byte flash page lands in a page the first chunk just programmed.
+    // every 64-byte flash page lands in a page the first chunk just programmed - and the erase unit
+    // is the WHOLE 64-byte page. That is what made a lost write leave a hole (E85): a page-start
+    // request the node never received, or whose answer was lost, leaves the page's second half blank
+    // while the tool only learns that ONE chunk failed, so it re-sends one chunk of a two-chunk page.
     //
-    // The erase decision is POSITIONAL, never content-based: only the chunk whose offset starts a
-    // page erases that page, and it erases it whatever the page already holds - a page carrying an
-    // older image is exactly what a re-flash has to replace, and a blank page only costs the erase.
-    // A chunk inside a page never erases, because the erase unit is the whole page and clearing it
-    // would take the chunk that just landed in the other half with it.
+    // Two rules, both decided by the OFFSET and never by what the page happens to hold:
+    //   * the erase is positional (E84): only the chunk whose offset starts a page erases it, and it
+    //     erases it whatever it holds - a page carrying an older image is what a re-flash replaces,
+    //     and a chunk inside a page never erases, because clearing the page would take the half that
+    //     just landed with it;
+    //   * a chunk inside a page is only programmed when the page's first half is KNOWN to be there -
+    //     either this chunk follows it directly (`LastWritten` names the page start), or the half
+    //     already holds data (the tool's correction round re-sends one chunk of a written page). A
+    //     blank first half means the page-start request never arrived, so the chunk is REFUSED and
+    //     the ack names the PAGE: programming it alone would leave exactly the half-blank page E85
+    //     measured, and the tooling can re-send the page's first chunk from that address.
     //
-    // The ack rule IS the verification: the write response names `Offset` only when the 32 bytes
-    // read back as sent. Flash programming can only clear bits, so a chunk arriving in a slot that
-    // was never erased reads back different and is refused (the response keeps the previous
-    // offset, which is how the tool tells a refusal from an ack - Docs: "Success only if the offset
-    // matches the request"), while a re-sent identical chunk verifies and is acked, so the
-    // protocol stays idempotent for the app's retry round.
+    // The ack rule IS the verification: the write response names `Offset` only when the 32 bytes read
+    // back as sent, and names the PAGE when the page could not be written, so the tooling re-sends
+    // the page rather than one chunk of it. Flash programming can only clear bits, so a chunk
+    // arriving in a slot that was never erased reads back different and is refused (the response
+    // keeps the previous offset, which is how the tool tells a refusal from an ack - Docs: "Success
+    // only if the offset matches the request"), while a re-sent identical chunk verifies and is
+    // acked, so the protocol stays idempotent for the app's retry round.
     //
     // `Flash` is the device's flash adapter (Unlock/Lock, ErasePage, ProgramWord, ReadWord). It is
     // a template parameter so the host test drives THIS function against a NOR model (program only
     // clears bits) instead of a copy of the rule.
     constexpr uint32_t PAGE_SIZE = 64; // the CH32V003 CR_PAGE_ER erase page
 
-    template <class Flash>
-    inline bool WriteChunk(uint32_t Offset, const uint8_t *Payload, uint32_t AppSize,
-                           uint32_t &LastWritten)
+    // What one write request did, which is what its response has to say:
+    enum class ChunkResult : uint8_t
     {
-        if ((Offset & (PAYLOAD_SIZE - 1u)) != 0) return false; // 32-byte aligned
+        Refused,   // misaligned or out of range: nothing was touched, the ack keeps the old offset
+        Written,   // the chunk is in flash: the ack names this chunk
+        PageFailed // the page could not be written: the ack names the PAGE, so the tool re-sends it
+    };
+
+    template <class Flash>
+    inline ChunkResult WriteChunk(uint32_t Offset, const uint8_t *Payload, uint32_t AppSize,
+                                  uint32_t &LastWritten)
+    {
+        if ((Offset & (PAYLOAD_SIZE - 1u)) != 0) return ChunkResult::Refused; // 32-byte aligned
         // Bounds are checked on the offset, not the computed address: `AppSize - Offset` under an
         // `Offset <= AppSize` guard cannot wrap.
-        if (Offset > AppSize || AppSize - Offset < PAYLOAD_SIZE) return false;
-        if ((Offset & (PAGE_SIZE - 1u)) == 0 && !Flash::ErasePage(Offset)) return false;
+        if (Offset > AppSize || AppSize - Offset < PAYLOAD_SIZE) return ChunkResult::Refused;
+
+        const uint32_t Page = Offset & ~(PAGE_SIZE - 1u);
+        if (Offset == Page)
+        {
+            if (!Flash::ErasePage(Page)) return ChunkResult::PageFailed;
+        }
+        else if (LastWritten != Page && Flash::ReadWord(Page) == 0xFFFFFFFFu)
+        {
+            // No page-start chunk wrote this page's first half: programming the second half alone
+            // would leave the page half blank for ever. Name the page instead - the tool re-sends
+            // the page's first chunk, which erases and writes the page as a unit.
+            return ChunkResult::PageFailed;
+        }
 
         // Program and read back in ONE loop: the words are compared while the chunk is still in
         // hand, so the ack above costs no second pass over the payload.
@@ -220,9 +251,19 @@ namespace Bootloader
             if (Flash::ReadWord(Offset + i) != Word) Landed = false;
         }
         Flash::Lock();
-        if (!Landed) return false;
+        if (!Landed) return ChunkResult::PageFailed;
         LastWritten = Offset;
-        return true;
+        return ChunkResult::Written;
+    }
+
+    // The offset a write response carries for one outcome - the whole answer the tool has to read:
+    // the chunk when it landed, the PAGE (with bit 0 set as the failure flag) when the page could not
+    // be written, and the previous offset when nothing was touched. Bit 0 is the flag because every
+    // real offset is 32-byte aligned; without it a failed PAGE-START chunk would answer with its own
+    // offset and be read as a success.
+    inline uint32_t WriteAck(ChunkResult Result, uint32_t Offset, uint32_t LastWritten)
+    {
+        return Result == ChunkResult::PageFailed ? ((Offset & ~(PAGE_SIZE - 1u)) | 1u) : LastWritten;
     }
 
     // -----------------------------------------------------------------------
