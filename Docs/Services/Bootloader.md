@@ -8,7 +8,7 @@ Writes are acknowledged: every write request is answered by a write response car
 
 Erasing is a separate command from writing: a page is blanked by an erase request and then programmed by the write requests that cover it. A write never erases and does not require the page to have been erased first - a page that was never blanked simply receives wrong data, which the CRC verification and the read-back both catch.
 
-Final verification of the image is the app's responsibility, in two measures: a CRC verify request over the whole image range, and a full read-back of the same range.
+Final verification of the image is the app's responsibility, in two measures: a CRC verify request over the whole app space, and a full read-back of the same space.
 ### Bootloader Packets
 These packets are used on both RSBus and USB.
 
@@ -123,14 +123,14 @@ Write response packet:
 
 CRC request packet:
 
+The CRC always covers the whole app space - there is no offset and no length, so the frame carries neither.
+
 | Field        | Size   | Note |
 | ------------ | ------ | ---- |
 | Start Marker | uint8  | 0xCA |
 | Padding      | 3bit   | 0    |
-| Parity       | 1bit   | Even, covers command and offset |
+| Parity       | 1bit   | Even, covers the command |
 | Command      | 4bit   | 0b1000 |
-| Offset       | uint32 | Start of the range to verify, relative to the start of the main binary space |
-| Length       | uint16 | Length of the range in bytes |
 | End Marker   | uint8  | 0xBC |
 
 CRC response packet:
@@ -139,10 +139,9 @@ CRC response packet:
 | ------------ | ------ | ---- |
 | Start Marker | uint8  | 0xCA |
 | Padding      | 3bit   | 0    |
-| Parity       | 1bit   | Even, covers command, offset and CRC |
+| Parity       | 1bit   | Even, covers the command and the CRC |
 | Command      | 4bit   | 0b1001 |
-| Offset       | uint32 | The range's start, echoed |
-| CRC          | uint32 | CRC-32 (poly 0xEDB88320, init 0xFFFFFFFF, final XOR), little-endian, over `[offset, offset+length)` |
+| CRC          | uint32 | CRC-32 (poly 0xEDB88320, init 0xFFFFFFFF, final XOR), little-endian, over the whole app space |
 | End Marker   | uint8  | 0xBC |
 
 The packets are sent whenever the USB or RSBus is clear, and all actions are blocking.
@@ -151,8 +150,9 @@ The app compares before it writes, so an update transfers only what changed:
 
 1. Identify, to learn the app size and the page size.
 2. For every page of the image: read it, compare with the image. Erase the page only where the two differ, and write only the chunks of pages that differ.
-3. CRC verify the whole image range and compare with the CRC of the image the app holds.
-4. Read the whole range back and compare it byte for byte.
+3. Blank the pages from the end of the image to the end of the app space. The CRC covers the whole app space, so that tail is part of what it measures; leaving an earlier image's bytes there makes the CRC unpredictable. The tail is a handful of pages (on the DAS, 9 of them).
+4. CRC verify. Because the space is now a function of the image alone, the expected value is the host's CRC of the image padded to the app size with 0xFF.
+5. Read the whole space back and compare it byte for byte.
 
 Steps 3 and 4 are both required. The CRC is one exchange over the whole range; the read-back is the independent measure that does not depend on the device's CRC implementation being correct. A disagreement between them is a finding in its own right, not something to resolve by trusting one of them.
 
@@ -169,5 +169,5 @@ The two packet families share one UART, so while a passthrough is outstanding th
 | Request identification | 0  | -               | App size, Page size, Name | |
 | Send write packet      | 1  | Offset, Payload | Offset          | Success only if the offset matches the request |
 | Request read           | 2  | Offset          | Offset, Payload |      |
-| Request CRC            | 3  | Offset, Length  | Offset, CRC     | CRC-32 over the range |
+| Request CRC            | 3  | -               | CRC             | CRC-32 over the whole app space |
 | Erase page             | 4  | Offset          | Page            | Offset must be page-aligned |
