@@ -19,7 +19,7 @@ struct IdentifyFrame
 };
 
 // App size, then the flash page size (what an erase request's page is measured in), then the name.
-constexpr IdentifyFrame MakeIdentify(uint32_t Space, uint16_t PageSize, const char *Name)
+constexpr IdentifyFrame MakeIdentify(uint32_t Space, uint32_t PageSize, const char *Name)
 {
     IdentifyFrame Frame{};
     Frame.Bytes[0] = Bootloader::START;
@@ -28,8 +28,10 @@ constexpr IdentifyFrame MakeIdentify(uint32_t Space, uint16_t PageSize, const ch
     Frame.Bytes[3] = (uint8_t)((Space >> 8) & 0xFFu);
     Frame.Bytes[4] = (uint8_t)((Space >> 16) & 0xFFu);
     Frame.Bytes[5] = (uint8_t)((Space >> 24) & 0xFFu);
-    Frame.Bytes[6] = (uint8_t)(PageSize & 0xFFu);
-    Frame.Bytes[7] = (uint8_t)((PageSize >> 8) & 0xFFu);
+    Frame.Bytes[Bootloader::IDENTIFY_PAGE_AT] = (uint8_t)(PageSize & 0xFFu);
+    Frame.Bytes[Bootloader::IDENTIFY_PAGE_AT + 1] = (uint8_t)((PageSize >> 8) & 0xFFu);
+    Frame.Bytes[Bootloader::IDENTIFY_PAGE_AT + 2] = (uint8_t)((PageSize >> 16) & 0xFFu);
+    Frame.Bytes[Bootloader::IDENTIFY_PAGE_AT + 3] = (uint8_t)((PageSize >> 24) & 0xFFu);
     for (uint8_t i = 0; i < Bootloader::NAME_SIZE; i++)
     {
         if (Name[i] == '\0')

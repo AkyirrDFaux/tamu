@@ -9,11 +9,11 @@
 // format and speaks the raw bootloader frame on the RS485 bus (no 0xAA sync, so the running
 // nodes - which wait for 0xAA - ignore it).
 //
-// Protocol v2 (Core/Functions/Bootloader.h): a 4-bit command field. An identify request returns
-// the app size, the flash page size (64, the erase unit) and the name; every write is answered by
-// a write response carrying the offset of the last chunk that landed; an ERASE request (0b1000)
-// blanks the 64-byte page its offset falls in; and a digest request (0b0110) answers with the
-// CRC32 of the requested range of the app region.
+// Protocol v2 (Core/Functions/Bootloader.h): a 4-bit command field - bits 1-3 the operation, bit 0
+// the direction. An identify request returns the app size, the name and the flash page size (64,
+// the erase unit); every write (0b0110) is answered by a write response carrying the offset of the
+// last chunk that landed; an ERASE request (0b0100) blanks the 64-byte page its offset names; and a
+// digest request (0b1000) answers with the CRC32 of the requested range of the app region.
 //
 // Flash rules: writes are 32-byte aligned (per the doc) and NEVER erase - the erase is its own
 // command, so a delta upload can blank exactly the pages it is about to rewrite, and a write the
@@ -58,8 +58,8 @@
 // offset past APP_LIMIT (the same wrap-safe subtraction the Core bootloader uses).
 #define APP_SIZE (APP_LIMIT - APP_BASE)
 // An erase is refused past this point: the storage region at 0x3E00 is inside the app region,
-// but it belongs to the app (its file table is 512 B of state), so a range erase - the one
-// command that can be aimed at a whole region at once - stops at the code space's end.
+// but it belongs to the app (its file table is 512 B of state), so the erase command - one page
+// per request, 64 B each, but still the only destructive command - stops at the code space's end.
 #define APP_CODE_LIMIT 0x3E00u
 #define APP_CODE_SIZE (APP_CODE_LIMIT - APP_BASE)
 
@@ -313,19 +313,17 @@ static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
     SendRaw(Resp, sizeof(Resp));
 }
 
-// CRC32 of [Offset, Offset + Length) of the app region. Bytes past the end of the region read as
-// 0xFF (the flash's erased value), so a tool asks for a padded length and a correct image cannot
-// fail at the tail. The running value is fed through one loop - a second loop would duplicate the
-// CRC step, which the 2 KB image cannot afford.
-__attribute__((always_inline)) static inline uint32_t AppDigest(uint32_t Offset, uint16_t Length)
+// CRC32 of the WHOLE app region - there is no offset and no length: the CRC is one number that
+// describes the app space, so the tool's expected value is its own CRC of the image padded to the
+// app size with 0xFF (the upload blanks the tail so the padding is real flash content). The running
+// value is fed through one loop - a table would cost 1 KB the 2 KB image does not have.
+__attribute__((always_inline)) static inline uint32_t AppDigest()
 {
-    uint32_t Avail = Offset <= APP_SIZE ? APP_SIZE - Offset : 0u;
-    if (Avail > Length) Avail = Length;
-    const uint8_t *Src = (const uint8_t *)(APP_BASE + Offset);
+    const uint8_t *Src = (const uint8_t *)APP_BASE;
 
     uint32_t Crc = 0xFFFFFFFFu;
-    for (uint32_t i = 0; i < Length; i++)
-        Crc = Bootloader::Crc32Step(Crc, i < Avail ? Src[i] : 0xFFu);
+    for (uint32_t i = 0; i < APP_SIZE; i++)
+        Crc = Bootloader::Crc32Step(Crc, Src[i]);
     return Crc ^ 0xFFFFFFFFu;
 }
 
@@ -346,7 +344,7 @@ static void HandleRead(uint32_t Offset)
     // frame differs.
     if (Offset == BL_DIGEST_HOOK_OFFSET)
     {
-        uint32_t Crc = AppDigest(0, APP_SIZE);
+        uint32_t Crc = AppDigest();
         for (uint8_t i = 0; i < Bootloader::PAYLOAD_SIZE; i++)
             Dst[i] = i < 4 ? (uint8_t)(Crc >> (8u * i)) : 0xFFu;
         Bootloader::EncodeReadFrame(Offset, Resp);
@@ -370,16 +368,17 @@ static void HandleIdentify()
     SendRaw(Identify.Bytes, Bootloader::IDENTIFY_RESP_SIZE);
 }
 
-static void HandleDigest(uint32_t Offset, uint16_t Length)
+static void HandleDigest()
 {
     static uint8_t Resp[Bootloader::DIGEST_RESP_SIZE];
-    Bootloader::EncodeDigestResponse(Offset, AppDigest(Offset, Length), Resp);
+    Bootloader::EncodeDigestResponse(AppDigest(), Resp);
     SendRaw(Resp, sizeof(Resp));
 }
 
-// Blanks the 64-byte page the offset falls in - the erase the write path no longer performs.
-// One page per request: the tool owns the loop (Bootloader::ErasePage explains why). The answer
-// is the page, flagged when it is not blank, so an ack always means the page can be programmed.
+// Blanks the 64-byte page named by the offset - the erase the write path no longer performs.
+// The offset must be PAGE-ALIGNED; a misaligned one is refused with the flag and blanks nothing
+// (Bootloader::ErasePage). One page per request: the tool owns the loop. The answer is the page,
+// flagged when it is not blank, so an ack always means the page can be programmed.
 static void HandleErase(uint32_t Offset)
 {
     uint8_t Resp[Bootloader::ERASE_RESP_SIZE];
@@ -452,7 +451,7 @@ int main(void)
         // The bench build reaches the same AppDigest through the read hook below (its carrier
         // frame), so it leaves this dispatch out to stay inside the 2 KB.
         else if (Cmd == Bootloader::CMD_DIGEST_REQ)
-            HandleDigest(Offset, Bootloader::DigestLength(Frame));
+            HandleDigest();
 #endif
     }
 }

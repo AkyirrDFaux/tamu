@@ -385,7 +385,11 @@ if ! grep -q 'inline uint32_t WriteAck(' "$BL_HDR" ||
     echo "FAIL $BL_HDR: a failed page is not named in the write response (WriteAck)"
     chunk_fail=1
 fi
-if ! printf '%s\n' "$ERASE_FN" | grep -q 'if (Page >= AppSize || !Flash::ErasePage(Page)) return Page | 1u;'; then
+if ! printf '%s\n' "$ERASE_FN" | grep -q 'if ((Offset & (PAGE_SIZE - 1u)) != 0) return Offset | 1u;'; then
+    echo "FAIL $BL_HDR: a misaligned erase is not refused - it must never be rounded into a page"
+    chunk_fail=1
+fi
+if ! printf '%s\n' "$ERASE_FN" | grep -q 'if (Offset >= AppSize || !Flash::ErasePage(Offset)) return Offset | 1u;'; then
     echo "FAIL $BL_HDR: an erase is not bounded by the caller's region and flagged when it fails"
     chunk_fail=1
 fi
@@ -411,6 +415,42 @@ if ! grep -q 'CMD_ERASE_REQ' "$DAS_BL"; then
 fi
 [ $chunk_fail = 0 ] && echo "PASS: the erase is its own bounded command, a write only programs (a page-start chunk against its blank page), every word is read back, and only WriteChunk/WriteAck name an offset"
 fail=$((fail + chunk_fail))
+echo
+
+# Gate: the passthrough CID and the frame it builds have the SAME RANK (Docs/Services/Bootloader.md,
+# 3694c46): 0x20 identify, 0x21 read, 0x22 erase, 0x23 write, 0x24 CRC - the CID's low bits are the
+# command's bits 1-3. A stale mapping is not a cosmetic bug: a 0x21-is-write client would ERASE a
+# page instead of writing one, so the order is pinned here, not left to care. The reply builder in
+# PollBootloaderPassthrough is pinned the same way, because a mis-ordered reply branch would hand a
+# read's 36 bytes back as an erase ack.
+echo "### source guard: the passthrough CID order (identify, read, erase, write, CRC)"
+DEV_H=${DEV_H:-$ROOT/src/Core/Services/Device.h}
+CID_SEND=$(sed -n '/inline void DeviceService::HandleBootloaderPassthrough(/,/Issue and return/p' "$DEV_H")
+CID_POLL=$(sed -n '/if (PtCid == 0x20)/,/PtPending = false;/p' "$DEV_H")
+cid_fail=0
+for pair in 0x20:EncodeIdentifyRequest 0x21:EncodeReadRequest 0x22:EncodeEraseRequest \
+            0x23:EncodeWrite 0x24:EncodeDigestRequest; do
+    cid=${pair%%:*}
+    enc=${pair##*:}
+    if ! printf '%s\n' "$CID_SEND" | grep -A10 "Cid == $cid)" | grep -q "$enc"; then
+        echo "FAIL $DEV_H: CID $cid does not build $enc - the CID rank and the command rank disagree"
+        cid_fail=1
+    fi
+done
+for pair in 0x20:FLAG_SUCCESS 0x21:Payload\(PtRx\) 0x22:Ack 0x23:PtOffset 0x24:DigestCrc; do
+    cid=${pair%%:*}
+    what=${pair##*:}
+    if ! printf '%s\n' "$CID_POLL" | grep -A20 "PtCid == $cid)" | grep -q "$what"; then
+        echo "FAIL $DEV_H: the reply for CID $cid does not use $what - the reply ladder is out of order"
+        cid_fail=1
+    fi
+done
+if ! grep -q 'case 0x24: // Bootloader passthrough: CRC of the whole app space' "$DEV_H"; then
+    echo "FAIL $DEV_H: 0x24 is not routed as the CRC passthrough command"
+    cid_fail=1
+fi
+[ $cid_fail = 0 ] && echo "PASS: 0x20 identify / 0x21 read / 0x22 erase / 0x23 write / 0x24 CRC, request and reply"
+fail=$((fail + cid_fail))
 echo
 
 # t_79a194d5: the pairing-free BLE updater's recovery path. The factory image's boot decision
@@ -1966,7 +2006,7 @@ fi
 # (5) and both counter sets are readable without a console: the passthrough's own totals line (on the
 # port the rig reads when the link is quiet) and the BUSGATE dump.
 if ! grep -q 'kept=%lu drop=%lu rawstint=%lu rawstall=%lu' "$DEVSVC" ||
-   ! grep -q 'nocid i/r/w/d/e=%u/%u/%u/%u/%u' "$DEVSVC"; then
+   ! grep -q 'nocid i/r/e/w/c=%u/%u/%u/%u/%u' "$DEVSVC"; then
     echo "FAIL $DEVSVC: the BLPT totals must report kept/drop, rawstint/rawstall and the per-command timeouts"
     e82_fail=1
 fi

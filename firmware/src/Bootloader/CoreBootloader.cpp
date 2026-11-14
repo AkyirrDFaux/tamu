@@ -440,15 +440,17 @@ static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
     SendFrame(Resp, sizeof(Resp));
 }
 
-// Blanks the `ota_0` sector the offset falls in - the erase the write path no longer owns. The
-// sector is marked as erased, so the writes that follow program into it instead of erasing it
-// again (HandleWrite's first-touch rule). The answer is the sector's base address, with bit 0 set
-// when it is not blank afterwards; an offset outside the slot is answered the same way.
+// Blanks the `ota_0` sector named by the offset - the erase the write path no longer owns. The
+// offset must be SECTOR-ALIGNED: a misaligned one names no sector and is refused with the flag
+// instead of being rounded down, because an erase is the one destructive command. The sector is
+// marked as erased, so the writes that follow program into it instead of erasing it again
+// (HandleWrite's first-touch rule). The answer is the sector's base address, with bit 0 set when
+// it is not blank afterwards; an offset outside the slot is answered the same way.
 static void HandleErase(uint32_t Offset)
 {
-    uint32_t Ack = Offset & ~(SECTOR_SIZE - 1u);
-    const uint32_t Sector = Ack / SECTOR_SIZE;
-    bool Ok = App != nullptr && Offset < App->size && Ack < App->size &&
+    uint32_t Ack = Offset;
+    const uint32_t Sector = Offset / SECTOR_SIZE;
+    bool Ok = (Offset & (SECTOR_SIZE - 1u)) == 0 && App != nullptr && Offset < App->size &&
               Sector < sizeof(Erased) * 8u;
     if (Ok && !SectorErased(Sector))
         Ok = esp_partition_erase_range(App, Sector * SECTOR_SIZE, SECTOR_SIZE) == ESP_OK;

@@ -509,21 +509,25 @@ static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
     tud_cdc_write_flush();
 }
 
-// Blanks the 4 KB sector the offset falls in - the erase the write path no longer has to own (the
-// command is what lets a tool blank just the sectors it is about to rewrite). The answer is the
-// sector's base address, with bit 0 set when it is not blank afterwards; a sector outside the app
-// window is answered the same way and is never touched.
+// Blanks the 4 KB sector named by the offset - the erase the write path no longer has to own (the
+// command is what lets a tool blank just the sectors it is about to rewrite). The offset must be
+// SECTOR-ALIGNED: a misaligned one names no sector and is refused with the flag rather than rounded
+// down, because an erase is the one destructive command. The answer is the sector's base address,
+// with bit 0 set when it is not blank afterwards; a sector outside the app window is answered the
+// same way and is never touched.
 static void HandleErase(uint32_t Offset)
 {
-    uint32_t Ack = Offset & ~(FLASH_ERASE_SECTOR - 1u);
-    if (Offset < APP_SIZE && Ack < APP_SIZE && FlashEraseSector(APP_BASE + Ack))
+    uint32_t Ack = Offset;
+    bool Ok = (Offset & (FLASH_ERASE_SECTOR - 1u)) == 0 && Offset < APP_SIZE;
+    if (Ok)
     {
-        ErasedSector = Ack / FLASH_ERASE_SECTOR;
+        if (FlashEraseSector(APP_BASE + Offset))
+            ErasedSector = Offset / FLASH_ERASE_SECTOR;
+        else
+            Ok = false;
     }
-    else
-    {
+    if (!Ok)
         Ack |= 1u;
-    }
 
     uint8_t Resp[Bootloader::ERASE_RESP_SIZE];
     Bootloader::EncodeEraseResponse(Ack, Resp);

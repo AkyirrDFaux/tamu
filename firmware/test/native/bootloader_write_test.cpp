@@ -13,8 +13,10 @@
 //   * the ack rule is the verification: the response names the chunk only when its 32 bytes read
 //     back as sent, names the PAGE (bit 0 set) when the page could not be written, and keeps the
 //     previous offset when nothing was touched;
-//   * ErasePage blanks the page its offset falls in and answers with the page - with bit 0 set
-//     when the page is not blank afterwards (a failed erase, or an offset past the region).
+//   * ErasePage blanks the page its offset NAMES - the offset must be page-aligned, and a
+//     misaligned one is refused with the flag (never rounded into the page below it) - and answers
+//     with the page, with bit 0 set when the page is not blank afterwards (a failed erase, an
+//     offset past the region, or a misaligned offset, which is answered with its own value).
 //
 // The model below is NOR, like the chip: programming only clears bits, so a chunk written onto a
 // slot that was not blank reads back different. The test drives the REAL rule - WriteChunk,
@@ -308,12 +310,23 @@ int main()
         CHECK_EQ(HandleWrite(LastCodePage + PAYLOAD_SIZE, Chunk), LastCodePage + PAYLOAD_SIZE);
     }
 
-    // --- 9. ErasePage: the page, the bound, and a failed erase -------------------
+    // --- 9. ErasePage: the page, the alignment refusal, the bound, a failed erase ----
     NorFlash::Reset();
     {
-        // Any offset inside a page names that page.
-        CHECK_EQ(HandleErase(PAGE_SIZE + 5u), PAGE_SIZE);
+        // A page's own base offset names it, and it is blanked.
+        CHECK_EQ(HandleErase(PAGE_SIZE), PAGE_SIZE);
         CHECK(NorFlash::AllErased(PAGE_SIZE, PAGE_SIZE));
+        CHECK_EQ(NorFlash::Erases, 1);
+
+        // A misaligned offset is REFUSED with the flag and blanks nothing - never rounded down
+        // into the page below it. An erase is the one destructive command, so a tool computing a
+        // bad offset has to see the refusal instead of a page it never asked about.
+        NorFlash::FillByte(PAGE_SIZE * 2u, 0x5A, PAGE_SIZE);
+        CHECK_EQ(HandleErase(PAGE_SIZE * 2u + 5u), (PAGE_SIZE * 2u + 5u) | 1u);
+        CHECK_EQ(NorFlash::Erases, 1);                                     // no erase ran
+        CHECK_EQ(*(NorFlash::Bytes + PAGE_SIZE * 2u), 0x5A);                // untouched, not blanked
+        CHECK_EQ(HandleErase(1u), 1u | 1u);                                // the smallest misalignment
+        CHECK_EQ(HandleErase(PAGE_SIZE - 1u), (PAGE_SIZE - 1u) | 1u);
         CHECK_EQ(NorFlash::Erases, 1);
 
         // The last code page is inside the bound; the storage page above it is not, and is not
@@ -328,8 +341,8 @@ int main()
         // An erase the controller declines to perform is answered with the flag, so the tool does
         // not go on to write into a page that still holds data.
         NorFlash::EraseTakesEffect = false;
-        NorFlash::FillByte(PAGE_SIZE * 2u, 0x00, PAGE_SIZE);
-        CHECK_EQ(HandleErase(PAGE_SIZE * 2u), PAGE_SIZE * 2u | 1u);
+        NorFlash::FillByte(PAGE_SIZE * 3u, 0x00, PAGE_SIZE);
+        CHECK_EQ(HandleErase(PAGE_SIZE * 3u), PAGE_SIZE * 3u | 1u);
         NorFlash::EraseTakesEffect = true;
     }
 

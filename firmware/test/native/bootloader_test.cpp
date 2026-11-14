@@ -42,10 +42,32 @@ int main()
     using namespace Bootloader;
 
     // --- the control byte's shape -------------------------------------------
-    CHECK_EQ(CMD_WRITE & 0x0Fu, 0x2u);
-    CHECK_EQ(CMD_ERASE_REQ, 0x8u);
-    CHECK_EQ(CMD_ERASE_RESP, 0x9u);
-    CHECK_EQ(IDENTIFY_RESP_SIZE, 41);
+    // bit 0 = direction (0 request, 1 response), bits 1-3 = operation.
+    CHECK_EQ(CMD_IDENTIFY_REQ, 0x0u);          // 0b0000
+    CHECK_EQ(CMD_IDENTIFY_RESP, 0x1u);         // 0b0001
+    CHECK_EQ(CMD_READ_REQ, 0x2u);              // 0b0010
+    CHECK_EQ(CMD_READ_RESP, 0x3u);             // 0b0011
+    CHECK_EQ(CMD_ERASE_REQ, 0x4u);             // 0b0100
+    CHECK_EQ(CMD_ERASE_RESP, 0x5u);            // 0b0101
+    CHECK_EQ(CMD_WRITE, 0x6u);                 // 0b0110
+    CHECK_EQ(CMD_WRITE_RESP, 0x7u);            // 0b0111
+    CHECK_EQ(CMD_DIGEST_REQ, 0x8u);            // 0b1000
+    CHECK_EQ(CMD_DIGEST_RESP, 0x9u);           // 0b1001
+    CHECK_EQ(CMD_IDENTIFY_REQ & 1u, 0u);       // identify: a request
+    CHECK_EQ(CMD_IDENTIFY_RESP & 1u, 1u);      // ... and its response
+    CHECK_EQ(CMD_READ_REQ & 1u, 0u);
+    CHECK_EQ(CMD_READ_RESP & 1u, 1u);
+    CHECK_EQ(CMD_ERASE_REQ & 1u, 0u);
+    CHECK_EQ(CMD_ERASE_RESP & 1u, 1u);
+    CHECK_EQ(CMD_WRITE & 1u, 0u);
+    CHECK_EQ(CMD_WRITE_RESP & 1u, 1u);
+    CHECK_EQ(CMD_DIGEST_REQ & 1u, 0u);
+    CHECK_EQ(CMD_DIGEST_RESP & 1u, 1u);
+    CHECK_EQ(CMD_WRITE & 0x0Fu, 0x6u);
+    CHECK_EQ(CMD_ERASE_REQ, 0x4u);
+    CHECK_EQ(CMD_ERASE_RESP, 0x5u);
+    CHECK_EQ(IDENTIFY_RESP_SIZE, 39);          // the same length as v1 - see the identify block
+    CHECK_EQ(IDENTIFY_RESP_SIZE, DATA_SIZE);
     CHECK_EQ(ERASE_REQ_SIZE, READ_REQ_SIZE);   // header-only both ways
     CHECK_EQ(ERASE_RESP_SIZE, READ_REQ_SIZE);
 
@@ -111,7 +133,7 @@ int main()
     // --- erase: request header-only, response names the page (bit 0 = not blank) --
     {
         uint8_t Req[ERASE_REQ_SIZE];
-        EncodeEraseRequest(0x00003440u, Req);          // any offset inside the page
+        EncodeEraseRequest(0x00003440u, Req);          // the page's own base offset
         CHECK_EQ(sizeof(Req), 7);
         CHECK_EQ(Req[0], START);
         CHECK_EQ(Req[6], END);
@@ -155,7 +177,7 @@ int main()
         PrintHex("eraseresp", Resp, ERASE_RESP_SIZE);
     }
 
-    // --- identify: request header-only, response carries size + page + name ----
+    // --- identify: request header-only, response carries size + name + page ----
     {
         uint8_t req[READ_REQ_SIZE];
         EncodeIdentifyRequest(req);
@@ -168,22 +190,43 @@ int main()
 
         uint8_t resp[IDENTIFY_RESP_SIZE];
         EncodeIdentifyResponse(0x00003600u, 64, "DAS v0.1", resp);
-        CHECK_EQ(sizeof(resp), 41);
+        CHECK_EQ(sizeof(resp), 39);                    // v1's length, unchanged
         CHECK_EQ(resp[0], START);
-        CHECK_EQ(resp[40], END);
+        CHECK_EQ(resp[38], END);
         CHECK_EQ(resp[1] & 0x0Fu, CMD_IDENTIFY_RESP);
         CHECK_EQ(resp[1] & 0xE0u, 0);
         CHECK_EQ((resp[1] >> 4) & 1u, RefParity(resp, IDENTIFY_RESP_SIZE));
         CHECK_EQ(Offset(resp), 0x00003600u);
-        CHECK_EQ(IdentifyPageSize(resp), 64);          // the erase unit, u16 little-endian
-        CHECK_EQ(resp[6], 64);
+        CHECK_EQ(IdentifyPageSize(resp), 64);          // the erase unit, u32 little-endian
+        CHECK_EQ(resp[6], 64);                        // ... right after the app size
         CHECK_EQ(resp[7], 0);
+        CHECK_EQ(IDENTIFY_PAGE_AT, 6);                 // constants first ...
+        CHECK_EQ(IDENTIFY_NAME_AT, 10);                // ... name last
         CHECK(std::memcmp(IdentifyName(resp), "DAS v0.1", 9) == 0);
         CHECK_EQ(IdentifyName(resp)[9], 0);            // null-padded
         CHECK_EQ(IdentifyName(resp)[NAME_SIZE - 1], 0);
         CHECK_EQ(Decode(resp, IDENTIFY_RESP_SIZE), CMD_IDENTIFY_RESP);
-        // The v1 length must NOT decode: the length is how a tool tells v1 from v2.
-        CHECK_EQ(Decode(resp, DATA_SIZE), INVALID);
+
+        // The page size is a full u32, so a 4 KB sector is expressible; a name longer than the
+        // field is truncated, never spilling into the end marker.
+        uint8_t big[IDENTIFY_RESP_SIZE];
+        EncodeIdentifyResponse(0x00100000u, 4096, "Tamu v2.0A", big);
+        CHECK_EQ(IdentifyPageSize(big), 4096);
+        CHECK_EQ(Decode(big, IDENTIFY_RESP_SIZE), CMD_IDENTIFY_RESP);
+        uint8_t truncated[IDENTIFY_RESP_SIZE];
+        EncodeIdentifyResponse(0, 64, "012345678901234567890123456789", truncated); // 30 chars
+        CHECK(std::memcmp(IdentifyName(truncated), "0123456789012345678901234567", NAME_SIZE) == 0);
+        CHECK_EQ(truncated[IDENTIFY_RESP_SIZE - 1], END); // the 29th and 30th chars are dropped
+        CHECK_EQ(IdentifyPageSize(truncated), 64);        // the page field is untouched
+        CHECK_EQ(Decode(truncated, IDENTIFY_RESP_SIZE), CMD_IDENTIFY_RESP);
+
+        // A v1 control byte (parity at bit 3) must not decode. The length cannot tell the two
+        // protocols apart - both identify responses are 39 bytes - so the control byte is what
+        // does, and this is the request that pins it.
+        uint8_t v1[READ_REQ_SIZE];
+        EncodeReadRequest(0x00000101u, v1);            // three set bits: v1 parity would be 1
+        v1[1] = (uint8_t)(CMD_READ_REQ | (1u << 3));
+        CHECK_EQ(Decode(v1, READ_REQ_SIZE), INVALID);
     }
 
     // --- every single-bit flip must be rejected -----------------------------
@@ -224,9 +267,10 @@ int main()
         CHECK_EQ(Decode(Frame, READ_REQ_SIZE), INVALID); // wrong length for the command
         CHECK_EQ(Decode(Frame, 0), INVALID);
 
-        // A write body claiming to be a digest request (9 bytes) must not decode.
+        // A write body claiming to be a digest request (9 bytes) must not decode: the length and
+        // the command have to agree.
         std::memcpy(bad, Frame, DATA_SIZE);
-        bad[1] = (uint8_t)((bad[1] & 0x0Fu) | 0x06u); // digest-request command
+        bad[1] = (uint8_t)((bad[1] & 0x0Fu) | CMD_DIGEST_REQ);
         CHECK_EQ(Decode(bad, DATA_SIZE), INVALID);
     }
 
@@ -345,33 +389,34 @@ int main()
 
     // --- digest request/response layout --------------------------------------
     {
+                // The CRC always covers the whole app space, so the request carries nothing: it is the
+        // shortest frame the codec has - start | control | end, 3 bytes.
         uint8_t Req[DIGEST_REQ_SIZE];
-        EncodeDigestRequest(0x00001200u, 0x1000u, Req);
-        CHECK_EQ(sizeof(Req), 9);
+        EncodeDigestRequest(Req);
+        CHECK_EQ(sizeof(Req), 3);
+        CHECK_EQ(DIGEST_REQ_SIZE, 3);
         CHECK_EQ(Req[0], START);
-        CHECK_EQ(Req[8], END);
+        CHECK_EQ(Req[2], END);
         CHECK_EQ(Req[1] & 0x0Fu, CMD_DIGEST_REQ);
         CHECK_EQ(Req[1] & 0xE0u, 0);
-        CHECK_EQ((Req[1] >> 4) & 1u, RefParity(Req, DIGEST_REQ_SIZE));
-        CHECK_EQ(Offset(Req), 0x00001200u);   // the offset keeps the header's own slot
-        CHECK_EQ(DigestLength(Req), 0x1000u);
-        CHECK_EQ(Req[6], 0x00);               // u16 little-endian
-        CHECK_EQ(Req[7], 0x10);
+        CHECK_EQ((Req[1] >> 4) & 1u, RefParity(Req, DIGEST_REQ_SIZE)); // parity of the command alone
         CHECK_EQ(Decode(Req, DIGEST_REQ_SIZE), CMD_DIGEST_REQ);
         CHECK_EQ(Decode(Req, DIGEST_RESP_SIZE), INVALID); // wrong length for the command
         CHECK_EQ(Decode(Req, READ_REQ_SIZE), INVALID);
+        CHECK_EQ(Decode(Req, 2), INVALID);                // shorter than the frame
 
+        // The response is start | control | crc32 | end = 7 bytes; no offset is echoed.
         uint8_t Resp[DIGEST_RESP_SIZE];
-        EncodeDigestResponse(0x00001200u, 0xDEADBEEFu, Resp);
-        CHECK_EQ(sizeof(Resp), 11);
+        EncodeDigestResponse(0xDEADBEEFu, Resp);
+        CHECK_EQ(sizeof(Resp), 7);
+        CHECK_EQ(DIGEST_RESP_SIZE, 7);
         CHECK_EQ(Resp[0], START);
-        CHECK_EQ(Resp[10], END);
+        CHECK_EQ(Resp[6], END);
         CHECK_EQ(Resp[1] & 0x0Fu, CMD_DIGEST_RESP);
         CHECK_EQ((Resp[1] >> 4) & 1u, RefParity(Resp, DIGEST_RESP_SIZE));
-        CHECK_EQ(Offset(Resp), 0x00001200u);  // offset echoed
         CHECK_EQ(DigestCrc(Resp), 0xDEADBEEFu);
-        CHECK_EQ(Resp[6], 0xEF);              // u32 little-endian
-        CHECK_EQ(Resp[9], 0xDE);
+        CHECK_EQ(Resp[2], 0xEF);              // u32 little-endian, right after the control byte
+        CHECK_EQ(Resp[5], 0xDE);
         CHECK_EQ(Decode(Resp, DIGEST_RESP_SIZE), CMD_DIGEST_RESP);
         CHECK_EQ(Decode(Resp, DIGEST_REQ_SIZE), INVALID);
 
@@ -408,6 +453,57 @@ int main()
         for (int i = 0; i < 64; i++) Crc = Crc32Step(Crc, Range[i]);
         CHECK_EQ(Crc ^ 0xFFFFFFFFu, Crc32(Range, 64));
         CHECK_EQ(Crc ^ 0xFFFFFFFFu, 0x100ECE8Cu);
+    }
+
+    // --- the command table the built image carries ----------------------------
+    // Prints the control byte of one real frame per command, decoded back to operation and
+    // direction. This is the table to compare against Docs/Services/Bootloader.md.
+    {
+        struct Row
+        {
+            const char *Name;
+            uint8_t Byte;
+            uint16_t Len;
+        };
+        uint8_t Buf[DATA_SIZE];
+        uint8_t Zero[PAYLOAD_SIZE] = {0};
+        auto Put = [&](const char *Name, uint16_t Len) { return Row{Name, Buf[1], Len}; };
+
+        EncodeIdentifyRequest(Buf);
+        Row Rows[10];
+        Rows[0] = Put("identify-req ", READ_REQ_SIZE);
+        EncodeIdentifyResponse(0x3600u, 64, "DAS v0.1", Buf);
+        Rows[1] = Put("identify-resp", IDENTIFY_RESP_SIZE);
+        EncodeReadRequest(0x100u, Buf);
+        Rows[2] = Put("read-req     ", READ_REQ_SIZE);
+        EncodeReadResponse(0x40u, Zero, Buf);
+        Rows[3] = Put("read-resp    ", DATA_SIZE);
+        EncodeEraseRequest(0x3440u, Buf);
+        Rows[4] = Put("erase-req    ", ERASE_REQ_SIZE);
+        EncodeEraseResponse(0x3440u, Buf);
+        Rows[5] = Put("erase-resp   ", ERASE_RESP_SIZE);
+        EncodeWrite(0, Zero, Buf);
+        Rows[6] = Put("write        ", DATA_SIZE);
+        EncodeWriteResponse(0x1040u, Buf);
+        Rows[7] = Put("write-resp   ", READ_REQ_SIZE);
+        EncodeDigestRequest(Buf);
+        Rows[8] = Put("digest-req   ", DIGEST_REQ_SIZE);
+        EncodeDigestResponse(0xDEADBEEFu, Buf);
+        Rows[9] = Put("digest-resp  ", DIGEST_RESP_SIZE);
+
+        const uint8_t Expect[10] = {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9};
+        std::printf("command table (control byte of a real frame):\n");
+        std::printf("  frame          control  parity  cmd  op(bits1-3)  dir\n");
+        for (int i = 0; i < 10; i++)
+        {
+            const uint8_t Ctl = Rows[i].Byte;
+            const uint8_t Cmd = (uint8_t)(Ctl & 0x0Fu);
+            CHECK_EQ(Cmd, Expect[i]);
+            CHECK_EQ(FrameSize(Cmd), Rows[i].Len);
+            std::printf("  %s  0x%02X     %u       %X     %u            %u\n", Rows[i].Name, Ctl,
+                        (unsigned)((Ctl >> 4) & 1u), (unsigned)Cmd, (unsigned)(Cmd >> 1),
+                        (unsigned)(Cmd & 1u));
+        }
     }
 
     std::printf("== bootloader packet tests (v2 codec): %d checks, %d failures ==\n", checks, failures);
