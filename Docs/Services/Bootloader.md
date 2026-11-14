@@ -8,7 +8,9 @@ Erasing is separate from writing: an erase request blanks a page, then writes pr
 
 Verification is the app's job, in two measures: a CRC request over the whole app space, and a read-back of the same space.
 ### Bootloader Packets
-Used on both RSBus and USB. The command is a 4-bit field in the control byte: bit 0 is `0` for a request and `1` for its response, bits 1-3 select the operation. The rest of the control byte is the even parity bit (bit 4) and three padding bits (bits 5-7), always `0`.
+Used on both RSBus and USB. This is the only supported encoding: the earlier 3-bit command field is **deprecated**, so a bootloader whose identify response carries no page size is an old one and must be refused rather than guessed at.
+
+The command is a 4-bit field in the control byte: bit 0 is `0` for a request and `1` for its response, bits 1-3 select the operation. The rest of the control byte is the even parity bit (bit 4) and three padding bits (bits 5-7), always `0`.
 
 | Command           | Value    |
 | ----------------- | -------- |
