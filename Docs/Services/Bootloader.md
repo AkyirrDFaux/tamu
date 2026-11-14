@@ -153,6 +153,7 @@ The app compares before it writes, so an update transfers only what changed:
 3. Blank the pages from the end of the image to the end of the app space. The CRC covers the whole app space, so that tail is part of what it measures; leaving an earlier image's bytes there makes the CRC unpredictable. The tail is a handful of pages (on the DAS, 9 of them).
 4. CRC verify. Because the space is now a function of the image alone, the expected value is the host's CRC of the image padded to the app size with 0xFF.
 5. Read the whole space back and compare it byte for byte.
+6. **Correction.** If the read-back found mismatches, correct exactly the pages they fall in - erase and write only those - then repeat steps 4 and 5. There is **one** correction round: a second read-back that still differs ends the upload as a failure naming the offsets that disagree, and it is not retried further. Loss on the wire is inherent, so a correction round is expected; an unbounded retry is what turned a bad link into twenty rewrites of the same node.
 
 Steps 3 and 4 are both required. The CRC is one exchange over the whole range; the read-back is the independent measure that does not depend on the device's CRC implementation being correct. A disagreement between them is a finding in its own right, not something to resolve by trusting one of them.
 
