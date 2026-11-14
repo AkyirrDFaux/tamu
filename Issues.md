@@ -2389,3 +2389,33 @@ encoding, not the bootloader's silence, and candidate 2 (the reply sink closing 
 to explain it. The `-DBOOTLOADER_FORCE` bench image is the cheaper route than the PC hijack: it needs
 no OpenOCD server kept alive, and the core's identify/erase/write frames are then answered normally.
 
+## E91 The PC hijack still does not yield an answering bootloader: the production image runs its frame loop but never answers (2026-11-14, card t_aa766f9e)
+
+Re-measured on node 2 (Part UUID 64-a2-ab-cd-ce-5a-bd-eb) with the v2 core (`Tamu_v2_0A` iteration 11)
+on the rig, to decide whether the production image can be made to answer identify without the button.
+It cannot, by any of the three hijack forms tried:
+
+* `.pio/probe/force_bl.sh` (halt, SysTick, a5, sp, `pc = main+0x78` = 0x30a, resume, shutdown): the
+  shutdown resets the CH32V003, which re-runs the bootloader's `main()` with the button released and
+  lands straight in the app - the node answered `all_versions.py` as `2026.11.12 iter 2`.
+* The same sequence through a **kept-alive** OpenOCD server (`.pio/probe/force_bl_hold.tcl`): the
+  node IS in the bootloader's loop (`reg pc` = 0x3ba/0x3c0, `bltu s0,a5,...` + `andi a5,a5,32` =
+  the inlined `ReceiveFrame` polling `USART1->STATR & RXNE`), yet every identify over the passthrough
+  settles as the core's `0x03` deadline (`nocid i` climbs 13 -> 16 -> 24 across runs). GPIO/USART1
+  state read over SWD is the bootloader's own: `GPIOD->CFGLR` = 0x48B33083 (PD5 AF-PP, PD6 input-PU,
+  PD4 out-PP), `USART1->CTLR1` = 0x200C, `BRR` = 0x68, `INDR` bit 6 high. `STATR` after a request
+  shows `TXE|TC|IDLE` (a transmission completed), `IWDG` is not armed (0x40003000 = 0,0,FFF,0), and
+  the PC after a request sits in APP space (0x8ec/0x12be/0x63a) - i.e. the node answers, or falls
+  back to the app, but the core never receives a valid answer.
+* **`reset halt` first** (clean peripheral state, then the same PC/a5/sp/SysTick preset): identical
+  `0x03` deadline. So it is not leftover app state.
+
+With the `-DBOOTLOADER_FORCE` bench image written at 0x08000000 (1960 B, sha256 4c0ba6eb, padded to
+2 KB sha256 09d58cc5 - byte-identical to the `.pio/probe/t_c9a37bb8_force.bin` an earlier card left)
+the same request is answered on the first attempt: `identify: app size 14336 B, page size 64 B, name
+'DAS v0.1', flags 0x2E`. The bench image is the production source with only the button check skipped,
+so the difference is the entry path, not the protocol. Until someone finds the hijack's missing
+piece, the FORCE image (then restoring `binaries/DAS_bootloader_2k_pad.bin` and re-verifying it) is
+the only way an agent can reach bootloader mode on the production image without a human on PC0; a
+real identify proof for the production image itself still needs the button.
+
