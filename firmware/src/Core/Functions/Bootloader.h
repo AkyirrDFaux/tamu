@@ -471,4 +471,43 @@ namespace Bootloader
             return EchoByte::Echo;
         return Got == START ? EchoByte::Reply : EchoByte::Collision;
     }
+
+    // -----------------------------------------------------------------------
+    // Is this frame the ANSWER to the request the core has outstanding? (card t_c9a37bb8)
+    // -----------------------------------------------------------------------
+    //
+    // The core's passthrough lets a byte sink assemble the FIRST valid frame it meets on the bus.
+    // That is not the same thing as the node's answer: the line is half duplex and the core hears
+    // its OWN raw request echo, which for the header-only requests (identify, read, erase) is a
+    // valid 7-byte frame - 0xCA, control, four offset bytes, 0xBC. Accepting one as the answer to a
+    // READ forwarded `PtRx + 6` to the app: the END marker as payload byte 0, followed by whatever
+    // the reply buffer still held from the previous response. Measured on the rig 2026-11-14:
+    // 30 of 4480 whole-space chunk reads were wrong, every one of them `BC || the previous
+    // response's payload[1:]`, at one chunk per ~2-6 pages and at moving offsets - a read that
+    // disagreed with itself, and therefore a CRC and a read-back that could never confirm an upload.
+    //
+    // The two predicates below make the answer checkable without giving the core any geometry of
+    // its own: the response command the CID expects, and (for a read) the offset it must echo. The
+    // core sends the request and knows both, so a frame that fails either is NOT the answer and has
+    // to be discarded rather than forwarded.
+    inline uint8_t PassthroughResponse(uint8_t Cid)
+    {
+        switch (Cid)
+        {
+            case 0x20: return CMD_IDENTIFY_RESP;
+            case 0x21: return CMD_READ_RESP;
+            case 0x22: return CMD_ERASE_RESP;
+            case 0x23: return CMD_WRITE_RESP;
+            case 0x24: return CMD_DIGEST_RESP;
+            default:   return INVALID;
+        }
+    }
+
+    // A read response answers THIS read only when it echoes the offset that was asked for: a
+    // response that arrives late (another offset's answer) is a valid frame of the right command
+    // and would otherwise be forwarded as this chunk's bytes.
+    inline bool ReadAnswersOffset(const uint8_t *Frame, uint32_t Asked)
+    {
+        return Offset(Frame) == Asked;
+    }
 }

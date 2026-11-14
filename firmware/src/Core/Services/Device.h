@@ -100,6 +100,14 @@ private:
     uint16_t PtOkCount     = 0; // settled with a reply
     uint16_t PtTimeouts    = 0; // settled on the deadline (no reply) - reason 0x03
     uint16_t PtNodeFail    = 0; // the node answered with a failure frame - reason 0x04
+    // Frames the sink met while a passthrough was outstanding that were NOT its answer (card
+    // t_c9a37bb8): a valid frame of another command, or a read response echoing another offset.
+    // The core's own header-only request echo is the common one - it is a valid 7-byte frame, and
+    // accepting it forwarded its END marker (0xBC) as payload byte 0. `PtForeignCmd` is the last
+    // one's command bits, so a rig run names what was on the bus instead of guessing (a read
+    // request 0b0010 = our own echo; a response command = a late answer to an earlier request).
+    uint16_t PtForeign     = 0;
+    uint8_t PtForeignCmd   = 0;
     // The same deadline settles counted PER PASSTHROUGH COMMAND (index = CID - 0x20, so
     // 0 identify / 1 write / 2 read / 3 digest). The card that added them (t_5eb19a27) measures a
     // 200-cycle run per command, and "the node answered 199 of 200 identifies and 196 of 200 reads"
@@ -421,6 +429,19 @@ inline bool DeviceService::BootloaderRxFeed(uint8_t Byte)
             PtRxLen = 0; // bad control: resync on the next 0xCA
             return true;
         }
+        // Card t_c9a37bb8: a valid frame is not the same thing as OUR answer. The line is half
+        // duplex, so the core hears its own raw request echo - for the header-only requests that
+        // echo IS a valid 7-byte frame (0xCA, control, offset, 0xBC), and forwarding one as a read
+        // reply handed the app its END marker as payload byte 0 (30 of 4480 chunk reads measured on
+        // the rig). Reject it here, on the control byte, so nothing of the foreign frame is
+        // assembled into PtRx and the real answer's 0xCA still starts a clean frame.
+        if ((PtRx[1] & 0x0Fu) != Bootloader::PassthroughResponse(PtCid))
+        {
+            PtForeign = (uint16_t)(PtForeign + 1);
+            PtForeignCmd = (uint8_t)(PtRx[1] & 0x0Fu);
+            PtRxLen = 0; // not our answer: resync on the next 0xCA
+            return true;
+        }
         if (PtRxLen >= Need)
         {
             if (Bootloader::Decode(PtRx, Need) != Bootloader::INVALID)
@@ -497,6 +518,14 @@ inline void DeviceService::PollBootloaderPassthrough()
                       (unsigned)PtTimeoutById[0], (unsigned)PtTimeoutById[1],
                       (unsigned)PtTimeoutById[2], (unsigned)PtTimeoutById[3],
                       (unsigned)PtTimeoutById[4]);
+            // Third line, card t_c9a37bb8: the frames met while a passthrough was outstanding that
+            // were NOT its answer, and the command bits of the most recent one. This is what names
+            // the defect from the rig without a rebuild: `last=0x2` is a READ REQUEST - the core
+            // hearing its own raw request echo - while a response command (0x3/0x5/0x7) is a late
+            // answer to an earlier request. Printed only when there were any.
+            if (PtForeign != 0)
+                DeviceLog("BLPT", "foreign=%u last=0x%02X", (unsigned)PtForeign,
+                          (unsigned)PtForeignCmd);
         }
         return; // not expecting a reply: one bool test, no bus access
     }
@@ -509,6 +538,20 @@ inline void DeviceService::PollBootloaderPassthrough()
         uint8_t Flags = FLAG_TYPE | FLAG_START | FLAG_STOP;
         uint8_t OutLen = 0;
         uint8_t Fail = 0; // non-zero: the one-byte reason this reply fails with (0x04)
+
+        // The half of the answer check only the poll can make (card t_c9a37bb8; the sink rejects a
+        // frame of the wrong COMMAND, BootloaderRxFeed): a read response must echo the offset we
+        // asked for. One that does not is a late answer to an earlier request - a valid frame of the
+        // right command, and forwarding it would hand this chunk another chunk's bytes. Dropped, so
+        // the request keeps waiting for its own answer (and settles on the deadline if none comes).
+        if (PtCid == 0x21 && !Bootloader::ReadAnswersOffset(PtRx, PtOffset))
+        {
+            PtForeign = (uint16_t)(PtForeign + 1);
+            PtForeignCmd = (uint8_t)(PtRx[1] & 0x0Fu);
+            PtRxReady = false;
+            PtRxLen = 0;
+            return;
+        }
 
         if (PtCid == 0x20)
         { // Identify (0b000x): the node's identify-response body forwarded verbatim - app-space
@@ -550,15 +593,9 @@ inline void DeviceService::PollBootloaderPassthrough()
         else if (PtCid == 0x24)
         { // CRC (0b100x): the node answers with the CRC32 of the whole app space (7-byte frame,
           // no offset). The core forwards the four CRC bytes and owns no comparison; the app
-          // compares them against its own CRC of the image padded to the app size. A valid frame of
-          // any OTHER command met in the echo window belongs to an earlier transaction, so it is
-          // dropped and the poll keeps waiting for the answer this request asked for.
-            if ((PtRx[1] & 0x0Fu) != Bootloader::CMD_DIGEST_RESP)
-            {
-                PtRxReady = false;
-                PtRxLen = 0;
-                return;
-            }
+          // compares them against its own CRC of the image padded to the app size. A frame of any
+          // other command cannot reach here any more - the sink rejects one against this CID's
+          // response command (BootloaderRxFeed, card t_c9a37bb8) - so the value is this request's.
             uint32_t Crc = Bootloader::DigestCrc(PtRx);
             memcpy(Out, &Crc, 4);
             OutLen = 4;

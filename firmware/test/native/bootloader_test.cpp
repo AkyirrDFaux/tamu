@@ -506,6 +506,50 @@ int main()
         }
     }
 
+    // --- a valid frame is not necessarily OUR answer (card t_c9a37bb8) ----------
+    // The core's passthrough assembles the first valid 0xCA frame on the bus and forwards it as the
+    // answer to its outstanding request. On a half-duplex line the core also hears its OWN raw
+    // request echo, and for the header-only requests that echo IS a valid 7-byte frame - the rig
+    // measured a differing chunk reading the END marker 0xBC at byte 0, which is PtRx+6 of exactly
+    // such a frame. Two predicates let the device code reject it: the response command the CID
+    // expects, and the offset a read response has to echo.
+    {
+        CHECK_EQ(PassthroughResponse(0x20), CMD_IDENTIFY_RESP);
+        CHECK_EQ(PassthroughResponse(0x21), CMD_READ_RESP);
+        CHECK_EQ(PassthroughResponse(0x22), CMD_ERASE_RESP);
+        CHECK_EQ(PassthroughResponse(0x23), CMD_WRITE_RESP);
+        CHECK_EQ(PassthroughResponse(0x24), CMD_DIGEST_RESP);
+        CHECK_EQ(PassthroughResponse(0x1F), INVALID); // outside the passthrough CID range
+        CHECK_EQ(PassthroughResponse(0x25), INVALID);
+        // Every mapping is a RESPONSE (bit 0 set) with a real frame size - a request mapped here
+        // would accept the core's own echo, which is the defect itself.
+        for (uint8_t Cid = 0x20; Cid <= 0x24; Cid++)
+        {
+            const uint8_t Resp = PassthroughResponse(Cid);
+            CHECK((Resp & 1u) == 1u);
+            CHECK(FrameSize(Resp) != 0);
+        }
+
+        // The core's own read request is the frame the route used to accept: 7 bytes, command
+        // 0b0010, offset echoed, END marker last. It must NOT be this CID's response.
+        uint8_t Req[READ_REQ_SIZE];
+        EncodeReadRequest(0x1200u, Req);
+        CHECK_EQ((uint8_t)(Req[1] & 0x0Fu), CMD_READ_REQ);
+        CHECK((Req[1] & 0x0Fu) != PassthroughResponse(0x21));
+        // ... and the END marker really is the byte the core forwarded as payload byte 0, which is
+        // the "reads 0xbc at byte 0" signature: PtRx + HEADER_SIZE of a 7-byte frame.
+        CHECK_EQ(Req[HEADER_SIZE], END);
+
+        // A read response answers THIS read only when it echoes the offset asked for.
+        uint8_t Resp[DATA_SIZE];
+        uint8_t Body[PAYLOAD_SIZE];
+        for (int i = 0; i < PAYLOAD_SIZE; i++) Body[i] = (uint8_t)(0xA0 + i);
+        EncodeReadResponse(0x1200u, Body, Resp);
+        CHECK(ReadAnswersOffset(Resp, 0x1200u));
+        CHECK(!ReadAnswersOffset(Resp, 0x1220u)); // the next chunk's answer, arriving late
+        CHECK(!ReadAnswersOffset(Resp, 0x0000u));
+    }
+
     std::printf("== bootloader packet tests (v2 codec): %d checks, %d failures ==\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
