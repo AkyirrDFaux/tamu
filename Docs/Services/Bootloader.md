@@ -8,7 +8,7 @@ Erasing is separate from writing: an erase request blanks a page, then writes pr
 
 Verification is the app's job, in two measures: a CRC request over the whole app space, and a read-back of the same space.
 ### Bootloader Packets
-Used on both RSBus and USB. This is the only supported encoding: the earlier 3-bit command field is **deprecated**, so a bootloader whose identify response carries no page size is an old one and must be refused rather than guessed at.
+Used on both RSBus and USB. A bootloader that does not report a page size in its identify response does not conform to this document and is refused by the app rather than guessed at.
 
 The command is a 4-bit field in the control byte: bit 0 is `0` for a request and `1` for its response, bits 1-3 select the operation. The rest of the control byte is the even parity bit (bit 4) and three padding bits (bits 5-7), always `0`.
 
@@ -153,7 +153,18 @@ Steps 4 and 5 are independent: the CRC is one exchange whose value depends on th
 ### Core Bootloader Passthrough Commands (002x)
 Lets the app send bootloader packets to the RSBus for all five operations. Routers treat them as a broadcast and as high-priority traffic on the same physical layer.
 
-The passthrough is asynchronous: the core issues the frame and keeps serving while it awaits the reply. A reply that does not arrive within 1 s returns the failure flag; a request while one is pending is refused.
+The passthrough is asynchronous: the core issues the frame and keeps serving while it awaits the reply.
+
+A failure is never reported without saying which failure it was, because the app retries some and not others. Every failure answer carries a one-byte reason:
+
+| Reason | Meaning |
+| ------ | ------- |
+| `0x01` | Refused: another passthrough request is outstanding |
+| `0x02` | Refused: the request is malformed - payload too short or an unknown command ID |
+| `0x03` | The node did not answer before the 1 s deadline |
+| `0x04` | The node answered with a failure frame of its own |
+
+`0x01` and `0x02` are decided by the core without touching the bus; `0x03` means the request went out and nothing came back; `0x04` carries the node's own answer semantics (an erase at a misaligned offset, a write into a page that was not erased).
 
 Both packet families share one UART, so while a passthrough is outstanding the core separates them: a bootloader frame accumulates in the passthrough's own buffer and everything else continues through the standard packet assembler. Neither is dropped, and a reply is never mistaken for standard traffic.
 
