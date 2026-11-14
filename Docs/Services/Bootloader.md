@@ -155,10 +155,12 @@ The passthrough is asynchronous: the core issues the frame and keeps serving whi
 
 Both packet families share one UART, so while a passthrough is outstanding the core separates them: a bootloader frame accumulates in the passthrough's own buffer and everything else continues through the standard packet assembler. Neither is dropped, and a reply is never mistaken for standard traffic.
 
+The command IDs follow the bootloader command order - identify, read, erase, write, CRC - so a table row and its packet always carry the same rank.
+
 | Name                   | ID | Request         | Response        | Note |
 | ---------------------- | -- | --------------- | --------------- | ---- |
 | Request identification | 0  | -               | App size, Page size, Name | |
-| Send write packet      | 1  | Offset, Payload | Offset          | Success only if the offset matches the request |
-| Request read           | 2  | Offset          | Offset, Payload | |
-| Request CRC            | 3  | -               | CRC             | CRC-32 over the whole app space |
-| Erase page             | 4  | Offset          | Page            | Offset must be page-aligned |
+| Request read           | 1  | Offset          | Offset, Payload | |
+| Erase page             | 2  | Offset          | Page            | Offset must be page-aligned |
+| Send write packet      | 3  | Offset, Payload | Offset          | Success only if the offset matches the request |
+| Request CRC            | 4  | -               | CRC             | CRC-32 over the whole app space |
