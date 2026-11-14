@@ -49,8 +49,8 @@ Identify response packet:
 | Parity       | 1bit     | Even, covers command, size, page size and name |
 | Command      | 4bit     | 0b0001 |
 | App size     | uint32   | Size of the uploadable app region in bytes. It is the app space alone on a device that partitions its flash, and also covers storage on a device without a partition table. |
-| Name         | char[28] | Device name, null-padded |
 | Page size    | uint32   | Erase page size in bytes. Every erase offset is a multiple of it, and the app size is a multiple of it. |
+| Name         | char[28] | Device name, null-padded |
 | End Marker   | uint8    | 0xBC |
 
 Read request packet:
