@@ -2317,3 +2317,25 @@ flash route can reach them: the bootloader protocol's offsets are relative to th
 and both bootloaders are only replaceable another way (E25/E26 for the DAS). A package naming one is
 refused as the wrong target, with both addresses in the sentence, rather than as an unknown target.
 Should a route ever exist, `routeTarget()` in `firmware_package.dart` is the one place to extend.
+
+## E89 Passthrough failures: the reason table has no code for the core's own send refusal (2026-11-14, card t_99f85cd3)
+
+`Docs/Services/Bootloader.md` (the reason table, `c3aabab`) gives four reason bytes, and the core now
+answers every failure with one of them. The core has **five** failure paths, not four: besides busy
+(`0x01`), malformed (`0x02`), the 1 s deadline (`0x03`) and the node's own failure frame (`0x04`),
+`RS485SendRaw` can return false before the raw request leaves the device at all - the line never went
+silent inside the stint, or a byte that was neither our echo nor the node's start marker collided.
+That path is not a refusal the core *decides* (it needed the bus), it is not the deadline (it returns
+in ~6 ms), and no node answered, so none of the four rows describes it.
+
+**What the core does today:** it reports that failure in the `0x03` class - from the app's side the
+outcome is "no node answer on this attempt", which is the class whose recovery applies - and keeps it
+countable on its own through `sendfail=` in the BLPT totals line, next to `busy/short/timeout/nodefail`.
+Reported rather than guessed at, because a fifth code is the parent's (and `Docs/`'s) call: either
+
+> | `0x05` | The core could not put the request on the bus |
+
+is added to the table and the core answers it (a one-line change in `Core/Services/Device.h` - the
+constant is already routed through a single helper), or the table gains a sentence saying a send
+refusal is reported as `0x03`. Until then the behaviour is the one described above, and it is pinned
+on the source by the `run.sh` guard "every passthrough failure carries its one-byte reason".

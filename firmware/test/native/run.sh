@@ -2348,6 +2348,71 @@ fi
 fail=$((fail + raw_fail))
 echo
 
+# t_99f85cd3: every passthrough FAILURE carries its one-byte reason, so a refusal the core decided
+# (busy, malformed) is never reported to the app as a node's silence. DeviceService cannot be linked
+# on the host (it pulls the whole device layer), so the four paths and their byte are pinned on the
+# source, in the Doc's terms (Docs/Services/Bootloader.md, the reason table):
+#   - one constant per reason, carrying the spec's values 0x01-0x04;
+#   - every failure path routes its reply through SendPassthroughFail with its own constant, and no
+#     failure path still builds a payload-less FLAG_FAIL of its own - that shape IS the bug (the app
+#     then cannot tell "retry in a moment" from "the node is not there");
+#   - the reason byte is the reply's WHOLE payload (len 1), and the four counters the rig reads are
+#     the four reasons (busy/short/timeout/nodefail).
+echo "### source guard: every passthrough failure carries its one-byte reason"
+REASON_SRC=${REASON_SRC:-$ROOT/src/Core/Services/Device.h}
+reason_ok=0
+# (1) the constants carry the doc's values.
+for R in "KPtReasonBusy *= *0x01" "KPtReasonMalformed *= *0x02" \
+         "KPtReasonTimeout *= *0x03" "KPtReasonNodeFail *= *0x04"; do
+    if ! grep -qE "static constexpr uint8_t $R;" "$REASON_SRC"; then
+        echo "FAIL $REASON_SRC: the reason constant '$R' is missing or carries another value"
+        reason_ok=1
+    fi
+done
+# (2) every refusal the core decides is answered by at least one path, through the one builder. The
+# node's own failure frame (0x04) is not a refusal the core decides - check (3) pins its reply path.
+for R in KPtReasonBusy KPtReasonMalformed KPtReasonTimeout; do
+    if ! grep -qE "SendPassthroughFail\(.*, *$R\);" "$REASON_SRC"; then
+        echo "FAIL $REASON_SRC: no failure path answers with $R"
+        reason_ok=1
+    fi
+done
+# (3) the three paths the app must not confuse: busy refuses without the bus, the deadline answers
+# 0x03, the node's own failure frame answers 0x04.
+if ! grep -qE 'SendPassthroughFail\(Frame.IdSrc, Frame.Cmd, Frame.Trid, KPtReasonBusy\);' "$REASON_SRC" ||
+   ! grep -qE 'SendPassthroughFail\(PtSrc, PtCmd, PtTrid, KPtReasonTimeout\);' "$REASON_SRC" ||
+   [ "$(grep -c 'Fail = KPtReasonNodeFail;' "$REASON_SRC")" != 2 ]; then
+    echo "FAIL $REASON_SRC: the busy refusal, the deadline and the node's failure frame must each answer their own reason"
+    reason_ok=1
+fi
+# (4) no failure path builds a payload-less FLAG_FAIL of its own any more.
+if grep -qE 'FLAG_FAIL, nullptr, 0\)' "$REASON_SRC"; then
+    echo "FAIL $REASON_SRC: a failure path still builds a payload-less FLAG_FAIL - the reason byte is missing"
+    reason_ok=1
+fi
+# (5) the failure reply's WHOLE payload is the reason byte: one byte, and nothing else.
+if ! grep -qF 'FLAG_FAIL, &Reason, 1);' "$REASON_SRC" ||
+   ! grep -qE 'void SendPassthroughFail\(uint16_t Src, uint16_t Cmd, uint16_t Trid, uint8_t Reason\);' "$REASON_SRC"; then
+    echo "FAIL $REASON_SRC: a failure reply must carry the one-byte reason and nothing else"
+    reason_ok=1
+fi
+# (6) the success path is untouched: identify and read still forward their 36-byte body, and no
+# success carries a reason.
+if [ "$(grep -c 'OutLen = sizeof(Out);' "$REASON_SRC")" != 2 ]; then
+    echo "FAIL $REASON_SRC: the identify/read forward path changed - the success reply must stay byte-identical"
+    reason_ok=1
+fi
+# (7) the four reasons are countable on the rig without the app.
+if [ "$(grep -c 'PtNodeFail = (uint16_t)(PtNodeFail + 1);' "$REASON_SRC")" != 1 ] ||
+   ! grep -q 'busy=%u short=%u' "$REASON_SRC" ||
+   ! grep -q 'timeout=%u nodefail=%u' "$REASON_SRC"; then
+    echo "FAIL $REASON_SRC: the BLPT totals line must count the four reasons apart (busy/short/timeout/nodefail)"
+    reason_ok=1
+fi
+[ $reason_ok = 0 ] && echo "PASS: the four failure reasons have one constant each, every failure path answers its own, and the byte is the reply's whole payload"
+fail=$((fail + reason_ok))
+echo
+
 # Tool test: the packaging layer. tools/pack_firmware.py turns a built image plus its metadata
 # into binaries/<target>-<version>.fw.zip - the image and a manifest.json naming its address,
 # sha256, crc32 and padded length - and `--verify` re-checks a package against its own bytes. It

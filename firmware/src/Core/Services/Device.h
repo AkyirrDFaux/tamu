@@ -46,10 +46,14 @@ private:
     // Handle* encodes the raw frame, RS485SendRaw's it, records the pending request and returns;
     // the main loop's PollBootloaderPassthrough collects the reply.
     void HandleBootloaderPassthrough(const PacketFrame &Frame, uint8_t Cid);
-    // Answers a passthrough request whose payload is too short to encode with FLAG_FAIL instead of
-    // returning silently: an unanswered request is indistinguishable from a dead node to the app,
-    // which then waits out its own timeout (card t_334a1347).
+    // Answers a passthrough request whose payload is too short to encode with FLAG_FAIL + reason
+    // 0x02 instead of returning silently: an unanswered request is indistinguishable from a dead
+    // node to the app, which then waits out its own timeout (card t_334a1347).
     void RefuseShortRequest(const PacketFrame &Frame, uint8_t Need);
+    // One FLAG_FAIL reply carrying its one-byte reason (Docs/Services/Bootloader.md, the reason
+    // table). Every passthrough failure goes through here, so the failure a client sees and the
+    // reason byte it reads are built in the same place.
+    void SendPassthroughFail(uint16_t Src, uint16_t Cmd, uint16_t Trid, uint8_t Reason);
     bool BootloaderRxFeed(uint8_t Byte);               // sink for raw bootloader reply bytes
     static inline DeviceService *RxInstance = nullptr; // the single instance, for that hook
 
@@ -60,6 +64,16 @@ private:
     // poll rebuild the Device response for the original requester after Handle* has returned.
     static constexpr uint32_t KPtTimeoutMs = 1000; // reply deadline (ms)
     static constexpr uint32_t KPtDumpAfterMs = 10000; // idle before the totals line is printed
+    // The one-byte reason every passthrough FAILURE carries (Docs/Services/Bootloader.md "Core
+    // Bootloader Passthrough Commands (002x)"). Each failure path routes to its own constant, so the
+    // byte on the wire, the counter and the log line cannot drift apart: a refusal the core decides
+    // (0x01/0x02, decided without touching the bus) is not a node that stayed silent (0x03) and not
+    // the node's own failure frame (0x04). Failures only - a SUCCESS reply is byte-identical to what
+    // it was before this byte existed, so a client that ignores the byte still works.
+    static constexpr uint8_t KPtReasonBusy      = 0x01; // a passthrough request is already outstanding
+    static constexpr uint8_t KPtReasonMalformed = 0x02; // payload too short, or CID outside 0x20-0x24
+    static constexpr uint8_t KPtReasonTimeout   = 0x03; // the node did not answer by the deadline
+    static constexpr uint8_t KPtReasonNodeFail  = 0x04; // the node answered with a failure frame
     bool PtPending    = false;                    // a request is issued and not yet settled
     uint8_t PtCid     = 0;                        // passthrough CID (0x20..0x24)
     uint16_t PtSrc    = 0;                        // reply routing: original request IdSrc
@@ -84,7 +98,8 @@ private:
     uint16_t PtSinkFrames  = 0; // complete, valid 0xCA reply frames decoded
     uint16_t PtSinkBad     = 0; // 0xCA frames that failed the size/parity check
     uint16_t PtOkCount     = 0; // settled with a reply
-    uint16_t PtTimeouts    = 0; // settled on the deadline (no reply)
+    uint16_t PtTimeouts    = 0; // settled on the deadline (no reply) - reason 0x03
+    uint16_t PtNodeFail    = 0; // the node answered with a failure frame - reason 0x04
     // The same deadline settles counted PER PASSTHROUGH COMMAND (index = CID - 0x20, so
     // 0 identify / 1 write / 2 read / 3 digest). The card that added them (t_5eb19a27) measures a
     // 200-cycle run per command, and "the node answered 199 of 200 identifies and 196 of 200 reads"
@@ -250,13 +265,11 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
     PtLastMs = DeviceStatus.UptimeMs;
 
     // Busy: refuse a second request rather than queue it, so the app must wait for the
-    // outstanding one to settle (its reply or the 1 s timeout).
+    // outstanding one to settle (its reply or the 1 s timeout). Reason 0x01 - the app retries.
     if (PtPending)
     {
         PtBusyRefused = (uint16_t)(PtBusyRefused + 1);
-        PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                        FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
-        DispatchPacket(TxFrame);
+        SendPassthroughFail(Frame.IdSrc, Frame.Cmd, Frame.Trid, KPtReasonBusy);
         return;
     }
 
@@ -312,10 +325,11 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
         Len = Bootloader::DIGEST_REQ_SIZE;
     }
     else
-    { // Not a passthrough CID: refuse rather than send something nobody asked for.
-        PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                        FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
-        DispatchPacket(TxFrame);
+    { // Not a passthrough CID: refuse rather than send something nobody asked for. Dispatch only
+      // routes 0x20-0x24 here, so this is defensive - but it answers like the malformed request it
+      // is (0x02, counted with the short-payload refusals), never with silence.
+        PtShortRefused = (uint16_t)(PtShortRefused + 1);
+        SendPassthroughFail(Frame.IdSrc, Frame.Cmd, Frame.Trid, KPtReasonMalformed);
         return;
     }
 
@@ -342,16 +356,31 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
         PtSendFail = (uint16_t)(PtSendFail + 1);
         PtPending = false;
         BootloaderRxSink = nullptr;
-        PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                        FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
-        DispatchPacket(TxFrame);
+        // The frame never left the core, so no node answered and none can. The reason table has no
+        // code for the core's own send refusal, so it is reported in the class the app reacts to
+        // when there is no node answer (0x03) and stays countable on its own through `sendfail=` in
+        // the BLPT totals line - the app must never read a bus hold-off as a malformed request.
+        SendPassthroughFail(Frame.IdSrc, Frame.Cmd, Frame.Trid, KPtReasonTimeout);
         return;
     }
 }
 
+// One FLAG_FAIL reply carrying its one-byte reason (Docs/Services/Bootloader.md, the reason table).
+// Every passthrough failure is built here, so the wire byte and the reason constant cannot drift
+// apart. The payload is the reason byte ALONE - the app classifies a FAIL by its one-byte payload -
+// and the frame is otherwise the one SendDeviceReply builds, plus FLAG_FAIL.
+inline void DeviceService::SendPassthroughFail(uint16_t Src, uint16_t Cmd, uint16_t Trid,
+                                               uint8_t Reason)
+{
+    PacketConstruct(&TxFrame, Src, Cmd, Trid,
+                    FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, &Reason, 1);
+    DispatchPacket(TxFrame);
+}
+
 // A passthrough request that cannot be encoded is REFUSED, not ignored: the app cannot tell "the
 // core rejected this" from "the node is dead" when nothing comes back, and it then waits out its
-// own timeout (card t_334a1347). One FAIL reply, and the check is logged once since boot.
+// own timeout (card t_334a1347). One FAIL reply carrying reason 0x02 (malformed), and the check is
+// logged once since boot.
 inline void DeviceService::RefuseShortRequest(const PacketFrame &Frame, uint8_t Need)
 {
     PtShortRefused = (uint16_t)(PtShortRefused + 1);
@@ -361,9 +390,7 @@ inline void DeviceService::RefuseShortRequest(const PacketFrame &Frame, uint8_t 
         DeviceLog("BLPT", "refused a short passthrough request: cid=0x%02X payload=%u need=%u",
                   (unsigned)GetServiceCID(Frame.Cmd), (unsigned)PayloadBytes(Frame), (unsigned)Need);
     }
-    PacketConstruct(&TxFrame, Frame.IdSrc, Frame.Cmd, Frame.Trid,
-                    FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
-    DispatchPacket(TxFrame);
+    SendPassthroughFail(Frame.IdSrc, Frame.Cmd, Frame.Trid, KPtReasonMalformed);
 }
 
 // Byte sink for the bootloader reply, installed on the shared bus reader (RSBus.h
@@ -433,6 +460,12 @@ inline void DeviceService::PollBootloaderPassthrough()
             // that never left. Printed 10 s after the last request, and DeviceLog keeps it off a
             // link the app is still using.
             //
+            // The four failure reasons the app is told are the four refusals this line counts:
+            // `busy` (0x01) and `short` (0x02) are decided without the bus, `timeout` (0x03) is the
+            // deadline, `nodefail` (0x04) is a failure frame from the node. `sendfail` is the core's
+            // own send refusal, reported to the app in the 0x03 class (see the send path) and kept
+            // apart here so a rig session can still tell it from a silent node.
+            //
             // short/coll/reply are the raw send's own echo verdicts (RSBus.h): `reply` counts the
             // sends the node answered INSIDE the echo window - the case that used to be reported
             // as a collision and threw the answer away - and `coll` a byte that was neither our
@@ -440,10 +473,11 @@ inline void DeviceService::PollBootloaderPassthrough()
             // reply>0 is the fixed path doing its job.
             DeviceLog("BLPT",
                       "total req=%u busy=%u short=%u sendfail=%u sinkbytes=%u frames=%u bad=%u "
-                      "ok=%u timeout=%u rawshort=%lu rawcoll=%lu rawreply=%lu",
+                      "ok=%u timeout=%u nodefail=%u rawshort=%lu rawcoll=%lu rawreply=%lu",
                       (unsigned)PtReqCount, (unsigned)PtBusyRefused, (unsigned)PtShortRefused,
                       (unsigned)PtSendFail, (unsigned)PtSinkBytes, (unsigned)PtSinkFrames,
                       (unsigned)PtSinkBad, (unsigned)PtOkCount, (unsigned)PtTimeouts,
+                      (unsigned)PtNodeFail,
                       (unsigned long)RS485RawShortEcho, (unsigned long)RS485RawCollisions,
                       (unsigned long)RS485RawEarlyReplies);
             // The second line is the card t_5eb19a27 attribution set, kept separate because the
@@ -474,6 +508,7 @@ inline void DeviceService::PollBootloaderPassthrough()
         uint8_t Out[Bootloader::IDENTIFY_RESP_SIZE - 3]; // the frame body: size | name | page
         uint8_t Flags = FLAG_TYPE | FLAG_START | FLAG_STOP;
         uint8_t OutLen = 0;
+        uint8_t Fail = 0; // non-zero: the one-byte reason this reply fails with (0x04)
 
         if (PtCid == 0x20)
         { // Identify (0b000x): the node's identify-response body forwarded verbatim - app-space
@@ -499,7 +534,8 @@ inline void DeviceService::PollBootloaderPassthrough()
             uint32_t Ack = Bootloader::Offset(PtRx);
             memcpy(Out, &Ack, 4);
             OutLen = 4;
-            Flags |= ((Ack & 1u) == 0u) ? FLAG_SUCCESS : FLAG_FAIL;
+            if (Ack & 1u) Fail = KPtReasonNodeFail;
+            else          Flags |= FLAG_SUCCESS;
         }
         else if (PtCid == 0x23)
         { // Write (0b011x): SUCCESS only when the node reports the exact offset we asked it to
@@ -508,7 +544,8 @@ inline void DeviceService::PollBootloaderPassthrough()
             uint32_t Last = Bootloader::Offset(PtRx);
             memcpy(Out, &Last, 4);
             OutLen = 4;
-            Flags |= (Last == PtOffset) ? FLAG_SUCCESS : FLAG_FAIL;
+            if (Last == PtOffset) Flags |= FLAG_SUCCESS;
+            else                  Fail = KPtReasonNodeFail;
         }
         else if (PtCid == 0x24)
         { // CRC (0b100x): the node answers with the CRC32 of the whole app space (7-byte frame,
@@ -529,8 +566,23 @@ inline void DeviceService::PollBootloaderPassthrough()
         }
         else
         { // Not a passthrough CID: FAIL rather than answer with another command's payload.
+          // Defensive (PtCid is always 0x20-0x24 while pending) and reported as the malformed
+          // request it would be.
             OutLen = 0;
-            Flags |= FLAG_FAIL;
+            Fail = KPtReasonMalformed;
+        }
+
+        // A node that answered with a failure frame: the reply carries the one-byte reason, not the
+        // node's 4-byte ack (Docs/Services/Bootloader.md - every failure answer carries a one-byte
+        // reason). 0x04 still tells the app the node's own semantics are what refused it - an erase
+        // at a misaligned offset, a write into a page that was not erased - and its recovery path
+        // for those is unchanged.
+        if (Fail != 0)
+        {
+            PtNodeFail = (uint16_t)(PtNodeFail + 1);
+            Out[0] = Fail;
+            OutLen = 1;
+            Flags = (uint8_t)((Flags & ~FLAG_SUCCESS) | FLAG_FAIL);
         }
 
         PtPending = false;
@@ -549,9 +601,9 @@ inline void DeviceService::PollBootloaderPassthrough()
         if (PtCid >= 0x20 && PtCid <= 0x24)
             PtTimeoutById[PtCid - 0x20] = (uint16_t)(PtTimeoutById[PtCid - 0x20] + 1);
         BootloaderRxSink = nullptr;
-        PacketConstruct(&TxFrame, PtSrc, PtCmd, PtTrid,
-                        FLAG_TYPE | FLAG_START | FLAG_STOP | FLAG_FAIL, nullptr, 0);
-        DispatchPacket(TxFrame);
+        // The deadline is its own reason: the request went out and the node never answered, which
+        // the app retries differently from a refusal of its own.
+        SendPassthroughFail(PtSrc, PtCmd, PtTrid, KPtReasonTimeout);
     }
 }
 #endif // TYPE_CORE
