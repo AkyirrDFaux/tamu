@@ -2371,3 +2371,21 @@ candidates, not conclusions - nothing was changed to test them:
 Separating them needs a HEAD core on the rig (a flash, and the card did not authorise one) or a bus
 capture during the request. `.pio/probe/force_bl.sh` + `.pio/probe/bl_identify.py` reproduce the
 observation in one command pair; reset with `minichlink -b` afterwards.
+
+**Resolution (card t_99f85cd3, 2026-11-14, after the core was flashed).** Candidate 1 was the cause:
+the core on the rig was the pre-v2 encoding. With `Tamu_v2_0A` iteration 9 on the rig (the reason-byte
+build, which is also the first core carrying the v2 bootloader command encoding) and the node's own
+bootloader in bootloader mode, identify over the passthrough answers on the first attempt:
+
+```
+$ .pio/probe/venv/bin/python .pio/probe/bl_identify.py 3
+identify: app size 14336 B, page size 64 B, name 'DAS v0.1', flags 0x2E
+```
+
+Nothing was changed on the node side: its flash was a byte-identical read-back of the production v2
+bootloader plus the app region before and after (sha256 of the whole 16 KB unchanged), and the same
+request against the old core answered the core's empty `FLAG_FAIL`. So the defect was the core's
+encoding, not the bootloader's silence, and candidate 2 (the reply sink closing early) is not needed
+to explain it. The `-DBOOTLOADER_FORCE` bench image is the cheaper route than the PC hijack: it needs
+no OpenOCD server kept alive, and the core's identify/erase/write frames are then answered normally.
+
