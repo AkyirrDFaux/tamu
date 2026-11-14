@@ -2339,3 +2339,35 @@ is added to the table and the core answers it (a one-line change in `Core/Servic
 constant is already routed through a single helper), or the table gains a sentence saying a send
 refusal is reported as `0x03`. Until then the behaviour is the one described above, and it is pinned
 on the source by the `run.sh` guard "every passthrough failure carries its one-byte reason".
+
+## E90 Identify over the core passthrough got no answer with a node provably in bootloader mode (2026-11-14, card t_c00ec895)
+
+Acceptance 3 of the bootloader-v2 rig card asks for `identify` -> **page size 64** from every node. A
+node can only answer identify while it runs its bootloader, and on the production image only the button
+selects that (PC0 at reset). The card predates this entry with "not yet proven over the bus", and this
+run reproduced the gap under conditions that rule out the node side:
+
+* Node 2's flash read back byte for byte as `binaries/DAS_bootloader_2k_pad.bin` (2048 B) +
+  `binaries/DAS_v0_1.bin` (13812 B) - the production v2 image, no `-DBOOTLOADER_FORCE`.
+* The node was put into bootloader mode over SWD alone (`.pio/probe/force_bl.sh`:
+  halt, `SysTick->CTLR |= 5`, `a5 = 0x40011000`, `sp = 0x20000800`, `pc = main+0x78`, the target of the
+  `beqz` that skips `JumpToApp`), then halted again: **pc = 0x000003c0**, i.e. inside `main()`'s
+  inlined `ReceiveFrame` byte loop, polling `USART1->STATR`. The forced entry skips only the button
+  sample; `SetupUart`, `FlashUnlock` and the frame loop run unmodified.
+* `.pio/probe/bl_identify.py 3` in that window: three attempts, each answered by the **core** with
+  `flags 0x4E payload` (empty) - no node answered.
+
+That is a core-side or core/bootloader-compatibility observation, not a node image defect. Two
+candidates, not conclusions - nothing was changed to test them:
+
+1. The core on the rig reports `2026.11.14 iter 6`; the 4-bit command encoding and the renumbered v2
+   command set landed before the DAS bootloader stamp at HEAD (`iter 7`), so the flashed core may
+   still encode a request the v2 bootloader rejects as `INVALID` (it refuses an unknown command
+   silently).
+2. `RS485SendRaw`'s reply sink may close before the bootloader's answer: the bootloader waits for
+   `BL_SILENCE_BYTES` (32 byte times, capped at 10 ms) of bus quiet before it drives the line, while
+   an empty-payload `FLAG_FAIL` came back well inside the 1 s deadline.
+
+Separating them needs a HEAD core on the rig (a flash, and the card did not authorise one) or a bus
+capture during the request. `.pio/probe/force_bl.sh` + `.pio/probe/bl_identify.py` reproduce the
+observation in one command pair; reset with `minichlink -b` afterwards.
