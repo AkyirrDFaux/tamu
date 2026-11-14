@@ -382,10 +382,18 @@ static uint16_t Have = 0; // bytes currently in FrameBuf
 static uint16_t TotalNeed = 0; // total bytes the frame needs once known
 
 static void HandleWrite(uint32_t Offset, const uint8_t *Payload);
+static void HandleErase(uint32_t Offset);
 
 // Offset of the last successfully programmed chunk (0xFFFFFFFF = nothing yet). Reported back
 // on every write so the app resynchronises after a rejected chunk instead of guessing.
 static uint32_t LastWritten = 0xFFFFFFFFu;
+
+// The sector the ERASE command blanked last (0xFFFFFFFF = none). A write into that sector must not
+// erase it again: the tool erased it on purpose and may have programmed the sector's other chunks
+// already (protocol v2: the erase is its own command). Any other sector keeps the old first-touch
+// behaviour - a write that starts a sector erases it - so a tool that never sends an erase still
+// works exactly as before.
+static uint32_t ErasedSector = 0xFFFFFFFFu;
 
 static void SendReadResponse(uint32_t Offset)
 {
@@ -410,17 +418,18 @@ static void SendReadResponse(uint32_t Offset)
     tud_cdc_write_flush();
 }
 
-constexpr IdentifyFrame Identify = MakeIdentify(APP_LIMIT - APP_BASE, "Valu v2.0");
+constexpr IdentifyFrame Identify =
+    MakeIdentify(APP_LIMIT - APP_BASE, FLASH_ERASE_SECTOR, "Valu v2.0");
 
 static void HandleIdentify()
 {
-    tud_cdc_write(Identify.Bytes, Bootloader::DATA_SIZE);
+    tud_cdc_write(Identify.Bytes, Bootloader::IDENTIFY_RESP_SIZE);
     tud_cdc_write_flush();
 }
 
 static void DispatchFrame(const uint8_t *Frame)
 {
-    uint8_t Cmd = (uint8_t)(Frame[1] & 0x07u);
+    uint8_t Cmd = (uint8_t)(Frame[1] & 0x0Fu);
     uint32_t Offset = Bootloader::Offset(Frame);
     if (Cmd == Bootloader::CMD_IDENTIFY_REQ)
         HandleIdentify();
@@ -428,6 +437,8 @@ static void DispatchFrame(const uint8_t *Frame)
         HandleWrite(Offset, Bootloader::Payload(Frame));
     else if (Cmd == Bootloader::CMD_READ_REQ)
         SendReadResponse(Offset);
+    else if (Cmd == Bootloader::CMD_ERASE_REQ)
+        HandleErase(Offset);
 }
 
 static void FeedByte(uint8_t Byte)
@@ -447,7 +458,7 @@ static void FeedByte(uint8_t Byte)
 
     if (Have == 2)
     {
-        uint16_t Need = Bootloader::FrameSize((uint8_t)(Byte & 0x07u));
+        uint16_t Need = Bootloader::FrameSize((uint8_t)(Byte & 0x0Fu));
         if (Need == 0) // unknown command: drop and resync
         {
             Have = 0;
@@ -473,9 +484,17 @@ static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
     if (Ok) Ok = Offset <= APP_SIZE && APP_SIZE - Offset >= Bootloader::PAYLOAD_SIZE;
 
     // Erase the containing 4 KB sector on the first write into it, then the 128 32-byte
-    // writes of the sector program into the freshly erased sector.
+    // writes of the sector program into the freshly erased sector - unless the ERASE command
+    // blanked that sector already (ErasedSector), in which case re-erasing would take the chunks
+    // of the same sector that have landed since.
     if (Ok && (Addr & (FLASH_ERASE_SECTOR - 1u)) == 0)
-        Ok = FlashEraseSector(Addr);
+    {
+        const uint32_t Sector = Addr / FLASH_ERASE_SECTOR;
+        if (Sector == ErasedSector)
+            ErasedSector = 0xFFFFFFFFu; // primed once: the erase that follows a write is the tool's
+        else
+            Ok = FlashEraseSector(Addr);
+    }
 
     if (Ok)
     {
@@ -486,6 +505,28 @@ static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
     // Always acknowledge, even a rejected chunk, so the app can resynchronise on LastWritten.
     uint8_t Resp[Bootloader::READ_REQ_SIZE];
     Bootloader::EncodeWriteResponse(LastWritten, Resp);
+    tud_cdc_write(Resp, sizeof(Resp));
+    tud_cdc_write_flush();
+}
+
+// Blanks the 4 KB sector the offset falls in - the erase the write path no longer has to own (the
+// command is what lets a tool blank just the sectors it is about to rewrite). The answer is the
+// sector's base address, with bit 0 set when it is not blank afterwards; a sector outside the app
+// window is answered the same way and is never touched.
+static void HandleErase(uint32_t Offset)
+{
+    uint32_t Ack = Offset & ~(FLASH_ERASE_SECTOR - 1u);
+    if (Offset < APP_SIZE && Ack < APP_SIZE && FlashEraseSector(APP_BASE + Ack))
+    {
+        ErasedSector = Ack / FLASH_ERASE_SECTOR;
+    }
+    else
+    {
+        Ack |= 1u;
+    }
+
+    uint8_t Resp[Bootloader::ERASE_RESP_SIZE];
+    Bootloader::EncodeEraseResponse(Ack, Resp);
     tud_cdc_write(Resp, sizeof(Resp));
     tud_cdc_write_flush();
 }

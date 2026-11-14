@@ -440,6 +440,28 @@ static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
     SendFrame(Resp, sizeof(Resp));
 }
 
+// Blanks the `ota_0` sector the offset falls in - the erase the write path no longer owns. The
+// sector is marked as erased, so the writes that follow program into it instead of erasing it
+// again (HandleWrite's first-touch rule). The answer is the sector's base address, with bit 0 set
+// when it is not blank afterwards; an offset outside the slot is answered the same way.
+static void HandleErase(uint32_t Offset)
+{
+    uint32_t Ack = Offset & ~(SECTOR_SIZE - 1u);
+    const uint32_t Sector = Ack / SECTOR_SIZE;
+    bool Ok = App != nullptr && Offset < App->size && Ack < App->size &&
+              Sector < sizeof(Erased) * 8u;
+    if (Ok && !SectorErased(Sector))
+        Ok = esp_partition_erase_range(App, Sector * SECTOR_SIZE, SECTOR_SIZE) == ESP_OK;
+    if (Ok)
+        MarkErased(Sector);
+    else
+        Ack |= 1u;
+
+    uint8_t Resp[Bootloader::ERASE_RESP_SIZE];
+    Bootloader::EncodeEraseResponse(Ack, Resp);
+    SendFrame(Resp, sizeof(Resp));
+}
+
 static void HandleRead(uint32_t Offset)
 {
     auto ReadPayload = [](uint32_t Off, uint8_t *Data) {
@@ -454,11 +476,11 @@ static void HandleRead(uint32_t Offset)
     BootloaderHost::HandleRead(Offset, ReadPayload, Send);
 }
 
-// The identify response is entirely build-time constant (app size + name), so the whole frame -
-// control/parity included - is precomputed and lives in flash. The builder is shared with the
-// DAS/Valu bootloaders (Core/Devices/BootloaderIdentify.h), so the three cannot disagree about
-// what an identify response is.
-constexpr IdentifyFrame Identify = MakeIdentify(OTA_APP_SIZE, "Tamu v2.0A");
+// The identify response is entirely build-time constant (app size + page size + name), so the whole
+// frame - control/parity included - is precomputed and lives in flash. The builder is shared with
+// the DAS/Valu bootloaders (Core/Devices/BootloaderIdentify.h), so the three cannot disagree about
+// what an identify response is. The page size is this device's ERASE unit: a 4 KB `ota_0` sector.
+constexpr IdentifyFrame Identify = MakeIdentify(OTA_APP_SIZE, SECTOR_SIZE, "Tamu v2.0A");
 
 // One byte stream, both transports: a frame that arrives over BLE is assembled exactly the way a
 // USB frame is, so the handlers cannot disagree about what a frame is.
@@ -467,14 +489,16 @@ static uint16_t FrameLen = 0;
 
 static void Dispatch()
 {
-    const uint8_t Cmd = (uint8_t)(FrameBuf[1] & 0x07u);
+    const uint8_t Cmd = (uint8_t)(FrameBuf[1] & 0x0Fu);
     const uint32_t Offset = Bootloader::Offset(FrameBuf);
     if (Cmd == Bootloader::CMD_IDENTIFY_REQ)
-        SendFrame(Identify.Bytes, Bootloader::DATA_SIZE);
+        SendFrame(Identify.Bytes, Bootloader::IDENTIFY_RESP_SIZE);
     else if (Cmd == Bootloader::CMD_WRITE)
         HandleWrite(Offset, Bootloader::Payload(FrameBuf));
     else if (Cmd == Bootloader::CMD_READ_REQ)
         HandleRead(Offset);
+    else if (Cmd == Bootloader::CMD_ERASE_REQ)
+        HandleErase(Offset);
 }
 
 static void FeedByte(uint8_t Byte)
@@ -485,7 +509,7 @@ static void FeedByte(uint8_t Byte)
     if (FrameLen < 2)
         return;
 
-    const uint16_t Need = Bootloader::FrameSize((uint8_t)(FrameBuf[1] & 0x07u));
+    const uint16_t Need = Bootloader::FrameSize((uint8_t)(FrameBuf[1] & 0x0Fu));
     if (Need == 0 || Need > sizeof(FrameBuf))
     {
         FrameLen = 0;

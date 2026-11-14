@@ -7,16 +7,26 @@
 // holding the button (PC0, active low) at reset, in which case the white LED (PD0) comes on;
 // otherwise the app is launched immediately. It deliberately ignores the standard packet
 // format and speaks the raw bootloader frame on the RS485 bus (no 0xAA sync, so the running
-// nodes - which wait for 0xAA - ignore it). Every write is answered by a write response carrying
-// the last successfully written offset, an identify request returns the app size and name, and a
-// digest request (0b110) answers with the CRC32 of the requested range of the app region.
+// nodes - which wait for 0xAA - ignore it).
 //
-// Flash rules: writes are 32-byte aligned (per the doc). The erase unit is the 64-byte page, so the
-// chunk that starts a page erases it (positionally, whatever it holds) and no other chunk erases; a
-// chunk inside a page is only programmed when that page's first half is known to be there, and is
-// otherwise REFUSED with the PAGE named in the reply, so a tool re-sends the page's first chunk
-// instead of leaving a 32-byte hole (Bootloader::WriteChunk). It never touches the storage region at
-// 0x3E00 (the app's `.SV`/table live there).
+// Protocol v2 (Core/Functions/Bootloader.h): a 4-bit command field. An identify request returns
+// the app size, the flash page size (64, the erase unit) and the name; every write is answered by
+// a write response carrying the offset of the last chunk that landed; an ERASE request (0b1000)
+// blanks the 64-byte page its offset falls in; and a digest request (0b0110) answers with the
+// CRC32 of the requested range of the app region.
+//
+// Flash rules: writes are 32-byte aligned (per the doc) and NEVER erase - the erase is its own
+// command, so a delta upload can blank exactly the pages it is about to rewrite, and a write the
+// node never answers can no longer leave a page blank (E85: the erase used to be a side effect of
+// the page-start chunk). A page-start chunk is still checked before it programs: its page's first
+// word must read 0xFFFFFFFF, otherwise it is REFUSED with the PAGE named in the reply - that is
+// what catches a tool writing into a page it never erased (Bootloader::WriteChunk). The full
+// prevention of E85's half-written page is the tool's: erase, then both chunks of the page.
+//
+// Erases stop at 0x3E00: the storage region at the top of the app region belongs to the app (its
+// file table is 512 B of state), so the one command that can be aimed at a whole page per request
+// refuses it rather than wiping it. A write is bounded by the app region as before (the tool never
+// sends a chunk that lands in the storage).
 //
 // It is written with direct register access (no SPL GPIO/USART/RCC/FLASH) to fit the 2 KB
 // region alongside the framework startup/SystemInit. The clock is already 48 MHz: the
@@ -47,6 +57,12 @@
 // computed address: `APP_BASE + Offset + PAYLOAD_SIZE` wraps near 2^32 and would let a huge
 // offset past APP_LIMIT (the same wrap-safe subtraction the Core bootloader uses).
 #define APP_SIZE (APP_LIMIT - APP_BASE)
+// An erase is refused past this point: the storage region at 0x3E00 is inside the app region,
+// but it belongs to the app (its file table is 512 B of state), so a range erase - the one
+// command that can be aimed at a whole region at once - stops at the code space's end.
+#define APP_CODE_LIMIT 0x3E00u
+#define APP_CODE_SIZE (APP_CODE_LIMIT - APP_BASE)
+
 
 // The flash controller programs/erases through the 0x08000000 alias; the CPU reads/executes
 // through 0x00000000 (see Devices/DAS_v0.1/Storage.h).
@@ -102,17 +118,19 @@ static void GpioInPU(GPIO_TypeDef *Port, uint32_t Pin)
 #define FSR_BSY 0x00000001u     // busy
 
 // Unlocks both the standard and the fast program/erase controller.
-__attribute__((noinline)) static void FlashUnlock()
+//
+// UNLOCKED ONCE, when bootloader mode is entered - not per operation. The controller only acts
+// when a command bit is set (FCR_PG / FCR_PAGE_ER), and this image never launches the app after
+// unlocking (the launch happens at reset, before this call), so a lock/unlock pair around every
+// chunk and every page was pure overhead: measured 32 B of the 2 KB region for the second call
+// site plus the lock helper, which is what the erase command needed. The chip's flash controller
+// comes back locked on any reset, so nothing inherits this state.
+static void FlashUnlock()
 {
     FLASH->KEYR = FLASH_KEY1;
     FLASH->KEYR = FLASH_KEY2;
     FLASH->MODEKEYR = FLASH_KEY1;
     FLASH->MODEKEYR = FLASH_KEY2;
-}
-
-__attribute__((noinline)) static void FlashLock()
-{
-    FLASH->CTLR |= FCR_LOCK | FCR_FLOCK;
 }
 
 // Erases the 64-byte page containing `addr` (the 0x08000000 alias).
@@ -139,12 +157,9 @@ static void FlashProgramWord(uint32_t Addr, uint32_t Data)
 
 static bool FlashErasePage(uint32_t Addr)
 {
-    FlashUnlock();
     FlashErasePageFast(FLASH_CTRL_BASE + Addr);
     // Page-aligned, so a plain word read: a memcpy here would pull the library routine in.
-    uint32_t Check = *(volatile uint32_t *)Addr;
-    FlashLock();
-    return Check == 0xFFFFFFFFu;
+    return *(volatile uint32_t *)Addr == 0xFFFFFFFFu;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +186,7 @@ static void SetupUart()
 // frame that keeps arriving still completes.
 //
 // One byte loop over STATR for the whole frame: a per-byte helper call costs 48 B on this target.
-static uint8_t ReceiveFrame(uint8_t *Out, size_t Cap, uint32_t TimeoutUs)
+static uint8_t ReceiveFrame(uint8_t *Out, uint32_t TimeoutUs)
 {
     const uint32_t TimeoutCycles = TimeoutUs * CYCLES_PER_US;
     uint32_t Start = SysTick->CNT;
@@ -195,11 +210,11 @@ static uint8_t ReceiveFrame(uint8_t *Out, size_t Cap, uint32_t TimeoutUs)
         Out[Got++] = Byte;
         if (Got == 2)
         {
-            // FrameSize() is a table over the 3 command bits whose largest entry is DATA_SIZE,
-            // i.e. exactly `Cap`: the size is bounded by construction, so only a command that has
-            // no size at all (0) can be rejected here. Keeping the comparison out is 8 B of the
-            // 2 KB this image has to live in.
-            Need = Bootloader::FrameSize((uint8_t)(Byte & 0x07u));
+            // FrameSize() is a table over the 4 command bits whose largest entry is
+            // IDENTIFY_RESP_SIZE, i.e. exactly `MAX_FRAME_SIZE`: the size is bounded by
+            // construction, so only a command that has no size at all (0) can be rejected here.
+            // Keeping the comparison out is 8 B of the 2 KB this image has to live in.
+            Need = Bootloader::FrameSize((uint8_t)(Byte & 0x0Fu));
             if (Need == 0) return Bootloader::INVALID;
         }
         else if (Need != 0 && Got == Need)
@@ -266,8 +281,9 @@ static uint32_t LastWritten = 0xFFFFFFFFu;
 // so there is one copy of each rule and this adapter only touches the flash controller.
 struct DasFlash
 {
-    static void Unlock() { FlashUnlock(); }
-    static void Lock() { FlashLock(); }
+    // The controller is unlocked once, when bootloader mode is entered (FlashUnlock).
+    static void Unlock() {}
+    static void Lock() {}
     static bool ErasePage(uint32_t Offset) { return FlashErasePage(APP_BASE + Offset); }
     static void ProgramWord(uint32_t Offset, uint32_t Data)
     {
@@ -346,17 +362,28 @@ static void HandleRead(uint32_t Offset)
     SendRaw(Resp, sizeof(Resp));
 }
 
-constexpr IdentifyFrame Identify = MakeIdentify(APP_LIMIT - APP_BASE, "DAS v0.1");
+constexpr IdentifyFrame Identify =
+    MakeIdentify(APP_LIMIT - APP_BASE, Bootloader::PAGE_SIZE, "DAS v0.1");
 
 static void HandleIdentify()
 {
-    SendRaw(Identify.Bytes, Bootloader::DATA_SIZE);
+    SendRaw(Identify.Bytes, Bootloader::IDENTIFY_RESP_SIZE);
 }
 
 static void HandleDigest(uint32_t Offset, uint16_t Length)
 {
     static uint8_t Resp[Bootloader::DIGEST_RESP_SIZE];
     Bootloader::EncodeDigestResponse(Offset, AppDigest(Offset, Length), Resp);
+    SendRaw(Resp, sizeof(Resp));
+}
+
+// Blanks the 64-byte page the offset falls in - the erase the write path no longer performs.
+// One page per request: the tool owns the loop (Bootloader::ErasePage explains why). The answer
+// is the page, flagged when it is not blank, so an ack always means the page can be programmed.
+static void HandleErase(uint32_t Offset)
+{
+    uint8_t Resp[Bootloader::ERASE_RESP_SIZE];
+    Bootloader::EncodeEraseResponse(Bootloader::ErasePage<DasFlash>(Offset, APP_CODE_SIZE), Resp);
     SendRaw(Resp, sizeof(Resp));
 }
 
@@ -367,7 +394,9 @@ static void HandleDigest(uint32_t Offset, uint16_t Length)
 static void JumpToApp()
 {
     __disable_irq();
-    USART1->CTLR1 &= ~0x2000u /* UE */;
+    // No USART1 shutdown here: the launch happens at reset, BEFORE SetupUart, so the port is
+    // still at its reset value and the app's own startup configures it. (Writing CTLR1 here
+    // measured 20 B of the 2 KB region for an instruction pair that cannot run.)
     // The app's own startup sets sp/gp/mtvec; a plain jump to its reset vector is enough.
     ((void (*)(void))APP_BASE)();
     for (;;) {} // unreachable
@@ -398,14 +427,16 @@ int main(void)
         JumpToApp();
 #endif
 
-    // Bootloader mode: white LED on, then serve frames until reset.
+    // Bootloader mode: white LED on, unlock the flash controller for the whole session, then
+    // serve frames until reset.
     GPIOD->BSHR = (1u << 0);
     SetupUart();
+    FlashUnlock();
 
     for (;;)
     {
         uint8_t Frame[Bootloader::MAX_FRAME_SIZE];
-        uint8_t Cmd = ReceiveFrame(Frame, sizeof(Frame), 2000000u); // 2 s per byte
+        uint8_t Cmd = ReceiveFrame(Frame, 2000000u); // 2 s per frame
         if (Cmd == Bootloader::INVALID) continue;
 
         uint32_t Offset = Bootloader::Offset(Frame);
@@ -415,6 +446,8 @@ int main(void)
             HandleWrite(Offset, Bootloader::Payload(Frame));
         else if (Cmd == Bootloader::CMD_READ_REQ)
             HandleRead(Offset);
+        else if (Cmd == Bootloader::CMD_ERASE_REQ)
+            HandleErase(Offset);
 #ifndef BL_DIGEST_READ_HOOK
         // The bench build reaches the same AppDigest through the read hook below (its carrier
         // frame), so it leaves this dispatch out to stay inside the 2 KB.

@@ -12,7 +12,7 @@
 //
 // The helpers are header-only and templated on those callbacks so, at -Os/-flto, the
 // host's transport inlines into the helper rather than costing an indirect call. The
-// DAS image has only ~200 B of flash free, so keep the indirection count low.
+// DAS image is 4 B under its 2 KB region, so keep the indirection count low.
 
 #include <cstdint>
 #include <cstring>

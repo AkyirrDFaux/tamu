@@ -877,6 +877,17 @@ are hardware-only.
   page whose page-start request is dropped, and a full 432-chunk upload + digest) is written and
   unrun: `firmware/.pio/probe/tcb8_page_loss.py` (`lost <page> [--drop]`, `full <image>`, `dump`).)*
 
+  *(2026-11-14, card `t_32ee3f57` - the NODE-SIDE shape of E85 is CLOSED by protocol v2. The erase
+  is its own command (0b1000 request / 0b1001 response) and a write no longer erases anything, so
+  the page-start chunk is not the thing that blanks a page any more: a lost write costs one re-sent
+  write, never a blank page. A page-start chunk (offset % page size == 0) still reads its page's
+  first word and refuses, naming the PAGE, when it is not `0xFFFFFFFF` - that catches a tool writing
+  into a page it never erased, which is the same class from the other side. The leftover is the
+  tooling's: an uploader must erase before it writes, and one that skips the erase now gets a
+  refusal instead of a half-blank page. Measured on the DAS: the erase command costs 104 B of the
+  2 KB and the write handler gives back 116 B, identify (with the page size) 0 B, the 4-bit command
+  field +8 B - see E88 for the budget and the app/docs follow-ups.)*
+
 - **E86 (code fixed 2026-11-13, card `t_9c6dbc90`) - the rig's `factory` slot is still damaged.**
   The `0x70000` default that wrote an app image *inside* `factory` (measured 2026-11-12, card
   `t_5eb19a27`: the core answered nothing until the same image was written at 0x90000) is gone:
@@ -894,6 +905,33 @@ are hardware-only.
   same card (one more stack line, the core has 236 kB free), and the card's new attribution counters
   are printed on a SECOND `BLPT` line (`counters kept=... drop=... rawstint=... rawstall=...
   nocid i/r/w/d=...`) so the totals line keeps its established shape.
+
+- **E88 Protocol v2 (4-bit commands, standalone erase, page size in identify) needs the app lane and
+  the docs** (card `t_32ee3f57`, 2026-11-14; firmware side done). The wire format is now v2 in all
+  three bootloaders (`Core/Functions/Bootloader.h`): control byte `command(4) | parity(1) |
+  padding(3)`, commands 0b0000..0b1001 (the ten old ones unchanged in value, plus `0b1000`
+  erase-request and `0b1001` erase-response), identify response 41 bytes (`app size u32`, `page size
+  u16`, `name char[32]`), and an erase request/ack that is header-only: the request names ONE page
+  by any offset inside it, the ack carries the page with bit 0 set when the page is not blank. One
+  page per request is deliberate - the loop over a range cost 104 B of the DAS's 2 KB, the tool's
+  loop costs nothing. The core's passthrough gained CID `0x24` (erase: offset 4 in, acked offset 4
+  out, SUCCESS when bit 0 is clear) and CID `0x20`'s reply grew from 36 to 38 bytes (page size u16
+  after the app size) - both are app-visible changes.
+  What is NOT done, and is somebody else's card:
+  (a) **The app lane.** `bootloader_client.dart` still speaks v1: parity bit 3, a 39-byte identify,
+  CID 0x20 read as 36 bytes, no erase CID. A v2 node REFUSES a page-start write into a page it was
+  not told to erase, so a v1 client cannot write a v2 node at all - the app must ship with this
+  firmware, not after it. The upload loop is: identify (app size + page size) -> digest or read for
+  what differs -> erase each page/sector that differs -> write its chunks (32 B each) -> digest.
+  (b) **Delta upload is a tool algorithm**, not firmware: the node needs nothing beyond the erase
+  command and the reads it already serves. The rule the node does impose is that a page's both
+  chunks are written after its erase (a page-start chunk into a non-blank page is refused, so the
+  tool re-erases and re-writes the page).
+  (c) **Docs/Services/Bootloader.md is still v1** (3-bit command field, "padding 4bit", a 34-byte
+  identify payload, no erase command, and the write section still implies the bootloader erases).
+  The parent agent must update it with Akyirr's approval; agents do not edit Docs.
+  (d) The core's BLPT counters line now ends `nocid i/r/w/d/e=` (a fifth field for the erase CID) -
+  a rig script that parses that line by position needs the extra field.
 
 ## BLE Settings block (2026-10-28)
 

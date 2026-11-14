@@ -326,51 +326,48 @@ echo "### native script tests (file header + Properties + Service opcode set + P
 build_run "script" "script_test.cpp" -DUSE_SCRIPTS -DSCRIPT_HOST_TEST
 echo
 
-echo "### native bootloader packet tests (codec layout + even parity)"
+echo "### native bootloader packet tests (v2 codec layout: 4-bit commands, erase pair, page size)"
 build_run "bootloader" "bootloader_test.cpp"
 echo
 
-echo "### native bootloader write-path tests (positional erase + the ack-only-when-landed rule)"
+echo "### native bootloader write-path tests (erase command + page-start check + ack-only-when-landed)"
 build_run "blwrite" "bootloader_write_test.cpp"
 echo
 
-# t_5195d4bc + t_cb8bd722: a write is only acked when its 32 bytes are in flash, the page erase is
-# decided by the OFFSET, and a chunk inside a page is only programmed when that page's first half is
-# known to be there. An upload sends 32-byte chunks in order, so the second chunk of every 64-byte
-# page lands in a page the first chunk just programmed: erasing there would take the first chunk with
-# it, never erasing means a re-flash cannot replace an old image, acking a chunk that did not land is
-# what made the tool lose chunks silently, and programming a second half whose page-start request was
-# lost is what left a 32-byte hole in the image (E85). The rule itself - Bootloader::WriteChunk and
-# Bootloader::WriteAck - is driven by the test above against a NOR model, so this guard only pins
-# that the node still runs THAT rule and that its decisions keep their shape:
-#   - the page erase is gated on the offset starting a page (never on what the page holds);
-#   - a second-half chunk without its page's first half is refused, not programmed;
+# Protocol v2 (the erase moved out of the write) + t_5195d4bc/t_cb8bd722's ack rule. The device
+# rule is Bootloader::WriteChunk / WriteAck / ErasePage, driven by bootloader_write_test.cpp against
+# a NOR model - so this guard only pins that the node still runs THAT rule and that its decisions
+# keep their shape:
+#   - a write never erases (the erase is the ERASE command's), so a lost write cannot blank a page;
+#   - a PAGE-START chunk is checked against its page's first word, and a chunk inside a page is not;
 #   - every programmed word is read back before the chunk can be acked;
 #   - the response's offset comes from WriteAck, so a page failure names the PAGE;
-#   - the device's write handler goes through WriteChunk and does not touch LastWritten itself.
-echo "### source guard: the bootloader ack rule (positional erase + page rule + read-back)"
+#   - the device's write handler goes through WriteChunk, its erase through ErasePage, and neither
+#     touches LastWritten itself.
+echo "### source guard: the bootloader write rule (v2: erase command + page-start check + read-back)"
 BL_HDR=${BL_HDR:-$ROOT/src/Core/Functions/Bootloader.h}
 DAS_BL=${DAS_BL:-$ROOT/src/Devices/DAS_v0.1/Bootloader.cpp}
 CHUNK_FN=$(sed -n '/inline ChunkResult WriteChunk(/,/^    }/p' "$BL_HDR")
+ERASE_FN=$(sed -n '/inline uint32_t ErasePage(/,/^    }/p' "$BL_HDR")
 chunk_fail=0
 if [ -z "$CHUNK_FN" ]; then
-    echo "FAIL $BL_HDR: Bootloader::WriteChunk was not found - this guard cannot see the ack rule"
+    echo "FAIL $BL_HDR: Bootloader::WriteChunk was not found - this guard cannot see the write rule"
     chunk_fail=1
 fi
-if ! printf '%s\n' "$CHUNK_FN" | grep -q 'const uint32_t Page = Offset & ~(PAGE_SIZE - 1u);'; then
-    echo "FAIL $BL_HDR: the page is not derived from the offset - the erase decision must be positional"
+if [ -z "$ERASE_FN" ]; then
+    echo "FAIL $BL_HDR: Bootloader::ErasePage was not found - the erase command has no rule"
     chunk_fail=1
 fi
-if ! printf '%s\n' "$CHUNK_FN" | grep -q 'if (!Flash::ErasePage(Page))'; then
-    echo "FAIL $BL_HDR: the page erase is not gated on the chunk that starts the page"
+if printf '%s\n' "$CHUNK_FN" | grep -q 'ErasePage'; then
+    echo "FAIL $BL_HDR: a write erases again - the erase is the ERASE command's, or a lost write can blank a page (E85)"
     chunk_fail=1
 fi
 if printf '%s\n' "$CHUNK_FN" | grep -q 'IsErased\|IsBlank\|AllErased'; then
-    echo "FAIL $BL_HDR: the erase decision looks at the page's content again (must be positional)"
+    echo "FAIL $BL_HDR: the write rule looks at the page's whole content again"
     chunk_fail=1
 fi
-if ! printf '%s\n' "$CHUNK_FN" | grep -q 'LastWritten != Page && Flash::ReadWord(Page) == 0xFFFFFFFFu'; then
-    echo "FAIL $BL_HDR: a chunk inside a page is not checked against its page's first half (E85)"
+if ! printf '%s\n' "$CHUNK_FN" | grep -q 'if ((Offset & (PAGE_SIZE - 1u)) == 0 && Flash::ReadWord(Offset) != 0xFFFFFFFFu)'; then
+    echo "FAIL $BL_HDR: a page-start chunk is not checked against its page's first word"
     chunk_fail=1
 fi
 if ! printf '%s\n' "$CHUNK_FN" | grep -q 'Flash::ReadWord(Offset + i) != Word'; then
@@ -388,8 +385,16 @@ if ! grep -q 'inline uint32_t WriteAck(' "$BL_HDR" ||
     echo "FAIL $BL_HDR: a failed page is not named in the write response (WriteAck)"
     chunk_fail=1
 fi
+if ! printf '%s\n' "$ERASE_FN" | grep -q 'if (Page >= AppSize || !Flash::ErasePage(Page)) return Page | 1u;'; then
+    echo "FAIL $BL_HDR: an erase is not bounded by the caller's region and flagged when it fails"
+    chunk_fail=1
+fi
 if ! grep -q 'Bootloader::WriteChunk<DasFlash>' "$DAS_BL"; then
     echo "FAIL $DAS_BL: the write handler does not use the tested rule (Bootloader::WriteChunk)"
+    chunk_fail=1
+fi
+if ! grep -q 'Bootloader::ErasePage<DasFlash>' "$DAS_BL"; then
+    echo "FAIL $DAS_BL: the erase handler does not use the tested rule (Bootloader::ErasePage)"
     chunk_fail=1
 fi
 if ! grep -q 'Bootloader::WriteAck(Result, Offset, LastWritten)' "$DAS_BL"; then
@@ -400,7 +405,11 @@ if grep -q 'LastWritten = Offset' "$DAS_BL"; then
     echo "FAIL $DAS_BL: the write handler acks by itself again - only WriteChunk may name an offset"
     chunk_fail=1
 fi
-[ $chunk_fail = 0 ] && echo "PASS: the bootloader erases positionally, refuses a half-page chunk, reads every word back, and acks only through WriteChunk/WriteAck"
+if ! grep -q 'CMD_ERASE_REQ' "$DAS_BL"; then
+    echo "FAIL $DAS_BL: the node does not dispatch the erase command"
+    chunk_fail=1
+fi
+[ $chunk_fail = 0 ] && echo "PASS: the erase is its own bounded command, a write only programs (a page-start chunk against its blank page), every word is read back, and only WriteChunk/WriteAck name an offset"
 fail=$((fail + chunk_fail))
 echo
 
@@ -1957,7 +1966,7 @@ fi
 # (5) and both counter sets are readable without a console: the passthrough's own totals line (on the
 # port the rig reads when the link is quiet) and the BUSGATE dump.
 if ! grep -q 'kept=%lu drop=%lu rawstint=%lu rawstall=%lu' "$DEVSVC" ||
-   ! grep -q 'nocid i/r/w/d=%u/%u/%u/%u' "$DEVSVC"; then
+   ! grep -q 'nocid i/r/w/d/e=%u/%u/%u/%u/%u' "$DEVSVC"; then
     echo "FAIL $DEVSVC: the BLPT totals must report kept/drop, rawstint/rawstall and the per-command timeouts"
     e82_fail=1
 fi

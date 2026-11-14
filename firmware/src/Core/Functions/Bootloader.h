@@ -1,20 +1,26 @@
 #pragma once
 
-// Bootloader packet codec (Docs/Services/Bootloader.md).
+// Bootloader packet codec (Docs/Services/Bootloader.md), protocol v2.
 //
 // The bootloader replaces the main binary; it deliberately ignores the standard packet
 // format and speaks this raw, byte-packed frame on USB (cores) or RSBus (nodes):
 //
 //   [0]      0xCA start marker
-//   [1]      control: padding(4)=0 | parity(1, even) | command(3)
+//   [1]      control: padding(3)=0 | parity(1, even) | command(4)
 //   [2..5]   offset, u32 little-endian, relative to the main binary space start
-//   [6..37]  32-byte payload  (write, read-response and identify-response)
-//   [38]     0xBC end marker  (write, read-response and identify-response)
+//   [6..37]  32-byte payload  (write, read-response)
+//   [38]     0xBC end marker  (write, read-response)
 //
-// Header-only frames (no payload): start | control | offset | end = 7 bytes.
-// Commands: 0b000 identify-request, 0b001 identify-response, 0b010 write-request,
-//           0b011 write-response, 0b100 read-request, 0b101 read-response,
-//           0b110 digest-request, 0b111 digest-response.
+// Header-only frames (offset slot only): start | control | offset | end = 7 bytes.
+// Commands: 0b0000 identify-request, 0b0001 identify-response, 0b0010 write-request,
+//           0b0011 write-response, 0b0100 read-request, 0b0101 read-response,
+//           0b0110 digest-request, 0b0111 digest-response, 0b1000 erase-request,
+//           0b1001 erase-response. 0b1010..0b1111 are undefined and rejected.
+//
+// v2 is the 4-bit command field: three bits were all used (eight commands) and the erase needed
+// a ninth. Existing command VALUES did not change, but the parity bit moved from bit 3 to bit 4
+// to make room, so a v2 frame is not a v1 frame - what tells the two apart on the wire is the
+// identify response's length (v2 is one byte longer: it carries the page size).
 //
 // The digest request carries the range in place of a payload - offset (u32, the header's own
 // slot) followed by a u16 length - and its response echoes the offset and carries a u32 CRC32
@@ -24,13 +30,18 @@
 // CRC32 is the reflected 0xEDB88320 polynomial, init 0xFFFFFFFF, final XOR 0xFFFFFFFF (the
 // CRC-32/ISO-HDLC that zlib.crc32 computes).
 //
-// The identify-response carries the app-space size in the offset slot (u32 LE) and the
-// device name as the 32-byte payload (null-padded); the write-response carries the offset
-// of the last successfully written chunk in the offset slot. Both are header-only.
+// The identify response carries the app-space size in the offset slot (u32 LE), then the flash
+// PAGE SIZE (u8, the erase unit of the erase command), then the device name as a 32-byte
+// null-padded field: start | control | size | page | name | end = 40 bytes.
+//
+// The erase request names one page (any offset inside it) in the offset slot and is header-only;
+// its response carries the page it blanked, with bit 0 set when that page is not blank. Keeping
+// the erase in its own command is what lets a write be pure programming, and what lets a tool
+// blank only the pages it is about to rewrite.
 //
 // Parity is even over the "rest of the packet" after the control byte's padding/parity: the
-// command (3 bits), the offset (32 bits) and the payload (32 bytes, when present). The start
-// marker, the 4 padding bits and the end marker are excluded.
+// command (4 bits), the offset (32 bits) and the payload (32 bytes, when present). The start
+// marker, the 3 padding bits and the end marker are excluded.
 
 #include <cstdint>
 #include <cstring>
@@ -46,8 +57,10 @@ namespace Bootloader
     constexpr uint8_t CMD_WRITE_RESP    = 0x3; // 0b011
     constexpr uint8_t CMD_READ_REQ      = 0x4; // 0b100
     constexpr uint8_t CMD_READ_RESP     = 0x5; // 0b101
-    constexpr uint8_t CMD_DIGEST_REQ    = 0x6; // 0b110 - CRC32 of a range of the app region
-    constexpr uint8_t CMD_DIGEST_RESP   = 0x7; // 0b111 - the CRC, offset echoed
+    constexpr uint8_t CMD_DIGEST_REQ    = 0x6; // 0b0110 - CRC32 of a range of the app region
+    constexpr uint8_t CMD_DIGEST_RESP   = 0x7; // 0b0111 - the CRC, offset echoed
+    constexpr uint8_t CMD_ERASE_REQ     = 0x8; // 0b1000 - erase the pages covering a range
+    constexpr uint8_t CMD_ERASE_RESP    = 0x9; // 0b1001 - the last page erased, bit 0 = failure
 
     // Decode sentinel: 0 is a valid command (identify-request), so "invalid" is 0xFF.
     constexpr uint8_t INVALID = 0xFF;
@@ -56,22 +69,31 @@ namespace Bootloader
     constexpr uint8_t HEADER_SIZE    = 6;  // start + control + offset
     constexpr uint8_t READ_REQ_SIZE  = HEADER_SIZE + 1;                    // header + end
     constexpr uint8_t DATA_SIZE      = HEADER_SIZE + PAYLOAD_SIZE + 1;     // header + payload + end
-    // Digest request: offset (u32) + length (u16) after the header is 2 + 1, response: the CRC
-    // (u32) + end. Both stay well inside MAX_FRAME_SIZE.
+    // Digest request: offset (u32) + length (u16) next to the header; response: the CRC (u32).
     constexpr uint8_t DIGEST_REQ_SIZE  = HEADER_SIZE + 2 + 1;
     constexpr uint8_t DIGEST_RESP_SIZE = HEADER_SIZE + 4 + 1;
+    // Erase: header-only both ways - the request names the page in the offset slot (any offset
+    // inside it), the ack carries the page it blanked. One page per request, see ErasePage.
+    constexpr uint8_t ERASE_REQ_SIZE   = HEADER_SIZE + 1;
+    constexpr uint8_t ERASE_RESP_SIZE  = HEADER_SIZE + 1;
     constexpr uint8_t NAME_SIZE      = 32; // identify-response name (null-padded)
-    constexpr uint8_t MAX_FRAME_SIZE = DATA_SIZE;
+    // Identify response: app size (u32) in the offset slot, the flash page size (u16), then the
+    // name. The page size is what the erase command's page is measured in, so the tool asks the
+    // device instead of assuming 64: the erase units differ (a 64 B page on the CH32V003, a 4 KB
+    // sector on the CH32V203 and the ESP32-C3), so a byte would not hold them.
+    constexpr uint8_t IDENTIFY_RESP_SIZE = HEADER_SIZE + 2 + NAME_SIZE + 1;
+    constexpr uint8_t IDENTIFY_NAME_AT   = HEADER_SIZE + 2; // app size (4) + page size (2)
+    constexpr uint8_t MAX_FRAME_SIZE     = IDENTIFY_RESP_SIZE;
 
-    // Even parity over the command (3 bits), the offset and the payload (bytes 2..len-2).
+    // Even parity over the command (4 bits), the offset and the payload (bytes 2..len-2).
     //
     // Parity of a XOR is the XOR of the parities, so the whole body collapses to one byte with
     // a single XOR per byte and one fold at the end - instead of the shift-and-xor ladder run
-    // per byte. The command's three bits join the same sum (cmd is masked to 3 bits, so its
+    // per byte. The command's four bits join the same sum (cmd is masked to 4 bits, so its
     // higher bits cannot contribute).
     constexpr uint8_t Parity(const uint8_t *Frame, uint16_t Len)
     {
-        uint8_t Acc = (uint8_t)(Frame[1] & 0x07u);
+        uint8_t Acc = (uint8_t)(Frame[1] & 0x0Fu);
         for (uint16_t i = 2; i + 1 < Len; i++)
             Acc ^= Frame[i];
         Acc ^= (uint8_t)(Acc >> 4);
@@ -80,11 +102,11 @@ namespace Bootloader
         return (uint8_t)(Acc & 1u);
     }
 
-    // Fills byte 1: padding 0, even parity, command. `Frame` must already hold the full body.
+    // Fills byte 1: command(4) | parity(1) | padding(3)=0. `Frame` must already hold the full body.
     inline void WriteControl(uint8_t *Frame, uint8_t Cmd, uint16_t Len)
     {
-        Frame[1] = (uint8_t)(Cmd & 0x07u);
-        Frame[1] |= (uint8_t)(Parity(Frame, Len) << 3);
+        Frame[1] = (uint8_t)(Cmd & 0x0Fu);
+        Frame[1] |= (uint8_t)(Parity(Frame, Len) << 4);
     }
 
     // The two frame layouts every encoder below is built from: [start][control][offset][payload][end]
@@ -111,11 +133,25 @@ namespace Bootloader
         WriteControl(Out, CMD_WRITE, DATA_SIZE);
     }
 
+    // A header-only frame: [start][control][offset][end]. The offset slot is the whole payload, so
+    // ONE builder serves every request and ack of that shape - identify and read requests, write
+    // and erase acks - instead of one copy of the same six bytes per command.
+    inline void EncodeHeaderFrame(uint8_t Cmd, uint32_t Offset, uint8_t *Out)
+    {
+        EncodeHeaderBody(Offset, Out);
+        WriteControl(Out, Cmd, READ_REQ_SIZE);
+    }
+
     // Acknowledges a write: header-only, carrying the offset of the last successfully written chunk.
     inline void EncodeWriteResponse(uint32_t Offset, uint8_t *Out)
     {
-        EncodeHeaderBody(Offset, Out);
-        WriteControl(Out, CMD_WRITE_RESP, READ_REQ_SIZE);
+        EncodeHeaderFrame(CMD_WRITE_RESP, Offset, Out);
+    }
+
+    // Acknowledges an erase: header-only, carrying the page (bit 0 set when it is not blank).
+    inline void EncodeEraseResponse(uint32_t Offset, uint8_t *Out)
+    {
+        EncodeHeaderFrame(CMD_ERASE_RESP, Offset, Out);
     }
 
     inline void EncodeReadRequest(uint32_t Offset, uint8_t *Out)
@@ -148,21 +184,31 @@ namespace Bootloader
         WriteControl(Out, CMD_IDENTIFY_REQ, READ_REQ_SIZE);
     }
 
-    // Identify response: app-space size (u32) in the offset slot, name as the 32-byte payload.
-    inline void EncodeIdentifyResponse(uint32_t AppSize, const char *Name, uint8_t *Out)
+    // Identify response: app-space size (u32) in the offset slot, the flash page size (u16), then
+    // the name as the 32-byte field after it.
+    inline void EncodeIdentifyResponse(uint32_t AppSize, uint16_t PageSize, const char *Name,
+                                       uint8_t *Out)
     {
         Out[0] = START;
         memcpy(Out + 2, &AppSize, 4);
-        memset(Out + 6, 0, NAME_SIZE);
+        memcpy(Out + 6, &PageSize, 2);
+        memset(Out + IDENTIFY_NAME_AT, 0, NAME_SIZE);
         uint8_t i = 0;
         while (i < NAME_SIZE && Name[i] != '\0')
         {
-            Out[6 + i] = (uint8_t)Name[i];
+            Out[IDENTIFY_NAME_AT + i] = (uint8_t)Name[i];
             i++;
         }
-        Out[DATA_SIZE - 1] = END;
-        WriteControl(Out, CMD_IDENTIFY_RESP, DATA_SIZE);
+        Out[IDENTIFY_RESP_SIZE - 1] = END;
+        WriteControl(Out, CMD_IDENTIFY_RESP, IDENTIFY_RESP_SIZE);
     }
+
+    // The identify response's two geometry fields; the name follows them.
+    inline uint16_t IdentifyPageSize(const uint8_t *Frame)
+    {
+        return (uint16_t)(Frame[6] | ((uint16_t)Frame[7] << 8));
+    }
+    inline const uint8_t *IdentifyName(const uint8_t *Frame) { return Frame + IDENTIFY_NAME_AT; }
 
     inline uint32_t Offset(const uint8_t *Frame)
     {
@@ -174,35 +220,33 @@ namespace Bootloader
     inline const uint8_t *Payload(const uint8_t *Frame) { return Frame + 6; }
 
     // -----------------------------------------------------------------------
-    // Writing one chunk (cards t_5195d4bc and t_cb8bd722: the erase decision, the ack rule, and the
-    // page a chunk has to belong to before it may be programmed)
+    // Writing one chunk (cards t_5195d4bc, t_cb8bd722 and the v2 erase split)
     // -----------------------------------------------------------------------
     //
-    // An upload sends 32-byte chunks in order (Docs/Services/Bootloader.md), so the SECOND chunk of
-    // every 64-byte flash page lands in a page the first chunk just programmed - and the erase unit
-    // is the WHOLE 64-byte page. That is what made a lost write leave a hole (E85): a page-start
-    // request the node never received, or whose answer was lost, leaves the page's second half blank
-    // while the tool only learns that ONE chunk failed, so it re-sends one chunk of a two-chunk page.
+    // A write only programs. It used to own the erase: the chunk whose offset started a 64-byte
+    // page erased it, and a chunk inside a page was refused unless the page's first half was
+    // known to be there. That rule existed because the erase was a side effect of a write, and
+    // it is what made a lost page-start write leave a page blank for ever (E85). With ERASE as
+    // its own command the tool blanks the pages it is about to write first, so:
+    //   * a lost write costs one re-sent write, never a blank page (E85's shape is gone);
+    //   * a delta upload blanks exactly the pages that differ;
+    //   * a write no longer needs to know what the page holds - except for the one check below.
     //
-    // Two rules, both decided by the OFFSET and never by what the page happens to hold:
-    //   * the erase is positional (E84): only the chunk whose offset starts a page erases it, and it
-    //     erases it whatever it holds - a page carrying an older image is what a re-flash replaces,
-    //     and a chunk inside a page never erases, because clearing the page would take the half that
-    //     just landed with it;
-    //   * a chunk inside a page is only programmed when the page's first half is KNOWN to be there -
-    //     either this chunk follows it directly (`LastWritten` names the page start), or the half
-    //     already holds data (the tool's correction round re-sends one chunk of a written page). A
-    //     blank first half means the page-start request never arrived, so the chunk is REFUSED and
-    //     the ack names the PAGE: programming it alone would leave exactly the half-blank page E85
-    //     measured, and the tooling can re-send the page's first chunk from that address.
+    // The one check: a PAGE-START chunk (offset % PAGE_SIZE == 0) reads the page's first word
+    // before it programs anything, and refuses with the PAGE named when that word is not
+    // 0xFFFFFFFF. It catches a tool writing into a page it never erased (a lost erase ack, a
+    // tool that assumes the old erase-in-write behaviour), which would otherwise program into
+    // dirty bits and read back different. A chunk INSIDE a page is never checked: by then its
+    // page's first word is the one this very upload just programmed. The check is only compiled
+    // where it fits (DAS: it is what the last 12 B of the 2 KB region went to).
     //
-    // The ack rule IS the verification: the write response names `Offset` only when the 32 bytes read
-    // back as sent, and names the PAGE when the page could not be written, so the tooling re-sends
-    // the page rather than one chunk of it. Flash programming can only clear bits, so a chunk
-    // arriving in a slot that was never erased reads back different and is refused (the response
-    // keeps the previous offset, which is how the tool tells a refusal from an ack - Docs: "Success
-    // only if the offset matches the request"), while a re-sent identical chunk verifies and is
-    // acked, so the protocol stays idempotent for the app's retry round.
+    // The ack rule IS the verification: the write response names `Offset` only when the 32 bytes
+    // read back as sent, and names the PAGE when the page could not be written. Flash programming
+    // can only clear bits, so a chunk arriving in a slot that was not blank reads back different
+    // and is refused (the response keeps the previous offset, which is how the tool tells a
+    // refusal from an ack - Docs: "Success only if the offset matches the request"), while a
+    // re-sent identical chunk verifies and is acked, so the protocol stays idempotent for the
+    // app's retry round.
     //
     // `Flash` is the device's flash adapter (Unlock/Lock, ErasePage, ProgramWord, ReadWord). It is
     // a template parameter so the host test drives THIS function against a NOR model (program only
@@ -226,18 +270,13 @@ namespace Bootloader
         // `Offset <= AppSize` guard cannot wrap.
         if (Offset > AppSize || AppSize - Offset < PAYLOAD_SIZE) return ChunkResult::Refused;
 
-        const uint32_t Page = Offset & ~(PAGE_SIZE - 1u);
-        if (Offset == Page)
-        {
-            if (!Flash::ErasePage(Page)) return ChunkResult::PageFailed;
-        }
-        else if (LastWritten != Page && Flash::ReadWord(Page) == 0xFFFFFFFFu)
-        {
-            // No page-start chunk wrote this page's first half: programming the second half alone
-            // would leave the page half blank for ever. Name the page instead - the tool re-sends
-            // the page's first chunk, which erases and writes the page as a unit.
+        // The erase is the ERASE command's job, not this one, so a write only ever programs. A
+        // PAGE-START chunk also proves the erase happened: its page's first word must read
+        // 0xFFFFFFFF, or the tool is writing into a page it never erased (a lost erase ack, an
+        // old tool), and the page is named instead. A chunk INSIDE a page is never checked - by
+        // then the page's first word is the one this upload just programmed.
+        if ((Offset & (PAGE_SIZE - 1u)) == 0 && Flash::ReadWord(Offset) != 0xFFFFFFFFu)
             return ChunkResult::PageFailed;
-        }
 
         // Program and read back in ONE loop: the words are compared while the chunk is still in
         // hand, so the ack above costs no second pass over the payload.
@@ -264,6 +303,33 @@ namespace Bootloader
     inline uint32_t WriteAck(ChunkResult Result, uint32_t Offset, uint32_t LastWritten)
     {
         return Result == ChunkResult::PageFailed ? ((Offset & ~(PAGE_SIZE - 1u)) | 1u) : LastWritten;
+    }
+
+    // -----------------------------------------------------------------------
+    // Erasing a page (the ERASE command)
+    // -----------------------------------------------------------------------
+    //
+    // The erase is its own command, which is what lets a write be pure programming: the tool
+    // blanks the pages it is about to rewrite, then sends the 32-byte chunks. Three things
+    // follow. A lost write can no longer leave a page erased - the erase happened on purpose,
+    // before the chunks, so a lost write is re-sent as a write. A delta upload can blank exactly
+    // the pages that differ instead of the whole region. And the erase no longer has to be
+    // decided from the OFFSET inside a write, so WriteChunk holds no page rule at all.
+    //
+    // ONE page per request, not a range: the loop over a range costs 104 B of this 2 KB image
+    // (measured), while a tool that sends one request per page pays only bus time, of which the
+    // side that has 2 KB of flash has none. The request names the page by any offset inside it.
+    //
+    // The answer is the page, with bit 0 set when it is NOT blank (the same flag WriteAck uses:
+    // a real page offset is 64-byte aligned, so bit 0 is never set in a plain ack). A page past
+    // the region the caller allows is answered the same way and is not touched, so an ack always
+    // means "this page is blank now" - which is what the writes that follow rely on.
+    template <class Flash>
+    inline uint32_t ErasePage(uint32_t Offset, uint32_t AppSize)
+    {
+        const uint32_t Page = Offset & ~(PAGE_SIZE - 1u);
+        if (Page >= AppSize || !Flash::ErasePage(Page)) return Page | 1u;
+        return Page;
     }
 
     // -----------------------------------------------------------------------
@@ -300,6 +366,12 @@ namespace Bootloader
         WriteControl(Out, CMD_DIGEST_REQ, DIGEST_REQ_SIZE);
     }
 
+    // Erase request: header-only, naming the 64-byte page with any offset inside it.
+    inline void EncodeEraseRequest(uint32_t Offset, uint8_t *Out)
+    {
+        EncodeHeaderFrame(CMD_ERASE_REQ, Offset, Out);
+    }
+
     // Digest response: the offset echoed in the header's slot, then the CRC32 (u32).
     inline void EncodeDigestResponse(uint32_t Offset, uint32_t Crc, uint8_t *Out)
     {
@@ -310,6 +382,7 @@ namespace Bootloader
         WriteControl(Out, CMD_DIGEST_RESP, DIGEST_RESP_SIZE);
     }
 
+    // The u16 length of a digest request.
     inline uint16_t DigestLength(const uint8_t *Frame)
     {
         return (uint16_t)(Frame[6] | ((uint16_t)Frame[7] << 8));
@@ -323,20 +396,28 @@ namespace Bootloader
 
     // The frame length for a command, or 0 when the command is unknown. One byte per command
     // in flash measures smaller than the compare chain on this target.
-    constexpr uint8_t FRAME_SIZE_OF[8] = {
-        READ_REQ_SIZE,     // 0b000 identify-request
-        DATA_SIZE,         // 0b001 identify-response
-        DATA_SIZE,         // 0b010 write
-        READ_REQ_SIZE,     // 0b011 write-response
-        READ_REQ_SIZE,     // 0b100 read-request
-        DATA_SIZE,         // 0b101 read-response
-        DIGEST_REQ_SIZE,   // 0b110 digest-request
-        DIGEST_RESP_SIZE   // 0b111 digest-response
+    constexpr uint8_t FRAME_SIZE_OF[16] = {
+        READ_REQ_SIZE,      // 0b0000 identify-request
+        IDENTIFY_RESP_SIZE, // 0b0001 identify-response
+        DATA_SIZE,          // 0b0010 write
+        READ_REQ_SIZE,      // 0b0011 write-response
+        READ_REQ_SIZE,      // 0b0100 read-request
+        DATA_SIZE,          // 0b0101 read-response
+        DIGEST_REQ_SIZE,    // 0b0110 digest-request
+        DIGEST_RESP_SIZE,   // 0b0111 digest-response
+        ERASE_REQ_SIZE,     // 0b1000 erase-request
+        ERASE_RESP_SIZE,    // 0b1001 erase-response
+        0,                  // 0b1010
+        0,                  // 0b1011
+        0,                  // 0b1100
+        0,                  // 0b1101
+        0,                  // 0b1110
+        0                   // 0b1111
     };
 
     inline uint16_t FrameSize(uint8_t Cmd)
     {
-        return Cmd < 8 ? FRAME_SIZE_OF[Cmd] : 0;
+        return Cmd < 16 ? FRAME_SIZE_OF[Cmd] : 0;
     }
 
     // Validates a complete frame; returns the command, or INVALID when the frame is bad.
@@ -344,13 +425,13 @@ namespace Bootloader
     {
         if (Len < READ_REQ_SIZE || Frame[0] != START)
             return INVALID;
-        if ((Frame[1] & 0xF0u) != 0) // padding must be zero
+        if ((Frame[1] & 0xE0u) != 0) // padding (bits 5-7) must be zero
             return INVALID;
-        uint8_t Cmd = (uint8_t)(Frame[1] & 0x07u);
+        uint8_t Cmd = (uint8_t)(Frame[1] & 0x0Fu);
         uint16_t Expect = FrameSize(Cmd);
         if (Expect == 0 || Len != Expect || Frame[Len - 1] != END)
             return INVALID;
-        uint8_t Got = (uint8_t)((Frame[1] >> 3) & 1u);
+        uint8_t Got = (uint8_t)((Frame[1] >> 4) & 1u);
         return (Got == Parity(Frame, Len)) ? Cmd : INVALID;
     }
 

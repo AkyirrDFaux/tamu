@@ -29,7 +29,7 @@ public:
     bool Handle(const PacketFrame &Frame); // CID dispatch; true if consumed
 
 #ifdef TYPE_CORE
-    // Main-loop tick for the asynchronous bootloader passthrough (CIDs 0x20/0x21/0x22/0x23):
+    // Main-loop tick for the asynchronous bootloader passthrough (CIDs 0x20/0x21/0x22/0x23/0x24):
     // returns immediately unless a request is outstanding, settles the awaited reply into a
     // Device response, or fails it on the 1 s deadline. Call next to the other service ticks.
     void PollBootloaderPassthrough();
@@ -41,7 +41,7 @@ private:
     void HandleSNDB(const PacketFrame &Frame);
 
     // Bootloader passthrough (Docs/Services/Bootloader.md "Core bootloader passthrough
-    // commands", CIDs 0x20 identify / 0x21 write / 0x22 read / 0x23 digest). Asynchronous:
+    // commands", CIDs 0x20 identify / 0x21 write / 0x22 read / 0x23 digest / 0x24 erase). Asynchronous:
     // Handle* encodes the raw frame, RS485SendRaw's it, records the pending request and returns;
     // the main loop's PollBootloaderPassthrough collects the reply.
     void HandleBootloaderPassthrough(const PacketFrame &Frame, uint8_t Cid);
@@ -60,7 +60,7 @@ private:
     static constexpr uint32_t KPtTimeoutMs = 1000; // reply deadline (ms)
     static constexpr uint32_t KPtDumpAfterMs = 10000; // idle before the totals line is printed
     bool PtPending    = false;                    // a request is issued and not yet settled
-    uint8_t PtCid     = 0;                        // passthrough CID (0x20/0x21/0x22/0x23)
+    uint8_t PtCid     = 0;                        // passthrough CID (0x20..0x24)
     uint16_t PtSrc    = 0;                        // reply routing: original request IdSrc
     uint16_t PtCmd    = 0;                        // reply routing: original request Cmd
     uint16_t PtTrid   = 0;                        // reply routing: original request Trid
@@ -89,7 +89,7 @@ private:
     // 200-cycle run per command, and "the node answered 199 of 200 identifies and 196 of 200 reads"
     // is a different finding from a total. A silent request has to be attributable per command, and
     // this is the device's own answer to that - the probe's table is the app's side of it.
-    uint16_t PtTimeoutById[4] = {0, 0, 0, 0};
+    uint16_t PtTimeoutById[5] = {0, 0, 0, 0, 0};
     uint32_t PtLastMs      = 0; // UptimeMs of the last request handled
     uint32_t PtDumpedAt    = 0; // UptimeMs of the last totals line
     uint16_t PtDumpedReq   = 0; // PtReqCount at that dump: nothing new, nothing printed
@@ -239,7 +239,7 @@ void DeviceService::HandleSNDB(const PacketFrame &Frame)
 // The app sends these to the connected core; the core relays the raw frame onto its RSBus.
 // The frame carries no address, so this is a broadcast: every node currently in bootloader
 // mode on that bus receives it. CIDs (Docs/Services/Bootloader.md): 0x20 identify, 0x21 write,
-// 0x22 read, 0x23 digest. The handler only ISSUES the raw request and returns;
+// 0x22 read, 0x23 digest, 0x24 erase. The handler only ISSUES the raw request and returns;
 // PollBootloaderPassthrough (main loop) collects the reply and builds the Device response. One
 // request is outstanding at a time - a second one while pending is refused, never queued.
 inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame, uint8_t Cid)
@@ -277,6 +277,18 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
         Offset = LoadUnaligned<uint32_t>(Frame.Payload);
         Bootloader::EncodeWrite(Offset, Frame.Payload + 4, Raw);
         Len = Bootloader::DATA_SIZE;
+    }
+    else if (Cid == 0x24)
+    { // Erase: Offset (4). The node blanks the page its offset falls in (its identify response
+      // reports the page size), so the core forwards the offset and owns no geometry.
+        if (PayloadBytes(Frame) < 4)
+        {
+            RefuseShortRequest(Frame, 4);
+            return;
+        }
+        Offset = LoadUnaligned<uint32_t>(Frame.Payload);
+        Bootloader::EncodeEraseRequest(Offset, Raw);
+        Len = Bootloader::ERASE_REQ_SIZE;
     }
     else if (Cid == 0x23)
     { // Digest: Offset (4) + Length (2), relayed as the bootloader's digest request.
@@ -370,7 +382,7 @@ inline bool DeviceService::BootloaderRxFeed(uint8_t Byte)
         PtRx[PtRxLen++] = Byte;
     if (PtRxLen >= 2)
     {
-        uint16_t Need = Bootloader::FrameSize((uint8_t)(PtRx[1] & 0x07));
+        uint16_t Need = Bootloader::FrameSize((uint8_t)(PtRx[1] & 0x0Fu));
         if (Need == 0 || Need > sizeof(PtRx))
         {
             PtRxLen = 0; // bad control: resync on the next 0xCA
@@ -439,11 +451,12 @@ inline void DeviceService::PollBootloaderPassthrough()
             //   nocid i/r/w/d deadline settles per passthrough command (identify/write/read/digest).
             DeviceLog("BLPT",
                       "counters kept=%lu drop=%lu rawstint=%lu rawstall=%lu "
-                      "nocid i/r/w/d=%u/%u/%u/%u",
+                      "nocid i/r/w/d/e=%u/%u/%u/%u/%u",
                       (unsigned long)BusRxKept, (unsigned long)BusRxDestroyed,
                       (unsigned long)RS485RawStintCuts, (unsigned long)RS485RawTxStalls,
                       (unsigned)PtTimeoutById[0], (unsigned)PtTimeoutById[1],
-                      (unsigned)PtTimeoutById[2], (unsigned)PtTimeoutById[3]);
+                      (unsigned)PtTimeoutById[2], (unsigned)PtTimeoutById[3],
+                      (unsigned)PtTimeoutById[4]);
         }
         return; // not expecting a reply: one bool test, no bus access
     }
@@ -452,16 +465,28 @@ inline void DeviceService::PollBootloaderPassthrough()
     // there is no bus access here. Build the Device response from it, or FAIL on the deadline.
     if (PtRxReady)
     {
-        uint8_t Out[4 + Bootloader::NAME_SIZE];
+        uint8_t Out[4 + 2 + Bootloader::NAME_SIZE];
         uint8_t Flags = FLAG_TYPE | FLAG_START | FLAG_STOP;
         uint8_t OutLen = 0;
 
         if (PtCid == 0x20)
-        { // Identification: app-space size (offset slot) + 32-byte null-padded name.
+        { // Identification: app-space size (offset slot) + page size (u16) + 32-byte
+          // null-padded name. The page size is the node's ERASE unit, so the app asks the node
+          // how big a page is instead of assuming one device's geometry.
             memcpy(Out, PtRx + 2, 4);
-            memcpy(Out + 4, Bootloader::Payload(PtRx), Bootloader::NAME_SIZE);
+            memcpy(Out + 4, PtRx + 6, 2);
+            memcpy(Out + 6, Bootloader::IdentifyName(PtRx), Bootloader::NAME_SIZE);
             OutLen = sizeof(Out);
             Flags |= FLAG_SUCCESS;
+        }
+        else if (PtCid == 0x24)
+        { // Erase: the node answers the page it blanked, with bit 0 set when the page is NOT
+          // blank. Bit 0 is the protocol's failure flag (every real page offset is aligned), so
+          // the core forwards the offset and reads the flag - no page-size arithmetic here.
+            uint32_t Ack = Bootloader::Offset(PtRx);
+            memcpy(Out, &Ack, 4);
+            OutLen = 4;
+            Flags |= ((Ack & 1u) == 0u) ? FLAG_SUCCESS : FLAG_FAIL;
         }
         else if (PtCid == 0x21)
         { // Write: SUCCESS only when the node reports the exact offset we asked it to write;
@@ -478,7 +503,7 @@ inline void DeviceService::PollBootloaderPassthrough()
           // compares the CRC against the image it holds. A valid frame of any OTHER command met
           // in the echo window belongs to an earlier transaction, so it is dropped and the poll
           // keeps waiting for the answer this request asked for (the deadline still bounds it).
-            if ((PtRx[1] & 0x07u) != Bootloader::CMD_DIGEST_RESP)
+            if ((PtRx[1] & 0x0Fu) != Bootloader::CMD_DIGEST_RESP)
             {
                 PtRxReady = false;
                 PtRxLen = 0;
@@ -509,7 +534,7 @@ inline void DeviceService::PollBootloaderPassthrough()
     {
         PtPending = false;
         PtTimeouts = (uint16_t)(PtTimeouts + 1);
-        if (PtCid >= 0x20 && PtCid <= 0x23)
+        if (PtCid >= 0x20 && PtCid <= 0x24)
             PtTimeoutById[PtCid - 0x20] = (uint16_t)(PtTimeoutById[PtCid - 0x20] + 1);
         BootloaderRxSink = nullptr;
         PacketConstruct(&TxFrame, PtSrc, PtCmd, PtTrid,
@@ -748,6 +773,7 @@ bool DeviceService::Handle(const PacketFrame &Frame)
         case 0x21: // Bootloader passthrough: send write packet
         case 0x22: // Bootloader passthrough: request read
         case 0x23: // Bootloader passthrough: request digest
+        case 0x24: // Bootloader passthrough: erase one page
         {
             HandleBootloaderPassthrough(Frame, Cid);
             break;
