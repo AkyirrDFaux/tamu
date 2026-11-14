@@ -45,14 +45,16 @@ int _relayCoreId(HilContext ctx) {
 int _chunkCount(int appSize) =>
     (appSize + Bootloader.payloadSize - 1) ~/ Bootloader.payloadSize;
 
-/// Reads [appSize] bytes of the main binary in 32-byte chunks. Returns null when
-/// any chunk did not read back (a timeout), so a partial image is never written.
+/// Reads [appSize] bytes of the main binary in 32-byte chunks. Returns null when a chunk did not
+/// read back (the node stopped answering), so a partial image is never written.
 Future<Uint8List?> _readImage(BootloaderClient boot, int appSize) async {
   final out = BytesBuilder();
-  for (var i = 0; i < _chunkCount(appSize); i++) {
-    final data = await boot.readChunk(i * Bootloader.payloadSize);
-    if (data == null) return null;
-    out.add(data);
+  try {
+    for (var i = 0; i < _chunkCount(appSize); i++) {
+      out.add(await boot.readChunk(i * Bootloader.payloadSize));
+    }
+  } on PassthroughFailure {
+    return null;
   }
   return out.toBytes();
 }
@@ -93,7 +95,7 @@ final List<HilTest> bootloaderTests = <HilTest>[
         if (id == null) return;
         ctx.note(
           'the device: identified ${id.name} '
-          '(${id.appSize} byte app space)',
+          '(${id.appSize} byte app space, ${id.pageSize} byte pages)',
         );
         expect(id.name, isNotEmpty, reason: 'the device reports a name');
         expect(
@@ -169,15 +171,22 @@ final List<HilTest> bootloaderTests = <HilTest>[
             }
           },
         );
-        // flash() returns only once the digest confirmed the whole image; a mismatch throws
-        // FlashAborted instead, which fails this test with its own sentence.
-        expect(phases, contains(FlashPhase.writing));
+        // flash() returns only once the two measures confirmed the whole space; a mismatch throws
+        // FlashAborted instead, which fails this test with its own sentence. The outlet is the
+        // delta pass: the device already holds this image, so every page compares equal and
+        // nothing is rewritten.
+        expect(phases, contains(FlashPhase.comparing));
         expect(phases, contains(FlashPhase.verifying));
         expect(phases.last, FlashPhase.done);
+        expect(
+          result.pagesWritten,
+          0,
+          reason: 'the device already held the image it was sent',
+        );
         ctx.note(
-          'the device: rewrote ${image.length} bytes, '
+          'the device: compared ${image.length} bytes, '
           'verified by ${result.outcome.label} '
-          'writes=${result.writes} reads=${result.reads} - ${result.note}',
+          'writes=${result.chunksWritten} reads=${result.reads} - ${result.note}',
         );
       }
     },

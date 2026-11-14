@@ -1,4 +1,4 @@
-/// The Update page names the three device failures apart, and says what to do about each.
+/// The Update page names the device failures apart, and says what to do about each.
 ///
 /// A bootloader never jumps to the app by itself and no packet can reset a node, so every failed
 /// run leaves the device waiting for a power cycle. One message for all of them ("check the link
@@ -14,9 +14,13 @@ import 'package:tamuapp/ui/update_page.dart';
 import 'support/bootloader_transport.dart';
 import 'support/fw_package.dart';
 
+/// A small node - four one-chunk pages, the DAS geometry scaled down - so a run is a handful of
+/// requests and every request answers immediately: the fake has no timers.
+FakeBootloaderTransport _device() =>
+    FakeBootloaderTransport(appSize: 128, pageSize: 32, name: 'Tamu v2.0A');
+
 /// Mounts the page over [transport] with four chunks (128 bytes) to write, taps Update, and lets
-/// the run finish. Every request answers immediately: the fake has no timers, and the client's
-/// pacing is off.
+/// the run finish.
 Future<void> _runUpdate(
   WidgetTester tester,
   FakeBootloaderTransport transport,
@@ -26,19 +30,17 @@ Future<void> _runUpdate(
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
-  transport.identity = const BootloaderIdentity(
-    appSize: 0x4000,
-    name: 'Tamu v2.0A',
+  final fakePackage = PackageForTest(
+    target: 'DAS_v0_1',
+    image: testImage(transport.appSize),
   );
-  final fakePackage = PackageForTest(target: 'DAS_v0_1', image: testImage(128));
   await tester.pumpWidget(
     MaterialApp(
       home: UpdatePage(
         isConnected: () => true,
         initialPackage: fakePackage.build(),
         initialPackageName: fakePackage.name,
-        clientFactory: () =>
-            BootloaderClient(transport: transport, writePacing: Duration.zero),
+        clientFactory: () => BootloaderClient(transport: transport),
       ),
     ),
   );
@@ -54,11 +56,16 @@ void main() {
   testWidgets('a silent node is named and the user is told to power-cycle', (
     tester,
   ) async {
-    final t = FakeBootloaderTransport()..alwaysNullRead = true;
+    // The node answers identify and then goes quiet for the read-back: the run stops on the
+    // first read it does not answer, and names silence rather than the link.
+    final t = _device()
+      ..beforeReadBack = (device, round) {
+        device.silent = true;
+      };
     await _runUpdate(tester, t);
 
-    expect(find.textContaining('Update stopped (no answer)'), findsOneWidget);
-    expect(find.textContaining('the node stopped answering'), findsOneWidget);
+    expect(find.textContaining('Update stopped (node silent)'), findsOneWidget);
+    expect(find.textContaining('the node did not answer'), findsOneWidget);
     expect(
       find.textContaining('Power-cycle the node:'),
       findsOneWidget,
@@ -70,18 +77,20 @@ void main() {
   testWidgets('a refused write is named apart from a silent link', (
     tester,
   ) async {
-    final t = FakeBootloaderTransport()..alwaysReject = true;
+    // The node refuses the first chunk it is asked to program (it answers its own failure frame,
+    // the core's reason 0x04): the run stops at that write.
+    final t = _device()..rejectWriteOnce.add(0);
     await _runUpdate(tester, t);
 
     expect(
-      find.textContaining('Update stopped (write refused)'),
+      find.textContaining('Update stopped (node refused)'),
       findsOneWidget,
     );
-    expect(find.textContaining('never confirmed the chunk'), findsOneWidget);
+    expect(find.textContaining('the node refused it'), findsOneWidget);
     expect(
-      find.textContaining('nothing was programmed'),
+      find.textContaining('A refused erase or write'),
       findsOneWidget,
-      reason: 'the remedy has to say the node holds no new data',
+      reason: 'the remedy has to say the page was not blank when the write arrived',
     );
     expect(find.textContaining('Power-cycle the node:'), findsOneWidget);
   });
@@ -89,9 +98,10 @@ void main() {
   testWidgets(
     'a write that does not match is named, with the first differing offset',
     (tester) async {
-      // The device loses every chunk and keeps losing the correction: both measures name the
-      // image wrong, one correction round runs, and the run stops with the offset.
-      final t = FakeBootloaderTransport()..corruptAll = true;
+      // The read path lies while the flash is right: the node's own CRC agrees and the read-back
+      // differs, which no correction round can settle. Five rounds run and the run stops naming
+      // both measures and the offsets.
+      final t = _device()..readLies = true;
       await _runUpdate(tester, t);
 
       expect(
@@ -104,9 +114,9 @@ void main() {
         reason: 'the offset and the count are named',
       );
       expect(
-        find.textContaining('digest 0x'),
+        find.textContaining('CRC matches, read-back differs'),
         findsOneWidget,
-        reason: 'both measures are reported, the digest first',
+        reason: 'both measures are reported, and neither wins the disagreement',
       );
       expect(
         find.textContaining('Power-cycle the node:'),

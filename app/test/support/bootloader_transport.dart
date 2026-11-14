@@ -1,72 +1,195 @@
-/// A fake bootloader channel, shared by [BootloaderClient]'s own suite and the Update page's.
+/// A fake v2 bootloader device, shared by [BootloaderClient]'s own suite and the Update page's.
 ///
-/// One fake models every link fault the client has to tell apart: a refused write (a `FAIL` with
-/// the device's stale last-written offset), a dropped write the core acknowledged but the node
-/// never got (the passthrough's offset-less ACK), a read timeout, a node that answers nothing, a
-/// write that lands but is lost by the flash, and a node whose bootloader has no digest command.
+/// The fake IS the device: one [space] of [appSize] bytes, erased to 0xFF, that behaves like NOR
+/// flash - an erase blanks a page, a write only clears bits (`space[i] &= data[i]`), and a write
+/// whose stored bytes do not read back as sent is refused, exactly as the bootloader's ack rule
+/// says. So a client that writes without erasing is caught here by the same rule the node applies,
+/// and not by a mock's opinion.
 ///
-/// The device's content is what the digest is computed over, so a chunk the flash did not keep
-/// shows up in the digest - exactly as on the real node, where the digest is computed from flash
-/// and not through the read command.
+/// Each fault the client has to tell apart has its own switch: the four passthrough reasons
+/// (busy / malformed / node silent / node refused), a write the channel accepts but the device
+/// loses, a read path that lies while the flash is right, a page the node will not blank, a
+/// pre-v2 identify body, and a bootloader with no CRC command. [beforeCrc] is the bench hook a
+/// corruption test needs: it runs between the CRC and the read-back, so a test can damage one word
+/// "mid-verify" the way an SWD write does.
 library;
 
 import 'dart:typed_data';
 
 import 'package:tamuapp/core/bootloader.dart';
 import 'package:tamuapp/core/bootloader_client.dart';
-import 'package:tamuapp/core/transport.dart';
 
 class FakeBootloaderTransport implements BootloaderTransport {
-  /// The bytes the node holds, by offset.
-  final Map<int, Uint8List> flash = {};
+  FakeBootloaderTransport({
+    this.appSize = 1024,
+    this.pageSize = 64,
+    this.name = 'DAS v0.1',
+  }) : space = Uint8List(appSize)..fillRange(0, appSize, 0xFF);
 
-  /// Offsets whose next write is refused once (direct-USB style: a stale offset).
-  final Set<int> rejectOnce = {};
+  /// The app space the device reports.
+  final int appSize;
 
-  /// Offsets whose next write is acknowledged but never programmed.
-  final Set<int> dropOnce = {};
+  /// The erase page size the device reports.
+  final int pageSize;
 
-  /// Offsets whose next read times out.
-  final Set<int> timeoutOnce = {};
+  /// The name the device reports.
+  final String name;
 
-  /// Offsets whose stored chunk is programmed with byte 0 flipped: the device took the data and
-  /// lost it, which is what the owner saw as "acknowledged but does not read back".
-  final Set<int> corrupt = {};
+  /// What the device holds. Erased (0xFF) until something is written.
+  final Uint8List space;
 
-  /// True to corrupt every chunk's stored bytes, so the whole image is wrong on the device.
-  bool corruptAll = false;
+  /// Pages whose erase the node refuses: its storage region, or a write-protected page.
+  final Set<int> protectedPages = {};
 
-  /// True when [corruptAll] / [corrupt] only hit a chunk's FIRST write, so one correction round can
-  /// fix it. False (the default) keeps corrupting every write: a flash that will not hold the data.
+  /// Offsets whose next write the node refuses with its own failure frame.
+  final Set<int> rejectWriteOnce = {};
+
+  /// Offsets whose next write is acknowledged and then LOST: the device accepted it and the bytes
+  /// are not there, which is what the read-back exists to find.
+  final Set<int> dropWriteOnce = {};
+
+  /// Offsets whose every write is stored with its first byte flipped: the flash does not hold
+  /// what it is given, so no correction round can settle it.
+  final Set<int> corruptWrite = {};
+
+  /// True to damage every write once, so a single correction round can fix it.
   bool corruptFirstWriteOnly = false;
 
-  /// True to make every read flip a byte after the fact: the stored bytes and the digest are right,
+  /// Offsets whose READ comes back with a byte flipped: the stored bytes and the CRC are right,
   /// the read path is not - the node's own CRC and its own bytes disagree.
-  bool readBackLies = false;
+  bool readLies = false;
 
-  bool alwaysNullRead = false;
+  /// True when the device answers nothing (`0x03`) to every request.
+  bool silent = false;
 
-  /// True to refuse every write the way a node that has left bootloader mode does: a FAIL with a
-  /// stale last-written offset, for every chunk and every attempt.
-  bool alwaysReject = false;
+  /// How many more requests are refused as busy (`0x01`) before the device answers.
+  int busyLeft = 0;
 
-  /// True to mirror the passthrough: writes are ACKed with a success flag but no last-written
-  /// offset, so the client cannot reconcile per chunk and the digest must catch a drop.
-  bool nullOffsetAcks = false;
+  /// True to refuse every request as busy, for the exhausted-backoff case.
+  bool busyAlways = false;
 
-  /// True to model a bootloader older than the digest command: the digest request is ignored,
-  /// which is indistinguishable from silence for the caller - that is what the fallback is for.
-  bool noDigest = false;
+  /// True to refuse every request as malformed (`0x02`), i.e. a client bug.
+  bool malformed = false;
 
-  /// Digest requests issued (the client sends one, and retries a miss).
-  int digests = 0;
+  /// True to model a FAIL with no reason byte: a core older than the reason table.
+  bool unreported = false;
 
-  /// Offsets that have been programmed at least once (for [corruptFirstWriteOnly]).
+  /// True to model a pre-v2 identify body: the page field is the first four bytes of the name.
+  bool oldBootloader = false;
+
+  /// True when the node refuses the CRC request (a bootloader without the CRC command).
+  bool noCrc = false;
+
+  /// Runs between the CRC exchange and the read-back of one verification, like an SWD write
+  /// landing mid-verify. The second argument is the verification's 1-based round number.
+  void Function(FakeBootloaderTransport device, int round)? beforeReadBack;
+
+  int identifies = 0;
+  int reads = 0;
+  int writes = 0;
+  int erases = 0;
+  int crcs = 0;
+
+  /// Verification rounds started (one per CRC exchange).
+  int rounds = 0;
+
   final Set<int> _programmed = {};
 
-  BootloaderIdentity? identity;
-  int writes = 0, reads = 0;
-  int _last = Bootloader.nothingWritten;
+  /// The bytes the device should hold for [image] in an app space of [appSize]: the image, 0xFF
+  /// past its end, with any protected page left as it is. What a clean upload must produce.
+  Uint8List expectedSpace(List<int> image) {
+    final out = Uint8List(appSize)..fillRange(0, appSize, 0xFF);
+    final n = image.length > appSize ? appSize : image.length;
+    out.setRange(0, n, image);
+    for (final page in protectedPages) {
+      out.setRange(page, page + pageSize, space.sublist(page, page + pageSize));
+    }
+    return out;
+  }
+
+  /// True when the device holds exactly [expectedSpace] for [image].
+  bool holds(List<int> image) {
+    final want = expectedSpace(image);
+    for (var i = 0; i < appSize; i++) {
+      if (space[i] != want[i]) return false;
+    }
+    return true;
+  }
+
+  void _gate(String what) {
+    if (busyAlways) {
+      throw PassthroughFailure(PassthroughReason.busy, what);
+    }
+    if (busyLeft > 0) {
+      busyLeft--;
+      throw PassthroughFailure(PassthroughReason.busy, what);
+    }
+    if (malformed) {
+      throw PassthroughFailure(PassthroughReason.malformed, what, code: 0x02);
+    }
+    if (unreported) {
+      throw PassthroughFailure(PassthroughReason.unreported, what);
+    }
+    if (silent) {
+      throw PassthroughFailure(PassthroughReason.nodeSilent, what, code: 0x03);
+    }
+  }
+
+  @override
+  Future<BootloaderIdentity?> identify(Duration timeout) async {
+    identifies++;
+    // The transport contract: a node that answers nothing to identify gives a NULL identity (it is
+    // not in bootloader mode) rather than a failure - the other requests still report silence.
+    if (silent) return null;
+    _gate('identify');
+    // A pre-v2 body has the name where the page size belongs: the first four name characters read
+    // as the page size, which is what the real one does.
+    final v1Page = name.length >= 4
+        ? name.codeUnitAt(0) |
+              (name.codeUnitAt(1) << 8) |
+              (name.codeUnitAt(2) << 16) |
+              (name.codeUnitAt(3) << 24)
+        : 0;
+    return BootloaderIdentity(
+      appSize: appSize,
+      pageSize: oldBootloader ? v1Page : pageSize,
+      name: name,
+    );
+  }
+
+  @override
+  Future<Uint8List> readChunk(int offset, Duration timeout) async {
+    reads++;
+    _gate('read 0x${offset.toRadixString(16)}');
+    final data = Uint8List.fromList(
+      space.sublist(offset, offset + Bootloader.payloadSize),
+    );
+    if (readLies) data[1] = data[1] ^ 0xFF;
+    return data;
+  }
+
+  @override
+  Future<int> erasePage(int offset, Duration timeout) async {
+    erases++;
+    _gate('erase 0x${offset.toRadixString(16)}');
+    if (offset % pageSize != 0 || offset >= appSize) {
+      throw PassthroughFailure(
+        PassthroughReason.nodeRefused,
+        'erase 0x${offset.toRadixString(16)}',
+        code: 0x04,
+      );
+    }
+    if (protectedPages.contains(offset)) {
+      throw PassthroughFailure(
+        PassthroughReason.nodeRefused,
+        'erase 0x${offset.toRadixString(16)}',
+        code: 0x04,
+      );
+    }
+    space.fillRange(offset, offset + pageSize, 0xFF);
+    _programmed.removeWhere((o) => o >= offset && o < offset + pageSize);
+    return offset;
+  }
 
   @override
   Future<WriteAck> writeChunk(
@@ -75,79 +198,66 @@ class FakeBootloaderTransport implements BootloaderTransport {
     Duration timeout,
   ) async {
     writes++;
-    if (alwaysReject) {
-      return nullOffsetAcks
-          ? const WriteAck(false)
-          : WriteAck(false, lastWrittenOffset: _last);
+    _gate('write 0x${offset.toRadixString(16)}');
+    if (rejectWriteOnce.remove(offset)) {
+      throw PassthroughFailure(
+        PassthroughReason.nodeRefused,
+        'write 0x${offset.toRadixString(16)}',
+        code: 0x04,
+      );
     }
-    // A rejected write is acknowledged with the device's (stale) last-written offset.
-    if (rejectOnce.remove(offset)) {
-      return nullOffsetAcks
-          ? const WriteAck(false)
-          : WriteAck(false, lastWrittenOffset: _last);
+    if (dropWriteOnce.remove(offset)) {
+      // Accepted, acknowledged - and never programmed.
+      return WriteAck(true, acked: offset);
     }
-    // A dropped write is acknowledged by the core but never reaches the node.
-    if (dropOnce.remove(offset)) {
-      return nullOffsetAcks
-          ? const WriteAck(true)
-          : WriteAck(false, lastWrittenOffset: _last);
+    if (offset % pageSize == 0 && !_blank(offset, 4)) {
+      // The firmware's page-start rule: a chunk that starts a page is refused (naming the page)
+      // when the page's first word is not blank, i.e. the tool wrote without erasing.
+      return WriteAck(false, acked: (offset & ~(pageSize - 1)) | 1);
     }
-    final stored = Uint8List.fromList(data);
-    final corruptThis =
-        (corruptAll || corrupt.contains(offset)) &&
+    // NOR flash: programming only clears bits, so a dirty byte stays dirty and the ack says so.
+    var landed = true;
+    final corrupting =
+        corruptWrite.contains(offset) &&
         (!corruptFirstWriteOnly || !_programmed.contains(offset));
-    if (corruptThis) stored[0] = stored[0] ^ 0xFF;
-    flash[offset] = stored;
+    for (var i = 0; i < Bootloader.payloadSize; i++) {
+      space[offset + i] &= data[i];
+      if (space[offset + i] != data[i]) landed = false;
+    }
+    if (landed && corrupting) {
+      // The device took the bytes and the flash did not keep them. The ack still names the chunk,
+      // so only the read-back can find this.
+      space[offset] = space[offset] ^ 0xFF;
+    }
     _programmed.add(offset);
-    _last = offset;
-    return nullOffsetAcks
-        ? const WriteAck(true)
-        : WriteAck(true, lastWrittenOffset: offset);
+    return landed
+        ? WriteAck(true, acked: offset)
+        : WriteAck(false, acked: offset);
   }
 
-  /// The device's chunk at [offset]: what it holds, or erased 0xFF where nothing was written.
-  Uint8List _held(int offset) =>
-      flash[offset] ??
-      (Uint8List(Bootloader.payloadSize)
-        ..fillRange(0, Bootloader.payloadSize, 0xFF));
-
   @override
-  Future<Uint8List?> readChunk(int offset, Duration timeout) async {
-    reads++;
-    if (timeoutOnce.remove(offset)) {
-      throw const TransportException('timeout');
+  Future<int> crc(Duration timeout) async {
+    crcs++;
+    rounds++;
+    _gate('CRC');
+    if (noCrc) {
+      throw const PassthroughFailure(
+        PassthroughReason.nodeRefused,
+        'CRC',
+        code: 0x04,
+      );
     }
-    if (alwaysNullRead) return null;
-    final data = Uint8List.fromList(_held(offset));
-    if (readBackLies) data[0] = data[0] ^ 0xFF;
-    return data;
+    final hook = beforeReadBack;
+    if (hook != null) hook(this, rounds);
+    // The node computes the CRC over its WHOLE app space, from flash, not through the read path.
+    return Bootloader.crc32(space);
   }
 
-  @override
-  Future<int?> digest(int offset, int length, Duration timeout) async {
-    digests++;
-    if (noDigest || alwaysNullRead) return null;
-    // The node computes the CRC from its flash: bytes past the app region read as erased 0xFF.
-    var crc = 0xFFFFFFFF;
+  bool _blank(int offset, int length) {
     for (var i = 0; i < length; i++) {
-      final chunk = _held(offset + i - (offset + i) % Bootloader.payloadSize);
-      crc = _Crc.step(crc, chunk[(offset + i) % Bootloader.payloadSize]);
+      if (space[offset + i] != 0xFF) return false;
     }
-    return crc ^ 0xFFFFFFFF;
-  }
-
-  @override
-  Future<BootloaderIdentity?> identify(Duration timeout) async => identity;
-}
-
-/// The reflected CRC-32 step, so the fake's digest is the device's value and not the client's.
-class _Crc {
-  static int step(int crc, int byte) {
-    var c = crc ^ (byte & 0xFF);
-    for (var bit = 0; bit < 8; bit++) {
-      c = (c >> 1) ^ ((c & 1) != 0 ? 0xEDB88320 : 0);
-    }
-    return c;
+    return true;
   }
 }
 

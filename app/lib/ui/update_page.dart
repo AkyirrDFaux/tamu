@@ -109,12 +109,9 @@ class _UpdatePageState extends State<UpdatePage> {
     if (_directToCore) {
       final t = ConnectionManager.instance.transport;
       if (t is UsbTransport) {
-        // Direct USB: the transport owns the per-write pacing (DirectUsbTransport's
-        // writePacing); zero the client's own pacing so a write is not delayed twice.
-        return BootloaderClient(
-          transport: DirectUsbTransport(t),
-          writePacing: Duration.zero,
-        );
+        // Direct USB: the raw frames go straight to the core's own bootloader, so the core's
+        // passthrough (and its relay) is skipped entirely.
+        return BootloaderClient(transport: DirectUsbTransport(t));
       }
     }
     return BootloaderClient(coreId: coreId);
@@ -285,14 +282,16 @@ class _UpdatePageState extends State<UpdatePage> {
       }
       _addLog(
         'Bootloader identified: ${id.name} '
-        '(${_formatBytes(id.appSize)} app space). Writing '
-        '${_formatBytes(image.length)}; the device\'s own CRC is compared '
-        'with the package\'s crc32_padded ${hex32(package.crc32Padded)}.',
+        '(${_formatBytes(id.appSize)} app space, ${id.pageSize} B erase pages). '
+        'Writing ${_formatBytes(image.length)}: every page is read and compared '
+        'first, only the pages that differ are erased and written, and the pages '
+        'after the image are blanked. The device\'s whole-space CRC is compared '
+        'with the host\'s ${hex32(package.crc32Padded)} only when the image fills '
+        'the app space; the client computes the value for the space it writes.',
       );
       final result = await client.flash(
         image,
         maxImageSize: id.appSize,
-        expectedDigest: package.crc32Padded,
         deadline: BootloaderClient.flashDeadline,
         isCancelled: () => _cancelRequested,
         onProgress: (p) {
@@ -300,8 +299,8 @@ class _UpdatePageState extends State<UpdatePage> {
         },
       );
       setState(() => _result = result);
+      _addLog('Verified: ${result.note}.');
       _addLog(
-        'Verified: ${result.note}. '
         'Power-cycle the device to run the new firmware.',
       );
     } on FlashAborted catch (aborted) {
@@ -330,8 +329,9 @@ class _UpdatePageState extends State<UpdatePage> {
   }
 
   String _phaseLabel(FlashProgress p) => switch (p.phase) {
-    FlashPhase.writing => 'Writing',
-    FlashPhase.verifying => 'Verifying (digest + read-back)',
+    FlashPhase.comparing => 'Comparing pages',
+    FlashPhase.writing => 'Erasing and writing',
+    FlashPhase.verifying => 'Verifying (CRC + read-back)',
     FlashPhase.correcting => 'Correcting',
     FlashPhase.done => 'Done',
   };
@@ -390,11 +390,13 @@ class _UpdatePageState extends State<UpdatePage> {
       ),
       _bullet(
         context,
-        'Tap Update. Every write is acknowledged by the target (it reports '
-        'the last successfully written chunk), then the image is verified '
-        'with the device\'s digest and a read-back pass. A chunk that does '
-        'not read back stops the run - the log names the count, the offsets '
-        'and what to do.',
+        'Tap Update. The target is identified first (its app space and its '
+        'erase page size), then every page of the image is read and compared: '
+        'only the pages that differ are erased and written, and the pages after '
+        'the image are blanked. The whole space is then verified twice - the '
+        'device\'s own CRC and a full read-back - and up to five correction '
+        'rounds repair only the pages the read-back names. A space that still '
+        'disagrees stops the run, which names the offsets.',
       ),
       _bullet(
         context,
@@ -424,6 +426,7 @@ class _UpdatePageState extends State<UpdatePage> {
         if (_identity != null) ...[
           InfoRow('Device', _identity!.name),
           InfoRow('App space', _formatBytes(_identity!.appSize)),
+          InfoRow('Erase pages', '${_identity!.pageSize} B'),
         ],
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),

@@ -1,50 +1,91 @@
-/// Bootloader flashing client (Docs/Services/Bootloader.md).
+/// Bootloader client, protocol v2 (Docs/Services/Bootloader.md, `c3aabab`).
 ///
-/// The update is written first, then verified by TWO measures, in order. Writes are acknowledged:
-/// every write request draws a write-response carrying the offset of the last successfully written
-/// chunk, so the client can reconcile a chunk against the device's acknowledged progress and end
-/// the run at the first chunk the node does not take.
+/// One upload is five steps, in this order, and every one of them is bounded:
 ///
-/// 1. **The digest**: one round trip over `[0, padded length)`, compared with the manifest's
-///    `crc32_padded` (or the CRC of the image handed in). One request instead of 432.
-/// 2. **The full read-back pass**: every chunk, because it is the only check that does not depend
-///    on the node's own CRC being right.
+/// 1. **Identify** - the app size, the flash page size and the device name. A bootloader that
+///    does not report a plausible page size is a pre-v2 one and is REFUSED ([FlashFault
+///    .oldBootloader]): v2 renumbered the commands, so a v1 frame read as v2 would be a
+///    different operation, and guessing is how a node gets erased by a read.
+/// 2. **Compare per page** - read each page of the image in 32-byte chunks and compare. Only the
+///    pages that differ are erased and written, which is where the reliability comes from: loss
+///    is per transaction, so a page that already matches is one the run never has to re-send.
+/// 3. **Blank the tail** - the pages from the end of the image to the end of the app space, so
+///    the whole space is a function of the image and the CRC is predictable. A page the node
+///    REFUSES to erase is not a failure: some devices keep state at the top of the app space (the
+///    DAS keeps its 512-byte storage there and its erase command stops at the code space's end),
+///    so those bytes are read first and become part of the model both measures are compared with.
+/// 4. **Verify, two measures** - the CRC (one exchange, over the whole app space) and the full
+///    read-back. They are reported separately and neither wins a disagreement: the CRC depends on
+///    the node's own CRC code being right, the read-back does not, so "CRC matches, read-back
+///    differs" is its own named outcome ([FlashVerifyOutcome.crcAgreesReadBackDiffers]) and so is
+///    the other way round.
+/// 5. **Correct, up to five rounds** - the pages the read-back flagged are erased and rewritten,
+///    then both measures run again. A clean read-back rewrites nothing. A sixth failure ends the
+///    upload naming the offsets that disagree ([FlashFault.verifyMismatch]).
 ///
-/// The two results are reported separately and neither is preferred: a digest that passes while a
-/// byte differs is its own outcome (`digestAgreesReadBackDiffers`), and a digest that differs while
-/// every byte reads back identical is another (`digestDiffersReadBackAgrees`). A disagreement costs
-/// at most ONE correction round - acknowledged chunks only, i.e. the chunks the write pass was
-/// acknowledged for - then one re-read of exactly those chunks; it never loops. A node whose
-/// bootloader predates the digest command answers nothing to the digest request, so the read-back
-/// pass is the only measure and the result says so.
+/// ## One request at a time, and why a busy answer cannot livelock
 ///
-/// The low-level channel lives behind [BootloaderTransport] so the same algorithm drives both
-/// a node over the core's Device passthrough ([PassthroughTransport]) and the core over its
-/// own USB bootloader ([DirectUsbTransport]).
+/// The core relays ONE passthrough request at a time and refuses a second with reason `0x01`
+/// (Docs/Services/Bootloader.md "Core Bootloader Passthrough Commands"). The client sends its
+/// requests sequentially and retries `0x01` on a backoff of 250 ms, doubling to a 2 s cap, at most
+/// six times per request - 250 + 500 + 1000 + 2000 + 2000 = 5.75 s at worst, after which the
+/// request fails as [FlashFault.busy]. It cannot livelock because the wait is bounded twice over:
+/// a fixed number of attempts per request, and the run's own deadline, which is checked between
+/// every request. The 250 ms first step is the settle measured on the bench: an outstanding
+/// passthrough settles within a few milliseconds of its reply, and 250 ms is past every one seen.
+/// No delay is inserted between ordinary requests - the read-back of the whole DAS space (448
+/// chunk reads) completes in 5.9 s, so back-to-back requests are what the core is built for.
+///
+/// ## The other three reasons are NOT retries
+///
+/// `0x02` malformed is a bug in this client (the core could not even encode the request): it stops
+/// the run as [FlashFault.malformed] instead of hammering the same frame. `0x03` means the request
+/// went out and the node never answered: the node is not in bootloader mode or is not there, and
+/// re-sending into that is exactly the hammering the reason exists to prevent, so the run stops as
+/// [FlashFault.nodeSilent]. `0x04` is the node's own refusal (a misaligned erase, a write into a
+/// page that was not erased): it is the node's semantics and maps to [FlashFault.nodeRefused] - or
+/// to the "this page cannot be blanked" path of step 3 - never to a retry. A FAIL with no reason
+/// byte at all comes from a core older than the reason table and is named as its own fault
+/// ([FlashFault.unreportedRefusal]) rather than folded into any of the four.
+///
+/// A timeout of the APP's own request (no packet came back from the core at all) is a fifth,
+/// different silence and is retried: it says nothing about the node.
+///
+/// ## The upload deadline
+///
+/// [BootloaderClient.flashDeadline] is 10 minutes, checked between every request in [flash]. The
+/// arithmetic: a full read-back of the DAS space (448 chunk reads) is 5.9 s, and verification runs
+/// at most six times (the initial one plus one after each of the five correction rounds) - ~36 s;
+/// the delta write pass is at most 448 chunk writes and 224 erases (~10 s), and five correction
+/// rounds repairing the whole image at worst add ~50 s. That is ~100 s over USB; a BLE link costs
+/// ~3.5x per request, so the same worst case is ~350 s. Ten minutes covers it with margin, and it
+/// is a backstop rather than the liveness mechanism: every request is already bounded by its own
+/// window and attempt count.
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'bootloader.dart';
 import 'connection.dart';
 import 'protocol.dart';
+import 'request_channel.dart';
 import 'transport.dart';
 import 'types.dart';
 
 /// Which stage of [BootloaderClient.flash] is running.
-enum FlashPhase { writing, verifying, correcting, done }
+enum FlashPhase { comparing, writing, verifying, correcting, done }
 
 /// A progress snapshot emitted by [BootloaderClient.flash].
 class FlashProgress {
   final FlashPhase phase;
 
-  /// Steps finished in this phase: image chunks while writing, and `0`/`1` while verifying (a
-  /// digest request is one step; a read-back pass reports its chunks instead).
+  /// Steps finished in this phase: pages while comparing/writing, chunk reads while verifying.
   final int completed;
   final int total;
 
-  /// Chunks the current read-back has found different from what was written so far.
+  /// Chunks the current read-back has found different from what should be there.
   final int mismatches;
 
   const FlashProgress({
@@ -57,60 +98,60 @@ class FlashProgress {
   double get fraction => total == 0 ? 1.0 : completed / total;
 }
 
-/// What the two measures of a verification said.
+/// What the two measures of one verification said.
 ///
-/// Verification is two measures in order, and neither wins a disagreement: the digest is one round
-/// trip over the padded range compared with the manifest's `crc32_padded`, and the full read-back
-/// pass is the only check that does not depend on the node's own CRC being right. A digest that
-/// passes while a byte differs is its own named outcome - never resolved by preferring one side.
+/// The CRC is one exchange whose value depends on the device's own CRC code being right; the
+/// read-back does not depend on it. A disagreement is its own named outcome - never resolved by
+/// preferring either side.
 enum FlashVerifyOutcome {
-  /// The digest matched and every chunk read back identical.
+  /// The CRC matched and every chunk read back identical.
   confirmed,
 
-  /// The digest matched, the read-back found chunks that differ: the node's CRC and its own bytes
-  /// disagree, so one of the two is lying and the run must not pick one.
-  digestAgreesReadBackDiffers,
+  /// The CRC matched and the read-back found chunks that differ: the node's CRC and its own bytes
+  /// disagree, so one of the two is lying.
+  crcAgreesReadBackDiffers,
 
-  /// The digest did not match, every chunk read back identical: the digest (or the value it was
+  /// The CRC did not match and every chunk read back identical: the CRC (or the value it was
   /// compared with) is wrong, the bytes are not.
-  digestDiffersReadBackAgrees,
+  crcDiffersReadBackAgrees,
 
-  /// Both measures say the image is wrong.
+  /// Both measures say the space is wrong.
   bothDiffer,
 
-  /// No digest from the node - a bootloader older than the digest command - so the read-back pass
-  /// is the only measure. [FlashVerifyResult.note] says so.
+  /// The node did not answer the CRC request, so the read-back is the only measure
+  /// ([FlashVerifyResult.note] says so). A pre-v2 bootloader has no CRC command.
   readBackOnly;
 
-  /// True when the outcome names an image the measures agree on. Use [FlashVerifyResult.clean]:
-  /// with no digest the read-back pass has to have found nothing as well.
+  /// True when the outcome names a space the measures agree on. Use [FlashVerifyResult.clean]:
+  /// with no CRC the read-back has to have found nothing as well.
   bool get agrees =>
-      this == FlashVerifyOutcome.confirmed || this == FlashVerifyOutcome.readBackOnly;
+      this == FlashVerifyOutcome.confirmed ||
+      this == FlashVerifyOutcome.readBackOnly;
 
   String get label => switch (this) {
-    FlashVerifyOutcome.confirmed => 'digest and read-back agree',
-    FlashVerifyOutcome.digestAgreesReadBackDiffers =>
-      'digest matches, read-back differs',
-    FlashVerifyOutcome.digestDiffersReadBackAgrees =>
-      'digest differs, read-back matches',
-    FlashVerifyOutcome.bothDiffer => 'digest and read-back both differ',
-    FlashVerifyOutcome.readBackOnly => 'read-back only (no digest from the node)',
+    FlashVerifyOutcome.confirmed => 'CRC and read-back agree',
+    FlashVerifyOutcome.crcAgreesReadBackDiffers =>
+      'CRC matches, read-back differs',
+    FlashVerifyOutcome.crcDiffersReadBackAgrees =>
+      'CRC differs, read-back matches',
+    FlashVerifyOutcome.bothDiffer => 'CRC and read-back both differ',
+    FlashVerifyOutcome.readBackOnly => 'read-back only (no CRC from the node)',
   };
 }
 
-/// The two measures of one verification: the digest, the read-back pass, and what they said.
+/// The two measures of one verification: the CRC, the read-back, and what they said.
 class FlashVerifyResult {
   /// What the two measures said (see [FlashVerifyOutcome]).
   final FlashVerifyOutcome outcome;
 
-  /// The digest the node answered with, or null when it has no digest command.
-  final int? digest;
+  /// The CRC the node answered with, or null when it has no CRC command.
+  final int? crc;
 
-  /// The value the digest was compared against: the caller's expected CRC32 (the package
-  /// manifest's `crc32_padded`) or the client's own CRC of the padded image.
-  final int expectedDigest;
+  /// The value the CRC was compared against: the client's CRC32 of the model space (the image,
+  /// its tail, and any region the device refuses to blank).
+  final int expectedCrc;
 
-  /// Read-back passes over the image: 1 whenever the pass ran.
+  /// Read-back passes over the space: 1 whenever the pass ran.
   final int readBacks;
 
   /// Chunk reads issued.
@@ -119,151 +160,267 @@ class FlashVerifyResult {
   /// Every chunk the read-back found different, when any. Null when the pass found none.
   final FlashVerifyReport? differences;
 
-  /// Chunks the one correction round rewrote and then re-read identical (only ever set by
+  /// Chunks a correction round rewrote and then found identical (only ever set by
   /// [BootloaderClient.flash], which is the only caller that writes).
   final int corrected;
 
   const FlashVerifyResult({
     required this.outcome,
-    this.digest,
-    required this.expectedDigest,
+    this.crc,
+    required this.expectedCrc,
     required this.readBacks,
     required this.reads,
     this.differences,
     this.corrected = 0,
   });
 
-  /// True when the device holds the image that was handed in: both measures agreed, or - with no
-  /// digest from the node - the read-back pass found nothing.
+  /// True when the device holds the space the image describes: both measures agreed, or - with no
+  /// CRC from the node - the read-back pass found nothing.
   bool get clean =>
       outcome == FlashVerifyOutcome.confirmed ||
       (outcome == FlashVerifyOutcome.readBackOnly && differing == 0);
 
-  /// True when the node answered the digest request at all.
-  bool get hasDigest => digest != null;
+  /// True when the node answered the CRC request at all.
+  bool get hasCrc => crc != null;
 
-  /// True when the digest agreed with the expected value.
-  bool get digestOk => digest != null && digest == expectedDigest;
+  /// True when the CRC agreed with the expected value.
+  bool get crcOk => crc != null && crc == expectedCrc;
 
   int get differing => differences?.count ?? 0;
 
-  /// `digest 0x1234abcd, expected 0x1234abce` - the pair a digest disagreement is reported with.
-  String get digestPair => hasDigest
-      ? '${_hex32(digest!)} (expected ${_hex32(expectedDigest)})'
-      : 'none (the node has no digest command)';
+  /// `0x0b43b1b7 (expected 0x083a7d36)` - the pair a CRC disagreement is reported with.
+  String get crcPair => hasCrc
+      ? '${_hex32(crc!)} (expected ${_hex32(expectedCrc)})'
+      : 'none (the node did not answer a CRC request)';
 
   /// The two measures, each on its own terms - the shape both the log line and the report use.
   String get note {
-    final digestPart = hasDigest
-        ? 'digest 0x${digest!.toRadixString(16).padLeft(8, '0')} vs '
-              '${_hex32(expectedDigest)} - ${digestOk ? 'match' : 'MISMATCH'}'
-        : 'digest none (the node has no digest command)';
+    final crcPart = hasCrc
+        ? 'CRC ${_hex32(crc!)} vs ${_hex32(expectedCrc)} - '
+              '${crcOk ? 'match' : 'MISMATCH'}'
+        : 'CRC none (the node did not answer a CRC request)';
     final readPart = differing == 0
         ? 'read-back $reads chunks, all identical'
         : 'read-back ${differences!.summary}';
     final correctedPart = corrected > 0
-        ? '; one correction round rewrote $corrected chunk(s)'
+        ? '; a correction round rewrote $corrected chunk(s)'
         : '';
-    return '$digestPart; $readPart$correctedPart';
+    return '$crcPart; $readPart$correctedPart';
   }
 }
 
-/// The outcome of [BootloaderClient.flash]: one write pass, then the two measures of
-/// [_verify]. A run that cannot confirm the image throws [FlashAborted] instead of returning a
-/// result.
+/// The outcome of [BootloaderClient.flash].
 class FlashResult {
   /// The two measures, as they stood when the run finished.
   final FlashVerifyResult verify;
 
-  /// Write operations issued (the initial pass plus at most one correction round).
-  final int writes;
+  /// Image pages that were compared against the device.
+  final int pagesCompared;
 
-  const FlashResult({required this.verify, required this.writes});
+  /// Image pages that already held what the image wants: never erased, never written.
+  final int pagesKept;
 
-  /// Chunks rewritten by the one correction round.
-  int get corrections => verify.corrected;
+  /// Image pages erased and written - the initial delta pass plus every correction round.
+  final int pagesWritten;
 
-  /// Chunk reads issued by the verification.
+  /// Tail pages the run blanked (already-blank pages are not counted).
+  final int pagesBlanked;
+
+  /// Tail pages the node refuses to erase; their bytes are part of the verified model.
+  final int pagesProtected;
+
+  /// 32-byte chunks written over the whole run.
+  final int chunksWritten;
+
+  /// Chunks of a rewritten page that were already blank after its erase, so they were not sent.
+  final int chunksSkipped;
+
+  /// Correction rounds run (0 when the first verification was clean).
+  final int correctionRounds;
+
+  /// Verification rounds run: 1 plus [correctionRounds].
+  final int rounds;
+
+  const FlashResult({
+    required this.verify,
+    required this.pagesCompared,
+    required this.pagesKept,
+    required this.pagesWritten,
+    required this.pagesBlanked,
+    required this.pagesProtected,
+    required this.chunksWritten,
+    required this.chunksSkipped,
+    required this.correctionRounds,
+    required this.rounds,
+  });
+
   int get reads => verify.reads;
+
+  /// Chunks a correction round rewrote over the whole run.
+  int get corrections => verify.corrected;
 
   FlashVerifyOutcome get outcome => verify.outcome;
 
   bool get clean => verify.clean;
 
+  /// The counts a handoff quotes, in one line.
+  String get counts =>
+      '${pagesCompared - pagesKept} of $pagesCompared image page(s) rewritten, '
+      '$pagesKept kept, $pagesBlanked tail page(s) blanked, '
+      '${pagesProtected > 0 ? '$pagesProtected tail page(s) not blankable, ' : ''}'
+      '$chunksWritten chunk(s) written, $rounds verification round(s)';
+
   /// One line stating how the image was confirmed, for a log or a page.
-  String get note => verify.note;
+  String get note => '${verify.note}; $counts';
 }
 
 String _hex32(int value) =>
     '0x${value.toUnsigned(32).toRadixString(16).padLeft(8, '0')}';
 
-/// A device's identity: the size of its main-binary space and its name.
+/// A device's identity: the size of its app space, its erase page size, and its name.
 class BootloaderIdentity {
-  /// The app-space size in bytes (the identify-response's offset slot).
+  /// The app-space size in bytes (the identify response's offset slot).
   final int appSize;
 
-  /// The device name (the identify-response's 32-byte, null-padded payload).
+  /// The flash erase page size in bytes (the identify response's page field).
+  final int pageSize;
+
+  /// The device name (the identify response's 28-byte, null-padded field).
   final String name;
 
-  const BootloaderIdentity({required this.appSize, required this.name});
+  const BootloaderIdentity({
+    required this.appSize,
+    required this.pageSize,
+    required this.name,
+  });
+
+  /// Pages in the whole app space.
+  int get pages => appSize ~/ pageSize;
 
   @override
-  String toString() => '$name ($appSize bytes)';
+  String toString() => '$name ($appSize B app space, $pageSize B pages)';
 }
 
 /// The outcome of one low-level write attempt.
 class WriteAck {
-  /// True when the channel reported the write accepted (and, when [lastWrittenOffset] is
-  /// known, that the device reached this chunk).
+  /// True when the device reported this chunk written.
   final bool accepted;
 
-  /// The offset of the device's last successfully written chunk, or null when the channel
-  /// could not expose it (a relay timeout carries no payload). A value of
-  /// [Bootloader.nothingWritten] means nothing has been written yet.
-  final int? lastWrittenOffset;
+  /// The offset the device's write response carried: this chunk when it landed, the page with
+  /// bit 0 set when the page could not be written, or a stale offset when nothing was touched.
+  final int? acked;
 
-  const WriteAck(this.accepted, {this.lastWrittenOffset});
+  const WriteAck(this.accepted, {this.acked});
+
+  /// True when the answer names a PAGE, i.e. the page could not be written (a write into a page
+  /// that was never erased).
+  bool get pageFailed => acked != null && Bootloader.ackFailed(acked!);
 }
 
-/// Low-level bootloader channel. One call is one attempt (no retries here); a timeout is
-/// reported as null (or [TransportException] when the transport chooses to throw).
-/// [BootloaderClient] adds the pacing and the retry policy.
+/// Why a passthrough request failed (Docs/Services/Bootloader.md, the reason table).
+///
+/// The five are kept apart because the client does something different with each: only [busy] and
+/// [linkLost] are retried, [nodeRefused] is the node's own semantics, and [malformed] is a bug in
+/// this client.
+enum PassthroughReason {
+  /// `0x01` - the core refused it: another passthrough request is outstanding.
+  busy(0x01),
+
+  /// `0x02` - the core refused it: the request is malformed (payload too short, unknown CID).
+  malformed(0x02),
+
+  /// `0x03` - the request went out and the node never answered before the 1 s deadline.
+  nodeSilent(0x03),
+
+  /// `0x04` - the node answered with a failure frame of its own.
+  nodeRefused(0x04),
+
+  /// A FAIL with no reason byte: a core older than the reason table. Never folded into the four.
+  unreported(0),
+
+  /// No reply from the core at all - the app's own request timed out. Distinct from [nodeSilent]:
+  /// this one says nothing about the node, so it is retried.
+  linkLost(-1);
+
+  const PassthroughReason(this.code);
+
+  /// The byte the core sends for this reason; null for the two that no byte describes.
+  final int code;
+
+  String get label => switch (this) {
+    PassthroughReason.busy => 'refused, another request is outstanding',
+    PassthroughReason.malformed => 'refused, the request is malformed',
+    PassthroughReason.nodeSilent => 'the node did not answer',
+    PassthroughReason.nodeRefused => 'the node refused it',
+    PassthroughReason.unreported =>
+      'refused with no reason (the core predates the reason byte)',
+    PassthroughReason.linkLost => 'the core did not answer the request',
+  };
+
+  /// The reason a one-byte failure payload carries, or [unreported] for a byte outside the table.
+  static PassthroughReason fromCode(int code) => switch (code) {
+    0x01 => PassthroughReason.busy,
+    0x02 => PassthroughReason.malformed,
+    0x03 => PassthroughReason.nodeSilent,
+    0x04 => PassthroughReason.nodeRefused,
+    _ => PassthroughReason.unreported,
+  };
+}
+
+/// One failed request, with the reason the core gave (or the absence of one).
+class PassthroughFailure implements Exception {
+  final PassthroughReason reason;
+
+  /// What was being asked, so a message names the request and not just the verdict.
+  final String what;
+
+  /// The reason byte as received, when one arrived.
+  final int? code;
+
+  const PassthroughFailure(this.reason, this.what, {this.code});
+
+  String get message => '${reason.label} ($what)';
+
+  @override
+  String toString() => message;
+}
+
+/// Low-level bootloader channel. One call is one attempt (no retries here); a failure is thrown
+/// as [PassthroughFailure] so the client can tell the four reasons and the link's own silence
+/// apart. [BootloaderClient] owns the retry policy and the pacing.
 abstract class BootloaderTransport {
-  /// Writes one 32-byte chunk at [offset]. Both channels report the device's
-  /// [WriteAck.lastWrittenOffset]; it is null only when a relay timeout carried no payload,
-  /// in which case the verify pass catches a dropped write.
+  /// Asks the device to identify itself. Null when the node did not answer at all - the answer a
+  /// node that is not in bootloader mode gives - and thrown for every other failure.
+  Future<BootloaderIdentity?> identify(Duration timeout);
+
+  /// Reads 32 bytes at [offset].
+  Future<Uint8List> readChunk(int offset, Duration timeout);
+
+  /// Blanks the [Bootloader] page at [offset] and returns the page the device acknowledged.
+  Future<int> erasePage(int offset, Duration timeout);
+
+  /// Writes one 32-byte chunk at [offset].
   Future<WriteAck> writeChunk(int offset, List<int> data, Duration timeout);
 
-  /// Reads 32 bytes at [offset]. Returns null when the node answered FAIL or the request was
-  /// missed; throws [TransportException] on timeout.
-  Future<Uint8List?> readChunk(int offset, Duration timeout);
-
-  /// Asks for the CRC32 of `[offset, offset + length)` of the device's app region (the digest
-  /// command). Returns the CRC, or null when no digest came back: the node answered FAIL, the
-  /// request was missed, or its bootloader predates the digest command and stayed silent.
-  Future<int?> digest(int offset, int length, Duration timeout);
-
-  /// Asks the device to identify itself. Returns null when it did not answer.
-  Future<BootloaderIdentity?> identify(Duration timeout);
+  /// Asks for the CRC32 of the whole app space (one number, no arguments).
+  Future<int> crc(Duration timeout);
 }
 
 /// Core passthrough command IDs (Docs/Services/Bootloader.md "Core Bootloader Passthrough
-/// Commands (002x)"): the core relays the app's request onto its RSBus and echoes the reply.
-const int coreBootIdentify =
-    0x20; // request identification (response: app size + name)
-const int coreBootWrite =
-    0x21; // send write packet      (request: offset + payload; response: last-written offset)
-const int coreBootRead =
-    0x22; // request read           (request: offset; response: offset + payload)
-const int coreBootDigest =
-    0x23; // request digest         (request: offset + length; response: the node's frame as-is)
+/// Commands (002x)"). They follow the bootloader command order - identify, read, erase, write, CRC
+/// - so a CID and its frame always carry the same rank.
+const int coreBootIdentify = 0x20;
+const int coreBootRead = 0x21;
+const int coreBootErase = 0x22;
+const int coreBootWrite = 0x23;
+const int coreBootCrc = 0x24;
 
-/// The core's Device `0020/0021/0022/0023` passthrough: the core relays each raw bootloader
-/// frame onto its RSBus, so the app reaches whatever node is in bootloader mode without knowing
-/// its address. A write reply carries the node's last-written offset (the flag is SUCCESS only
-/// when that offset names the requested chunk); reads return `offset + payload`; identification
-/// returns `app size + name`; the digest returns the node's 11-byte digest response verbatim,
-/// so this client decodes and compares it.
+/// The core's `0020`-`0024` passthrough: the core relays each raw bootloader frame onto its RSBus,
+/// so the app reaches whatever node is in bootloader mode without knowing its address.
+///
+/// The core owns the frame encoding, the 1 s reply deadline, and the failure reasons; this
+/// transport turns its answers into [WriteAck]s, page numbers and CRCs, and its refusals into
+/// [PassthroughFailure]s.
 class PassthroughTransport implements BootloaderTransport {
   /// The core that relays our raw frames onto its RSBus.
   final int coreId;
@@ -272,98 +429,229 @@ class PassthroughTransport implements BootloaderTransport {
 
   ConnectionManager get _link => ConnectionManager.instance;
 
-  @override
-  Future<WriteAck> writeChunk(
-    int offset,
-    List<int> data,
-    Duration timeout,
-  ) async {
-    final payload = <int>[...uint32ToBytes(offset), ...data];
-    final reply = await _link.requestWithFlags(
-      coreId,
-      ServiceType.device,
-      coreBootWrite,
-      payload: payload,
-      timeout: timeout,
-    );
-    // The core relays the node's write-response offset; the flag is SUCCESS only when it names
-    // this chunk. A FAIL still carries the offset (the node's last successfully written one),
-    // and a timeout carries none, so the client can retry or resynchronise.
-    final last = reply.payload.length >= 4
-        ? uint32FromBytes(reply.payload, 0)
-        : null;
-    return WriteAck(reply.ok, lastWrittenOffset: last);
-  }
-
-  @override
-  Future<Uint8List?> readChunk(int offset, Duration timeout) async {
-    final reply = await _link.request(
-      coreId,
-      ServiceType.device,
-      coreBootRead,
-      payload: uint32ToBytes(offset),
-      timeout: timeout,
-    );
-    if (reply.length < 4 + Bootloader.payloadSize) return null;
-    return Uint8List.fromList(reply.sublist(4, 4 + Bootloader.payloadSize));
-  }
-
-  @override
-  Future<int?> digest(int offset, int length, Duration timeout) async {
-    final payload = <int>[
-      ...uint32ToBytes(offset),
-      length & 0xFF,
-      (length >> 8) & 0xFF,
-    ];
-    final reply = await _link.requestWithFlags(
-      coreId,
-      ServiceType.device,
-      coreBootDigest,
-      payload: payload,
-      timeout: timeout,
-    );
-    // The core forwards the node's digest response verbatim, framing included, so the frame
-    // itself says whether it is this request's answer: the digest command, a valid parity, and
-    // the offset that was asked about.
-    if (!reply.ok || reply.payload.length < Bootloader.digestResponseSize) {
-      return null;
+  /// The reply to one passthrough request, with a FAIL classified by its reason byte.
+  Future<PacketResponse> _ask(
+    String what,
+    int cid, {
+    List<int> payload = const [],
+    required Duration timeout,
+  }) async {
+    final PacketResponse reply;
+    try {
+      reply = await _link.requestWithFlags(
+        coreId,
+        ServiceType.device,
+        cid,
+        payload: payload,
+        timeout: timeout,
+      );
+    } on TransportException {
+      throw PassthroughFailure(PassthroughReason.linkLost, what);
     }
-    final frame = reply.payload.sublist(0, Bootloader.digestResponseSize);
-    if (Bootloader.decode(frame) != Bootloader.cmdDigestResponse) return null;
-    if (Bootloader.offset(frame) != offset) return null;
-    return Bootloader.digestCrc(frame);
+    if (!reply.ok) throw _classify(what, reply);
+    return reply;
+  }
+
+  /// What a FAIL reply says: a one-byte reason, the node's own ack (4 bytes), or neither.
+  static PassthroughFailure _classify(String what, PacketResponse reply) {
+    final payload = reply.payload;
+    if (payload.length == 1) {
+      return PassthroughFailure(
+        PassthroughReason.fromCode(payload[0]),
+        what,
+        code: payload[0],
+      );
+    }
+    // A four-byte failure body is the node's own ack, which the core passes on with FAIL: for a
+    // write that is the page it could not program, for an erase the page with bit 0 set.
+    if (payload.length == 4) {
+      return PassthroughFailure(PassthroughReason.nodeRefused, what);
+    }
+    return PassthroughFailure(PassthroughReason.unreported, what);
   }
 
   @override
   Future<BootloaderIdentity?> identify(Duration timeout) async {
-    final reply = await _link.requestWithFlags(
-      coreId,
-      ServiceType.device,
-      coreBootIdentify,
-      timeout: timeout,
-    );
-    if (!reply.ok || reply.payload.length < 4) return null;
+    final PacketResponse reply;
+    try {
+      reply = await _ask('identify', coreBootIdentify, timeout: timeout);
+    } on PassthroughFailure catch (failure) {
+      if (failure.reason == PassthroughReason.nodeSilent) return null;
+      rethrow;
+    }
+    // The core forwards the node's identify body verbatim: app size (4), page size (4), name (28).
+    if (reply.payload.length < 4 + 4) {
+      throw const PassthroughFailure(
+        PassthroughReason.unreported,
+        'identify: the reply carried no page size',
+      );
+    }
     final appSize = uint32FromBytes(reply.payload, 0);
-    final nameBytes = reply.payload.sublist(4);
+    final pageSize = uint32FromBytes(reply.payload, 4);
+    final nameBytes = reply.payload.sublist(8);
     var n = nameBytes.length;
     while (n > 0 && nameBytes[n - 1] == 0) {
       n--;
     }
     return BootloaderIdentity(
       appSize: appSize,
+      pageSize: pageSize,
       name: String.fromCharCodes(nameBytes.sublist(0, n)),
     );
   }
+
+  @override
+  Future<Uint8List> readChunk(int offset, Duration timeout) async {
+    final reply = await _ask(
+      'read 0x${offset.toRadixString(16)}',
+      coreBootRead,
+      payload: uint32ToBytes(offset),
+      timeout: timeout,
+    );
+    if (reply.payload.length < 4 + Bootloader.payloadSize) {
+      throw PassthroughFailure(
+        PassthroughReason.unreported,
+        'read 0x${offset.toRadixString(16)}: the reply was '
+        '${reply.payload.length} bytes, not 36',
+      );
+    }
+    return Uint8List.fromList(
+      reply.payload.sublist(4, 4 + Bootloader.payloadSize),
+    );
+  }
+
+  @override
+  Future<int> erasePage(int offset, Duration timeout) async {
+    final reply = await _ask(
+      'erase 0x${offset.toRadixString(16)}',
+      coreBootErase,
+      payload: uint32ToBytes(offset),
+      timeout: timeout,
+    );
+    if (reply.payload.length < 4) {
+      throw PassthroughFailure(
+        PassthroughReason.unreported,
+        'erase 0x${offset.toRadixString(16)}: the reply carried no page',
+      );
+    }
+    final page = uint32FromBytes(reply.payload, 0);
+    if (Bootloader.ackFailed(page)) {
+      throw PassthroughFailure(
+        PassthroughReason.nodeRefused,
+        'erase 0x${offset.toRadixString(16)}',
+        code: PassthroughReason.nodeRefused.code,
+      );
+    }
+    return page;
+  }
+
+  @override
+  Future<WriteAck> writeChunk(
+    int offset,
+    List<int> data,
+    Duration timeout,
+  ) async {
+    final reply = await _ask(
+      'write 0x${offset.toRadixString(16)}',
+      coreBootWrite,
+      payload: [...uint32ToBytes(offset), ...data],
+      timeout: timeout,
+    );
+    final acked = reply.payload.length >= 4
+        ? uint32FromBytes(reply.payload, 0)
+        : null;
+    // The core sets SUCCESS only when the node's ack names the chunk it was asked to write, so
+    // `ok` is the verdict; the offset is kept for a message that says what the node answered.
+    return WriteAck(true, acked: acked);
+  }
+
+  @override
+  Future<int> crc(Duration timeout) async {
+    final reply = await _ask('CRC', coreBootCrc, timeout: timeout);
+    if (reply.payload.length < 4) {
+      throw const PassthroughFailure(
+        PassthroughReason.unreported,
+        'CRC: the reply carried no value',
+      );
+    }
+    return uint32FromBytes(reply.payload, 0);
+  }
 }
 
-/// The core's own USB bootloader (Docs/Services/Bootloader.md): the raw 0xCA..0xBC frames go
-/// straight to the USB Serial/JTAG port with no core relay. Each request's response frame is
-/// parsed off the same port; a write is acknowledged by a write-response carrying the offset
-/// of the last successfully written chunk, so the client can reconcile its progress.
+/// The core's own USB bootloader: the raw frames go straight to the USB Serial/JTAG port with no
+/// relay, so this transport encodes the requests and parses the answers itself. Each request's
+/// response frame is matched on its command, and additionally on the offset it echoes where the
+/// frame has one (a late answer from a previous transaction is dropped rather than returned).
 class DirectUsbTransport implements BootloaderTransport {
   final UsbTransport usb;
 
   DirectUsbTransport(this.usb);
+
+  @override
+  Future<BootloaderIdentity?> identify(Duration timeout) async {
+    final reply = await _requestFrame(
+      Bootloader.encodeIdentifyRequest(),
+      command: Bootloader.cmdIdentifyResponse,
+      size: Bootloader.identifyResponseSize,
+      timeout: timeout,
+      what: 'identify',
+    );
+    if (reply == null) return null;
+    return BootloaderIdentity(
+      appSize: Bootloader.appSize(reply),
+      pageSize: Bootloader.pageSize(reply),
+      name: Bootloader.name(reply),
+    );
+  }
+
+  @override
+  Future<Uint8List> readChunk(int offset, Duration timeout) async {
+    final reply = await _requestFrame(
+      Bootloader.encodeReadRequest(offset),
+      command: Bootloader.cmdReadResponse,
+      size: Bootloader.dataSize,
+      matchOffset: offset,
+      timeout: timeout,
+      what: 'read 0x${offset.toRadixString(16)}',
+    );
+    if (reply == null) {
+      throw PassthroughFailure(
+        PassthroughReason.nodeSilent,
+        'read 0x${offset.toRadixString(16)}',
+      );
+    }
+    return Uint8List.fromList(
+      reply.sublist(
+        Bootloader.headerSize,
+        Bootloader.headerSize + Bootloader.payloadSize,
+      ),
+    );
+  }
+
+  @override
+  Future<int> erasePage(int offset, Duration timeout) async {
+    final reply = await _requestFrame(
+      Bootloader.encodeEraseRequest(offset),
+      command: Bootloader.cmdEraseResponse,
+      size: Bootloader.readRequestSize,
+      timeout: timeout,
+      what: 'erase 0x${offset.toRadixString(16)}',
+    );
+    if (reply == null) {
+      throw PassthroughFailure(
+        PassthroughReason.nodeSilent,
+        'erase 0x${offset.toRadixString(16)}',
+      );
+    }
+    final page = Bootloader.offset(reply);
+    if (Bootloader.ackFailed(page)) {
+      throw PassthroughFailure(
+        PassthroughReason.nodeRefused,
+        'erase 0x${offset.toRadixString(16)}',
+      );
+    }
+    return page;
+  }
 
   @override
   Future<WriteAck> writeChunk(
@@ -376,65 +664,43 @@ class DirectUsbTransport implements BootloaderTransport {
       command: Bootloader.cmdWriteResponse,
       size: Bootloader.readRequestSize,
       timeout: timeout,
+      what: 'write 0x${offset.toRadixString(16)}',
     );
-    if (reply == null) return const WriteAck(false);
-    final last = Bootloader.offset(reply);
-    return WriteAck(last == offset, lastWrittenOffset: last);
+    if (reply == null) {
+      throw PassthroughFailure(
+        PassthroughReason.nodeSilent,
+        'write 0x${offset.toRadixString(16)}',
+      );
+    }
+    final acked = Bootloader.offset(reply);
+    if (acked == offset) return WriteAck(true, acked: acked);
+    // The ack names a page (bit 0 set) when the page could not be written, and otherwise keeps the
+    // last offset it did write - "success only if the offset matches the request".
+    return WriteAck(false, acked: acked);
   }
 
   @override
-  Future<Uint8List?> readChunk(int offset, Duration timeout) async {
+  Future<int> crc(Duration timeout) async {
     final reply = await _requestFrame(
-      Bootloader.encodeReadRequest(offset),
-      command: Bootloader.cmdReadResponse,
-      size: Bootloader.dataSize,
-      matchOffset: offset,
+      Bootloader.encodeCrcRequest(),
+      command: Bootloader.cmdCrcResponse,
+      size: Bootloader.crcResponseSize,
       timeout: timeout,
+      what: 'CRC',
     );
-    if (reply == null) return null;
-    return Uint8List.fromList(
-      reply.sublist(
-        Bootloader.headerSize,
-        Bootloader.headerSize + Bootloader.payloadSize,
-      ),
-    );
+    if (reply == null) {
+      throw const PassthroughFailure(PassthroughReason.nodeSilent, 'CRC');
+    }
+    return Bootloader.crc(reply);
   }
 
-  @override
-  Future<int?> digest(int offset, int length, Duration timeout) async {
-    final reply = await _requestFrame(
-      Bootloader.encodeDigestRequest(offset, length),
-      command: Bootloader.cmdDigestResponse,
-      size: Bootloader.digestResponseSize,
-      matchOffset: offset,
-      timeout: timeout,
-    );
-    if (reply == null) return null;
-    return Bootloader.digestCrc(reply);
-  }
-
-  @override
-  Future<BootloaderIdentity?> identify(Duration timeout) async {
-    final reply = await _requestFrame(
-      Bootloader.encodeIdentifyRequest(),
-      command: Bootloader.cmdIdentifyResponse,
-      size: Bootloader.dataSize,
-      timeout: timeout,
-    );
-    if (reply == null) return null;
-    return BootloaderIdentity(
-      appSize: Bootloader.appSize(reply),
-      name: Bootloader.name(reply),
-    );
-  }
-
-  /// Writes [request] and waits for its response frame: a valid frame of [command] and
-  /// [size], matched additionally on [matchOffset] when given (a late reply from a previous
-  /// transaction at another offset is dropped rather than returned). Returns null on timeout.
+  /// Writes [request] and waits for its response frame: a valid frame of [command] and [size],
+  /// matched additionally on [matchOffset] when given. Returns null on timeout.
   Future<Uint8List?> _requestFrame(
     List<int> request, {
     required int command,
     required int size,
+    required String what,
     int? matchOffset,
     required Duration timeout,
   }) async {
@@ -450,8 +716,6 @@ class DirectUsbTransport implements BootloaderTransport {
         }
         if (buffer.length < size) break;
         final frame = buffer.sublist(0, size);
-        // Match the reply to the request: a valid frame (structure + parity) of the expected
-        // command, and the requested offset when one is expected.
         if (Bootloader.decode(frame) == command &&
             (matchOffset == null || Bootloader.offset(frame) == matchOffset)) {
           buffer.removeRange(0, size);
@@ -472,32 +736,42 @@ class DirectUsbTransport implements BootloaderTransport {
   }
 }
 
-/// One 32-byte chunk of the image and its bootloader offset.
-class _Chunk {
-  final int offset;
-  final Uint8List data;
-
-  const _Chunk(this.offset, this.data);
-}
-
 /// Why a flash run stopped before the device's image was confirmed as the one that was sent.
 ///
-/// The three device faults are separate faults with separate remedies, and the page names them
-/// apart: [nodeSilent] is a link that died or a node that left bootloader mode, [writeRefused] is
-/// a node that answered and would not program the chunk, [verifyMismatch] is a node that took the
-/// data and did not keep it. [cancelled] and [deadline] are the user's own clock, not the device.
+/// The faults are kept apart because their remedies differ: a silent node and a refused write both
+/// need a power cycle, a refused erase may mean the page is not blankable at all, a malformed
+/// request is this client's bug, and a busy core is a link someone else is using.
 enum FlashFault {
-  /// The node stopped answering: a write was never taken through all its attempts, or a read-back
-  /// exhausted its attempts. Nothing the app sends can reset it.
+  /// The node answered nothing to identify (the core's reason `0x03`, or no frame at all over
+  /// direct USB): it is not in bootloader mode or it is not there.
+  noAnswer,
+
+  /// The identify body carried no usable page size: a pre-v2 bootloader, which this client refuses
+  /// rather than guessing at. Nothing was sent beyond the identify.
+  oldBootloader,
+
+  /// The core refused a request as malformed (`0x02`): a bug in this client, not in the node.
+  malformed,
+
+  /// Every bounded retry was refused because another passthrough request was outstanding
+  /// (`0x01`). Something else is using the core's relay.
+  busy,
+
+  /// A FAIL with no reason byte: a core older than the reason table, so the failure cannot be
+  /// classified. Never reported as one of the four it might have been.
+  unreportedRefusal,
+
+  /// The node stopped answering (`0x03`, or a request that never came back over direct USB).
   nodeSilent,
 
-  /// The node answered and refused the chunk (a `FLAG_FAIL`, or a last-written offset naming a
-  /// different chunk), through every attempt. Nothing was programmed there.
-  writeRefused,
+  /// The core did not answer the app's own request. The node may well be fine.
+  coreSilent,
 
-  /// The node accepted the chunk - and, for a confirmed write, named it in the write response -
-  /// but the image it holds does not digest to what was sent. The erase/program cycle or the
-  /// read path is at fault, not the link.
+  /// The node refused an operation (`0x04`): a misaligned erase, a write into a page that was not
+  /// erased, or an address outside the space.
+  nodeRefused,
+
+  /// Five correction rounds ran and the space still does not read back.
   verifyMismatch,
 
   /// The caller's `isCancelled` said stop.
@@ -506,11 +780,16 @@ enum FlashFault {
   /// The run outlived its `deadline`.
   deadline;
 
-  /// A short name for the failure class, so a log line or a report cannot fold the three device
-  /// faults into one message.
+  /// A short name for the failure class.
   String get label => switch (this) {
-    FlashFault.nodeSilent => 'no answer',
-    FlashFault.writeRefused => 'write refused',
+    FlashFault.noAnswer => 'no answer',
+    FlashFault.oldBootloader => 'old bootloader',
+    FlashFault.malformed => 'malformed request',
+    FlashFault.busy => 'the relay stayed busy',
+    FlashFault.unreportedRefusal => 'refused without a reason',
+    FlashFault.nodeSilent => 'node silent',
+    FlashFault.coreSilent => 'core silent',
+    FlashFault.nodeRefused => 'node refused',
     FlashFault.verifyMismatch => 'image does not read back',
     FlashFault.cancelled => 'cancelled',
     FlashFault.deadline => 'out of time',
@@ -519,111 +798,133 @@ enum FlashFault {
   /// What the user has to do about it.
   ///
   /// A bootloader never jumps to the app by itself and no packet can reset a node, so a device
-  /// left in bootloader mode needs a power cycle from a human: a message that only says "retry"
-  /// leaves it silently in its bootloader, which the owner cannot tell apart from a dead node.
+  /// left in bootloader mode needs a power cycle from a human.
   String get remedy => switch (this) {
-    FlashFault.nodeSilent =>
-      'Power-cycle the node: it is still in its bootloader and nothing the app sends can '
-          'reset it. Then hold its button while powering it on and retry.',
-    FlashFault.writeRefused =>
-      'Power-cycle the node: nothing was programmed and no packet can reset it. Then put it '
-          'back in bootloader mode and retry.',
+    FlashFault.noAnswer || FlashFault.nodeSilent =>
+      'Power-cycle the node: it is still in its bootloader and nothing the app sends can reset '
+          'it. Then hold its button while powering it on and retry.',
+    FlashFault.oldBootloader =>
+      'Update the bootloader first: this client speaks protocol v2 and refuses to guess at the '
+          'older encoding. Nothing was written.',
+    FlashFault.malformed =>
+      'This is a bug in the app, not in the device: the core could not encode the request. '
+          'Nothing was written past that point; report the request named above.',
+    FlashFault.busy =>
+      'Something else is using the core\'s bootloader relay (another upload, a script, another '
+          'app). Wait for it to finish and retry.',
+    FlashFault.unreportedRefusal =>
+      'The core answered a failure with no reason byte, so the app cannot tell a busy relay from '
+          'a dead node. Update the core firmware, which now always carries a reason, and retry.',
+    FlashFault.coreSilent =>
+      'The core stopped answering the app. Check the link (USB/BLE), then retry: the node holds '
+          'whatever was written so far, which is safe to overwrite.',
+    FlashFault.nodeRefused =>
+      'Power-cycle the node: it is still in its bootloader, and no packet can reset it. A refused '
+          'erase or write means the page was not blank when the write arrived; retrying from the '
+          'start of the upload erases it again.',
     FlashFault.verifyMismatch =>
-      'Power-cycle the node: it is still in its bootloader, and no packet can reset it. If '
-          'the same offsets fail again, the node\'s flash or its read path is at fault rather '
-          'than the image.',
+      'Power-cycle the node: it is still in its bootloader, and no packet can reset it. If the '
+          'same offsets fail again, the node\'s flash or its read path is at fault rather than the '
+          'image.',
     FlashFault.cancelled =>
-      'The node holds a partial image and is still in its bootloader; it is safe to write '
-          'over. Retry when ready.',
+      'The node holds a partial image and is still in its bootloader; it is safe to write over. '
+          'Retry when ready.',
     FlashFault.deadline =>
-      'The node holds a partial image. Check the link, then retry: a partial image is safe '
-          'to overwrite.',
+      'The node holds a partial image. Check the link, then retry: a partial image is safe to '
+          'overwrite.',
   };
 }
 
-/// One chunk a read-back returned different from what was written.
+/// One chunk a read-back returned different from what should be there.
 class FlashMismatch {
   const FlashMismatch(
     this.offset, {
-    required this.writeConfirmed,
     this.at,
     this.expected,
     this.actual,
+    this.length,
   });
 
-  /// The chunk's offset in the app image.
+  /// The chunk's offset in the app space.
   final int offset;
 
-  /// True when the write pass got a per-chunk acknowledgement for this offset: the device named
-  /// it as its last successfully written chunk, so it took the data and lost it. False when the
-  /// channel only accepted the write without saying how far the device got (a passthrough relay
-  /// timeout carries no offset), so the device may never have seen this chunk.
-  final bool writeConfirmed;
-
-  /// The first byte that differs: its position in the chunk, the byte written and the byte read
-  /// back. Null when the read came back a different length than the chunk.
+  /// The first byte that differs: its position in the chunk, the byte wanted and the byte read
+  /// back. Null when the read came back a different length than a chunk.
   final int? at;
   final int? expected;
   final int? actual;
 
-  /// `0x40 (byte 3: wrote 0x00, read 0x4e)`, or `0x40` when the read had another length.
+  /// The length the read came back with, when it was not a whole chunk.
+  final int? length;
+
+  /// `0x3400 (byte 3: wanted 0x00, read 0x4e)`, or `0x3400` when the read had another length.
   String get description {
-    final byte = at, wrote = expected, read = actual;
-    if (byte == null || wrote == null || read == null) {
+    final byte = at, want = expected, read = actual;
+    if (byte == null || want == null || read == null) {
       return '0x${offset.toRadixString(16)}';
     }
     return '0x${offset.toRadixString(16)} '
-        '(byte $byte: wrote ${_hex(wrote)}, read ${_hex(read)})';
+        '(byte $byte: wanted ${_hex8(want)}, read ${_hex8(read)})';
   }
 
-  static String _hex(int b) => '0x${b.toRadixString(16).padLeft(2, '0')}';
+  static String _hex8(int b) => '0x${b.toRadixString(16).padLeft(2, '0')}';
 }
 
-/// What the read-back pass found: how many chunks differ from the image, and which.
+/// What the read-back pass found: how many chunks differ from the model, and which.
 class FlashVerifyReport {
   /// How many offsets [summary] names.
   static const int named = 8;
 
-  /// The image's chunk count, so the summary can say how much of it was looked at.
+  /// The app space's chunk count, so the summary can say how much of it was looked at.
   final int total;
 
-  /// Every differing chunk, in image order.
+  /// Every differing chunk, in offset order.
   final List<FlashMismatch> all;
 
-  const FlashVerifyReport({required this.total, required this.all});
+  /// The erase page size, so the report can say which pages a correction has to rewrite.
+  final int pageSize;
+
+  const FlashVerifyReport({
+    required this.total,
+    required this.all,
+    this.pageSize = Bootloader.payloadSize,
+  });
 
   int get count => all.length;
 
-  /// Chunks the write pass acknowledged per chunk and that still do not match: the device took
-  /// the data and lost it, or the read path returned something else.
-  int get confirmed => all.where((m) => m.writeConfirmed).length;
+  /// The pages the differing chunks fall in, ascending - what a correction round rewrites.
+  List<int> get pages {
+    final set = <int>{};
+    for (final m in all) {
+      set.add(m.offset - m.offset % pageSize);
+    }
+    final list = set.toList()..sort();
+    return list;
+  }
 
-  /// Chunks whose write the channel only accepted without confirming it: the device may never
-  /// have seen them.
-  int get unconfirmed => count - confirmed;
-
-  /// The first [named] offsets, in image order.
+  /// The first [named] offsets, in offset order.
   List<FlashMismatch> get first => all.take(named).toList();
 
-  /// The first difference, in image order.
+  /// The first difference, in offset order.
   FlashMismatch? get firstDifference => all.isEmpty ? null : all.first;
 
-  /// `2 of 432 chunks differ (1 confirmed by the write pass, 1 not confirmed); first: 0x200 (...)`.
+  /// `2 of 448 chunks differ in 1 page (0x3400); first: 0x3400 (byte 3: wanted 0x00, read
+  /// 0x4e)` - the sentence a page shows and a handoff quotes.
   String get summary {
     final shown = first.map((m) => m.description).join(', ');
     final rest = count > named ? ' (+${count - named} more)' : '';
-    return '$count of $total chunks differ ($confirmed confirmed by the write pass, '
-        '$unconfirmed not confirmed); first: $shown$rest';
+    final where = pageSize > Bootloader.payloadSize
+        ? ' in ${pages.length} page(s) (${pages.take(named).map((p) => '0x${p.toRadixString(16)}').join(', ')})'
+        : '';
+    return '$count of $total chunks differ$where; first: $shown$rest';
   }
 }
 
 /// A flash run that stopped without confirming the image: the user cancelled it, its deadline
-/// passed, a chunk was never programmed, the node stopped answering, or a chunk does not read
-/// back.
+/// passed, the node went silent, the core refused, or the space does not read back.
 ///
 /// Thrown rather than returned because every one of these leaves the device with a partial image
-/// and nothing to confirm: the caller must hear it as a failure, not read a result as "it finished
-/// and did not check out".
+/// and nothing to confirm.
 class FlashAborted implements Exception {
   const FlashAborted(
     this.reason, {
@@ -639,17 +940,20 @@ class FlashAborted implements Exception {
   /// Which failure class stopped it; [remedy] follows from it.
   final FlashFault fault;
 
-  /// The image chunk being handled when it stopped, when there was one.
+  /// The app-space chunk being handled when it stopped, when there was one.
   final int? chunk;
 
-  /// The image's chunk count, when it was known.
+  /// The app space's chunk count, when it was known.
   final int? total;
 
   /// What the read-back found, when a mismatch stopped the run.
   final FlashVerifyReport? mismatches;
 
-  /// What the user has to do about it - a power cycle for the three device faults.
+  /// What the user has to do about it.
   String get remedy => fault.remedy;
+
+  /// The offsets that disagree, when the run stopped on a mismatch.
+  String get offsets => mismatches?.summary ?? '';
 
   /// `chunk 812 of 13512: the node stopped answering (...)` - the page prefixes its own
   /// `Update stopped (...)` line, so this does not repeat it.
@@ -661,522 +965,705 @@ class FlashAborted implements Exception {
   String toString() => message;
 }
 
-/// Flashes a device's main binary: write it all, then verify it with two measures - one digest
-/// request and the full read-back pass - and at most one correction round. See [flash].
+/// Flashes a device's main binary with protocol v2: identify, a per-page delta write, the tail
+/// blanked, then two measures and up to five correction rounds. See the library doc.
 class BootloaderClient {
   /// The low-level channel (passthrough by default, so [coreId] selects the relay core).
   final BootloaderTransport transport;
 
-  /// Delay between write requests. A node erases the 64-byte page on the first half of a
-  /// chunk and programs both halves; that cycle outlasts a request (measured ~40 ms), so a
-  /// frame arriving too soon is lost. Writes are paced past it; with the write acknowledgement
-  /// a dropped write is retried immediately, and the digest at the end catches any that slipped
-  /// through with an acknowledgement that did not name the chunk.
-  final Duration writePacing;
+  /// Window for one request. The core answers within 1 s of a passthrough request (its own
+  /// deadline), plus the app's link, so 4 s leaves the core's verdict time to arrive; a bigger
+  /// window is grown on a link-level retry.
+  final Duration requestTimeout;
 
-  /// Timeout growth factor applied on each retry ("dynamic adjustment").
+  /// Growth applied to the window on a link-level retry.
   final double timeoutGrowth;
 
-  /// Attempts for a read before it is treated as unverified (a timeout alone is never a
-  /// mismatch, so this is generous).
-  final int readAttempts;
+  /// Retries for a request the CORE did not answer at all (the app's link). Never used for the
+  /// four reasons the core itself reports.
+  final int linkAttempts;
 
-  /// Attempts for a write before it is dropped.
-  final int writeAttempts;
+  /// The first busy-backoff step: the settle measured between requests on the bench.
+  final Duration busyBackoff;
 
-  /// Attempts for a digest request before the client concludes the node has no digest command
-  /// (an older bootloader stays silent) and falls back to one read-back pass. Two: a lost digest
-  /// request gets a second, longer window, and the fallback still costs the image's reads.
-  final int digestAttempts;
+  /// The cap the busy backoff doubles up to.
+  final Duration busyBackoffCap;
 
-  /// How long one [flash] run may take as a whole. The app space is 32-byte chunks and the
-  /// passthrough paces writes 50 ms apart, so a full image is ~11 minutes of paced writes alone,
-  /// plus one digest request. Forty-five minutes is past any run that is making progress, and far
-  /// short of the hours a node that left bootloader mode used to cost - that case is stopped at
-  /// the first chunk that does not land, so this is the backstop, not the fix.
-  static const Duration flashDeadline = Duration(minutes: 45);
+  /// Attempts per request while the core answers `0x01` (busy).
+  final int busyAttempts;
+
+  /// Correction rounds an upload may run before it fails naming the offsets.
+  final int correctionRounds;
+
+  /// How long one [flash] run may take as a whole - see the library doc for the arithmetic.
+  /// Enforced in [flash], between every request.
+  static const Duration flashDeadline = Duration(minutes: 10);
 
   BootloaderClient({
     int coreId = 1,
     BootloaderTransport? transport,
-    this.writePacing = const Duration(milliseconds: 50),
+    this.requestTimeout = const Duration(seconds: 4),
     this.timeoutGrowth = 1.5,
-    this.readAttempts = 5,
-    this.writeAttempts = 3,
-    this.digestAttempts = 2,
+    this.linkAttempts = 3,
+    this.busyBackoff = const Duration(milliseconds: 250),
+    this.busyBackoffCap = const Duration(seconds: 2),
+    this.busyAttempts = 6,
+    this.correctionRounds = 5,
   }) : transport = transport ?? PassthroughTransport(coreId: coreId);
 
   Duration _grow(Duration timeout) {
     final grown = (timeout.inMicroseconds * timeoutGrowth).round();
-    return Duration(microseconds: grown.clamp(1000, 10000000));
+    return Duration(microseconds: grown.clamp(1000, 30000000));
   }
 
-  /// Asks the device to identify itself (app size + name), retrying a miss with a growing
-  /// window. Returns null when every attempt was missed.
-  Future<BootloaderIdentity?> identify() async {
-    var timeout = const Duration(seconds: 1);
-    for (var attempt = 0; attempt < readAttempts; attempt++) {
+  /// Runs one request under the retry policy: `0x01` waits and retries, a request the core never
+  /// answered retries with a wider window, and every other failure is final.
+  Future<T> _exchange<T>(
+    String what,
+    Future<T> Function(Duration timeout) call,
+  ) async {
+    var timeout = requestTimeout;
+    var wait = busyBackoff;
+    var busy = 0;
+    var lost = 0;
+    while (true) {
       try {
-        final id = await transport.identify(timeout);
-        if (id != null) return id;
-      } on TransportException {
-        // Timeout: retry with a longer window.
-      }
-      timeout = _grow(timeout);
-    }
-    return null;
-  }
-
-  /// Writes one 32-byte chunk, retrying a timeout or a rejected write with a growing window and
-  /// pacing after the attempt. Returns what the device acknowledged: [WriteAck.accepted] is false
-  /// when no attempt was taken, and [WriteAck.lastWrittenOffset] is null when the channel carried
-  /// an acceptance without saying which chunk the device reached (a passthrough relay timeout
-  /// carries no offset) - the one case in which the read-back may find a chunk worth rewriting.
-  ///
-  /// When the channel exposes the device's last-written offset, a write is only accepted once
-  /// that offset names this chunk, so a rejected chunk is retried here rather than read back.
-  Future<WriteAck> writeChunkAck(int offset, List<int> data) async {
-    var timeout = const Duration(seconds: 1);
-    var ack = const WriteAck(false);
-    for (var attempt = 0; attempt < writeAttempts; attempt++) {
-      try {
-        final reply = await transport.writeChunk(
-          offset,
-          Bootloader.padPayload(data),
-          timeout,
-        );
-        final last = reply.lastWrittenOffset;
-        // Reconcile against the device's acknowledged progress: a last-written offset that
-        // does not name this chunk means the device did not program it, so retry.
-        if (reply.accepted && (last == null || last == offset)) {
-          ack = reply;
-          break;
+        return await call(timeout);
+      } on PassthroughFailure catch (failure) {
+        switch (failure.reason) {
+          case PassthroughReason.busy:
+            busy++;
+            if (busy >= busyAttempts) rethrow;
+            await Future<void>.delayed(wait);
+            wait = Duration(
+              microseconds: math.min(
+                wait.inMicroseconds * 2,
+                busyBackoffCap.inMicroseconds,
+              ),
+            );
+          case PassthroughReason.linkLost:
+            lost++;
+            if (lost >= linkAttempts) rethrow;
+            await Future<void>.delayed(wait);
+            timeout = _grow(timeout);
+          case PassthroughReason.malformed:
+          case PassthroughReason.nodeSilent:
+          case PassthroughReason.nodeRefused:
+          case PassthroughReason.unreported:
+            rethrow;
         }
-      } on TransportException {
-        // Timeout: retry with a longer window.
       }
-      timeout = _grow(timeout);
     }
-    if (writePacing > Duration.zero) {
-      await Future<void>.delayed(writePacing);
-    }
-    return ack;
   }
 
-  /// Writes one 32-byte chunk and says only whether the device confirmed it.
-  Future<bool> writeChunk(int offset, List<int> data) async =>
-      (await writeChunkAck(offset, data)).accepted;
+  /// The fault a failure maps to, for the ones that end a run.
+  static FlashFault _faultOf(PassthroughReason reason) => switch (reason) {
+    PassthroughReason.busy => FlashFault.busy,
+    PassthroughReason.malformed => FlashFault.malformed,
+    PassthroughReason.nodeSilent => FlashFault.nodeSilent,
+    PassthroughReason.nodeRefused => FlashFault.nodeRefused,
+    PassthroughReason.unreported => FlashFault.unreportedRefusal,
+    PassthroughReason.linkLost => FlashFault.coreSilent,
+  };
 
-  /// Reads one 32-byte chunk, retrying a timeout or a FAIL with a growing window. Returns the
-  /// 32 bytes, or null when every attempt was missed (never counted as a mismatch by [flash]).
-  Future<Uint8List?> readChunk(int offset) async {
-    var timeout = const Duration(seconds: 1);
-    for (var attempt = 0; attempt < readAttempts; attempt++) {
-      try {
-        final data = await transport.readChunk(offset, timeout);
-        if (data != null) return data;
-      } on TransportException {
-        // Timeout: retry with a longer window.
-      }
-      timeout = _grow(timeout);
+  /// The identify body's geometry, or a refusal: a bootloader that reports no plausible page size
+  /// is a pre-v2 one and nothing else is sent to it.
+  static BootloaderIdentity _checked(BootloaderIdentity id) {
+    if (!Bootloader.pageSizePlausible(id.pageSize) ||
+        id.appSize <= 0 ||
+        id.appSize % id.pageSize != 0) {
+      throw FlashAborted(
+        'the bootloader reports an app space of ${id.appSize} B and a page size of '
+        '${id.pageSize} B, which is not a usable geometry - it is a pre-v2 bootloader '
+        '(the page size is where the old protocol kept its 32-byte name), so nothing was '
+        'written',
+        fault: FlashFault.oldBootloader,
+      );
     }
-    return null;
+    return id;
   }
+
+  /// Asks the device to identify itself. Null when the node did not answer (the core's `0x03`),
+  /// so a page can show "no bootloader reply" for a node that is simply not in bootloader mode;
+  /// throws [FlashAborted] when the answer is a pre-v2 bootloader.
+  Future<BootloaderIdentity?> identify() async {
+    final BootloaderIdentity? id;
+    try {
+      id = await _exchange('identify', transport.identify);
+    } on PassthroughFailure catch (failure) {
+      if (failure.reason == PassthroughReason.nodeSilent ||
+          failure.reason == PassthroughReason.linkLost) {
+        return null;
+      }
+      throw FlashAborted(failure.message, fault: _faultOf(failure.reason));
+    }
+    return id == null ? null : _checked(id);
+  }
+
+  /// Reads one 32-byte chunk, with the request policy applied.
+  Future<Uint8List> readChunk(int offset) =>
+      _exchange('read 0x${offset.toRadixString(16)}', (t) {
+        return transport.readChunk(offset, t);
+      });
+
+  /// Blanks one page, with the request policy applied.
+  Future<int> erasePage(int offset) =>
+      _exchange('erase 0x${offset.toRadixString(16)}', (t) {
+        return transport.erasePage(offset, t);
+      });
+
+  /// Writes one 32-byte chunk and says whether the device confirmed it.
+  Future<WriteAck> writeChunk(int offset, List<int> data) =>
+      _exchange('write 0x${offset.toRadixString(16)}', (t) {
+        return transport.writeChunk(offset, Bootloader.padPayload(data), t);
+      });
+
+  /// The CRC of the whole app space.
+  Future<int> crc() => _exchange('CRC', transport.crc);
 
   /// Flashes [image] and verifies it with two measures.
   ///
-  /// 1. One write pass over the image, each chunk confirmed against the device's write
-  ///    acknowledgement. The first chunk the node does not take ends the run
-  ///    ([FlashFault.writeRefused]) instead of walking the rest of the image into a node that has
-  ///    left bootloader mode.
-  /// 2. One digest request over `[0, padded length)` compared with [expectedDigest] (the package
-  ///    manifest's `crc32_padded`, or the client's own CRC of the padded image), then the full
-  ///    read-back pass. The two are reported separately ([FlashVerifyResult]): a digest that
-  ///    passes while a byte differs is its own outcome, and so is a digest that differs while
-  ///    every byte reads back identical. Neither is preferred over the other.
-  /// 3. At most ONE correction round when a chunk differs, and only for the chunks the write pass
-  ///    was acknowledged for - never for a chunk the node did not acknowledge, which is a link
-  ///    that is not taking data. One re-read of exactly those chunks decides; there is no second
-  ///    round, and the digest is not re-run.
-  ///
-  /// The bound, and why it replaced `maxPasses = 20`: writes are the image plus at most the
-  /// differing acknowledged chunks, reads are one pass plus at most those chunks, and no measure
-  /// is repeated. The old loop read the whole image back, rewrote every mismatched chunk and
-  /// verified again up to twenty times, so a link failing at the core - where every read comes
-  /// back wrong - landed twenty erase/write cycles of the whole image on the node and made the
-  /// owner's "it gets worse with each verification pass" true.
-  ///
-  /// [deadline] bounds the run as a whole and [isCancelled] is the user's way out; both are
-  /// checked between chunks, so neither waits for a stage to finish.
+  /// [maxImageSize] refuses an image the device's app space cannot hold before anything is sent;
+  /// [expectedCrc] is optional and must equal the client's own whole-space CRC (a caller that
+  /// computed it independently - the two must agree, or the value is a stale one and the run is
+  /// refused rather than compared against it). [deadline] bounds the run as a whole and
+  /// [isCancelled] is the user's way out; both are checked between requests.
   Future<FlashResult> flash(
     Uint8List image, {
     int? maxImageSize,
-    int? expectedDigest,
+    int? expectedCrc,
     void Function(FlashProgress progress)? onProgress,
     Duration deadline = flashDeadline,
     bool Function()? isCancelled,
   }) async {
-    // Refuse an image the device's app space cannot hold, before spending a write pass on it.
-    // The caller gets the size from identify(); the device would reject the out-of-range writes
-    // anyway, but only after the whole pass had run and failed verification.
     if (maxImageSize != null && image.length > maxImageSize) {
       throw ArgumentError(
         'image is ${image.length} bytes; the device app space is $maxImageSize',
       );
     }
-    final chunks = _chunk(image);
-    final total = chunks.length;
-    final expected = expectedDigest ?? Bootloader.crc32Padded(image);
-    var writes = 0;
-    final started = DateTime.now();
+    if (image.isEmpty) {
+      throw ArgumentError('image is empty: there is nothing to upload');
+    }
+    try {
+      return await _flash(
+        image,
+        expectedCrc: expectedCrc,
+        deadline: deadline,
+        isCancelled: isCancelled,
+        onProgress: onProgress,
+      );
+    } on PassthroughFailure catch (failure) {
+      throw FlashAborted(failure.message, fault: _faultOf(failure.reason));
+    }
+  }
 
-    /// The two ways out that are not the device's fault, checked between chunks.
-    void checkRun(int chunk, String phase) {
+  Future<FlashResult> _flash(
+    Uint8List image, {
+    int? expectedCrc,
+    required Duration deadline,
+    bool Function()? isCancelled,
+    void Function(FlashProgress progress)? onProgress,
+  }) async {
+    final started = DateTime.now();
+    var reads = 0;
+
+    void checkRun(String phase) {
       if (isCancelled?.call() ?? false) {
         throw FlashAborted(
           'you cancelled it while $phase',
           fault: FlashFault.cancelled,
-          chunk: chunk,
-          total: total,
         );
       }
       if (DateTime.now().difference(started) > deadline) {
         throw FlashAborted(
           'it passed its ${deadline.inMinutes} minute deadline while $phase',
           fault: FlashFault.deadline,
-          chunk: chunk,
-          total: total,
         );
       }
     }
 
-    // 1. One write pass. Each write is acknowledged, so a rejected chunk is retried right here;
-    //    a chunk the node never takes ends the run. A chunk the channel accepted without naming
-    //    it in the acknowledgement is remembered: the device may never have seen it, so the
-    //    verification below can say whether the device had confirmed the chunk it finds wrong.
-    final unconfirmed = <int>{};
-    for (var i = 0; i < total; i++) {
-      checkRun(i + 1, 'writing');
-      final ack = await writeChunkAck(chunks[i].offset, chunks[i].data);
-      if (!ack.accepted) {
-        throw FlashAborted(
-          'the node never confirmed the chunk at offset 0x'
-          '${chunks[i].offset.toRadixString(16)} after $writeAttempts attempts',
-          fault: FlashFault.writeRefused,
-          chunk: i + 1,
-          total: total,
-        );
+    // 1. Identify: nothing is sent to a device that does not answer, and nothing at all to one
+    //    that speaks the pre-v2 encoding.
+    checkRun('identifying');
+    final BootloaderIdentity? identity;
+    try {
+      identity = await _exchange('identify', transport.identify);
+    } on PassthroughFailure catch (failure) {
+      throw FlashAborted(
+        'identify failed: ${failure.message}',
+        fault: _faultOf(failure.reason),
+      );
+    }
+    if (identity == null) {
+      throw const FlashAborted(
+        'the node did not answer identify: it is not in bootloader mode, or it is not there',
+        fault: FlashFault.noAnswer,
+      );
+    }
+    final id = _checked(identity);
+    final pageSize = id.pageSize;
+    final appSize = id.appSize;
+    if (image.length > appSize) {
+      throw ArgumentError(
+        'image is ${image.length} bytes; ${id.name} has an app space of $appSize',
+      );
+    }
+    // The image's own pages end at a whole page; the rest of the space is the tail.
+    final imageEnd = Bootloader.paddedLength(image.length);
+    if (imageEnd > appSize) {
+      throw ArgumentError(
+        'image is ${image.length} bytes, which needs ${imageEnd - appSize} bytes more than '
+        'the $appSize byte app space to fill its last page',
+      );
+    }
+
+    // The model: what the space should hold once the upload is done. The image, erased 0xFF to
+    // the end of the space - and, for each tail page the device refuses to blank, the bytes it
+    // already holds (read before anything is written). Both measures are compared with THIS.
+    final space = Uint8List(appSize)..fillRange(0, appSize, 0xFF);
+    space.setRange(0, image.length, image);
+
+    // 2. Compare, page by page: only the pages that differ are written at all.
+    final differing = <int>[];
+    var kept = 0;
+    final pages = imageEnd ~/ pageSize;
+    for (var page = 0; page < imageEnd; page += pageSize) {
+      checkRun('comparing');
+      final want = Uint8List.sublistView(space, page, page + pageSize);
+      final same = await _pageMatches(page, pageSize, want, () => reads++);
+      if (same) {
+        kept++;
+      } else {
+        differing.add(page);
       }
-      if (ack.lastWrittenOffset == null) unconfirmed.add(i);
-      writes++;
+      onProgress?.call(
+        FlashProgress(
+          phase: FlashPhase.comparing,
+          completed: page ~/ pageSize + 1,
+          total: pages,
+        ),
+      );
+    }
+
+    // 3. Write the pages that differ, and blank the tail.
+    var chunksWritten = 0;
+    var chunksSkipped = 0;
+    var pagesWritten = 0;
+    for (var i = 0; i < differing.length; i++) {
+      checkRun('writing');
+      final written = await _rewritePage(
+        differing[i],
+        pageSize,
+        space,
+        onChunk: (written, skipped) {
+          chunksWritten += written;
+          chunksSkipped += skipped;
+        },
+      );
+      pagesWritten += written;
       onProgress?.call(
         FlashProgress(
           phase: FlashPhase.writing,
           completed: i + 1,
-          total: total,
+          total: differing.length,
         ),
       );
     }
 
-    // 2. Verification, two measures in order: the digest (one round trip over the padded range,
-    //    compared with the expected value) and then the full read-back pass, which is the only
-    //    measure that does not depend on the node's own CRC being right. Read-only by
-    //    construction; neither measure is re-run.
-    final verify = await _verify(
-      chunks,
+    var pagesBlanked = 0;
+    final protectedPages = <int>{};
+    for (var page = imageEnd; page < appSize; page += pageSize) {
+      checkRun('blanking the tail');
+      // Read first: if the page is already blank there is nothing to do, and if the node will not
+      // erase it, these bytes are what the space holds and what both measures have to expect.
+      final held = await _readPage(page, pageSize, () => reads++);
+      if (_allErased(held)) continue;
+      try {
+        await erasePage(page);
+        pagesBlanked++;
+        // An erase ack means "this page is blank now", so the model's 0xFF is right.
+      } on PassthroughFailure catch (failure) {
+        if (failure.reason != PassthroughReason.nodeRefused) rethrow;
+        // The node will not blank this page (the DAS's storage region is inside its app space and
+        // its erase stops at the code space's end). Take what it holds as the model's content.
+        protectedPages.add(page);
+        space.setRange(page, page + pageSize, held);
+      }
+      onProgress?.call(
+        FlashProgress(
+          phase: FlashPhase.writing,
+          completed: pagesBlanked,
+          total: (appSize - imageEnd) ~/ pageSize,
+        ),
+      );
+    }
+
+    // The CRC the device has to answer: the model's, not the image's - the difference is any
+    // region the device refuses to blank, which the host had to read to know.
+    final expected = Bootloader.crc32(space);
+    if (expectedCrc != null && expectedCrc != expected) {
+      throw ArgumentError(
+        'the caller\'s expected CRC ${_hex32(expectedCrc)} is not this space\'s '
+        '${_hex32(expected)} - the value does not describe the image plus the '
+        '${protectedPages.length} page(s) the device will not blank',
+      );
+    }
+
+    // 4./5. Two measures, then up to five correction rounds on the pages the read-back names.
+    var rounds = 0;
+    var corrections = 0;
+    var verify = await _measure(
+      space,
+      pageSize: pageSize,
       expected: expected,
-      unconfirmed: unconfirmed,
+      countRead: () => reads++,
       checkRun: checkRun,
       onProgress: onProgress,
     );
-
-    if (verify.clean) {
-      onProgress?.call(
-        FlashProgress(phase: FlashPhase.done, completed: total, total: total),
-      );
-      return FlashResult(verify: verify, writes: writes);
-    }
-
-    // 3. At most ONE correction round, acknowledged chunks only: the chunks the write pass was
-    //    acknowledged for (the device proved it accepts writes there, so a lost byte is worth one
-    //    rewrite) - never a chunk the node did not acknowledge, which is a link that is not taking
-    //    data. Then exactly one re-read of those chunks decides; there is no second round.
-    final differences = verify.differences;
-    if (differences == null || differences.count == 0) {
-      // The measures disagree but not a byte differs: nothing a rewrite could settle, so report
-      // both and stop. The run does not pick one side.
-      throw FlashAborted(
-        '${verify.outcome.label}: ${verify.note}',
-        fault: FlashFault.verifyMismatch,
-        total: total,
-      );
-    }
-    final correctable = differences.all.where((m) => m.writeConfirmed).toList();
-    final byOffset = <int, _Chunk>{for (final chunk in chunks) chunk.offset: chunk};
-    var corrected = 0;
-    if (correctable.isNotEmpty) {
-      for (final m in correctable) {
-        final chunk = byOffset[m.offset]!;
-        checkRun(m.offset ~/ _payloadSize + 1, 'correcting');
-        final ack = await writeChunkAck(chunk.offset, chunk.data);
-        if (!ack.accepted) {
-          throw FlashAborted(
-            'the node never took the correction for ${m.description} after '
-            '$writeAttempts attempts',
-            fault: FlashFault.writeRefused,
-            chunk: m.offset ~/ _payloadSize + 1,
-            total: total,
-            mismatches: differences,
-          );
-        }
-        writes++;
-        corrected++;
-        onProgress?.call(
-          FlashProgress(
-            phase: FlashPhase.correcting,
-            completed: corrected,
-            total: correctable.length,
-            mismatches: differences.count,
-          ),
-        );
-      }
-
-      // One re-read of the corrected chunks, not another pass over the image.
-      final stillWrong = <FlashMismatch>[];
-      var rereads = 0;
-      for (final m in correctable) {
-        final chunk = byOffset[m.offset]!;
-        checkRun(m.offset ~/ _payloadSize + 1, 're-reading the corrections');
-        final data = await readChunk(chunk.offset);
-        rereads++;
-        if (data == null) {
-          throw FlashAborted(
-            'the node stopped answering while the corrections were read back '
-            '(${m.description}, $readAttempts read attempts)',
-            fault: FlashFault.nodeSilent,
-            chunk: m.offset ~/ _payloadSize + 1,
-            total: total,
-            mismatches: differences,
-          );
-        }
-        if (!sameBytes(data, chunk.data)) {
-          stillWrong.add(_compare(chunk, data, writeConfirmed: true));
-        }
-      }
-      if (stillWrong.isNotEmpty) {
-        final report = FlashVerifyReport(total: total, all: stillWrong);
+    rounds = 1;
+    while (!verify.clean) {
+      final report = verify.differences;
+      if (report == null || report.count == 0) {
+        // The measures disagree but not one byte differs: nothing a rewrite could settle. Report
+        // both and stop - the run does not pick a side.
         throw FlashAborted(
-          'the corrected chunk still does not read back (${report.summary}); '
           '${verify.outcome.label}: ${verify.note}',
           fault: FlashFault.verifyMismatch,
-          chunk: stillWrong.first.offset ~/ _payloadSize + 1,
-          total: total,
+        );
+      }
+      if (rounds > correctionRounds) {
+        throw FlashAborted(
+          'five correction rounds and the space still does not read back: '
+          '${report.summary} (${verify.outcome.label}: ${verify.note})',
+          fault: FlashFault.verifyMismatch,
           mismatches: report,
         );
       }
-      onProgress?.call(
-        FlashProgress(phase: FlashPhase.done, completed: total, total: total),
-      );
-      return FlashResult(
-        verify: FlashVerifyResult(
-          outcome: verify.outcome,
-          digest: verify.digest,
-          expectedDigest: expected,
-          readBacks: verify.readBacks,
-          reads: verify.reads + rereads,
-          differences: differences,
-          corrected: corrected,
-        ),
-        writes: writes,
-      );
-    }
-
-    // Nothing to correct: the measures disagree in a way a rewrite cannot settle (the digest and
-    // the bytes contradict each other), or no chunk that differs was ever acknowledged. Report
-    // both measures and stop - the run does not pick one side.
-    final first = differences.firstDifference;
-    throw FlashAborted(
-      '${verify.outcome.label}: ${verify.note}',
-      fault: FlashFault.verifyMismatch,
-      chunk: first == null ? null : first.offset ~/ _payloadSize + 1,
-      total: total,
-      mismatches: differences,
-    );
-  }
-
-  /// Verifies the device's image against [image] WITHOUT writing a byte, and reports the two
-  /// measures separately: one digest request over `[0, padded length)` compared with
-  /// [expectedDigest] (or the client's own CRC of the padded image), then the full read-back pass.
-  /// Neither measure is preferred over the other, and neither is re-run.
-  Future<FlashVerifyResult> verify(Uint8List image, {int? expectedDigest}) =>
-      _verify(
-        _chunk(image),
-        expected: expectedDigest ?? Bootloader.crc32Padded(image),
-        unconfirmed: const <int>{},
-      );
-
-  /// Asks for the CRC32 of `[offset, offset + length)` of the device's image, retrying a miss with
-  /// a growing window. Returns null when no digest came back after [digestAttempts] - a node whose
-  /// bootloader predates the digest command never answers, and the read-back pass is then the only
-  /// measure.
-  Future<int?> digest(int offset, int length) async {
-    var timeout = const Duration(seconds: 1);
-    for (var attempt = 0; attempt < digestAttempts; attempt++) {
-      try {
-        final crc = await transport.digest(offset, length, timeout);
-        if (crc != null) return crc;
-      } on TransportException {
-        // Timeout: retry with a longer window, then report no digest.
-      }
-      timeout = _grow(timeout);
-    }
-    return null;
-  }
-
-  /// Both measures of one verification. Reads only; the caller decides what a disagreement means.
-  Future<FlashVerifyResult> _verify(
-    List<_Chunk> chunks, {
-    required int expected,
-    required Set<int> unconfirmed,
-    void Function(int chunk, String phase)? checkRun,
-    void Function(FlashProgress)? onProgress,
-  }) async {
-    final total = chunks.length;
-    var reads = 0;
-    void onRead() => reads++;
-
-    checkRun?.call(0, 'verifying');
-    onProgress?.call(
-      const FlashProgress(phase: FlashPhase.verifying, completed: 0, total: 2),
-    );
-
-    // (a) The digest: one round trip over the whole padded image. Bytes past the image read as
-    //     erased 0xFF, so the padded range is what a correct image digests to.
-    final digest = await this.digest(0, total * _payloadSize);
-    onProgress?.call(
-      const FlashProgress(phase: FlashPhase.verifying, completed: 1, total: 2),
-    );
-
-    // (b) The full read-back pass: every chunk, whatever the digest said. A digest that passes
-    //     while a byte differs is a finding, not something to skip the pass over.
-    final found = await _readBack(
-      chunks,
-      unconfirmed: unconfirmed,
-      onRead: onRead,
-      checkRun: checkRun,
-      onProgress: onProgress,
-    );
-
-    final differences = found.isEmpty
-        ? null
-        : FlashVerifyReport(total: total, all: found);
-    final FlashVerifyOutcome outcome;
-    if (digest == null) {
-      outcome = FlashVerifyOutcome.readBackOnly;
-    } else if (digest == expected) {
-      outcome = found.isEmpty
-          ? FlashVerifyOutcome.confirmed
-          : FlashVerifyOutcome.digestAgreesReadBackDiffers;
-    } else {
-      outcome = found.isEmpty
-          ? FlashVerifyOutcome.digestDiffersReadBackAgrees
-          : FlashVerifyOutcome.bothDiffer;
-    }
-    return FlashVerifyResult(
-      outcome: outcome,
-      digest: digest,
-      expectedDigest: expected,
-      readBacks: 1,
-      reads: reads,
-      differences: differences,
-    );
-  }
-
-  /// Reads the image back, chunk by chunk, and returns the chunks whose bytes differ - the whole
-  /// image every time, because this pass is a measure of its own and not a search for the digest's
-  /// first disagreement. Never writes.
-  ///
-  /// A chunk that exhausts its own attempts is a node that stopped answering, not a mismatch, so
-  /// that ends the run ([FlashFault.nodeSilent]).
-  Future<List<FlashMismatch>> _readBack(
-    List<_Chunk> chunks, {
-    required Set<int> unconfirmed,
-    required void Function() onRead,
-    void Function(int chunk, String phase)? checkRun,
-    void Function(FlashProgress)? onProgress,
-  }) async {
-    final total = chunks.length;
-    final found = <FlashMismatch>[];
-    for (var i = 0; i < total; i++) {
-      checkRun?.call(i + 1, 'verifying');
-      final data = await readChunk(chunks[i].offset);
-      onRead();
-      // A read that exhausted its own attempts (5 tries with growing windows, ~8 s of silence) is
-      // the node being gone, not a mismatch: end the run here instead of reading the rest.
-      if (data == null) {
+      // Correct exactly the pages the read-back flagged - never one the device will not blank,
+      // which no rewrite of ours can change.
+      final targets = report.pages
+          .where((page) => !protectedPages.contains(page))
+          .toList();
+      if (targets.isEmpty) {
         throw FlashAborted(
-          'the node stopped answering (offset 0x'
-          '${chunks[i].offset.toRadixString(16)}, $readAttempts read attempts)',
-          fault: FlashFault.nodeSilent,
-          chunk: i + 1,
-          total: total,
+          'the only differing pages are the ones the device will not blank: '
+          '${report.summary}',
+          fault: FlashFault.verifyMismatch,
+          mismatches: report,
         );
       }
-      if (!sameBytes(data, chunks[i].data)) {
+      for (var i = 0; i < targets.length; i++) {
+        checkRun('correcting');
+        await _rewritePage(
+          targets[i],
+          pageSize,
+          space,
+          onChunk: (written, skipped) {
+            chunksWritten += written;
+            chunksSkipped += skipped;
+            corrections += written;
+          },
+        );
+        pagesWritten++;
+        onProgress?.call(
+          FlashProgress(
+            phase: FlashPhase.correcting,
+            completed: i + 1,
+            total: targets.length,
+            mismatches: report.count,
+          ),
+        );
+      }
+      verify = await _measure(
+        space,
+        pageSize: pageSize,
+        expected: expected,
+        countRead: () => reads++,
+        checkRun: checkRun,
+        onProgress: onProgress,
+      );
+      rounds++;
+    }
+
+    onProgress?.call(
+      FlashProgress(
+        phase: FlashPhase.done,
+        completed: appSize ~/ Bootloader.payloadSize,
+        total: appSize ~/ Bootloader.payloadSize,
+      ),
+    );
+    return FlashResult(
+      verify: FlashVerifyResult(
+        outcome: verify.outcome,
+        crc: verify.crc,
+        expectedCrc: expected,
+        readBacks: verify.readBacks,
+        reads: reads,
+        differences: verify.differences,
+        corrected: corrections,
+      ),
+      pagesCompared: pages,
+      pagesKept: kept,
+      pagesWritten: pagesWritten,
+      pagesBlanked: pagesBlanked,
+      pagesProtected: protectedPages.length,
+      chunksWritten: chunksWritten,
+      chunksSkipped: chunksSkipped,
+      correctionRounds: rounds - 1,
+      rounds: rounds,
+    );
+  }
+
+  /// Verifies the device's space against [image] WITHOUT writing a byte.
+  ///
+  /// The tail past the image is whatever the device holds (a read-only pass cannot blank it), so
+  /// the comparison is the image plus those bytes; a clean result means the image is there.
+  Future<FlashVerifyResult> verify(Uint8List image) async {
+    final BootloaderIdentity? identity;
+    try {
+      identity = await _exchange('identify', transport.identify);
+    } on PassthroughFailure catch (failure) {
+      throw FlashAborted(
+        'identify failed: ${failure.message}',
+        fault: _faultOf(failure.reason),
+      );
+    }
+    if (identity == null) {
+      throw const FlashAborted(
+        'the node did not answer identify: it is not in bootloader mode, or it is not there',
+        fault: FlashFault.noAnswer,
+      );
+    }
+    final id = _checked(identity);
+    final imageEnd = Bootloader.paddedLength(image.length);
+    if (imageEnd > id.appSize) {
+      throw ArgumentError(
+        'image is ${image.length} bytes; ${id.name} has an app space of ${id.appSize}',
+      );
+    }
+    final space = Uint8List(id.appSize)..fillRange(0, id.appSize, 0xFF);
+    space.setRange(0, image.length, image);
+    var reads = 0;
+    if (imageEnd < id.appSize) {
+      final tail = await _readPage(
+        imageEnd,
+        id.appSize - imageEnd,
+        () => reads++,
+      );
+      space.setRange(imageEnd, id.appSize, tail);
+    }
+    final result = await _measure(
+      space,
+      pageSize: id.pageSize,
+      expected: Bootloader.crc32(space),
+      countRead: () => reads++,
+    );
+
+    return FlashVerifyResult(
+      outcome: result.outcome,
+      crc: result.crc,
+      expectedCrc: result.expectedCrc,
+      readBacks: result.readBacks,
+      reads: reads,
+      differences: result.differences,
+    );
+  }
+
+  // --- the two measures ------------------------------------------------------
+
+  /// One verification of [space]: the CRC, then the full read-back. Read-only.
+  Future<FlashVerifyResult> _measure(
+    Uint8List space, {
+    required int pageSize,
+    required int expected,
+    required void Function() countRead,
+    void Function(String phase)? checkRun,
+    void Function(FlashProgress progress)? onProgress,
+  }) async {
+    checkRun?.call('verifying');
+    final total = space.length ~/ Bootloader.payloadSize;
+    onProgress?.call(
+      FlashProgress(phase: FlashPhase.verifying, completed: 0, total: 2),
+    );
+
+    // (a) The CRC: one exchange over the whole app space. A node that refuses the request (a
+    //     bootloader without the CRC command) leaves the read-back as the only measure.
+    int? crc;
+    try {
+      crc = await this.crc();
+    } on PassthroughFailure catch (failure) {
+      if (failure.reason != PassthroughReason.nodeRefused &&
+          failure.reason != PassthroughReason.unreported) {
+        rethrow;
+      }
+    }
+    onProgress?.call(
+      FlashProgress(phase: FlashPhase.verifying, completed: 1, total: 2),
+    );
+
+    // (b) The full read-back, whatever the CRC said: a CRC that matches while a byte differs is a
+    //     finding, not something to skip the pass over.
+    final found = <FlashMismatch>[];
+    for (
+      var offset = 0;
+      offset < space.length;
+      offset += Bootloader.payloadSize
+    ) {
+      checkRun?.call('verifying');
+      final data = await readChunk(offset);
+      countRead();
+      final byteAt = _firstDifference(
+        data,
+        space,
+        offset,
+        Bootloader.payloadSize,
+      );
+      if (byteAt != null) {
         found.add(
-          _compare(chunks[i], data, writeConfirmed: !unconfirmed.contains(i)),
+          byteAt < 0
+              ? FlashMismatch(offset, length: data.length)
+              : FlashMismatch(
+                  offset,
+                  at: byteAt,
+                  expected: space[offset + byteAt],
+                  actual: data[byteAt],
+                ),
         );
       }
       onProgress?.call(
         FlashProgress(
           phase: FlashPhase.verifying,
-          completed: i + 1,
+          completed: offset ~/ Bootloader.payloadSize + 1,
           total: total,
           mismatches: found.length,
         ),
       );
     }
-    return found;
+
+    final differences = found.isEmpty
+        ? null
+        : FlashVerifyReport(total: total, all: found, pageSize: pageSize);
+    final FlashVerifyOutcome outcome;
+    if (crc == null) {
+      outcome = FlashVerifyOutcome.readBackOnly;
+    } else if (crc == expected) {
+      outcome = found.isEmpty
+          ? FlashVerifyOutcome.confirmed
+          : FlashVerifyOutcome.crcAgreesReadBackDiffers;
+    } else {
+      outcome = found.isEmpty
+          ? FlashVerifyOutcome.crcDiffersReadBackAgrees
+          : FlashVerifyOutcome.bothDiffer;
+    }
+    return FlashVerifyResult(
+      outcome: outcome,
+      crc: crc,
+      expectedCrc: expected,
+      readBacks: 1,
+      reads: total,
+      differences: differences,
+    );
   }
 
+  // --- page helpers ----------------------------------------------------------
 
-  // --- helpers ---------------------------------------------------------------
-
-  /// The first byte [read] got wrong against [chunk], for a report a person can act on.
-  static FlashMismatch _compare(
-    _Chunk chunk,
-    List<int> read, {
-    required bool writeConfirmed,
-  }) {
-    if (read.length == chunk.data.length) {
-      for (var i = 0; i < read.length; i++) {
-        if (read[i] != chunk.data[i]) {
-          return FlashMismatch(
-            chunk.offset,
-            writeConfirmed: writeConfirmed,
-            at: i,
-            expected: chunk.data[i],
-            actual: read[i],
-          );
-        }
+  /// Whether [want] (a whole page) is what the device holds. Stops at the first differing chunk:
+  /// the caller only needs to know whether the page has to be rewritten.
+  Future<bool> _pageMatches(
+    int page,
+    int pageSize,
+    Uint8List want,
+    void Function() countRead,
+  ) async {
+    for (var off = 0; off < pageSize; off += Bootloader.payloadSize) {
+      final data = await readChunk(page + off);
+      countRead();
+      if (data.length != Bootloader.payloadSize) return false;
+      for (var i = 0; i < Bootloader.payloadSize; i++) {
+        if (data[i] != want[off + i]) return false;
       }
     }
-    return FlashMismatch(chunk.offset, writeConfirmed: writeConfirmed);
+    return true;
   }
 
-  static const int _payloadSize = Bootloader.payloadSize;
-
-  /// Splits [image] into 32-byte chunks, padding the tail with 0xFF (erased flash) so every
-  /// chunk is a full write.
-  static List<_Chunk> _chunk(Uint8List image) {
-    final chunks = <_Chunk>[];
-    for (var offset = 0; offset < image.length; offset += _payloadSize) {
-      final end = offset + _payloadSize;
-      final data = Uint8List(_payloadSize)..fillRange(0, _payloadSize, 0xFF);
-      final n = end > image.length ? image.length - offset : _payloadSize;
-      data.setRange(0, n, image, offset);
-      chunks.add(_Chunk(offset, data));
+  /// Reads [length] bytes at [page] into one buffer (the tail's model and the comparison).
+  Future<Uint8List> _readPage(
+    int page,
+    int length,
+    void Function() countRead,
+  ) async {
+    final out = Uint8List(length);
+    for (var off = 0; off < length; off += Bootloader.payloadSize) {
+      final data = await readChunk(page + off);
+      countRead();
+      out.setRange(off, off + Bootloader.payloadSize, data);
     }
-    return chunks;
+    return out;
+  }
+
+  /// Erases the page at [page] and writes the chunks of [space] that are not already blank.
+  ///
+  /// Returns how many pages it wrote (1). A chunk that wants all 0xFF is not sent: the erase left
+  /// it blank, which is exactly what the chunk would program.
+  Future<int> _rewritePage(
+    int page,
+    int pageSize,
+    Uint8List space, {
+    required void Function(int written, int skipped) onChunk,
+  }) async {
+    final acked = await erasePage(page);
+    if (acked != page) {
+      throw FlashAborted(
+        'the node acknowledged an erase of 0x${acked.toRadixString(16)} for the page '
+        '0x${page.toRadixString(16)}',
+        fault: FlashFault.nodeRefused,
+      );
+    }
+    var written = 0;
+    var skipped = 0;
+    for (var off = 0; off < pageSize; off += Bootloader.payloadSize) {
+      final chunk = space.sublist(
+        page + off,
+        page + off + Bootloader.payloadSize,
+      );
+      if (_allErased(chunk)) {
+        skipped++;
+        continue;
+      }
+      final ack = await writeChunk(page + off, chunk);
+      if (!ack.accepted) {
+        throw FlashAborted(
+          'the node did not take the chunk at 0x${(page + off).toRadixString(16)} '
+          '(it answered 0x${(ack.acked ?? 0).toRadixString(16)}'
+          '${ack.pageFailed ? ', the page is not blank' : ''})',
+          fault: FlashFault.nodeRefused,
+        );
+      }
+      written++;
+    }
+    onChunk(written, skipped);
+    return 1;
+  }
+
+  static bool _allErased(List<int> bytes) {
+    for (final b in bytes) {
+      if (b != 0xFF) return false;
+    }
+    return true;
+  }
+
+  /// The first byte of [data] that differs from [want] at [offset], or -1 when the lengths
+  /// differ, or null when the chunk is identical.
+  static int? _firstDifference(
+    List<int> data,
+    List<int> want,
+    int offset,
+    int length,
+  ) {
+    if (data.length != length || offset + length > want.length) return -1;
+    for (var i = 0; i < length; i++) {
+      if (data[i] != want[offset + i]) return i;
+    }
+    return null;
   }
 }

@@ -1,10 +1,10 @@
 /// The update page has a way out of a flash.
 ///
-/// A flash writes every 32-byte chunk of an image (~13,500 for the app space) and reads them all
-/// back; when the node leaves bootloader mode after `identify()` succeeded the page used to crawl
-/// with no cancel at all (the card's report: `update_page.dart:165`). The client now stops at the
-/// first chunk that does not land, and this file pins the page's half: the Cancel control appears
-/// while a run is in flight, and tapping it ends the run after the chunk in flight.
+/// A flash reads every page of the image, writes the ones that differ, blanks the tail and then
+/// verifies twice; against a node that left bootloader mode after `identify()` succeeded the page
+/// used to crawl with no cancel at all. The client checks `isCancelled` between pages, and this
+/// file pins the page's half: the Cancel control appears while a run is in flight, and tapping it
+/// ends the run at the next page boundary, after the chunk in flight.
 library;
 
 import 'dart:async';
@@ -12,6 +12,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tamuapp/core/bootloader.dart';
 import 'package:tamuapp/core/bootloader_client.dart';
 import 'package:tamuapp/ui/update_page.dart';
 
@@ -19,12 +20,38 @@ import 'support/fw_package.dart';
 
 /// A bootloader channel whose first write is held open until the test lets it finish: the chunk
 /// in flight when the user cancels.
+///
+/// The node reports a one-chunk page, so the cancel lands between the page the held chunk belongs
+/// to and the next one: "the second chunk was never sent" then means exactly what it says.
 class _HeldWriteTransport implements BootloaderTransport {
   _HeldWriteTransport(this.hold);
 
   final Completer<void> hold;
   final flash = <int, Uint8List>{};
   int writes = 0;
+
+  static const int appSize = 0x4000;
+  static const int pageSize = Bootloader.payloadSize;
+
+  @override
+  Future<BootloaderIdentity?> identify(Duration timeout) async =>
+      const BootloaderIdentity(
+        appSize: appSize,
+        pageSize: pageSize,
+        name: 'Tamu v2.0A',
+      );
+
+  @override
+  Future<Uint8List> readChunk(int offset, Duration timeout) async =>
+      flash[offset] ??
+      (Uint8List(Bootloader.payloadSize)
+        ..fillRange(0, Bootloader.payloadSize, 0xFF));
+
+  @override
+  Future<int> erasePage(int offset, Duration timeout) async {
+    flash.removeWhere((o, _) => o >= offset && o < offset + pageSize);
+    return offset;
+  }
 
   @override
   Future<WriteAck> writeChunk(
@@ -35,31 +62,15 @@ class _HeldWriteTransport implements BootloaderTransport {
     writes++;
     if (writes == 1) await hold.future;
     flash[offset] = Uint8List.fromList(data);
-    return WriteAck(true, lastWrittenOffset: offset);
+    return WriteAck(true, acked: offset);
   }
 
   @override
-  Future<Uint8List?> readChunk(int offset, Duration timeout) async =>
-      flash[offset];
-
-  @override
-  Future<int?> digest(int offset, int length, Duration timeout) async {
-    // Hold the whole padded range: what the page's run would verify if it got that far.
-    var crc = 0xFFFFFFFF;
-    for (var i = offset; i < offset + length; i++) {
-      final held = flash[i - i % 32];
-      final b = held == null ? 0xFF : held[i % 32];
-      crc ^= b;
-      for (var bit = 0; bit < 8; bit++) {
-        crc = (crc >> 1) ^ ((crc & 1) != 0 ? 0xEDB88320 : 0);
-      }
-    }
-    return crc ^ 0xFFFFFFFF;
+  Future<int> crc(Duration timeout) async {
+    final space = Uint8List(appSize)..fillRange(0, appSize, 0xFF);
+    flash.forEach((offset, data) => space.setRange(offset, offset + data.length, data));
+    return Bootloader.crc32(space);
   }
-
-  @override
-  Future<BootloaderIdentity?> identify(Duration timeout) async =>
-      const BootloaderIdentity(appSize: 0x4000, name: 'Tamu v2.0A');
 }
 
 void main() {
@@ -85,10 +96,7 @@ void main() {
           isConnected: () => true,
           initialPackage: fakePackage.build(),
           initialPackageName: fakePackage.name,
-          clientFactory: () => BootloaderClient(
-            transport: transport,
-            writePacing: Duration.zero,
-          ),
+          clientFactory: () => BootloaderClient(transport: transport),
         ),
       ),
     );
@@ -113,7 +121,7 @@ void main() {
     await tester.pump();
     expect(find.textContaining('Stopping after the chunk'), findsOneWidget);
 
-    // The chunk in flight lands, and the next check ends the run.
+    // The chunk in flight lands, and the next page boundary ends the run.
     hold.complete();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 10));

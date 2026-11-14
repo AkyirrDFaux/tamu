@@ -38,8 +38,9 @@ void main() {
   test('upload a node application image over the RSBus passthrough', () async {
     // Driven by `./upload.sh rsbus das`. A bare `flutter test` must not fail for want of a
     // rig, so it skips unless the tool opted in; the `hil` tag keeps it out of ./test.sh.
-    // The flash itself paces 429 chunks and then verifies by read-back, so the per-test
-    // timeout is disabled below (Timeout.none) rather than guessed at.
+    // The flash compares every page first, writes only the ones that differ, blanks the tail
+    // and then verifies the whole space twice, so the per-test timeout is disabled below
+    // (Timeout.none) rather than guessed at.
     final imagePath = Platform.environment['TAMU_DAS_IMAGE'];
     if (imagePath == null) {
       markTestSkipped('not an upload run (use ./upload.sh rsbus das)');
@@ -85,8 +86,8 @@ void main() {
 
     // ignore: avoid_print
     print(
-      'RESULT verified by ${result.outcome.label} (digest=${result.verify.digest}) '
-      'writes=${result.writes} reads=${result.reads} - ${result.note}',
+      'RESULT verified by ${result.outcome.label} (crc=${result.verify.crc}) '
+      'chunksWritten=${result.chunksWritten} reads=${result.reads} - ${result.note}',
     );
   }, timeout: Timeout.none);
 }

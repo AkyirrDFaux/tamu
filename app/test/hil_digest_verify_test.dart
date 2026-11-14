@@ -17,6 +17,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tamuapp/core/bootloader.dart';
 import 'package:tamuapp/core/bootloader_client.dart';
 
 import 'hil/hil_api.dart';
@@ -64,14 +65,14 @@ void main() {
     final result = await client.verify(bytes);
     watch.stop();
 
-    final digest = result.digest;
+    final crc = result.crc;
     // ignore: avoid_print
     print(
       'VERIFY ${image.path}: ${bytes.length} B '
       '(padded ${bytes.length + (32 - bytes.length % 32) % 32}) in '
       '${watch.elapsedMilliseconds} ms - outcome=${result.outcome.label} '
-      'digest=0x${(digest ?? 0).toRadixString(16).padLeft(8, '0')} '
-      'expected=0x${result.expectedDigest.toRadixString(16).padLeft(8, '0')} '
+      'CRC=0x${(crc ?? 0).toRadixString(16).padLeft(8, '0')} '
+      'expected=0x${result.expectedCrc.toRadixString(16).padLeft(8, '0')} '
       'readBacks=${result.readBacks} reads=${result.reads} '
       'differ=${result.differing} clean=${result.clean}',
     );
@@ -93,24 +94,29 @@ void main() {
     } else {
       // Two measures, reported separately. The read path is flaky on this rig (Issues.md: a few
       // chunks out of 432 come back with a shifted payload), so a clean image may legitimately
-      // end as "digest matches, read-back differs" - the disagreement is the finding, and neither
-      // side is preferred. What must never happen on a clean image is a digest MISMATCH.
+      // end as "CRC matches, read-back differs" - the disagreement is the finding, and neither
+      // side is preferred. What must never happen on a clean image is a CRC MISMATCH.
       expect(
-        result.hasDigest ? result.digestOk : true,
+        result.hasCrc ? result.crcOk : true,
         isTrue,
-        reason: 'the node must hold this image; the digest is compared with the manifest value',
+        reason:
+            'the node must hold this image; its whole-space CRC is compared with the '
+            'space the host models',
       );
       expect(
         result.reads,
-        (bytes.length + 31) ~/ 32,
-        reason: 'the read-back pass covers every chunk, digest or not',
+        greaterThanOrEqualTo(
+          (identity!.appSize + Bootloader.payloadSize - 1) ~/
+              Bootloader.payloadSize,
+        ),
+        reason: 'the read-back pass covers the whole app space, CRC or not',
       );
       expect(
         result.outcome,
         anyOf(
           FlashVerifyOutcome.confirmed,
           FlashVerifyOutcome.readBackOnly,
-          FlashVerifyOutcome.digestAgreesReadBackDiffers,
+          FlashVerifyOutcome.crcAgreesReadBackDiffers,
         ),
       );
       if (!result.clean) {
