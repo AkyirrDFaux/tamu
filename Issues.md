@@ -906,32 +906,42 @@ are hardware-only.
   are printed on a SECOND `BLPT` line (`counters kept=... drop=... rawstint=... rawstall=...
   nocid i/r/w/d=...`) so the totals line keeps its established shape.
 
-- **E88 Protocol v2 (4-bit commands, standalone erase, page size in identify) needs the app lane and
-  the docs** (card `t_32ee3f57`, 2026-11-14; firmware side done). The wire format is now v2 in all
-  three bootloaders (`Core/Functions/Bootloader.h`): control byte `command(4) | parity(1) |
-  padding(3)`, commands 0b0000..0b1001 (the ten old ones unchanged in value, plus `0b1000`
-  erase-request and `0b1001` erase-response), identify response 41 bytes (`app size u32`, `page size
-  u16`, `name char[32]`), and an erase request/ack that is header-only: the request names ONE page
-  by any offset inside it, the ack carries the page with bit 0 set when the page is not blank. One
-  page per request is deliberate - the loop over a range cost 104 B of the DAS's 2 KB, the tool's
-  loop costs nothing. The core's passthrough gained CID `0x24` (erase: offset 4 in, acked offset 4
-  out, SUCCESS when bit 0 is clear) and CID `0x20`'s reply grew from 36 to 38 bytes (page size u16
-  after the app size) - both are app-visible changes.
+- **E88 Protocol v2 is shipped in the firmware; the app lane, the docs copy and the rig runs are
+  still open** (card `t_32ee3f57`, 2026-11-14; firmware side done and committed as `f3b910a`).
+  `Core/Functions/Bootloader.h` is the spec of `Docs/Services/Bootloader.md` (`7a45e00`, `3694c46`,
+  `ad84dab`, `6787155`): the control byte is `padding(3) | parity(1) | command(4)` and the NINE
+  commands are renumbered so an opcode reads as (operation, direction) - `0b000x` identify,
+  `0b001x` read, `0b010x` erase, `0b011x` write, `0b100x` CRC, bit 0 = 1 for a response. The
+  identify response is 39 bytes: app size u32, page size u32, name char[28]. The erase request is
+  header-only and names ONE page (its own base offset; a misaligned offset is refused with bit 0
+  set, never rounded); the ack carries the page, bit 0 set when it is not blank. The CRC request
+  carries nothing (3 bytes) and its response is start | control | crc32 | end = 7 bytes, because the
+  CRC always covers the whole app space. The core's passthrough CIDs follow the same rank: `0x20`
+  identify, `0x21` read, `0x22` erase, `0x23` write, `0x24` CRC, and CID `0x20`'s reply is the
+  node's identify body verbatim (36 bytes: size, page, name). All of it is app-visible.
   What is NOT done, and is somebody else's card:
-  (a) **The app lane.** `bootloader_client.dart` still speaks v1: parity bit 3, a 39-byte identify,
-  CID 0x20 read as 36 bytes, no erase CID. A v2 node REFUSES a page-start write into a page it was
-  not told to erase, so a v1 client cannot write a v2 node at all - the app must ship with this
-  firmware, not after it. The upload loop is: identify (app size + page size) -> digest or read for
-  what differs -> erase each page/sector that differs -> write its chunks (32 B each) -> digest.
+  (a) **The app lane.** `bootloader.dart` / `bootloader_client.dart` still speak v1: parity at bit 3,
+      the old command values (its `0x21` means write, which v2 reads as READ; its write CID is now
+      the erase CID), a 39-byte identify with the name at 6 and no page size, and no CRC/erase call.
+      A v2 node REFUSES a page-start write into a page it was not told to erase, so a v1 client
+      cannot write a v2 node at all - the app must ship with this firmware, not after it. The
+      procedure it has to implement (Docs/Services/Bootloader.md): identify -> per page read/compare,
+      erase + write only the pages that differ -> blank the pages after the image up to the app size
+      -> CRC (whole space, expected = the host's CRC of the image padded with 0xFF) -> full
+      read-back -> up to FIVE correction rounds on the pages the read-back named, each followed by
+      CRC + read-back -> a sixth failure reports the offsets. The upload's overall timeout has to
+      cover five rounds: the read-back alone measures ~5.9 s on the DAS space, so budget >= 180 s
+      (the firmware-side probe `updater_upload.py` enforces exactly that number).
   (b) **Delta upload is a tool algorithm**, not firmware: the node needs nothing beyond the erase
-  command and the reads it already serves. The rule the node does impose is that a page's both
-  chunks are written after its erase (a page-start chunk into a non-blank page is refused, so the
-  tool re-erases and re-writes the page).
-  (c) **Docs/Services/Bootloader.md is still v1** (3-bit command field, "padding 4bit", a 34-byte
-  identify payload, no erase command, and the write section still implies the bootloader erases).
-  The parent agent must update it with Akyirr's approval; agents do not edit Docs.
-  (d) The core's BLPT counters line now ends `nocid i/r/w/d/e=` (a fifth field for the erase CID) -
-  a rig script that parses that line by position needs the extra field.
+      command and the reads it already serves.
+  (c) **The core bootloader has no CRC handler of its own.** CID `0x24` relays a CRC request to a
+      NODE over RSBus; a core in its own bootloader mode cannot answer a CRC for its own image, so
+      the core's update is verified by read-back only. Not part of this card; record it here so the
+      asymmetry is not mistaken for a bug.
+  (d) The BLPT counters line now ends `nocid i/r/e/w/c=` (five fields, in CID order) - a rig script
+      that parses that line by position needs the rename.
+  (e) The bench hook `BL_DIGEST_READ_HOOK` still answers the whole-space CRC at a pseudo-offset; it
+      is compiled only for the bench env.
 
 ## BLE Settings block (2026-10-28)
 
