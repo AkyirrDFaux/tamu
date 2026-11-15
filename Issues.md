@@ -734,6 +734,37 @@ are hardware-only.
   `SeparatedNear = 31`, `DegenerateNear = 1`), and `test/native/run.sh` fails if either the wording or
   the skip comes back. Nothing in the delay changed: the 32-slot / 2..33 ms budget and the transmit
   stint's worst case are untouched.*)
+  *(2026-11-15, card `t_cafa3e7b` - **the class is not distinguishable, and there was no branch hiding
+  it.** The card asked whether the backoff's class is separable by address range, register type, node
+  role or transaction metadata, and to remove the branch that never fires if it is not. Measured on
+  the host (`firmware/test/native/bus_repeat_test.cpp`, `TestBackoffClassNotSeparable`, 201 checks /
+  0 failures): (1) ADDRESS RANGE - the map has 32 slots for a net's 1024 device numbers, so a class is
+  unavoidable by pigeonhole: 31 degenerate XOR differences inside one net (the multiples of 33, the
+  smallest 33), and the only schedule that separates a net is one delay per device number - 1024
+  slots = 1024 ms of window - against a 300 ms transmit stint that three attempts share. A wider
+  window MOVES the class instead of removing it (a 6-bit phase's smallest member would be 65).
+  (2) NODE ROLE - role is a FUNCTION of the address (a core is always its net's device 1, nodes are
+  allocated from 2 up), so as a term it SPLITS the class without separating it: it divides the
+  core/node member (1 against 32) and leaves every node/node member locked (3 vs 34, 2 vs 35 -
+  measured as equal delays with the role term folded in). The class is reachable as soon as ONE net
+  holds 32 devices (degenerate pairs in a net of 31/32/64 devices: 0/1/33); this rig's devices are
+  2, 3, 4, so it has none. (3) REGISTER TYPE and (4) TRANSACTION METADATA - Cmd, Priority, TrID, the
+  target ID and the flags describe the SENDER's own frame, the other contender's is not readable, and
+  the ordinary collision is two contenders sending the same kind, where any such term is equal on both
+  sides; two independent senders' frame terms still coincide on the 32-slot grid (125 of 4096 draws
+  measured). **No branch was removed, because none existed** - the only artifacts that ever pretended
+  to separate the class were the false "low 5 bits" sentence in `Bus.h` and the test's
+  `if (B == 32) continue;`, both already gone in `c23aa88`. Nothing in the delay changed and the DAS
+  pays 0 B for this pass (flash 13808/14336, RAM 2048/2048; core 713748/2633728, 92644/327680 - the
+  same figures as before it). The four dimensions are now stated in `Bus.h` as `ADDRESS RANGE` /
+  `NODE ROLE` / `REGISTER TYPE` / `TRANSACTION METADATA` and pinned by `test/native/run.sh`, whose new
+  clauses are RED against four mutants (`.pio/probe/e80_guard_probe.sh`: the role dimension dropped,
+  the metadata dimension dropped, the class assertion dropped, the measurement not called) plus a
+  fifth mutant - a wrong reachability value - that the source guard is blind to by design and the test
+  binary catches (`FAIL .../e80_mutant_value.cpp:520: Pairs32 = 1, want 0x0`). Also corrected here: the
+  fold's terms read bits 5-9 and 10-14, i.e. 15 of the 16 address bits, so a pair differing only in
+  bit 15 (net 0 against net 32) is a kernel member as well - but a bus does not cross nets, so no such
+  pair contends.*)
 
 
 - **E81 The DAS bootloader still ignores ~4 % of passthrough requests** (card `t_334a1347`,
