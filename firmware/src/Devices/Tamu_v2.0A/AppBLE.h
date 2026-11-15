@@ -565,6 +565,21 @@ static bool BleBondEpochKnown = false;     // false = no stamp (fresh partition,
 // it also skips the controller resolving-list removal that makes a forgotten peer unlinkable
 // again, and a revoke has to do both. The advertisement is rebuilt straight afterwards by the
 // tick's own path, so the air is empty for microseconds, not for a loop.
+//
+// E65 fix: wait for advertising to actually stop (ble_gap_adv_active() == 0) before unpairing,
+// with a bounded timeout. The controller may not stop instantly after the HCI command returns.
+static bool BleWaitAdvStopped(uint32_t TimeoutMs)
+{
+    const uint32_t Start = TimeFromBoot();
+    while (TimeFromBoot() - Start < TimeoutMs)
+    {
+        if (!ble_gap_adv_active())
+            return true;
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    return false;
+}
+
 bool AppBLEForgetAllBonds()
 {
     if (!BleServer)
@@ -573,12 +588,16 @@ bool AppBLEForgetAllBonds()
     NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
     const bool AdvWasUp = Adv != nullptr && Adv->isAdvertising();
     bool AdvStopped = !AdvWasUp;
+    uint32_t AdvStopMs = 0;
     if (AdvWasUp)
     {
-        Adv->stop(); // a synchronous HCI command: the controller is idle once it returns
-        AdvStopped = !Adv->isAdvertising();
+        Adv->stop(); // issue HCI stop command
+        AdvStopMs = TimeFromBoot();
+        AdvStopped = BleWaitAdvStopped(500); // wait for controller to confirm stop
         if (!AdvStopped)
-            DeviceLog("APPBLE", "advertising would not stop: the bond delete will be refused (E65)");
+            DeviceLog("APPBLE", "advertising would not stop within 500 ms: bond delete will be refused (E65)");
+        else
+            AdvStopMs = TimeFromBoot() - AdvStopMs;
     }
 
     const int Before = NimBLEDevice::getNumBonds();
@@ -613,7 +632,7 @@ bool AppBLEForgetAllBonds()
                   After);
     }
 
-    DeviceLog("APPBLE", "bonds forgotten: %d -> %d (ok=%d)", Before, After, Ok);
+    DeviceLog("APPBLE", "bonds forgotten: %d -> %d (ok=%d, adv_stop_ms=%u)", Before, After, Ok, (unsigned)AdvStopMs);
     AppBLEBondStoreChanged(); // the block's Bond texts follow in the next loop pass
 
     // The advertisement goes back up through AppBLETick's own rebuild path, in this same loop pass:
@@ -623,7 +642,7 @@ bool AppBLEForgetAllBonds()
     if (AdvWasUp && AdvStopped)
     {
         BleAdvStateApplied = false;
-        DeviceLog("APPBLE", "advertisement returns: the bond delete is done (E65)");
+        DeviceLog("APPBLE", "advertisement returns: the bond delete is done (E65, adv_stop_ms=%u)", (unsigned)AdvStopMs);
     }
 
     // The caller is told the STATE, not the per-entry result: an empty store afterwards is the
@@ -644,6 +663,9 @@ bool AppBLEForgetAllBonds()
 // The epoch stamp and the automatic window are NOT touched here: emptying the store is
 // AppBLEForgetAllBonds' job (the block calls it when every entry of the written array is zero), so
 // the "an explicit forget emptied the store" event still has exactly one grant site.
+//
+// E65 fix: wait for advertising to actually stop (ble_gap_adv_active() == 0) before unpairing,
+// with a bounded timeout. The controller may not stop instantly after the HCI command returns.
 bool AppBLEForgetBond(const uint8_t Addr[BLE_BOND_ADDR_LEN])
 {
     if (!BleServer)
@@ -667,24 +689,28 @@ bool AppBLEForgetBond(const uint8_t Addr[BLE_BOND_ADDR_LEN])
     NimBLEAdvertising *Adv = NimBLEDevice::getAdvertising();
     const bool AdvWasUp = Adv != nullptr && Adv->isAdvertising();
     bool AdvStopped = !AdvWasUp;
+    uint32_t AdvStopMs = 0;
     if (AdvWasUp)
     {
-        Adv->stop(); // a synchronous HCI command: the controller is idle once it returns
-        AdvStopped = !Adv->isAdvertising();
+        Adv->stop(); // issue HCI stop command
+        AdvStopMs = TimeFromBoot();
+        AdvStopped = BleWaitAdvStopped(500); // wait for controller to confirm stop
         if (!AdvStopped)
-            DeviceLog("APPBLE", "advertising would not stop: the bond delete will be refused (E65)");
+            DeviceLog("APPBLE", "advertising would not stop within 500 ms: bond delete will be refused (E65)");
+        else
+            AdvStopMs = TimeFromBoot() - AdvStopMs;
     }
 
     const int Before = NimBLEDevice::getNumBonds();
     const bool Ok = NimBLEDevice::deleteBond(Target);
     const int After = NimBLEDevice::getNumBonds();
-    DeviceLog("APPBLE", "bond forgotten: %d -> %d (ok=%d)", Before, After, Ok);
+    DeviceLog("APPBLE", "bond forgotten: %d -> %d (ok=%d, adv_stop_ms=%u)", Before, After, Ok, (unsigned)AdvStopMs);
     AppBLEBondStoreChanged();
 
     if (AdvWasUp && AdvStopped)
     {
         BleAdvStateApplied = false;
-        DeviceLog("APPBLE", "advertisement returns: the bond delete is done (E65)");
+        DeviceLog("APPBLE", "advertisement returns: the bond delete is done (E65, adv_stop_ms=%u)", (unsigned)AdvStopMs);
     }
 
     // The caller is told the store's STATE, like the forget-all path: the block reads the array back
