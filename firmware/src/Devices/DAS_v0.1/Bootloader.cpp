@@ -25,8 +25,11 @@
 //
 // Erases stop at 0x3E00: the storage region at the top of the app region belongs to the app (its
 // file table is 512 B of state), so the one command that can be aimed at a whole page per request
-// refuses it rather than wiping it. A write is bounded by the app region as before (the tool never
-// sends a chunk that lands in the storage).
+// refuses it rather than wiping it. Writes stop there as well (`APP_CODE_SIZE` is the bound the
+// write handler passes): a chunk past the code space is refused with its page named, so a write
+// cannot reach the storage either. Flash programming only clears bits, so a MID-PAGE chunk in the
+// tail used to be programmed and acked as written - and a PAGE-START one there only looked refused
+// by accident, because the storage's first word happens not to be blank.
 //
 // It is written with direct register access (no SPL GPIO/USART/RCC/FLASH) to fit the 2 KB
 // region alongside the framework startup/SystemInit. The clock is already 48 MHz: the
@@ -306,7 +309,7 @@ static void HandleWrite(uint32_t Offset, const uint8_t *Payload)
     // read as a success (its page address IS its own offset). The core relays this offset in its
     // write reply with FLAG_FAIL because it does not equal the offset it asked for.
     const Bootloader::ChunkResult Result =
-        Bootloader::WriteChunk<DasFlash>(Offset, Payload, APP_SIZE, LastWritten);
+        Bootloader::WriteChunk<DasFlash>(Offset, Payload, APP_SIZE, APP_CODE_SIZE, LastWritten);
 
     uint8_t Resp[Bootloader::READ_REQ_SIZE];
     Bootloader::EncodeWriteResponse(Bootloader::WriteAck(Result, Offset, LastWritten), Resp);

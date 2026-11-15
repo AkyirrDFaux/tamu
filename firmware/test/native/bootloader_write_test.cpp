@@ -13,6 +13,12 @@
 //   * the ack rule is the verification: the response names the chunk only when its 32 bytes read
 //     back as sent, names the PAGE (bit 0 set) when the page could not be written, and keeps the
 //     previous offset when nothing was touched;
+//   * the write is BOUNDED at the code space (the caller passes the region size AND the code space
+//     inside it): a chunk past the code space is refused with its PAGE named, exactly as an erase
+//     there is. The last 512 B of the app region is the app's own storage, and without this bound a
+//     MID-PAGE chunk in the tail is programmed and acked as written (flash programming only clears
+//     bits), while a PAGE-START chunk there only looks refused by accident - the storage's first
+//     word happens not to be blank;
 //   * ErasePage blanks the page its offset NAMES - the offset must be page-aligned, and a
 //     misaligned one is refused with the flag (never rounded into the page below it) - and answers
 //     with the page, with bit 0 set when the page is not blank afterwards (a failed erase, an
@@ -34,7 +40,8 @@
 namespace
 {
     constexpr uint32_t kAppSize = 0x3800; // the DAS upload window (APP_LIMIT - APP_BASE)
-    constexpr uint32_t kCodeSize = 0x3600; // what an erase is allowed to reach (storage above)
+    // The code space inside the window: what a write AND an erase may reach (storage above).
+    constexpr uint32_t kCodeSize = 0x3600;
 
     // A NOR flash seen through the offsets the bootloader uses (0 == APP_BASE). Static state, like
     // fake_flash.h: the rule calls the adapter's members on the type.
@@ -107,11 +114,12 @@ namespace
     uint32_t Last = 0xFFFFFFFFu;
 
     // The node's write handler, less the response frame: this IS the rule under test, and the value
-    // it returns is exactly what the write response carries.
+    // it returns is exactly what the write response carries. Both bounds are the caller's: the app
+    // region and the code space inside it (the DAS handler passes APP_SIZE and APP_CODE_SIZE).
     uint32_t HandleWrite(uint32_t Offset, const uint8_t *Payload)
     {
         const Bootloader::ChunkResult R =
-            Bootloader::WriteChunk<NorFlash>(Offset, Payload, kAppSize, Last);
+            Bootloader::WriteChunk<NorFlash>(Offset, Payload, kAppSize, kCodeSize, Last);
         return Bootloader::WriteAck(R, Offset, Last);
     }
 
@@ -398,6 +406,58 @@ int main()
         uint8_t New[64];
         Page(New, 0x80, 0x20);
         CHECK(NorFlash::Holds(0x80, New, sizeof(New)));
+    }
+
+    // --- 12. A chunk past the code space is refused with its page, as an erase there is ---------
+    // The last 512 B of the app region is the app's own storage (its file table). The write is
+    // bounded at the code space, so a chunk in the tail is refused with the PAGE named and bit 0
+    // set - the same answer an erase past the code space gives - and the tail is untouched whether
+    // it holds the storage or is still blank. The blank case is the defect this bound fixes: a
+    // MID-PAGE chunk into a blank storage page used to be programmed and acked as written, and only
+    // a PAGE-START one looked refused, incidentally, because the storage's first word is not blank.
+    NorFlash::Reset();
+    {
+        // The tail's first page holds the app's storage, like the device's.
+        uint8_t Storage[64];
+        for (uint32_t i = 0; i < sizeof(Storage); i++) Storage[i] = (uint8_t)(0xB0u + i);
+        NorFlash::Fill(kCodeSize, Storage, sizeof(Storage));
+        Last = kCodeSize - PAGE_SIZE; // the last chunk of the code space landed
+
+        // A MID-PAGE chunk inside the storage's first page (0x3620): refused with the page, and
+        // nothing is programmed - the ack is the PAGE (0x3600) with the failure flag.
+        Pattern(Chunk, kCodeSize + PAYLOAD_SIZE, 0xC0);
+        const uint32_t MidAck = HandleWrite(kCodeSize + PAYLOAD_SIZE, Chunk);
+        CHECK(MidAck != kCodeSize + PAYLOAD_SIZE);         // not an ack of the chunk
+        CHECK_EQ(MidAck, kCodeSize | 1u);                  // the PAGE, flagged
+        CHECK_EQ(AckPage(MidAck), kCodeSize);
+        CHECK(NorFlash::Holds(kCodeSize, Storage, sizeof(Storage)));   // the page is unchanged
+        CHECK(!NorFlash::Holds(kCodeSize + PAYLOAD_SIZE, Chunk, PAYLOAD_SIZE));
+        CHECK_EQ(Last, kCodeSize - PAGE_SIZE);             // progress did not move
+        CHECK_EQ(NorFlash::Erases, 0);                     // and no flash was touched at all
+
+        // A PAGE-START chunk at the storage's first page (0x3600): refused the same way, unchanged.
+        Pattern(Chunk, kCodeSize, 0xD0);
+        CHECK_EQ(HandleWrite(kCodeSize, Chunk), kCodeSize | 1u);
+        CHECK(NorFlash::Holds(kCodeSize, Storage, sizeof(Storage)));
+
+        // The refusal does not depend on the tail's content: a BLANK storage page is refused too.
+        // This is the case that used to be programmed and acked as written.
+        const uint32_t BlankPage = kCodeSize + PAGE_SIZE;
+        Pattern(Chunk, BlankPage + PAYLOAD_SIZE, 0xE0);
+        CHECK_EQ(HandleWrite(BlankPage + PAYLOAD_SIZE, Chunk), BlankPage | 1u);
+        CHECK(NorFlash::AllErased(BlankPage, PAGE_SIZE));  // nothing landed in it
+        Pattern(Chunk, BlankPage, 0xE0);
+        CHECK_EQ(HandleWrite(BlankPage, Chunk), BlankPage | 1u);
+        CHECK(NorFlash::AllErased(BlankPage, PAGE_SIZE));
+
+        // The bound is exactly the code space: the page below it still takes its two chunks, and
+        // the chunk that ends AT the code space's end is inside it.
+        const uint32_t LastCodePage = kCodeSize - PAGE_SIZE;
+        CHECK_EQ(HandleErase(LastCodePage), LastCodePage);
+        Pattern(Chunk, LastCodePage, 0xF0);
+        CHECK_EQ(HandleWrite(LastCodePage, Chunk), LastCodePage);
+        Pattern(Chunk, LastCodePage + PAYLOAD_SIZE, 0xF0);
+        CHECK_EQ(HandleWrite(LastCodePage + PAYLOAD_SIZE, Chunk), LastCodePage + PAYLOAD_SIZE);
     }
 
     std::printf("== bootloader write-path tests (v2: erase command + page-start check + ack rule): "

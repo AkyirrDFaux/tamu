@@ -243,13 +243,15 @@ namespace Bootloader
     //   * a delta upload blanks exactly the pages that differ;
     //   * a write no longer needs to know what the page holds - except for the one check below.
     //
-    // The one check: a PAGE-START chunk (offset % PAGE_SIZE == 0) reads the page's first word
-    // before it programs anything, and refuses with the PAGE named when that word is not
-    // 0xFFFFFFFF. It catches a tool writing into a page it never erased (a lost erase ack, a
-    // tool that assumes the old erase-in-write behaviour), which would otherwise program into
-    // dirty bits and read back different. A chunk INSIDE a page is never checked: by then its
-    // page's first word is the one this very upload just programmed. The check is unconditional -
-    // it costs 28 B of the 2 KB region and the owner allowed it because it fit (2026-11-13).
+    // The checks a write still makes: it is bounded by the CODE space the caller passes (a chunk in
+    // the storage tail is refused with its page - see WriteChunk below), and a PAGE-START chunk
+    // (offset % PAGE_SIZE == 0) reads the page's first word before it programs anything, refusing
+    // with the PAGE named when that word is not 0xFFFFFFFF. It catches a tool writing into a page it
+    // never erased (a lost erase ack, a tool that assumes the old erase-in-write behaviour), which
+    // would otherwise program into dirty bits and read back different. A chunk INSIDE a page is
+    // never checked: by then its page's first word is the one this very upload just programmed. The
+    // check is unconditional - it costs 28 B of the 2 KB region and the owner allowed it because it
+    // fit (2026-11-13).
     //
     // The ack rule IS the verification: the write response names `Offset` only when the 32 bytes
     // read back as sent, and names the PAGE when the page could not be written. Flash programming
@@ -268,19 +270,31 @@ namespace Bootloader
     // What one write request did, which is what its response has to say:
     enum class ChunkResult : uint8_t
     {
-        Refused,   // misaligned or out of range: nothing was touched, the ack keeps the old offset
+        Refused,   // misaligned or past the app region: nothing was touched, the ack keeps the old offset
         Written,   // the chunk is in flash: the ack names this chunk
-        PageFailed // the page could not be written: the ack names the PAGE, so the tool re-sends it
+        PageFailed // the page could not be written (dirty, or past the code space): the ack names the PAGE
     };
 
+    // `AppSize` is the whole app region the caller may write into, `CodeSize` the CODE space inside
+    // it. On the DAS the two differ: the last 512 B of the region is the app's own storage (its file
+    // table, .TABLE/.SV), which belongs to the app and not to an upload. A chunk past the region
+    // touches nothing and keeps the previous offset; a chunk inside the region but past the code
+    // space is refused with its PAGE named, exactly as an erase past it is. Without that bound a
+    // MID-PAGE chunk in the tail is programmed and acked as written, because flash programming only
+    // clears bits - and a PAGE-START chunk there only looks refused by accident, since the storage's
+    // first word happens not to be blank.
     template <class Flash>
     inline ChunkResult WriteChunk(uint32_t Offset, const uint8_t *Payload, uint32_t AppSize,
-                                  uint32_t &LastWritten)
+                                  uint32_t CodeSize, uint32_t &LastWritten)
     {
         if ((Offset & (PAYLOAD_SIZE - 1u)) != 0) return ChunkResult::Refused; // 32-byte aligned
         // Bounds are checked on the offset, not the computed address: `AppSize - Offset` under an
         // `Offset <= AppSize` guard cannot wrap.
         if (Offset > AppSize || AppSize - Offset < PAYLOAD_SIZE) return ChunkResult::Refused;
+        // The code space ends where the storage begins. Both bounds are whole multiples of the page
+        // size, so an aligned chunk below `CodeSize` always has a full payload left: one compare is
+        // the whole test.
+        if (Offset >= CodeSize) return ChunkResult::PageFailed;
 
         // The erase is the ERASE command's job, not this one, so a write only ever programs. A
         // PAGE-START chunk also proves the erase happened: its page's first word must read

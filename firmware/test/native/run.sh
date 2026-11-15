@@ -340,6 +340,8 @@ echo
 # keep their shape:
 #   - a write never erases (the erase is the ERASE command's), so a lost write cannot blank a page;
 #   - a PAGE-START chunk is checked against its page's first word, and a chunk inside a page is not;
+#   - the write is bounded at the CODE space, so a chunk in the app's storage tail is refused with
+#     its page named and touches nothing (t_71d4fe85);
 #   - every programmed word is read back before the chunk can be acked;
 #   - the response's offset comes from WriteAck, so a page failure names the PAGE;
 #   - the device's write handler goes through WriteChunk, its erase through ErasePage, and neither
@@ -397,6 +399,14 @@ if ! grep -q 'Bootloader::WriteChunk<DasFlash>' "$DAS_BL"; then
     echo "FAIL $DAS_BL: the write handler does not use the tested rule (Bootloader::WriteChunk)"
     chunk_fail=1
 fi
+# t_71d4fe85: the write is bounded at the CODE space (APP_CODE_SIZE), not at the whole app region.
+# The last 512 B of the region is the app's own storage, and bounded at the region a MID-PAGE chunk
+# in the tail was programmed and acked as written (flash programming only clears bits) while a
+# PAGE-START one only looked refused because the storage's first word is not blank.
+if ! grep -q 'Bootloader::WriteChunk<DasFlash>(Offset, Payload, APP_SIZE, APP_CODE_SIZE, LastWritten)' "$DAS_BL"; then
+    echo "FAIL $DAS_BL: the write is not bounded at the code space - a chunk in the storage tail would be programmed"
+    chunk_fail=1
+fi
 if ! grep -q 'Bootloader::ErasePage<DasFlash>' "$DAS_BL"; then
     echo "FAIL $DAS_BL: the erase handler does not use the tested rule (Bootloader::ErasePage)"
     chunk_fail=1
@@ -413,7 +423,7 @@ if ! grep -q 'CMD_ERASE_REQ' "$DAS_BL"; then
     echo "FAIL $DAS_BL: the node does not dispatch the erase command"
     chunk_fail=1
 fi
-[ $chunk_fail = 0 ] && echo "PASS: the erase is its own bounded command, a write only programs (a page-start chunk against its blank page), every word is read back, and only WriteChunk/WriteAck name an offset"
+[ $chunk_fail = 0 ] && echo "PASS: the erase is its own bounded command, a write only programs (a page-start chunk against its blank page, bounded at the code space), every word is read back, and only WriteChunk/WriteAck name an offset"
 fail=$((fail + chunk_fail))
 echo
 
