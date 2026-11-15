@@ -18,6 +18,7 @@ void LoadAllBackups();
 #include "Blocks/Button.h"
 #include "Blocks/LED.h"
 #include "Core/Functions/Device.h"
+#include "Core/Functions/Bootloader.h" // Bootloader::BL_ENTRY_ADDR, the jump contract
 #include "Core/Services/StaticMemory.h"
 
 // ResetCause.h is host-clean, so it cannot include the chip header: tie its constants to the
@@ -108,6 +109,33 @@ const size_t StaticBlockNum = sizeof(StaticBlockRegistry) / sizeof(StaticBlockDe
 #include "Button.h"
 #include "LED.h"
 #include "MeasuringRun.h"
+
+// Hands the node back to its bootloader without a reset (Device service CID 4). The bootloader
+// publishes its entry as a fixed address, Bootloader::BL_ENTRY_ADDR, so the app jumps to a
+// CONSTANT: nothing here reads the bootloader's image or its symbols, and the address cannot drift
+// between the two builds (the bootloader's link fails if its stub is not there - see
+// firmware/scripts/bootloader_entry_check.py).
+//
+// The jump is a plain call into the bootloader's published entry, which re-initialises its own RAM
+// statics and its UART before serving. The app's own state does not need to be cleaned up: the
+// bootloader's entry resets what it uses. Called by the Device service handler (Core/Services/
+// Device.h case 4) AFTER it has sent the reply - that send is complete when it returns, so the ack
+// is on the wire and the RS485 driver is back in RX before this runs.
+//
+// This does not return. It is a plain function rather than an inline helper in the main loop on
+// purpose: the DAS app's code space is full (12 B spare below .fixed_data) and a per-iteration call
+// to an absolute address in the main loop measured 20-28 B of .text (the loop's register
+// allocation is what pays), which does not fit. The handler path costs the call plus the entry
+// setup only.
+//
+// Compiled only with DEVICE_HAS_BOOTLOADER_ENTRY (platformio.ini): the DAS app cannot afford to
+// enable it yet, so this is the definition that goes live the moment the app finds ~7 B.
+#ifdef DEVICE_HAS_BOOTLOADER_ENTRY
+extern "C" __attribute__((noreturn)) void DeviceEnterBootloaderJump(void)
+{
+    ((void (*)(void))Bootloader::BL_ENTRY_ADDR)();
+}
+#endif
 
 // Converts a configured sampling rate (Hz) into the loop interval in ms (>= 1 ms).
 // Memoised per channel: the 32-bit software divide runs only when the stored rate changes,

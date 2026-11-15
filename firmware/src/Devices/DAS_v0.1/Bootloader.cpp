@@ -404,6 +404,71 @@ static void JumpToApp()
     for (;;) {} // unreachable
 }
 
+// The frame loop: serve until reset. Split out so the published entry below runs the same loop the
+// button path does instead of a second copy of it.
+static void Serve()
+{
+    for (;;)
+    {
+        uint8_t Frame[Bootloader::MAX_FRAME_SIZE];
+        uint8_t Cmd = ReceiveFrame(Frame, 2000000u); // 2 s per frame
+        if (Cmd == Bootloader::INVALID) continue;
+
+        uint32_t Offset = Bootloader::Offset(Frame);
+        if (Cmd == Bootloader::CMD_IDENTIFY_REQ)
+            HandleIdentify();
+        else if (Cmd == Bootloader::CMD_WRITE)
+            HandleWrite(Offset, Bootloader::Payload(Frame));
+        else if (Cmd == Bootloader::CMD_READ_REQ)
+            HandleRead(Offset);
+        else if (Cmd == Bootloader::CMD_ERASE_REQ)
+            HandleErase(Offset);
+        else if (Cmd == Bootloader::CMD_JUMP_REQ)
+            JumpToApp(); // offset ignored, no response: the app answering is the proof
+#ifndef BL_DIGEST_READ_HOOK
+        // The bench build reaches the same AppDigest through the read hook below (its carrier
+        // frame), so it leaves this dispatch out to stay inside the 2 KB.
+        else if (Cmd == Bootloader::CMD_DIGEST_REQ)
+            HandleDigest();
+#endif
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Published entry (contract)
+// ---------------------------------------------------------------------------
+// The app jumps here to hand the node back to the bootloader without a reset: the address is
+// Bootloader::BL_ENTRY_ADDR (0x7FC), where `.bootentry` holds the jump to this function - the
+// stub lives in the last word of the region so the entry does not have to fit in the free tail.
+// It skips the button test and the settle delay (the app decided), and does what the C startup
+// would have done for the bootloader's own RAM statics: the app has been using that RAM. LastWritten
+// is the only one read before it is written (every frame buffer is filled whole before its send),
+// and a stale value would name a garbage offset in a refused write's ack.
+//
+// Interrupts go off first: the app leaves USART1's RXNE interrupt enabled and its own ISR would
+// steal the bytes this loop polls for. The port needs nothing beyond SetupUart's CTLR1 write - the
+// app's CTLR2/CTLR3 are 0 and its BRR is the same 104, so the frames match. SysTick is already
+// running the way SendRaw counts on (the app sets CTLR |= 0x05 too).
+extern "C" void BootloaderEntry(void)
+{
+    __disable_irq();
+    LastWritten = 0xFFFFFFFFu;
+    SetupUart();
+    FlashUnlock();
+    GPIOD->BSHR = (1u << 0); // white LED on
+    Serve();
+}
+
+// The 4-byte contract stub: the app calls Bootloader::BL_ENTRY_ADDR and lands here. Pinned by
+// --section-start=.bootentry=0x7FC in platformio.ini; scripts/bootloader_entry_check.py fails the
+// build if this is not at that address or the image has grown into it. The linked row is 2 B
+// (`jal <BootloaderEntry>`), RVC having a short form for a call this close.
+extern "C" void BootloaderEntryStub(void);
+__attribute__((section(".bootentry"), used, noinline)) void BootloaderEntryStub(void)
+{
+    BootloaderEntry();
+}
+
 int main(void)
 {
     SysTick->CTLR |= 0x05; // 48 MHz core clock; the framework startup already ran SystemInit
@@ -430,33 +495,8 @@ int main(void)
 #endif
 
     // Bootloader mode: white LED on, unlock the flash controller for the whole session, then
-    // serve frames until reset.
-    GPIOD->BSHR = (1u << 0);
-    SetupUart();
-    FlashUnlock();
-
-    for (;;)
-    {
-        uint8_t Frame[Bootloader::MAX_FRAME_SIZE];
-        uint8_t Cmd = ReceiveFrame(Frame, 2000000u); // 2 s per frame
-        if (Cmd == Bootloader::INVALID) continue;
-
-        uint32_t Offset = Bootloader::Offset(Frame);
-        if (Cmd == Bootloader::CMD_IDENTIFY_REQ)
-            HandleIdentify();
-        else if (Cmd == Bootloader::CMD_WRITE)
-            HandleWrite(Offset, Bootloader::Payload(Frame));
-        else if (Cmd == Bootloader::CMD_READ_REQ)
-            HandleRead(Offset);
-        else if (Cmd == Bootloader::CMD_ERASE_REQ)
-            HandleErase(Offset);
-#ifndef BL_DIGEST_READ_HOOK
-        // The bench build reaches the same AppDigest through the read hook below (its carrier
-        // frame), so it leaves this dispatch out to stay inside the 2 KB.
-        else if (Cmd == Bootloader::CMD_DIGEST_REQ)
-            HandleDigest();
-#endif
-    }
+    // serve frames until reset. The same entry the app jumps to, so there is one setup path.
+    BootloaderEntry();
 }
 
 #endif // BOOTLOADER_BUILD

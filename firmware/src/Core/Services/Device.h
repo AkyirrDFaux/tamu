@@ -847,6 +847,39 @@ bool DeviceService::Handle(const PacketFrame &Frame)
             break;
         }
 
+        // Enter bootloader (Device service CID 0x0004, "Bootloader"): the inverse of the
+        // bootloader's own jump-to-app (0b1010). 0x0004 is free after Discover/Ping/Identify/
+        // TimeSync.
+        //
+        // SIZE-GATED (2026-11-15): this is compiled only for a device that defines
+        // DEVICE_HAS_BOOTLOADER_ENTRY. The DAS app is the only device with a bootloader to return
+        // to, and its code space is FULL - [0x800, 0x3E00) is 13824 B and the image ends at
+        // 0x3DF4, 12 B spare. The handler below costs 19 B of .text in the DAS build (measured on
+        // a clean build, in the widened-link rig; the ack's own LTO clone of SendDeviceReply plus
+        // the call), which overflows .fixed_data by 7 B; the earlier latch-and-main-loop shape
+        // (the reply latched a flag the loop tested) cost more, not less: the per-iteration call
+        // to the entry measured 20-28 B of .text because the main loop's register allocation pays
+        // for it. Neither fits, so the case is NOT enabled until the app finds ~7 B - that is a
+        // size-diet card, not a detail of this one.
+#ifdef DEVICE_HAS_BOOTLOADER_ENTRY
+        case 4:
+        {
+            // ADDRESSED like every other Device request, so exactly one node leaves the app and
+            // the rest of the bus keeps running.
+            //
+            // The reply goes out FIRST and it is a COMPLETE send, not a queued hand-off:
+            // SendDeviceReply -> DispatchPacket -> the device's bus send (SendAndVerifyPacket on
+            // the DAS) blocks until the frame's TC flag, drops the RS485 direction pin back to RX
+            // and consumes its own echo. When the call below is reached the ack is on the wire and
+            // the bus is idle, which is what makes this the safe point to leave the app from -
+            // there is no half-written frame to lose and nothing in the app's own RAM is needed
+            // afterwards (the bootloader re-initialises its statics and its UART).
+            SendDeviceReply(Frame, TxFrame, nullptr, 0);
+            DeviceEnterBootloaderJump(); // does not return
+            break;
+        }
+#endif
+
         case 0x10: // Core discover per docs 00.10
         {
 #ifdef TYPE_CORE

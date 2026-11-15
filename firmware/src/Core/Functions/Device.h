@@ -91,3 +91,20 @@ inline bool DeviceIdentifyActive(uint32_t NowMs)
     return Requested;
 }
 
+// Enter-bootloader request (Device service CID 4, "Bootloader": the inverse of the bootloader's
+// jump-to-app). A device whose image has a bootloader to return to defines
+// DEVICE_HAS_BOOTLOADER_ENTRY (platformio.ini) and provides this hook: the Device service handler
+// sends the reply and then calls it, and it hands the node to the bootloader. Without the define
+// the handler's case is not compiled at all, so nothing accepts a request it cannot act on.
+//
+// It MUST NOT RETURN: the bootloader's entry re-initialises its own RAM and serves forever, so an
+// implementation that comes back would resume an app whose bus/UART hardware the bootloader has
+// already retaken. Declared here (not in the device tree) because the shared handler is what calls
+// it; the definition lives in the device's Main.h, next to the address it jumps to.
+//
+// NOT enabled on the DAS yet (2026-11-15): enabling it overflows the DAS app's code space by 7 B
+// (see the size note at the case in Core/Services/Device.h).
+#ifdef DEVICE_HAS_BOOTLOADER_ENTRY
+extern "C" __attribute__((noreturn)) void DeviceEnterBootloaderJump(void);
+#endif
+

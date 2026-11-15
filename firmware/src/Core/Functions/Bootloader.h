@@ -13,8 +13,8 @@
 //
 // Header-only frames (offset slot only): start | control | offset | end = 7 bytes.
 // Commands: bit 0 is the direction (0 = request, 1 = response) and bits 1-3 the operation:
-//           0b000x identify, 0b001x read, 0b010x erase, 0b011x write, 0b100x digest/CRC.
-//           0b1010..0b1111 are undefined and rejected.
+//           0b000x identify, 0b001x read, 0b010x erase, 0b011x write, 0b100x digest/CRC,
+//           0b1010 jump to the app (no response). 0b1011..0b1111 are undefined and rejected.
 //
 // v2 is the 4-bit command field: three bits were all used (eight commands) and the erase needed a
 // ninth. The values are RENUMBERED - bits 1-3 are the operation, bit 0 the direction - so an opcode
@@ -67,6 +67,18 @@ namespace Bootloader
     constexpr uint8_t CMD_WRITE_RESP    = 0x7; // 0b0111 - the last written offset
     constexpr uint8_t CMD_DIGEST_REQ    = 0x8; // 0b1000 - CRC32 of a range of the app region
     constexpr uint8_t CMD_DIGEST_RESP   = 0x9; // 0b1001 - the CRC, offset echoed
+    // 0b1010 - jump to the app: the offset is ignored and there is NO response (the node is the
+    // app within milliseconds and the app answering the next request is the proof). 0b1011 is its
+    // response value and stays unused, so a stray 0b1011 frame is rejected like any unknown one.
+    constexpr uint8_t CMD_JUMP_REQ      = 0xA;
+
+    // The published entry point's address (contract): the DAS app calls this address to hand the
+    // node back to the bootloader without a reset. The DAS bootloader's `.bootentry` section is
+    // pinned here by --section-start (platformio.ini) and holds a 4-byte jump to BootloaderEntry;
+    // the app's jump stub (Devices/DAS_v0.1/Main.h) calls it. scripts/bootloader_entry_check.py
+    // fails the build when the stub is not exactly here or the image has grown into it. 0x7FC is
+    // the last word of the DAS's 2 KB bootloader region - no other device uses this address.
+    constexpr uint32_t BL_ENTRY_ADDR = 0x7FC;
 
     // Decode sentinel: 0 is a valid command (identify-request), so "invalid" is 0xFF.
     constexpr uint8_t INVALID = 0xFF;
@@ -431,8 +443,8 @@ namespace Bootloader
         READ_REQ_SIZE,      // 0b0111 write-response
         DIGEST_REQ_SIZE,    // 0b1000 digest-request
         DIGEST_RESP_SIZE,   // 0b1001 digest-response
-        0,                  // 0b1010
-        0,                  // 0b1011
+        READ_REQ_SIZE,      // 0b1010 jump-request (offset ignored, no response)
+        0,                  // 0b1011 jump-response (never sent)
         0,                  // 0b1100
         0,                  // 0b1101
         0,                  // 0b1110

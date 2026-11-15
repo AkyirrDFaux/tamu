@@ -5,9 +5,9 @@
 // is deliberately independent (a plain bit walk) so a broken fold in the codec cannot agree
 // with itself. The KAT hex strings at the end are mirrored verbatim in the app test.
 //
-// Protocol v2: the control byte is padding(3)=0 | parity(1) | command(4), so ten commands exist
-// (the digest pair plus ERASE) and Decode's "invalid" sentinel is 0xFF (0b0000 is a valid
-// command: identify-request).
+// Protocol v2: the control byte is padding(3)=0 | parity(1) | command(4), so eleven commands exist
+// (the digest pair plus ERASE and the jump request) and Decode's "invalid" sentinel is 0xFF (0b0000
+// is a valid command: identify-request).
 
 #include <cstdint>
 #include <cstdio>
@@ -222,10 +222,12 @@ int main()
 
         // A v1 control byte (parity at bit 3) must not decode. The length cannot tell the two
         // protocols apart - both identify responses are 39 bytes - so the control byte is what
-        // does, and this is the request that pins it.
+        // does, and this is the request that pins it. 0b1011 is the value to use: v1 reads it as a
+        // read-response, while v2 has no command there (0b1010 is the jump request and 0b1011 its
+        // never-sent response value).
         uint8_t v1[READ_REQ_SIZE];
         EncodeReadRequest(0x00000101u, v1);            // three set bits: v1 parity would be 1
-        v1[1] = (uint8_t)(CMD_READ_REQ | (1u << 3));
+        v1[1] = (uint8_t)(CMD_READ_REQ | (1u << 3) | 1u);
         CHECK_EQ(Decode(v1, READ_REQ_SIZE), INVALID);
     }
 
@@ -376,13 +378,16 @@ int main()
 
     // --- every defined command is a frame size; nothing undefined decodes ------
     {
-        for (int Cmd = 0; Cmd < 10; Cmd++) CHECK(FrameSize((uint8_t)Cmd) != 0);
+        for (int Cmd = 0; Cmd <= CMD_JUMP_REQ; Cmd++) CHECK(FrameSize((uint8_t)Cmd) != 0);
         CHECK_EQ(FrameSize(CMD_DIGEST_REQ), DIGEST_REQ_SIZE);
         CHECK_EQ(FrameSize(CMD_DIGEST_RESP), DIGEST_RESP_SIZE);
         CHECK_EQ(FrameSize(CMD_IDENTIFY_RESP), IDENTIFY_RESP_SIZE);
         CHECK_EQ(FrameSize(CMD_ERASE_REQ), ERASE_REQ_SIZE);
         CHECK_EQ(FrameSize(CMD_ERASE_RESP), ERASE_RESP_SIZE);
-        for (int Cmd = 10; Cmd < 16; Cmd++) CHECK_EQ(FrameSize((uint8_t)Cmd), 0); // undefined
+        CHECK_EQ(FrameSize(CMD_JUMP_REQ), READ_REQ_SIZE); // 0b1010: the 7-byte request shape
+        CHECK_EQ(CMD_JUMP_REQ, 0xAu);                     // the value is the contract with the tool
+        // 0b1011 is the jump's (never sent) response value: still undefined, like 0b1100-0b1111.
+        for (int Cmd = 11; Cmd < 16; Cmd++) CHECK_EQ(FrameSize((uint8_t)Cmd), 0); // undefined
         CHECK_EQ(FrameSize(16), 0);
         CHECK_EQ(FrameSize(0xFF), 0);
     }
