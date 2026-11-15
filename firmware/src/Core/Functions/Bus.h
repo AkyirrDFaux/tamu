@@ -46,9 +46,14 @@
 // multiples of 8, the smallest 8.)
 //
 // The delay is now a 5-bit ADDRESS PHASE XORed with a draw:
-//     phase = (Addr & 31) ^ ((Addr >> 5) & 31) ^ ((Addr >> 10) & 31)   -- all 16 address bits
+//     phase = (Addr & 31) ^ ((Addr >> 5) & 31) ^ ((Addr >> 10) & 31)   -- 15 of the 16 bits
 //     draw  = ((Rand >> 16) & 31) ^ Attempt
 //     delay = 2 + (phase ^ draw) ms                                    = 2 .. 33 ms
+//
+// (The middle term is bits 5-9 and the last is bits 10-14, so bit 15 - net bit 5 - is not read: a
+// pair whose addresses differ only in it, net 0 against net 32, is a kernel member as well. Those
+// two devices are in different nets and a bus does not cross nets (Docs/RSBus and Packets.md,
+// Network Structure), so no such pair ever contends for this medium.)
 //
 // * Why the pair separates within ONE attempt. XOR is a bijection, so two nodes that are still in
 //   phase (same PRNG state and attempt, hence the same draw) keep exactly the difference their
@@ -63,24 +68,52 @@
 //   The class it CANNOT tell apart is the kernel itself: the differences 33, 66, 99 ... i.e. pairs
 //   that are 32, 96, 288 ... apart inside one net (10 address bits). Node 1 against node 32 is the
 //   smallest (1 ^ 32 = 33); 0.3 against 0.34 is one a two-block net can really hold. Such a pair
-//   draws identically whenever both PRNG states agree, and no 5-bit address term can do better - a
-//   phase has 32 slots for a net's 1024 addresses, so 32 addresses must share every slot, and even
-//   the smallest LINEAR fold keeps a kernel member at or below 46: of the 46 nonzero differences
-//   1..46, either one maps to 0 or all 46 map into the 31 nonzero slots and two of them are equal,
-//   whose XOR (again at most 46) is in the kernel. The fold reaches 33, so at most 13 addresses of
-//   span are left unclaimed and none of that removes the class. (Card t_e707d153, E80. This comment
-//   used to claim that "two nodes whose addresses differ in the low 5 bits never draw the same
-//   delay" - false, and a rig-plausible pair: 3 & 31 = 3 and 34 & 31 = 2 differ there and still
-//   collide (3 ^ 34 = 33). The XOR difference is the guarantee; the low bits are not.)
-//   A bus whose node numbers sit inside one ALIGNED 32-address block - every real one; SNDB
-//   reserves 1 and allocates from 2 upwards - therefore has no degenerate pair at all except the
-//   core at 1 against a node at 32, which needs 32 nodes on one net. Two nodes that are NOT in
-//   phase (the core seeds from esp_random, the DAS from SysTick at boot) land on the same slot
-//   with probability 1/32 per attempt - 1/1024 over both retries. That is what the class actually
-//   costs on a bus whose PRNG states differ: addressing cannot close it (a "kind" term cannot
-//   either - two nodes contending for the medium are sending the same kind of frame, so any
-//   kind-derived term is equal on both sides, and the one device-unique term the DAS could have,
-//   its own address, does not exist before it is addressed).
+//   draws identically whenever both PRNG states agree. (Card t_e707d153, E80. This comment used to
+//   claim that "two nodes whose addresses differ in the low 5 bits never draw the same delay" -
+//   false, and a rig-plausible pair: 3 & 31 = 3 and 34 & 31 = 2 differ there and still collide
+//   (3 ^ 34 = 33). The XOR difference is the guarantee; the low bits are not.)
+//
+//   Card t_cafa3e7b asked whether that class is distinguishable after all - by address range,
+//   register type, node role or transaction metadata - and whether a separating branch is missing
+//   here. It is not distinguishable, and no branch is missing: there is nothing to remove, because
+//   no code here ever claimed to separate it (the artifacts that used to hide the class were a false
+//   sentence in this comment and a `if (B == 32) continue;` skip in the test, both gone). Each of
+//   the four dimensions fails for its own reason:
+//
+//   * ADDRESS RANGE. The address is the INPUT of this map and the map has 32 slots, so a net's 1024
+//     device numbers must share those 32 slots however the fold is arranged (pigeonhole): a class is
+//     unavoidable for ANY 32-slot address schedule. The only schedule that separates a net needs a
+//     distinct delay per device number - 1024 slots = 1024 ms of window - against a 300 ms transmit
+//     stint (RS485_TX_STINT_MS) that three attempts share and a DAS whose Sleep() is a whole
+//     millisecond. Widening the window MOVES the class instead of removing it: a 5-bit phase's
+//     smallest kernel member is 33, a 6-bit phase's would be 65, and so on.
+//   * NODE ROLE. A core is always its net's device 1 (NetId.h ApplyArmedNetId) and nodes are
+//     allocated from 2 upwards, so the role is a FUNCTION of the address, not a field beside it. As
+//     a non-linear term it does split off the members that straddle the role boundary - the core
+//     against a node, 1/32, the smallest member - but the class's remaining members are two NODES
+//     (3/34, 2/35, ...), where both sides have the same role and every role-derived term is equal. A
+//     term that removes some members has not separated the class - and the class is reachable long
+//     before a bus is exotic: device 32 is the first number that makes one possible (1 ^ 32 = 33),
+//     i.e. 32 devices on ONE net is enough. (This rig's device numbers are 2, 3, 4, so it has no
+//     degenerate pair at all: the phase separates every pair inside a 32-address block.)
+//   * REGISTER TYPE. A frame's Cmd says what its SENDER is asking for; the other party in a
+//     collision is whoever else was driving the line, and a sender cannot read that party's Cmd. The
+//     ordinary collision is two contenders sending the SAME kind - two nodes answering, two nodes
+//     installing a subscription - where any kind-derived term is equal on both sides.
+//   * TRANSACTION METADATA. Priority, TrID, the target ID and the flags describe the sender's own
+//     frame for the same reason. Priority is the one field the PROTOCOL itself shapes, and it is
+//     already spent upstream: RS485WaitForSilence above scales the silence window by it
+//     (8 + priority/8 + 0..3 bytes, Docs/RSBus and Packets.md), and it is equal on two contenders
+//     sending the same priority - the default 8 for almost everything.
+//
+//   What the class actually costs on a bus whose PRNG states differ (the core seeds from esp_random,
+//   the DAS from SysTick at boot) is the draw's own grid: a separated pair still lands on the same
+//   slot in 1 draw of 32 per attempt, 1/1024 over both retries - not a lockstep, and the reason
+//   nothing in the delay needed changing. The one device-unique term a node could fold into the draw
+//   does not exist before it is addressed: `ShortAddress` stays 0 until the discover loop answers
+//   (Devices/DAS_v0.1/Main.h), and the address it does have is the input the phase already reads.
+//   test/native/bus_repeat_test.cpp TestBackoffClassNotSeparable measures the four dimensions, the
+//   role split and the reachability above instead of trusting this paragraph.
 
 // * The draw reads the TOP half of the PRNG state, whose period is the full 2^32, so the 16-step
 //   low nibble never reaches the delay; XORing it over the phase moves the value uniformly over all

@@ -128,8 +128,24 @@ if [ "$(grep -c 'CHECK(!NewSeparates(1, 32));' "$E80_TEST")" != 1 ] ||
     echo "FAIL $E80_TEST: the kernel pair must be asserted, not skipped (E80's class: 1/32 and 3/34 collide)"
     e80_fail=1
 fi
+# t_cafa3e7b (E80): the class is NOT separable, and the four dimensions the card names are answered
+# in the source and MEASURED in the test (TestBackoffClassNotSeparable): address range (a 32-slot map
+# for a net's 1024 device numbers - the pigeonhole, so a class is unavoidable), node role (it splits
+# the core/node member and leaves the node/node members locked), register type and transaction
+# metadata (the other contender's frame is not readable, and two contenders sending the same kind
+# carry equal terms). Pinned so neither the statement nor the measurement can be dropped.
+if ! grep -q 'ADDRESS RANGE' "$E80_BACKOFF" || ! grep -q 'NODE ROLE' "$E80_BACKOFF" ||
+   ! grep -q 'REGISTER TYPE' "$E80_BACKOFF" || ! grep -q 'TRANSACTION METADATA' "$E80_BACKOFF"; then
+    echo "FAIL $E80_BACKOFF: the backoff must answer all four dimensions the E80 card names (address range / register type / node role / transaction metadata)"
+    e80_fail=1
+fi
+if [ "$(grep -c 'TestBackoffClassNotSeparable' "$E80_TEST")" -lt 2 ] ||
+   [ "$(grep -c 'TestBackoffClassNotSeparable();' "$E80_TEST")" != 1 ]; then
+    echo "FAIL $E80_TEST: TestBackoffClassNotSeparable must exist and be called from main (the class, the role split and its reachability are measurements, not a paragraph)"
+    e80_fail=1
+fi
 if [ "$e80_fail" = 0 ]; then
-    echo "PASS: the backoff states its XOR-difference guarantee, names the kernel class it cannot separate, and the test asserts that class instead of skipping it"
+    echo "PASS: the backoff states its XOR-difference guarantee and the kernel class it cannot separate, asserts that class instead of skipping it, and answers every dimension the E80 card names (class, role split, reachability measured)"
 fi
 if [ "$e80_fail" != 0 ]; then fail=$((fail + 1)); fi
 echo

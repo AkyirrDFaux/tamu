@@ -417,6 +417,110 @@ static void TestBackoffNotA16Cycle()
     CHECK_EQ(State % 16, First); // period 16 in the nibble the old expression read
 }
 
+// ------------------------------------------------------------------------------------------------
+// 6. E80 (card t_cafa3e7b): the address class the backoff cannot separate is NOT separable by
+//    anything the protocol puts in a sender's hands, so there is no class branch to add - and none
+//    to remove. The four dimensions the card names are measured here (address range, node role,
+//    register type, transaction metadata), plus the class's reachability: the number of devices a
+//    net needs before a degenerate pair exists at all.
+// ------------------------------------------------------------------------------------------------
+static void TestBackoffClassNotSeparable()
+{
+    // "In phase" is the same PRNG word and the same attempt, i.e. what two contenders that collided
+    // at the same call index have. The phase difference does not depend on the draw, so one draw
+    // decides whether two addresses can ever land on the same slot.
+    auto InPhase = [](uint32_t A, uint32_t B) {
+        return RS485BackoffMs((uint16_t)A, 0, 0x1234u) == RS485BackoffMs((uint16_t)B, 0, 0x1234u);
+    };
+
+    // The class, as the card's own instances: the smallest member is the CORE against node 32, the
+    // other two are two NODES (which is what a role term cannot touch).
+    CHECK(InPhase(1, 32));
+    CHECK(InPhase(3, 34));
+    CHECK(InPhase(2, 35));
+
+    // (1) ADDRESS RANGE. The address is the INPUT of the map and the map has 32 slots, so a net's
+    // 1024 device numbers must share those 32 slots however the fold is arranged (pigeonhole): one
+    // degenerate difference per 33 addresses, and only a schedule with a distinct delay per device
+    // number - 1024 slots = 1024 ms of window - could separate a net, against a 300 ms transmit
+    // stint that three attempts share.
+    unsigned Degenerate = 0;
+    uint32_t Smallest = 0;
+    for (uint32_t D = 1; D <= 1024; D++)
+        if (InPhase(0, D))
+        {
+            Degenerate++;
+            if (Smallest == 0) Smallest = D;
+        }
+    std::printf("  backoff class (E80): %u degenerate XOR differences in one net, smallest %u; the "
+                "map has 32 slots for 1024 device numbers - a class is unavoidable\n", Degenerate, Smallest);
+    CHECK_EQ(Smallest, 33);
+    CHECK_EQ(Degenerate, 31); // the multiples of 33 up to 1024, i.e. floor(1024 / 33)
+    CHECK(1024 / 33 == 31);
+
+    // (2) NODE ROLE. A core is its net's device 1 (NetId.h ApplyArmedNetId) and nodes are allocated
+    //    from 2 up, so the role is a FUNCTION of the address rather than a field beside it. As a
+    //    non-linear term it DOES split the class - it separates the boundary-straddling member, the
+    //    core against node 32 - and it cannot separate the class: the node/node members, where both
+    //    sides have the same role, stay locked.
+    auto RoleOf = [](uint32_t Addr) { return (uint32_t)((Addr & 0x3FFu) == 1u); };
+    auto DelayWithRole = [](uint16_t Addr, uint32_t Role) {
+        const uint32_t Phase = ((uint32_t)Addr & 0x1Fu) ^ (((uint32_t)Addr >> 5) & 0x1Fu)
+                             ^ (((uint32_t)Addr >> 10) & 0x1Fu);
+        return 2u + ((Phase ^ (Role ? 0x10u : 0u)) & 0x1Fu);
+    };
+    CHECK(RoleOf(1) != RoleOf(32)); // the core against the node
+    CHECK(RoleOf(3) == RoleOf(34)); // ... and the node/node members: no role boundary to straddle
+    CHECK(RoleOf(2) == RoleOf(35));
+    CHECK(DelayWithRole(1, RoleOf(1)) != DelayWithRole(32, RoleOf(32)));
+    CHECK(DelayWithRole(3, RoleOf(3)) == DelayWithRole(34, RoleOf(34)));
+    CHECK(DelayWithRole(2, RoleOf(2)) == DelayWithRole(35, RoleOf(35)));
+    std::printf("  backoff class (E80): node role splits the core/node member (1 vs 32) and leaves "
+                "the node/node members (3 vs 34, 2 vs 35) locked - the class is not separated\n");
+
+    // (3) REGISTER TYPE + (4) TRANSACTION METADATA. Cmd, Priority, TrID, the target ID and the flags
+    // describe the SENDER's own frame; the other party in a collision is whoever else drove the
+    // line, whom a sender cannot read. The ordinary collision is two contenders sending the SAME
+    // kind - two nodes answering, two nodes installing a subscription - where every kind-derived
+    // term is equal on both sides. A per-sender counter (TrID) is not device-unique either: two
+    // nodes' counters run independently and coincide on the same 5-bit value in 1 draw of 32.
+    uint32_t TermA = 0x1234u, TermB = 0x9E37u;
+    unsigned SameTerm = 0, TermDraws = 0;
+    for (int i = 0; i < 4096; i++)
+    {
+        TermA = TermA * 1664525u + 1013904223u; // one contender's own frame terms
+        TermB = TermB * 22695477u + 1u;         // the other's, independently
+        TermDraws++;
+        if (((TermA >> 16) & 0x1Fu) == ((TermB >> 16) & 0x1Fu))
+            SameTerm++;
+    }
+    std::printf("  backoff class (E80): a per-sender frame term (Cmd/priority/TrID) is equal on two "
+                "contenders sending the same frame, and two independent senders' terms coincide in "
+                "%u of %u draws (%.1f %%) - the same 32-slot grid\n",
+                SameTerm, TermDraws, 100.0 * (double)SameTerm / (double)TermDraws);
+    CHECK(SameTerm * 20 <= TermDraws); // ~3 %: no better than the draw alone, so not a separator
+    CHECK(SameTerm * 50 >= TermDraws); // ... and at least 2 %: it is the grid, not zero by construction
+
+    // REACHABILITY. The class is not an exotic corner: count the degenerate pairs on a net of N
+    // device numbers. Device 32 is the first number that makes one possible (1 ^ 32 == 33), so a
+    // bus inside one 32-address block - which is this rig, devices 2/3/4 - has none at all.
+    auto DegeneratePairs = [&InPhase](unsigned N) {
+        unsigned Count = 0;
+        for (uint32_t A = 1; A <= N; A++)
+            for (uint32_t B = A + 1; B <= N; B++)
+                if (InPhase(A, B))
+                    Count++;
+        return Count;
+    };
+    const unsigned Pairs31 = DegeneratePairs(31), Pairs32 = DegeneratePairs(32),
+                   Pairs64 = DegeneratePairs(64);
+    std::printf("  backoff class (E80): degenerate pairs on a net of 31/32/64 devices: %u/%u/%u "
+                "(32 devices on ONE net is where the class starts)\n", Pairs31, Pairs32, Pairs64);
+    CHECK_EQ(Pairs31, 0);
+    CHECK_EQ(Pairs32, 1);  // the core at 1 against the node at 32: 1 ^ 32 == 33
+    CHECK_EQ(Pairs64, 33); // one pair per 33-address span: XOR 33 (31 pairs), 66 (1) and 99 (1)
+}
+
 int main()
 {
     TestGuardedCids();
@@ -424,6 +528,7 @@ int main()
     TestRecordRefuses();
     TestBackoffRange();
     TestBackoffSeparates();
+    TestBackoffClassNotSeparable();
     TestBackoffNotA16Cycle();
 
     std::printf("%s: %d checks, %d failure(s)\n", failures ? "FAIL" : "PASS", checks, failures);
