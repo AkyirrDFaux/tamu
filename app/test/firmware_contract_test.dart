@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/ble_security.dart';
 import 'package:tamuapp/core/block_registry.dart';
 import 'package:tamuapp/core/bootloader.dart';
+import 'package:tamuapp/core/enter_bootloader.dart';
 import 'package:tamuapp/core/firmware_package.dart';
 import 'package:tamuapp/core/render_dict.dart';
 import 'package:tamuapp/core/script_errors.dart';
@@ -911,5 +912,128 @@ void main() {
       });
     },
     skip: packer.isEmpty ? 'packer source not available next to the app' : null,
+  );
+
+  // Device service CID 4 "enter bootloader" (`lib/core/enter_bootloader.dart`) is the inverse of
+  // the bootloader's own jump-to-app, and every half of it lives in the firmware: the CID, the
+  // compile gate, the ack-before-jump order and the entry address. A drift in any of them is
+  // silent from the app's side - the request would simply go unanswered - so the app's own CID is
+  // pinned against the firmware here rather than in a comment.
+  final enterBootloaderFiles = [
+    _firmwareFile('src/Core/Services/Device.h'),
+    _firmwareFile('src/Core/Functions/Device.h'),
+    _firmwareFile('src/Devices/DAS_v0.1/Main.h'),
+    _firmwareFile('src/Core/Functions/Bootloader.h'),
+    _firmwareFile('platformio.ini'),
+  ];
+  group(
+    'enter-bootloader contract (app vs firmware)',
+    () {
+      test(
+        'the CID is the gated case 4, and the ack is sent before the jump',
+        () {
+          final source = _firmwareFile(
+            'src/Core/Services/Device.h',
+          )!.readAsStringSync();
+          final start = source.indexOf('#ifdef DEVICE_HAS_BOOTLOADER_ENTRY');
+          expect(
+            start,
+            greaterThan(0),
+            reason: 'the handler is compiled only under this define',
+          );
+          final gated = source.substring(
+            start,
+            source.indexOf('#endif', start),
+          );
+          expect(gated, contains('case 4:'), reason: 'the CID is 0x0004');
+          expect(
+            gated,
+            contains('DeviceEnterBootloaderJump()'),
+            reason: 'the node leaves its app from this case',
+          );
+          expect(
+            gated.indexOf('SendDeviceReply'),
+            lessThan(gated.indexOf('DeviceEnterBootloaderJump()')),
+            reason: 'the ack is a complete send BEFORE the node leaves',
+          );
+          // The four documented Device commands are 0..3, so 4 is the next free CID.
+          for (final cid in [0, 1, 2, 3]) {
+            expect(
+              source,
+              contains('case $cid:'),
+              reason: 'Device CID $cid is still a command before case 4',
+            );
+          }
+          expect(deviceCidEnterBootloader, 4);
+        },
+      );
+
+      test('the shared header declares the jump the handler calls', () {
+        final source = _firmwareFile(
+          'src/Core/Functions/Device.h',
+        )!.readAsStringSync();
+        final start = source.indexOf('#ifdef DEVICE_HAS_BOOTLOADER_ENTRY');
+        final gated = source.substring(start, source.indexOf('#endif', start));
+        expect(gated, contains('DeviceEnterBootloaderJump'));
+      });
+
+      test('the DAS jump lands on the published bootloader entry', () {
+        final das = _firmwareFile(
+          'src/Devices/DAS_v0.1/Main.h',
+        )!.readAsStringSync();
+        final start = das.indexOf('#ifdef DEVICE_HAS_BOOTLOADER_ENTRY');
+        final gated = das.substring(start, das.indexOf('#endif', start));
+        expect(gated, contains('DeviceEnterBootloaderJump'));
+        expect(
+          gated,
+          contains('Bootloader::BL_ENTRY_ADDR'),
+          reason: 'the jump is a constant, not a read of the bootloader image',
+        );
+        final bootloader = _firmwareFile(
+          'src/Core/Functions/Bootloader.h',
+        )!.readAsStringSync();
+        final entry = RegExp(
+          r'BL_ENTRY_ADDR\s*=\s*(0x[0-9A-Fa-f]+)',
+        ).firstMatch(bootloader);
+        expect(entry, isNotNull, reason: 'the entry address is published');
+        expect(
+          int.parse(entry!.group(1)!.substring(2), radix: 16),
+          0x7FC,
+          reason: 'the address the app-side note and the card name',
+        );
+      });
+
+      test('the DAS env is the one that defines the gate', () {
+        final ini = _firmwareFile('platformio.ini')!.readAsStringSync();
+        final envs = <String, String>{};
+        var current = '';
+        for (final line in ini.split('\n')) {
+          final header = RegExp(r'^\[env:(\w+)\]').firstMatch(line.trim());
+          if (header != null) {
+            current = header.group(1)!;
+            envs[current] = '';
+            continue;
+          }
+          if (current.isNotEmpty) envs[current] = '${envs[current]}$line\n';
+        }
+        expect(
+          envs['DAS_v0_1'],
+          contains('DEVICE_HAS_BOOTLOADER_ENTRY'),
+          reason: 'the node with a bootloader to return to is the DAS app',
+        );
+        expect(
+          envs['DAS_bootloader'] ?? '',
+          isNot(contains('DEVICE_HAS_BOOTLOADER_ENTRY')),
+          reason: 'the bootloader itself is the destination, not a claimant',
+        );
+        // The DAS page size the identify reports, which is what the client reads as the node's
+        // new state: 64 B pages (STORAGE_BLOCK_SIZE is the same 64 B flash page).
+        expect(envs['DAS_v0_1'], contains('STORAGE_BLOCK_SIZE=64'));
+        expect(dasBootloaderPageSize, 64);
+      });
+    },
+    skip: enterBootloaderFiles.any((f) => f == null)
+        ? 'firmware tree not available next to the app'
+        : null,
   );
 }
