@@ -677,6 +677,27 @@ are hardware-only.
   2026-10-21 note), and 0.3/0.4 answer nothing, so it could not be run; and the new counters above
   need the built image flashed, which needs Akyirr's authorization. The recipe for both is in the
   card's handoff.*)
+  *(2026-11-15, card `t_741e97ea` - **the account's identity was FALSE and is corrected, and a loss no
+  retry fixed now has its own digit.** `writes = answered + refused + lost` over-counts every repair: a
+  write whose window expired and whose re-send was answered sits in BOTH `answered` and `lost`, so the
+  identity held only when nothing was repaired - the one case a restore is not. The dump now prints
+  `appwrite writes= answered= refused= lost= repaired= unrepaired=` (`unrepaired = lost - repaired`,
+  `AppInterface.h`), the header states `writes = answered + refused + unrepaired`, and the guard pins
+  both (`test/native/bus_retry_guard.sh` section 9). The guard is now RED against **eight** mutants -
+  `ident` (the false identity back) and `nopair` (the dump stops printing `unrepaired`) joining the six
+  - with the fixed file passing its control run. Build evidence, clean detached worktree at `bdc6d8a` +
+  this change: `pio run -e Tamu_v2_0A -e DAS_v0_1` SUCCESS (core `RAM 92644/327680`, `Flash
+  713748/2633728`; DAS `RAM 2048/2048`, `Flash 13808/14336`) and the native suite rc=0 with 93 PASS
+  lines. The DAS pays 0 B for the change: `USE_APP_INTERFACE` is not defined for that env and its ELF
+  carries 0 `AppBusWrite*` symbols against the core's 17.
+  **Still open, not this card:** the counters are readable as telemetry over the port without a
+  debugger, but NOT inside the app - there is no doc-sanctioned counter channel, the app's frame parser
+  discards console text (`UsbFrameParser.feed`), and the owner withdrew the RAM-line-streamed-by-CID
+  design on 2026-10-28, so surfacing them in the app is a doc-level decision. `unrepaired` is an upper
+  bound on state loss: an answer that arrives after the record was closed (sends spent) cannot re-cause
+  it, so the app's read-back stays the authority on whether a value landed. Unrelated: the shared
+  checkout is currently red for `DAS_v0_1` from another lane's uncommitted statics+stack change
+  (`section .stack VMA overlaps .bss VMA`), not from this one.*)
 
 
 - **E80 The retry backoff still has one address class that cannot be separated** (card `t_d7802076`,
