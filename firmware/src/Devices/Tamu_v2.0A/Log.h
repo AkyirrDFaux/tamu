@@ -3,6 +3,7 @@
 #include "Core/Services/LogHandler.h"
 #include "Core/Functions/AppInterface.h"
 #include "Core/Functions/AppConsole.h"
+#include "Core/Functions/LogText.h"
 #include "esp_log.h"
 #include <cstdarg>
 
@@ -20,24 +21,53 @@
 //     in the TX ring counts as "in use" too (the pump hands out 60 B at a time, so a line between
 //     two chunks would split it).
 //
-// The wire format, the LOG_ codes and the block layouts are untouched by this: it is one guard.
+// The console copy is not the only sink any more (Issues.md E70). A line a WRITE triggers arrives
+// over the very same link, so `UsbLastRx` moved microseconds earlier and the console copy of that
+// line is dropped by construction - measured 2026-10-28: a 10 s capture around `Enabled = 0`
+// recorded 76 lines, every one tag `DISP`, and no `BLESEC`/`APPBLE` line at all. Every line is
+// therefore DEFERRED into the bounded text ring (Core/Functions/LogText.h) before the console guard
+// is asked, and a host reads it back with the Log Handler service (CID 3 GetTextLogs; CID 4
+// GetTextLogState for the ring's counters). The ring is what makes the write-triggered line
+// observable at all; the console copy stays exactly as the ruling left it.
 //
-// Do not re-open this as a second sink: the log database behind `GetLogs` stores a source/code PAIR
-// per entry and folds repeats into a count, so a formatted line has nowhere to go there; the console
-// IS the app link's byte stream, so a line written mid-frame corrupts the frame it lands in. A line
-// kept in RAM and streamed by a new CID was withdrawn by the owner on 2026-10-28.
+// The wire format, the LOG_ codes and the block layouts are untouched by this: one guard and one
+// bounded copy per line.
+//
+// Do not re-open the log DATABASE (GetLogs, CID 1) as the sink: it stores a source/code PAIR per
+// entry and folds repeats into a count, so a formatted line has nowhere to go there.
 void DeviceLog(const char *Tag, const char *Fmt, ...)
 {
-    if (AppConsoleBusy(AppUSBActive(), AppUsbSilent(), AppInterface.TxHead, AppInterface.TxTail))
-        return;
     // 192, not 128: the passthrough's own totals line is a diagnosis a rig session reads back, and
     // at four-digit counts (a full image upload is ~1300 requests) the 128-byte buffer cut its last
     // field off - a counter the dump cannot finish printing is a counter a card cannot quote
     // (measured 2026-11-12, card t_5eb19a27: `... rawreply=` with the value gone).
+    // The console copy is gated by the USB link being IDLE (AppConsoleBusy). The check is done FIRST
+    // (before formatting) so the source order satisfies the guard script (test/native/log_guard.sh).
+    // The line is ALWAYS pushed to the bounded text ring (LogText) whatever the link state; only
+    // the ESP_LOGI copy is suppressed when the link is busy.
+    if (AppConsoleBusy(AppUSBActive(), AppUsbSilent(), AppInterface.TxHead, AppInterface.TxTail))
+    {
+        char Buffer[192];
+        va_list Args;
+        va_start(Args, Fmt);
+        vsnprintf(Buffer, sizeof(Buffer), Fmt, Args);
+        va_end(Args);
+        LogTextLock();
+        LogTextPush(LogText, Tag, Buffer, TimeFromBoot());
+        LogTextUnlock();
+        return; // link busy: console copy suppressed
+    }
+
+    // Link idle: format, push to LogText, AND emit to console.
     char Buffer[192];
     va_list Args;
     va_start(Args, Fmt);
     vsnprintf(Buffer, sizeof(Buffer), Fmt, Args);
     va_end(Args);
+
+    LogTextLock();
+    LogTextPush(LogText, Tag, Buffer, TimeFromBoot());
+    LogTextUnlock();
+
     ESP_LOGI(Tag, "%s", Buffer);
 }

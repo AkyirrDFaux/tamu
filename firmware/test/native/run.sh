@@ -444,18 +444,21 @@ fail=$((fail + chunk_fail))
 echo
 
 # Gate: the passthrough CID and the frame it builds have the SAME RANK (Docs/Services/Bootloader.md,
-# 3694c46): 0x20 identify, 0x21 read, 0x22 erase, 0x23 write, 0x24 CRC - the CID's low bits are the
-# command's bits 1-3. A stale mapping is not a cosmetic bug: a 0x21-is-write client would ERASE a
-# page instead of writing one, so the order is pinned here, not left to care. The reply builder in
-# PollBootloaderPassthrough is pinned the same way, because a mis-ordered reply branch would hand a
-# read's 36 bytes back as an erase ack.
-echo "### source guard: the passthrough CID order (identify, read, erase, write, CRC)"
+# 3694c46): 0x20 identify, 0x21 read, 0x22 erase, 0x23 write, 0x24 CRC, 0x25 jump to the app -
+# the CID's low bits are the command's bits 1-3. A stale mapping is not a cosmetic bug: a
+# 0x21-is-write client would ERASE a page instead of writing one, so the order is pinned here, not
+# left to care. The reply builder in PollBootloaderPassthrough is pinned the same way, because a
+# mis-ordered reply branch would hand a read's 36 bytes back as an erase ack. The jump is in the
+# ladder too: 0x25 must build the jump REQUEST and its reply branch must settle on the ack the node
+# sends just before it leaves (0b1011), never on a silent "sent" acknowledgement - a jump that did
+# not answer is a lost node (0x03), and quiet success would hide it.
+echo "### source guard: the passthrough CID order (identify, read, erase, write, CRC, jump)"
 DEV_H=${DEV_H:-$ROOT/src/Core/Services/Device.h}
 CID_SEND=$(sed -n '/inline void DeviceService::HandleBootloaderPassthrough(/,/Issue and return/p' "$DEV_H")
 CID_POLL=$(sed -n '/if (PtCid == 0x20)/,/PtPending = false;/p' "$DEV_H")
 cid_fail=0
 for pair in 0x20:EncodeIdentifyRequest 0x21:EncodeReadRequest 0x22:EncodeEraseRequest \
-            0x23:EncodeWrite 0x24:EncodeDigestRequest; do
+            0x23:EncodeWrite 0x24:EncodeDigestRequest 0x25:EncodeJumpRequest; do
     cid=${pair%%:*}
     enc=${pair##*:}
     if ! printf '%s\n' "$CID_SEND" | grep -A10 "Cid == $cid)" | grep -q "$enc"; then
@@ -463,7 +466,8 @@ for pair in 0x20:EncodeIdentifyRequest 0x21:EncodeReadRequest 0x22:EncodeEraseRe
         cid_fail=1
     fi
 done
-for pair in 0x20:FLAG_SUCCESS 0x21:Payload\(PtRx\) 0x22:Ack 0x23:PtOffset 0x24:DigestCrc; do
+for pair in 0x20:FLAG_SUCCESS 0x21:Payload\(PtRx\) 0x22:Ack 0x23:PtOffset 0x24:DigestCrc \
+            0x25:'Offset(PtRx)'; do
     cid=${pair%%:*}
     what=${pair##*:}
     if ! printf '%s\n' "$CID_POLL" | grep -A20 "PtCid == $cid)" | grep -q "$what"; then
@@ -475,7 +479,19 @@ if ! grep -q 'case 0x24: // Bootloader passthrough: CRC of the whole app space' 
     echo "FAIL $DEV_H: 0x24 is not routed as the CRC passthrough command"
     cid_fail=1
 fi
-[ $cid_fail = 0 ] && echo "PASS: 0x20 identify / 0x21 read / 0x22 erase / 0x23 write / 0x24 CRC, request and reply"
+# ... and the jump (0x25) must be ROUTED at all: without a case in Handle's CID switch the app's
+# jump request is answered like an unknown CID and the node never leaves the bootloader.
+if ! grep -q 'case 0x25: // Bootloader passthrough: jump to the app' "$DEV_H"; then
+    echo "FAIL $DEV_H: 0x25 is not routed as the jump passthrough command"
+    cid_fail=1
+fi
+# The jump is answered, so its reply command must be the awaited one (0b1011) - mapping it to the
+# request value (or to INVALID) would make the core drop the node's ack and report a lost node.
+if ! grep -q 'case 0x25: return CMD_JUMP_RESP;' "$BL_HDR"; then
+    echo "FAIL $BL_HDR: the 0x25 passthrough does not await the jump response (0b1011)"
+    cid_fail=1
+fi
+[ $cid_fail = 0 ] && echo "PASS: 0x20 identify / 0x21 read / 0x22 erase / 0x23 write / 0x24 CRC / 0x25 jump, request and reply"
 fail=$((fail + cid_fail))
 echo
 
@@ -783,6 +799,14 @@ echo
 
 echo "### native app-console guard tests (idle link writes the line, a busy one suppresses it - E67)"
 build_run "appconsole" "appconsole_test.cpp"
+echo
+
+# Issues.md E67/E70: the bounded text ring for DeviceLog lines. The ring holds the last
+# 32 lines (3,584 B RAM) with sequence numbers and overwrite accounting, readable via
+# LogHandler CID 3/4. The wrap arithmetic and the "whole line or nothing" encoding rule
+# are what make the host read trustworthy.
+echo "### native log text ring tests (bounded defer ring, wrap arithmetic, whole-line encoding)"
+build_run "logtext" "logtext_test.cpp"
 echo
 
 # t_7a1870db round 2 (E75). The TX ring's indexes are 16-bit free-running counters, and 65536 is
