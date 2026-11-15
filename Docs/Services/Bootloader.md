@@ -24,8 +24,10 @@ The command is a 4-bit field in the control byte: bit 0 is `0` for a request and
 | Write response    | `0b0111` |
 | CRC request       | `0b1000` |
 | CRC response      | `0b1001` |
+| Jump request      | `0b1010` |
+| Jump response     | `0b1011` |
 
-`0b1010`-`0b1111` are unassigned.
+`0b1100`-`0b1111` are unassigned.
 
 Identify request:
 
@@ -140,6 +142,30 @@ CRC response:
 | CRC          | uint32 | CRC-32 (poly 0xEDB88320, init 0xFFFFFFFF, final XOR), little-endian, over the whole app space |
 | End Marker   | uint8  | 0xBC |
 
+Jump request:
+
+| Field        | Size   | Note |
+| ------------ | ------ | ---- |
+| Start Marker | uint8  | 0xCA |
+| Padding      | 3bit   | 0    |
+| Parity       | 1bit   | Even, covers command and offset |
+| Command      | 4bit   | 0b1010 |
+| Offset       | uint32 | Ignored |
+| End Marker   | uint8  | 0xBC |
+
+Jump response:
+
+| Field        | Size   | Note |
+| ------------ | ------ | ---- |
+| Start Marker | uint8  | 0xCA |
+| Padding      | 3bit   | 0    |
+| Parity       | 1bit   | Even, covers command and offset |
+| Command      | 4bit   | 0b1011 |
+| Offset       | uint32 | Ignored |
+| End Marker   | uint8  | 0xBC |
+
+A jump request is answered, and the node then jumps immediately: the response is sent before the node leaves the bootloader, so a request that gets no answer is a lost node rather than an expected silence.
+
 Packets are sent whenever USB or RSBus is clear; all actions are blocking.
 ### Upload procedure
 1. Identify, for the app size and page size.
@@ -151,7 +177,7 @@ Packets are sent whenever USB or RSBus is clear; all actions are blocking.
 
 Steps 4 and 5 are independent: the CRC is one exchange whose value depends on the device's own CRC code being right, the read-back does not. A disagreement between them is a finding, not something to resolve by trusting either one.
 ### Core Bootloader Passthrough Commands (002x)
-Lets the app send bootloader packets to the RSBus for all five operations. Routers treat them as a broadcast and as high-priority traffic on the same physical layer.
+Lets the app send bootloader packets to the RSBus for all six operations. Routers treat them as a broadcast and as high-priority traffic on the same physical layer.
 
 The passthrough is asynchronous: the core issues the frame and keeps serving while it awaits the reply.
 
@@ -168,7 +194,7 @@ A failure is never reported without saying which failure it was, because the app
 
 Both packet families share one UART, so while a passthrough is outstanding the core separates them: a bootloader frame accumulates in the passthrough's own buffer and everything else continues through the standard packet assembler. Neither is dropped, and a reply is never mistaken for standard traffic.
 
-The command IDs follow the bootloader command order - identify, read, erase, write, CRC - so a table row and its packet always carry the same rank.
+The command IDs follow the bootloader command order - identify, read, erase, write, CRC, jump to app - so a table row and its packet always carry the same rank.
 
 | Name                   | ID | Request         | Response        | Note |
 | ---------------------- | -- | --------------- | --------------- | ---- |
@@ -177,3 +203,6 @@ The command IDs follow the bootloader command order - identify, read, erase, wri
 | Erase page             | 2  | Offset          | Page            | Offset must be page-aligned |
 | Send write packet      | 3  | Offset, Payload | Offset          | Success only if the offset matches the request |
 | Request CRC            | 4  | -               | CRC             | CRC-32 over the whole app space |
+| Jump to app            | 5  | -               | Offset          | The node answers, then leaves the bootloader |
+### Returning to the bootloader from the app
+A device running an application hands itself back without a reset by calling the bootloader's published entry: the last word of the bootloader's 2 KB region holds a jump into the bootloader's frame loop, which skips the button test and the settle delay. It is triggered by the device service's own command (CID 4), addressed to that one device, and it is acknowledged before the jump so the requester is not left waiting. A device whose build has no room for the handler does not implement the command and refuses it, rather than latching a request nothing acts on.
