@@ -399,8 +399,12 @@ extern uint32_t RS485TxStintWorstMs; // defined in Devices/Tamu_v2.0A/RSBus.h (l
 //   stray    bytes arrived inside the window but no complete answer did and nothing was refused:
 //            other traffic on the line, or a frame cut short (the record carries `asm=`).
 //
-// A write that was answered inside its window produces no record at all - `answered=` counts it,
-// so `writes = answered + refused + lost` and a rig capture reconciles to the digit.
+// A write that was answered inside its window produces no record at all - `answered=` counts it.
+// A REPAIRED write is counted twice on purpose: once in `answered=` (its re-send was answered) and
+// once in `lost=` (its window expired). So the identity a capture reconciles to the digit is
+// `writes = answered + refused + unrepaired`, `unrepaired = lost - repaired` - adding `lost` whole
+// to `answered` would double-count every repair and read as writes that vanished. Only `unrepaired`
+// is a real hole: a lost write no send of which was ever answered.
 enum AppBusWriteCause : uint8_t
 {
     ABW_NONE = 0,
@@ -722,11 +726,14 @@ inline void AppBusGateDrain()
                   (unsigned long)AppBusRetryTotal, (unsigned long)AppBusGateStrayTotal);
         // The app's writes, named (card t_e707d153, E79). A repair hides the loss from the app, so
         // these are the only figures that say a write was lost at all - and the five causes say
-        // WHICH mechanism. `writes = answered + refused + lost`; every lost one has a record below.
-        DeviceLog("BUSGATE", "appwrite writes=%lu answered=%lu refused=%lu lost=%lu repaired=%lu",
+        // WHICH mechanism. `writes = answered + refused + unrepaired`, `unrepaired = lost - repaired`
+        // (a repaired write is counted in both `answered` and `lost`); every lost one has a record
+        // below. `unrepaired` is printed so a loss no retry fixed is a digit, not a subtraction.
+        DeviceLog("BUSGATE", "appwrite writes=%lu answered=%lu refused=%lu lost=%lu repaired=%lu unrepaired=%lu",
                   (unsigned long)AppBusWriteTotal, (unsigned long)AppBusWriteAnswered,
                   (unsigned long)AppBusWriteRefused, (unsigned long)AppBusWriteLost,
-                  (unsigned long)AppBusWriteRepaired);
+                  (unsigned long)AppBusWriteRepaired,
+                  (unsigned long)(AppBusWriteLost - AppBusWriteRepaired));
         DeviceLog("BUSGATE", "appwrite cause silent=%lu late=%lu keepdrop=%lu notsent=%lu stray=%lu",
                   (unsigned long)AppBusWriteSilent, (unsigned long)AppBusWriteLate,
                   (unsigned long)AppBusWriteKeepDrop, (unsigned long)AppBusWriteNotSent,

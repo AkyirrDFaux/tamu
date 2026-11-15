@@ -205,8 +205,22 @@ if [ "$(grep -cF 'AppBusWriteNoteLate(Trid, Lateness);' "$IFACE")" != 1 ]; then
 fi
 
 # ... printed, with the figures a capture is reconciled against.
-if ! grep -q 'appwrite writes=%lu answered=%lu refused=%lu lost=%lu repaired=%lu' "$IFACE"; then
-    note "$IFACE" "the dump must print the write totals (writes/answered/refused/lost/repaired)"
+if ! grep -q 'appwrite writes=%lu answered=%lu refused=%lu lost=%lu repaired=%lu unrepaired=%lu' "$IFACE"; then
+    note "$IFACE" "the dump must print the write totals (writes/answered/refused/lost/repaired/unrepaired)"
+fi
+# `unrepaired` must be lost - repaired, printed rather than left as a subtraction: a loss no retry
+# fixed is the one figure that must not need arithmetic to be seen (E79's requirement 5).
+if ! grep -q 'AppBusWriteLost - AppBusWriteRepaired' "$IFACE"; then
+    note "$IFACE" "unrepaired= must be printed as lost - repaired (a loss no retry fixed has to be a digit)"
+fi
+# The identity a reader reconciles against must be TRUE: a repaired write is counted in both answered
+# and lost, so `writes = answered + refused + lost` would over-count every repair. The header states
+# the correct form, and the guard fails if the false one comes back.
+if grep -qF 'writes = answered + refused + lost' "$IFACE"; then
+    note "$IFACE" "the write identity must not be 'writes = answered + refused + lost': a repaired write is in BOTH answered and lost (the true form is writes = answered + refused + unrepaired)"
+fi
+if ! grep -qF 'writes = answered + refused + unrepaired' "$IFACE"; then
+    note "$IFACE" "the header must state the true identity writes = answered + refused + unrepaired (= lost - repaired)"
 fi
 if ! grep -q 'appwrite cause silent=%lu late=%lu keepdrop=%lu notsent=%lu stray=%lu' "$IFACE"; then
     note "$IFACE" "the dump must print the five causes apart"
@@ -217,7 +231,7 @@ fi
 
 if [ "$fail" = 0 ]; then
     echo "PASS: a forwarded Register CID 3 write whose answer never came is re-sent within APP_BUS_WRITE_RETRIES sends, with the app's own TRID, and retries= reports it"
-    echo "PASS: every lost write is named - refused (a FLAG_FAIL answer), notsent, keepdrop, late or silent/stray - with the numbers it was read from, and writes = answered + refused + lost"
+    echo "PASS: every lost write is named - refused (a FLAG_FAIL answer), notsent, keepdrop, late or silent/stray - with the numbers it was read from, and writes = answered + refused + unrepaired (unrepaired = lost - repaired)"
 fi
 exit "$fail"
 
