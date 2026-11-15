@@ -102,8 +102,9 @@ inline bool DeviceIdentifyActive(uint32_t NowMs)
 // already retaken. Declared here (not in the device tree) because the shared handler is what calls
 // it; the definition lives in the device's Main.h, next to the address it jumps to.
 //
-// NOT enabled on the DAS yet (2026-11-15): enabling it overflows the DAS app's code space by 7 B
-// (see the size note at the case in Core/Services/Device.h).
+// Enabled on the DAS (2026-11-15): the handler and the jump cost 16 B of .text, paid for by the
+// storage default-initialiser diet (Core/Functions/StorageBlockFS.h), and the image ends 8 B
+// below .fixed_data. Other targets do not define DEVICE_HAS_BOOTLOADER_ENTRY.
 #ifdef DEVICE_HAS_BOOTLOADER_ENTRY
 extern "C" __attribute__((noreturn)) void DeviceEnterBootloaderJump(void);
 #endif

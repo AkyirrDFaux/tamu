@@ -658,8 +658,15 @@ private:
     // Pending (reserved) allocation: a data area that has been erased for a new/moved
     // file but whose committing table record is not written yet. Treated as used so a
     // concurrent table move can never be placed over it.
-    uint32_t PendingOffset = 0;
-    uint32_t PendingBlocks = 0;
+    //
+    // No default member initialisers on these two (or on WearCursor below): they are zero,
+    // which .bss already provides, and a default member initialiser is what makes the class's
+    // implicit constructor non-trivial. Under -flto GCC 12 then emits a `_GLOBAL__sub_I`
+    // constructor that re-writes those zeros at boot - 34 B of .text on the DAS plus a 4 B
+    // .init_array entry, for values the loader has already stored. Static storage is
+    // zero-initialised, so dropping the `= 0` keeps every value identical.
+    uint32_t PendingOffset;
+    uint32_t PendingBlocks;
 
     // True when the page at `offset` overlaps the pending reservation.
     bool RangeIsPending(uint32_t Offset) const
@@ -776,5 +783,5 @@ private:
         return true;
     }
 
-    uint32_t WearCursor = 0;  // Rotating allocation cursor for even wear (in data pages)
+    uint32_t WearCursor;  // Rotating allocation cursor for even wear (in data pages); .bss zero
 } Storage;

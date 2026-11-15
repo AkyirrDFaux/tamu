@@ -853,14 +853,13 @@ bool DeviceService::Handle(const PacketFrame &Frame)
         //
         // SIZE-GATED (2026-11-15): this is compiled only for a device that defines
         // DEVICE_HAS_BOOTLOADER_ENTRY. The DAS app is the only device with a bootloader to return
-        // to, and its code space is FULL - [0x800, 0x3E00) is 13824 B and the image ends at
-        // 0x3DF4, 12 B spare. The handler below costs 19 B of .text in the DAS build (measured on
-        // a clean build, in the widened-link rig; the ack's own LTO clone of SendDeviceReply plus
-        // the call), which overflows .fixed_data by 7 B; the earlier latch-and-main-loop shape
-        // (the reply latched a flag the loop tested) cost more, not less: the per-iteration call
-        // to the entry measured 20-28 B of .text because the main loop's register allocation pays
-        // for it. Neither fits, so the case is NOT enabled until the app finds ~7 B - that is a
-        // size-diet card, not a detail of this one.
+        // to, and its code space is nearly full - [0x800, 0x3E00) is 13824 B. The handler below
+        // costs 16 B of .text in the DAS build (measured on a clean build; the ack's own LTO clone
+        // of SendDeviceReply plus the call), which is paid for by the storage diet in
+        // Core/Functions/StorageBlockFS.h: the app image ends at 0x3DF8, 8 B below the .fixed_data
+        // reservation at 0x3E00. The earlier latch-and-main-loop shape cost 24-28 B (the
+        // per-iteration call to the entry makes the main loop's register allocation pay), so the
+        // jump stays on this path, right after the ack.
 #ifdef DEVICE_HAS_BOOTLOADER_ENTRY
         case 4:
         {

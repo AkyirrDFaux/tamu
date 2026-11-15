@@ -123,13 +123,11 @@ const size_t StaticBlockNum = sizeof(StaticBlockRegistry) / sizeof(StaticBlockDe
 // is on the wire and the RS485 driver is back in RX before this runs.
 //
 // This does not return. It is a plain function rather than an inline helper in the main loop on
-// purpose: the DAS app's code space is full (12 B spare below .fixed_data) and a per-iteration call
-// to an absolute address in the main loop measured 20-28 B of .text (the loop's register
-// allocation is what pays), which does not fit. The handler path costs the call plus the entry
-// setup only.
+// purpose: a per-iteration call to an absolute address in the main loop measured 20-28 B of
+// .text (the loop's register allocation is what pays), while the handler path costs the call plus
+// the entry setup only - 16 B, which the storage diet in Core/Functions/StorageBlockFS.h paid for.
 //
-// Compiled only with DEVICE_HAS_BOOTLOADER_ENTRY (platformio.ini): the DAS app cannot afford to
-// enable it yet, so this is the definition that goes live the moment the app finds ~7 B.
+// Compiled only with DEVICE_HAS_BOOTLOADER_ENTRY (platformio.ini), which the DAS app defines.
 #ifdef DEVICE_HAS_BOOTLOADER_ENTRY
 extern "C" __attribute__((noreturn)) void DeviceEnterBootloaderJump(void)
 {
