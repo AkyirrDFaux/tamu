@@ -354,6 +354,10 @@ echo "### native bootloader storage tail boundary tests (CodeSize refusal at 0x3
 build_run "blstoragetail" "bootloader_storage_tail_test.cpp"
 echo
 
+echo "### native bootloader entry stub post-link checker tests"
+build_run "blentrycheck" "bootloader_entry_check_test.cpp"
+echo
+
 # DAS app Device service CID 4 "enter bootloader" tests
 # Test 1: without DEVICE_HAS_BOOTLOADER_ENTRY - CID 4 refused
 echo "### native DAS CID 4 enter-bootloader test (WITHOUT DEVICE_HAS_BOOTLOADER_ENTRY)"
