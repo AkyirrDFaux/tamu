@@ -358,6 +358,14 @@ echo "### native bootloader entry stub post-link checker tests"
 build_run "blentrycheck" "bootloader_entry_check_test.cpp"
 echo
 
+echo "### native bootloader jump command codec tests (CMD_JUMP_REQ/CMD_JUMP_RESP)"
+build_run "bljump" "bootloader_jump_test.cpp"
+echo
+
+echo "### native bootloader passthrough refusal frame format tests (0x01-0x04)"
+build_run "blptrefusal" "passthrough_refusal_test.cpp"
+echo
+
 # DAS app Device service CID 4 "enter bootloader" tests
 # Test 1: without DEVICE_HAS_BOOTLOADER_ENTRY - CID 4 refused
 echo "### native DAS CID 4 enter-bootloader test (WITHOUT DEVICE_HAS_BOOTLOADER_ENTRY)"
