@@ -350,6 +350,20 @@ echo "### native bootloader write-path tests (erase command + page-start check +
 build_run "blwrite" "bootloader_write_test.cpp"
 echo
 
+echo "### native bootloader storage tail boundary tests (CodeSize refusal at 0x3600)"
+build_run "blstoragetail" "bootloader_storage_tail_test.cpp"
+echo
+
+# DAS app Device service CID 4 "enter bootloader" tests
+# Test 1: without DEVICE_HAS_BOOTLOADER_ENTRY - CID 4 refused
+echo "### native DAS CID 4 enter-bootloader test (WITHOUT DEVICE_HAS_BOOTLOADER_ENTRY)"
+build_run "cid4_nobl" "device_cid4_bootloader_test.cpp" -DBOARD_DAS_v0_1 -DTYPE_NODE -DNUMBER_ONLY_32BIT -DSCALAR_ONLY
+echo
+# Test 2: with DEVICE_HAS_BOOTLOADER_ENTRY - CID 4 accepted, jumps to bootloader entry
+echo "### native DAS CID 4 enter-bootloader test (WITH DEVICE_HAS_BOOTLOADER_ENTRY)"
+build_run "cid4_withbl" "device_cid4_bootloader_test.cpp" -DBOARD_DAS_v0_1 -DTYPE_NODE -DNUMBER_ONLY_32BIT -DSCALAR_ONLY -DDEVICE_HAS_BOOTLOADER_ENTRY
+echo
+
 # Protocol v2 (the erase moved out of the write) + t_5195d4bc/t_cb8bd722's ack rule. The device
 # rule is Bootloader::WriteChunk / WriteAck / ErasePage, driven by bootloader_write_test.cpp against
 # a NOR model - so this guard only pins that the node still runs THAT rule and that its decisions
