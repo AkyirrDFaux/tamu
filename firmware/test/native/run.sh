@@ -2056,7 +2056,7 @@ fi
 # (5) and both counter sets are readable without a console: the passthrough's own totals line (on the
 # port the rig reads when the link is quiet) and the BUSGATE dump.
 if ! grep -q 'kept=%lu drop=%lu rawstint=%lu rawstall=%lu' "$DEVSVC" ||
-   ! grep -q 'nocid i/r/e/w/c=%u/%u/%u/%u/%u' "$DEVSVC"; then
+   ! grep -q 'nocid i/r/e/w/c/j=%u/%u/%u/%u/%u/%u' "$DEVSVC"; then
     echo "FAIL $DEVSVC: the BLPT totals must report kept/drop, rawstint/rawstall and the per-command timeouts"
     e82_fail=1
 fi

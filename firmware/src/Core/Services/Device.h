@@ -29,7 +29,7 @@ public:
     bool Handle(const PacketFrame &Frame); // CID dispatch; true if consumed
 
 #ifdef TYPE_CORE
-    // Main-loop tick for the asynchronous bootloader passthrough (CIDs 0x20/0x21/0x22/0x23/0x24):
+    // Main-loop tick for the asynchronous bootloader passthrough (CIDs 0x20/0x21/0x22/0x23/0x24/0x25):
     // returns immediately unless a request is outstanding, settles the awaited reply into a
     // Device response, or fails it on the 1 s deadline. Call next to the other service ticks.
     void PollBootloaderPassthrough();
@@ -41,8 +41,8 @@ private:
     void HandleSNDB(const PacketFrame &Frame);
 
     // Bootloader passthrough (Docs/Services/Bootloader.md "Core bootloader passthrough
-    // commands", CIDs 0x20 identify / 0x21 read / 0x22 erase / 0x23 write / 0x24 CRC - the
-    // CID rank follows the bootloader command bits 1-3). Asynchronous:
+    // commands", CIDs 0x20 identify / 0x21 read / 0x22 erase / 0x23 write / 0x24 CRC / 0x25 jump -
+    // the CID rank follows the bootloader command bits 1-3). Asynchronous:
     // Handle* encodes the raw frame, RS485SendRaw's it, records the pending request and returns;
     // the main loop's PollBootloaderPassthrough collects the reply.
     void HandleBootloaderPassthrough(const PacketFrame &Frame, uint8_t Cid);
@@ -71,11 +71,14 @@ private:
     // the node's own failure frame (0x04). Failures only - a SUCCESS reply is byte-identical to what
     // it was before this byte existed, so a client that ignores the byte still works.
     static constexpr uint8_t KPtReasonBusy      = 0x01; // a passthrough request is already outstanding
-    static constexpr uint8_t KPtReasonMalformed = 0x02; // payload too short, or CID outside 0x20-0x24
+    static constexpr uint8_t KPtReasonMalformed = 0x02; // payload too short, or CID outside 0x20-0x25
     static constexpr uint8_t KPtReasonTimeout   = 0x03; // the node did not answer by the deadline
     static constexpr uint8_t KPtReasonNodeFail  = 0x04; // the node answered with a failure frame
     bool PtPending    = false;                    // a request is issued and not yet settled
-    uint8_t PtCid     = 0;                        // passthrough CID (0x20..0x24)
+    // The passthrough CID (0x20..0x25). 0x25 is the jump: the node ACKS it (0b1011) and then
+    // leaves the bootloader, so it waits for that ack like every other command - a silent one is
+    // the ordinary 0x03 deadline, and the node is not mistaken for lost when it did answer.
+    uint8_t PtCid     = 0;
     uint16_t PtSrc    = 0;                        // reply routing: original request IdSrc
     uint16_t PtCmd    = 0;                        // reply routing: original request Cmd
     uint16_t PtTrid   = 0;                        // reply routing: original request Trid
@@ -109,11 +112,14 @@ private:
     uint16_t PtForeign     = 0;
     uint8_t PtForeignCmd   = 0;
     // The same deadline settles counted PER PASSTHROUGH COMMAND (index = CID - 0x20, so
-    // 0 identify / 1 write / 2 read / 3 digest). The card that added them (t_5eb19a27) measures a
-    // 200-cycle run per command, and "the node answered 199 of 200 identifies and 196 of 200 reads"
-    // is a different finding from a total. A silent request has to be attributable per command, and
-    // this is the device's own answer to that - the probe's table is the app's side of it.
-    uint16_t PtTimeoutById[5] = {0, 0, 0, 0, 0};
+    // 0 identify / 1 read / 2 erase / 3 write / 4 CRC / 5 jump). The card that added them
+    // (t_5eb19a27) measures a 200-cycle run per command, and "the node answered 199 of 200
+    // identifies and 196 of 200 reads" is a different finding from a total. A silent request has to
+    // be attributable per command, and this is the device's own answer to that - the probe's table
+    // is the app's side of it. The jump (0x25) is included so a rig run can distinguish a jump
+    // timeout from the other commands; a jumped node that never acked is exactly the lost-node
+    // case 0x03 reports, but having it in the table makes that explicit without a rebuild.
+    uint16_t PtTimeoutById[6] = {0, 0, 0, 0, 0, 0};
     uint32_t PtLastMs      = 0; // UptimeMs of the last request handled
     uint32_t PtDumpedAt    = 0; // UptimeMs of the last totals line
     uint16_t PtDumpedReq   = 0; // PtReqCount at that dump: nothing new, nothing printed
@@ -263,10 +269,12 @@ void DeviceService::HandleSNDB(const PacketFrame &Frame)
 // The app sends these to the connected core; the core relays the raw frame onto its RSBus.
 // The frame carries no address, so this is a broadcast: every node currently in bootloader
 // mode on that bus receives it. CIDs (Docs/Services/Bootloader.md, 3694c46): 0x20 identify,
-// 0x21 read, 0x22 erase, 0x23 write, 0x24 CRC - the CID and the frame carry the same rank. The
-// handler only ISSUES the raw request and returns;
+// 0x21 read, 0x22 erase, 0x23 write, 0x24 CRC, 0x25 jump to the app - the CID and the frame
+// carry the same rank. The handler only ISSUES the raw request and returns;
 // PollBootloaderPassthrough (main loop) collects the reply and builds the Device response. One
 // request is outstanding at a time - a second one while pending is refused, never queued.
+// The jump is no exception: the node acks it before it leaves, so the core awaits that ack and
+// reports the ordinary 0x03 deadline when it does not come.
 inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame, uint8_t Cid)
 {
     PtReqCount = (uint16_t)(PtReqCount + 1);
@@ -283,7 +291,7 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
 
     // Encode the raw bootloader request for this CID. The CIDs follow the bootloader command
     // order (bit 0 = direction, bits 1-3 = operation), so a CID and its frame carry the same rank:
-    // 0x20 identify, 0x21 read, 0x22 erase, 0x23 write, 0x24 CRC.
+    // 0x20 identify, 0x21 read, 0x22 erase, 0x23 write, 0x24 CRC, 0x25 jump.
     uint8_t Raw[Bootloader::DATA_SIZE];
     size_t Len;
     uint32_t Offset = 0;
@@ -332,9 +340,19 @@ inline void DeviceService::HandleBootloaderPassthrough(const PacketFrame &Frame,
         Bootloader::EncodeDigestRequest(Raw);
         Len = Bootloader::DIGEST_REQ_SIZE;
     }
+    else if (Cid == 0x25)
+    { // Jump to app (0b101x): the request takes NO arguments - the offset slot is ignored - so it
+      // is relayed as the bootloader's 7-byte jump request. The node ACKS it (0b1011) and only then
+      // leaves for its application, so the core WAITS for that ack like it does for every other
+      // command and settles on the ordinary 0x03 deadline when none comes: a node that never
+      // answered is reported as the lost node it is. Relaying the ack (instead of acknowledging the
+      // SEND and going quiet) is what makes the jump's outcome visible to the app.
+        Bootloader::EncodeJumpRequest(Raw);
+        Len = Bootloader::READ_REQ_SIZE;
+    }
     else
     { // Not a passthrough CID: refuse rather than send something nobody asked for. Dispatch only
-      // routes 0x20-0x24 here, so this is defensive - but it answers like the malformed request it
+      // routes 0x20-0x25 here, so this is defensive - but it answers like the malformed request it
       // is (0x02, counted with the short-payload refusals), never with silence.
         PtShortRefused = (uint16_t)(PtShortRefused + 1);
         SendPassthroughFail(Frame.IdSrc, Frame.Cmd, Frame.Trid, KPtReasonMalformed);
@@ -509,15 +527,15 @@ inline void DeviceService::PollBootloaderPassthrough()
             //   rawstint      attempts the raw send's one deadline refused to start;
             //   rawstall      a raw send whose last byte never left the UART in
             //                 RS485_TX_DONE_TIMEOUT_MS - a SEND timeout, not a node's silence;
-            //   nocid i/r/e/w/c deadline settles per passthrough command in CID order.
+            //   nocid i/r/e/w/c/j deadline settles per passthrough command in CID order.
             DeviceLog("BLPT",
                       "counters kept=%lu drop=%lu rawstint=%lu rawstall=%lu "
-                      "nocid i/r/e/w/c=%u/%u/%u/%u/%u",
+                      "nocid i/r/e/w/c/j=%u/%u/%u/%u/%u/%u",
                       (unsigned long)BusRxKept, (unsigned long)BusRxDestroyed,
                       (unsigned long)RS485RawStintCuts, (unsigned long)RS485RawTxStalls,
                       (unsigned)PtTimeoutById[0], (unsigned)PtTimeoutById[1],
                       (unsigned)PtTimeoutById[2], (unsigned)PtTimeoutById[3],
-                      (unsigned)PtTimeoutById[4]);
+                      (unsigned)PtTimeoutById[4], (unsigned)PtTimeoutById[5]);
             // Third line, card t_c9a37bb8: the frames met while a passthrough was outstanding that
             // were NOT its answer, and the command bits of the most recent one. This is what names
             // the defect from the rig without a rebuild: `last=0x2` is a READ REQUEST - the core
@@ -601,9 +619,18 @@ inline void DeviceService::PollBootloaderPassthrough()
             OutLen = 4;
             Flags |= FLAG_SUCCESS;
         }
+        else if (PtCid == 0x25)
+        { // Jump to app (0b101x): the node answered, and it did so immediately before leaving the
+          // bootloader. The reply's offset slot is the doc's "Offset" (ignored), forwarded verbatim;
+          // FLAG_SUCCESS is the whole answer - the node took the jump.
+            uint32_t Ack = Bootloader::Offset(PtRx);
+            memcpy(Out, &Ack, 4);
+            OutLen = 4;
+            Flags |= FLAG_SUCCESS;
+        }
         else
         { // Not a passthrough CID: FAIL rather than answer with another command's payload.
-          // Defensive (PtCid is always 0x20-0x24 while pending) and reported as the malformed
+          // Defensive (PtCid is always 0x20-0x25 while pending) and reported as the malformed
           // request it would be.
             OutLen = 0;
             Fail = KPtReasonMalformed;
@@ -635,7 +662,11 @@ inline void DeviceService::PollBootloaderPassthrough()
     {
         PtPending = false;
         PtTimeouts = (uint16_t)(PtTimeouts + 1);
-        if (PtCid >= 0x20 && PtCid <= 0x24)
+        // Per-command attribution covers all six passthrough commands (identify, read, erase,
+        // write, CRC, jump). The jump (0x25) is included so a rig run can distinguish a jump
+        // timeout from the other commands; a jumped node that never acked is exactly the lost-node
+        // case 0x03 reports, but having it in the table makes that explicit without a rebuild.
+        if (PtCid >= 0x20 && PtCid <= 0x25)
             PtTimeoutById[PtCid - 0x20] = (uint16_t)(PtTimeoutById[PtCid - 0x20] + 1);
         BootloaderRxSink = nullptr;
         // The deadline is its own reason: the request went out and the node never answered, which
@@ -646,7 +677,7 @@ inline void DeviceService::PollBootloaderPassthrough()
 #endif // TYPE_CORE
 
 // Handles Device service requests (Discover, Ping, Identify, TimeSync, Core discover, SNDB, and
-// the 0x20-0x24 bootloader passthrough that the CID table files under Bootloader).
+// the 0x20-0x25 bootloader passthrough that the CID table files under Bootloader).
 bool DeviceService::Handle(const PacketFrame &Frame)
 {
     uint8_t Cid = GetServiceCID(Frame.Cmd);
@@ -907,6 +938,7 @@ bool DeviceService::Handle(const PacketFrame &Frame)
         case 0x22: // Bootloader passthrough: erase one page
         case 0x23: // Bootloader passthrough: write
         case 0x24: // Bootloader passthrough: CRC of the whole app space
+        case 0x25: // Bootloader passthrough: jump to the app (the node acks, then leaves)
         {
             HandleBootloaderPassthrough(Frame, Cid);
             break;
