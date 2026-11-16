@@ -14,7 +14,7 @@
 // Header-only frames (offset slot only): start | control | offset | end = 7 bytes.
 // Commands: bit 0 is the direction (0 = request, 1 = response) and bits 1-3 the operation:
 //           0b000x identify, 0b001x read, 0b010x erase, 0b011x write, 0b100x digest/CRC,
-//           0b1010 jump to the app (no response). 0b1011..0b1111 are undefined and rejected.
+//           0b1010 jump to the app, 0b1011 its response. 0b1100..0b1111 are undefined and rejected.
 //
 // v2 is the 4-bit command field: three bits were all used (eight commands) and the erase needed a
 // ninth. The values are RENUMBERED - bits 1-3 are the operation, bit 0 the direction - so an opcode
@@ -67,10 +67,12 @@ namespace Bootloader
     constexpr uint8_t CMD_WRITE_RESP    = 0x7; // 0b0111 - the last written offset
     constexpr uint8_t CMD_DIGEST_REQ    = 0x8; // 0b1000 - CRC32 of a range of the app region
     constexpr uint8_t CMD_DIGEST_RESP   = 0x9; // 0b1001 - the CRC, offset echoed
-    // 0b1010 - jump to the app: the offset is ignored and there is NO response (the node is the
-    // app within milliseconds and the app answering the next request is the proof). 0b1011 is its
-    // response value and stays unused, so a stray 0b1011 frame is rejected like any unknown one.
+    // 0b1010 - jump to the app: the offset is ignored. The node ANSWERS (0b1011) and then jumps
+    // immediately - the response is a complete send (frame out, TC, direction pin back to RX)
+    // before the jump, exactly like the DAS app's CID 4 handler, so a missing answer is a lost
+    // node (the core's passthrough reports its usual 0x03 deadline), not an expected silence.
     constexpr uint8_t CMD_JUMP_REQ      = 0xA;
+    constexpr uint8_t CMD_JUMP_RESP     = 0xB; // 0b1011 - the ack the node sends just before it jumps
 
     // The published entry point's address (contract): the DAS app calls this address to hand the
     // node back to the bootloader without a reset. The DAS bootloader's `.bootentry` section is
@@ -414,6 +416,29 @@ namespace Bootloader
         EncodeHeaderFrame(CMD_ERASE_REQ, Offset, Out);
     }
 
+    // Jump request: header-only, the offset slot is ignored and zeroed.
+    inline void EncodeJumpRequest(uint8_t *Out)
+    {
+        EncodeHeaderFrame(CMD_JUMP_REQ, 0, Out);
+    }
+
+    // Jump response: header-only, same 7-byte shape and the offset ignored, sent by the node
+    // immediately BEFORE it jumps to the app. The send has to complete first (its own TC flag and
+    // the RS485 direction pin back to RX) or the jump would cut the ack off mid-frame.
+    inline void EncodeJumpResponse(uint8_t *Out)
+    {
+        EncodeHeaderFrame(CMD_JUMP_RESP, 0, Out);
+    }
+
+    // The control byte of a header-only frame carrying `Cmd` with the offset slot zeroed. Compile
+    // time so a node can send such an ack as a constant frame instead of encoding it: the DAS
+    // bootloader's 2 KB region makes every run-time encoder cost budget it does not have.
+    constexpr uint8_t HeaderControlZeroOffset(uint8_t Cmd)
+    {
+        uint8_t Body[READ_REQ_SIZE] = {START, Cmd, 0, 0, 0, 0, END};
+        return (uint8_t)(Cmd | (Parity(Body, READ_REQ_SIZE) << 4));
+    }
+
     // Digest response: the CRC32 of the whole app space (u32) between the control byte and the end.
     inline void EncodeDigestResponse(uint32_t Crc, uint8_t *Out)
     {
@@ -431,24 +456,25 @@ namespace Bootloader
     }
 
     // The frame length for a command, or 0 when the command is unknown. One byte per command
-    // in flash measures smaller than the compare chain on this target.
+    // in flash measures smaller than the compare chain on this target. The array is indexed by
+    // the 4-bit command value (CMD_* constants), so each comment names the constant for clarity.
     constexpr uint8_t FRAME_SIZE_OF[16] = {
-        READ_REQ_SIZE,      // 0b0000 identify-request
-        IDENTIFY_RESP_SIZE, // 0b0001 identify-response
-        READ_REQ_SIZE,      // 0b0010 read-request
-        DATA_SIZE,          // 0b0011 read-response
-        ERASE_REQ_SIZE,     // 0b0100 erase-request
-        ERASE_RESP_SIZE,    // 0b0101 erase-response
-        DATA_SIZE,          // 0b0110 write
-        READ_REQ_SIZE,      // 0b0111 write-response
-        DIGEST_REQ_SIZE,    // 0b1000 digest-request
-        DIGEST_RESP_SIZE,   // 0b1001 digest-response
-        READ_REQ_SIZE,      // 0b1010 jump-request (offset ignored, no response)
-        0,                  // 0b1011 jump-response (never sent)
-        0,                  // 0b1100
-        0,                  // 0b1101
-        0,                  // 0b1110
-        0                   // 0b1111
+        READ_REQ_SIZE,      // CMD_IDENTIFY_REQ  (0b0000) - identify request
+        IDENTIFY_RESP_SIZE, // CMD_IDENTIFY_RESP (0b0001) - identify response
+        READ_REQ_SIZE,      // CMD_READ_REQ      (0b0010) - read request
+        DATA_SIZE,          // CMD_READ_RESP     (0b0011) - read response
+        ERASE_REQ_SIZE,     // CMD_ERASE_REQ     (0b0100) - erase request
+        ERASE_RESP_SIZE,    // CMD_ERASE_RESP    (0b0101) - erase response
+        DATA_SIZE,          // CMD_WRITE         (0b0110) - write (32-byte chunk)
+        READ_REQ_SIZE,      // CMD_WRITE_RESP    (0b0111) - write response
+        DIGEST_REQ_SIZE,    // CMD_DIGEST_REQ    (0b1000) - digest/CRC request
+        DIGEST_RESP_SIZE,   // CMD_DIGEST_RESP   (0b1001) - digest/CRC response
+        READ_REQ_SIZE,      // CMD_JUMP_REQ      (0b1010) - jump to app request
+        READ_REQ_SIZE,      // CMD_JUMP_RESP     (0b1011) - jump response (ack before jump)
+        0,                  // 0b1100 - unassigned
+        0,                  // 0b1101 - unassigned
+        0,                  // 0b1110 - unassigned
+        0                   // 0b1111 - unassigned
     };
 
     inline uint16_t FrameSize(uint8_t Cmd)
@@ -525,6 +551,10 @@ namespace Bootloader
             case 0x22: return CMD_ERASE_RESP;
             case 0x23: return CMD_WRITE_RESP;
             case 0x24: return CMD_DIGEST_RESP;
+            // 0x25 is the jump (0b1010). The node ACKS it (0b1011) and then leaves the bootloader,
+            // so the core awaits that ack like every other command: a missing one is the ordinary
+            // 0x03 deadline, and the node is not mistaken for lost when it did answer.
+            case 0x25: return CMD_JUMP_RESP;
             default:   return INVALID;
         }
     }
