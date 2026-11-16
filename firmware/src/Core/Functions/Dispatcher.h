@@ -34,10 +34,10 @@ void DispatchPacket(const PacketFrame &Frame)
     if (Frame.IdTgt == ADDR_INVALID)
         return;
 
-    // TODO (Router): multi-bus tree topology is NOT implemented - see
+    // Router: single-bus topology is implemented (self/forward handling below).
+    // Multi-bus tree topology is future work - see
     // Docs/Services/Router.md:9 ("Not to be implemented yet, no multi-bus device
-    // available"). The bus is a single shared medium, so only self/forward handling
-    // below exists: a per-RSBus-port ID table and broadcast-to-all-directions would
+    // available"). A per-RSBus-port ID table and broadcast-to-all-directions would
     // be added here if a multi-bus device appears.
 
     // 2. Determine "Local Interest"
