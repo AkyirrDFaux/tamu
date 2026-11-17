@@ -241,22 +241,30 @@ static const struct ble_gatt_svc_def GattSvcs[] = {
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid = &SvcUuid.u,
+        .includes = NULL,
         .characteristics = (struct ble_gatt_chr_def[]){
             {
                 .uuid = &RxUuid.u,
                 .access_cb = ChrAccess,
+                .arg = NULL,
+                .descriptors = NULL,
                 .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+                .min_key_size = 0,
+                .val_handle = NULL,
             },
             {
                 .uuid = &TxUuid.u,
                 .access_cb = ChrAccess,
+                .arg = NULL,
+                .descriptors = NULL,
                 .flags = BLE_GATT_CHR_F_NOTIFY,
+                .min_key_size = 0,
                 .val_handle = &TxHandle,
             },
-            {0},
+            { .uuid = NULL, .access_cb = NULL, .arg = NULL, .descriptors = NULL, .flags = 0, .min_key_size = 0, .val_handle = NULL, .cpfd = NULL },
         },
     },
-    {0},
+    { .type = 0, .uuid = NULL, .includes = NULL, .characteristics = NULL },
 };
 
 static void Advertise();
@@ -501,6 +509,42 @@ static void Dispatch()
         HandleRead(Offset);
     else if (Cmd == Bootloader::CMD_ERASE_REQ)
         HandleErase(Offset);
+    else if (Cmd == Bootloader::CMD_CRC_REQ)
+    {
+        // CRC of the whole app space
+        uint32_t Crc = 0;
+        if (App != nullptr)
+        {
+            const uint32_t AppSize = App->size;
+            uint8_t Buf[256];
+            for (uint32_t Off = 0; Off < AppSize; Off += sizeof(Buf))
+            {
+                uint32_t Chunk = (AppSize - Off < sizeof(Buf)) ? AppSize - Off : sizeof(Buf);
+                esp_partition_read(App, Off, Buf, Chunk);
+                Crc = Bootloader::Crc32Update(Crc, Buf, Chunk);
+            }
+        }
+        uint8_t Resp[Bootloader::DIGEST_RESP_SIZE];
+        Bootloader::EncodeCrcResponse(Crc, Resp);
+        SendFrame(Resp, sizeof(Resp));
+    }
+    else if (Cmd == Bootloader::CMD_JUMP_REQ)
+    {
+        // The bootloader is the factory partition. To "jump to app", we need to select
+        // the ota_0 partition and restart - the app's otadata erase will confirm it.
+        uint8_t Resp[Bootloader::READ_REQ_SIZE];
+        Bootloader::EncodeJumpResponse(Resp);
+        SendFrame(Resp, sizeof(Resp));
+
+        // Wait for the send to complete, then restart into the main app.
+        vTaskDelay(pdMS_TO_TICKS(50));
+        const esp_partition_t *Ota0 = esp_partition_find_first(
+            ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
+        if (Ota0 != nullptr) {
+            esp_ota_set_boot_partition(Ota0);
+        }
+        esp_restart();
+    }
 }
 
 static void FeedByte(uint8_t Byte)

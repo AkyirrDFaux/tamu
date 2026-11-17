@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 
 import '../core/ble_security.dart' show hasBleSettingsBlock;
+import '../core/connection.dart';
 import '../core/device_db.dart';
+import '../core/enter_bootloader.dart';
+import '../core/notice.dart';
 import '../core/register_client.dart';
 import '../core/types.dart';
 import '../core/wifi_settings.dart' show hasWifiSettingsBlock;
-import '../core/notice.dart';
 import 'ble_security_page.dart';
+import 'dialogs.dart';
 import 'formatters.dart';
 import 'log_page.dart';
 import 'register_page.dart';
@@ -15,6 +18,7 @@ import 'sndb_page.dart';
 import 'storage_page.dart';
 import 'subscriptions_page.dart';
 import 'theme.dart';
+import 'update_page.dart';
 import 'viewer_kit.dart';
 import 'widgets.dart';
 import 'wifi_page.dart';
@@ -89,6 +93,7 @@ class _DeviceViewPageState extends State<DeviceViewPage>
     return names.isEmpty ? '-' : names.join(', ');
   }
 
+  /// Puts the device into bootloader mode and navigates to the Update page.
   @override
   Widget build(BuildContext context) {
     final entry = _db.byId(widget.deviceId);
@@ -191,6 +196,15 @@ class _DeviceViewPageState extends State<DeviceViewPage>
                   InfoCard(
                     title: 'Services',
                     children: [
+                      _serviceTile(
+                        context,
+                        Icons.usb_off,
+                        'Enter Bootloader',
+                        () => UpdatePage(
+                          isConnected: () => ConnectionManager.instance.isConnected,
+                          deviceId: widget.deviceId,
+                        ),
+                      ),
                       // Per Docs/App/Device view.md: hide unavailable services
                       // based on the device's capability field. Register (covers the
                       // System block, static blocks and dynamic/keyed memory), Storage

@@ -2,11 +2,21 @@
 
 #include "Core/Functions/Packet.h"
 #include "Core/Functions/Log.h"
+#include "Core/Functions/LogText.h"
 
 // Log Handler service (Docs/Services/Log Handler.md):
 //   CID 0: Error reporter (outbound on nodes, inbound DB input on the core).
 //   CID 1: GetLogs - stream of LogRecord entries (core only).
 //   CID 2: ClearReadLogs - clear N logs from the end, confirm (core only).
+//   CID 3: GetTextLogs - the device's own free-text lines, out of the bounded RAM ring
+//          (Core/Functions/LogText.h, Issues.md E70): request payload = the sequence number to
+//          start AFTER (u32, absent = everything retained), reply = one line per fragment.
+//   CID 4: GetTextLogState - the ring's counters (16 B, never fragmented). Core only.
+//
+// CIDs 3 and 4 are core-only because only the core keeps the ring: a node's log carries no free
+// text (`DEVICE_LOG_TEXTLESS`, src/Main.cpp) and the 2 KB DAS has no room for it. They are the
+// reason the device's lines are readable at all while a host holds the USB port - the console copy
+// is suppressed then, and a line a WRITE triggers is produced exactly in that window.
 class LogHandlerService
 {
 public:
@@ -31,6 +41,20 @@ private:
 
 // One instance per binary, in Core/Services/.
 LogHandlerService LogHandler;
+
+#ifdef TYPE_CORE
+// The core's own text ring (Core/Functions/LogText.h): every `DeviceLog` line is appended here
+// whether or not the console copy can be written, and CIDs 3/4 below read it back. Static RAM:
+// 32 slots * 112 B = 3,584 B, plus 24 B of counters - the only RAM this feature costs, and it
+// cannot grow (a full ring overwrites the oldest line and counts it). Core only: a node's log has
+// no free text, and the DAS is at 2,048/2,048 B.
+LogTextRing LogText;
+
+// A text line is emitted whole into ONE fragment: the record has to fit MAX_FRAG_CONTENT_SIZE, or
+// a line could be cut across fragments and a lost fragment would leave half a line on the host.
+static_assert(LOG_TEXT_RECORD_MAX <= MAX_FRAG_CONTENT_SIZE,
+              "a log line must fit one fragment (LogText.h geometry vs Packet.h frag capacity)");
+#endif
 
 #ifdef TYPE_CORE
 inline int LogHandlerService::LogSeqSlotCompare(const void *Left, const void *Right)
@@ -127,6 +151,76 @@ inline bool LogHandlerService::Handle(const PacketFrame &Frame)
         LogUsed[Slot] = true;
         LogSeq[Slot] = Seq;
         if ((uint32_t)Slot >= LogCount) LogCount = Slot + 1;
+        return true;
+    }
+
+    if (Cid == 3)
+    {
+        // GetTextLogs (Issues.md E70): the device's own free-text lines out of the bounded ring.
+        // The request's payload is the sequence number to start AFTER, so a reader resumes where it
+        // left off; no payload means "everything still retained", which is what a fresh session
+        // asks for. The ring's counters are counted from in the same lock, so the two passes below
+        // walk one consistent window.
+        uint32_t After = 0;
+        if (PayloadBytes(Frame) >= 4)
+            memcpy(&After, Frame.Payload, sizeof(After));
+
+        LogTextView View;
+        LogTextLock();
+        View = LogTextViewOf(LogText);
+        LogTextUnlock();
+
+        // Pass 1: how many lines will be emitted. A line that cannot be encoded (it cannot with
+        // this geometry - the static_assert pins it) is not counted, so the fragment count the host
+        // reassembles by is always the number of fragments that follow.
+        uint8_t Content[MAX_FRAG_CONTENT_SIZE];
+        uint16_t Total = 0;
+        for (uint32_t k = 0; k < View.Count; k++)
+        {
+            LogTextLock();
+            const LogTextSlot &Slot = LogTextSlotAt(LogText, View, k);
+            uint16_t Len = (Slot.Seq > After) ? LogTextEncodeLine(Slot, Content, sizeof(Content)) : 0;
+            LogTextUnlock();
+            if (Len)
+                Total++;
+        }
+        if (Total == 0)
+        {
+            SendResponse(Frame, nullptr, 0); // nothing new: the ring is empty or fully read
+            return true;
+        }
+
+        // Pass 2: one line per fragment. A writer overwriting a slot between the two passes can
+        // add a line past the count above (it is dropped here and picked up by the next read) or
+        // replace one the walk had not copied yet; either way a fragment holds a WHOLE line copied
+        // under the lock, and a short stream is visible to the host as fragments < total.
+        uint16_t Frag = 0;
+        for (uint32_t k = 0; k < View.Count && Frag < Total; k++)
+        {
+            LogTextLock();
+            const LogTextSlot &Slot = LogTextSlotAt(LogText, View, k);
+            uint16_t Len = (Slot.Seq > After) ? LogTextEncodeLine(Slot, Content, sizeof(Content)) : 0;
+            LogTextUnlock();
+            if (!Len)
+                continue;
+            memcpy(TxFrame.Payload + 4, Content, Len);
+            SendFragFragment(Frame, Frag, Total, Len, PRIORITY_LOG);
+            Frag++;
+        }
+        return true;
+    }
+
+    if (Cid == 4)
+    {
+        // GetTextLogState: the ring's counters, 16 B and never fragmented, so a reader can tell an
+        // empty ring from a quiet device and can see how many lines a full ring overwrote
+        // (Issues.md E70 acceptance: "a full ring overwrites the oldest line and counts it").
+        LogTextLock();
+        LogTextView View = LogTextViewOf(LogText);
+        LogTextUnlock();
+        uint8_t State[LOG_TEXT_STATE_SIZE];
+        LogTextEncodeState(View, State);
+        SendResponse(Frame, State, (uint16_t)sizeof(State));
         return true;
     }
 

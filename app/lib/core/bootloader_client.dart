@@ -3,9 +3,9 @@
 /// One upload is five steps, in this order, and every one of them is bounded:
 ///
 /// 1. **Identify** - the app size, the flash page size and the device name. A bootloader that
-///    does not report a plausible page size is a pre-v2 one and is REFUSED ([FlashFault
-///    .oldBootloader]): v2 renumbered the commands, so a v1 frame read as v2 would be a
-///    different operation, and guessing is how a node gets erased by a read.
+///    does not report a plausible page size is a pre-v2 bootloader, which this client refuses
+///    rather than guessing at - see [Bootloader.pageSizePlausible]. A bootloader that does not
+///    answer is simply not in bootloader mode and the run ends with [FlashFault.noAnswer].
 /// 2. **Compare per page** - read each page of the image in 32-byte chunks and compare. Only the
 ///    pages that differ are erased and written, which is where the reliability comes from: loss
 ///    is per transaction, so a page that already matches is one the run never has to re-send.
@@ -68,7 +68,10 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'bootloader.dart';
+import 'ble_bootloader_transport.dart';
 import 'connection.dart';
+import 'device_db.dart';
+import 'firmware_package.dart';
 import 'protocol.dart';
 import 'request_channel.dart';
 import 'transport.dart';
@@ -209,7 +212,7 @@ class FlashVerifyResult {
   }
 }
 
-/// The outcome of [BootloaderClient.flash].
+/// The outcome of [BootloaderClient.flash] or [BootloaderClient.flashPackage].
 class FlashResult {
   /// The two measures, as they stood when the run finished.
   final FlashVerifyResult verify;
@@ -241,6 +244,15 @@ class FlashResult {
   /// Verification rounds run: 1 plus [correctionRounds].
   final int rounds;
 
+  /// The package version from the manifest (when flashed via [flashPackage]).
+  final String? version;
+
+  /// The build commit from the manifest (when flashed via [flashPackage]).
+  final String? buildCommit;
+
+  /// The target the package was built for (when flashed via [flashPackage]).
+  final String? target;
+
   const FlashResult({
     required this.verify,
     required this.pagesCompared,
@@ -252,6 +264,9 @@ class FlashResult {
     required this.chunksSkipped,
     required this.correctionRounds,
     required this.rounds,
+    this.version,
+    this.buildCommit,
+    this.target,
   });
 
   int get reads => verify.reads;
@@ -393,6 +408,10 @@ abstract class BootloaderTransport {
   /// node that is not in bootloader mode gives - and thrown for every other failure.
   Future<BootloaderIdentity?> identify(Duration timeout);
 
+  /// Puts the addressed node into bootloader mode by sending Device service CID 4.
+  /// Returns true if the device acknowledged and entered bootloader mode.
+  Future<bool> enterBootloader(Duration timeout);
+
   /// Reads 32 bytes at [offset].
   Future<Uint8List> readChunk(int offset, Duration timeout);
 
@@ -404,16 +423,22 @@ abstract class BootloaderTransport {
 
   /// Asks for the CRC32 of the whole app space (one number, no arguments).
   Future<int> crc(Duration timeout);
+
+  /// Asks the node to jump to its application (no arguments). The node answers with an ack
+  /// and then leaves the bootloader. Returns true when the ack was received.
+  Future<bool> jump(Duration timeout);
 }
 
 /// Core passthrough command IDs (Docs/Services/Bootloader.md "Core Bootloader Passthrough
-/// Commands (002x)"). They follow the bootloader command order - identify, read, erase, write, CRC
-/// - so a CID and its frame always carry the same rank.
+/// Commands (002x)"). They follow the bootloader command order - identify, read, erase, write, CRC,
+/// jump - so a CID and its frame always carry the same rank.
 const int coreBootIdentify = 0x20;
 const int coreBootRead = 0x21;
 const int coreBootErase = 0x22;
 const int coreBootWrite = 0x23;
 const int coreBootCrc = 0x24;
+const int coreBootJump = 0x25;
+const int coreBootEnterBootloader = 0x04;
 
 /// The core's `0020`-`0024` passthrough: the core relays each raw bootloader frame onto its RSBus,
 /// so the app reaches whatever node is in bootloader mode without knowing its address.
@@ -576,6 +601,20 @@ class PassthroughTransport implements BootloaderTransport {
     }
     return uint32FromBytes(reply.payload, 0);
   }
+
+  @override
+  Future<bool> jump(Duration timeout) async {
+    final reply = await _ask('jump', coreBootJump, timeout: timeout);
+    // The core forwards the node's jump ack (4 bytes, offset ignored). SUCCESS means the ack arrived.
+    return reply.payload.length >= 4;
+  }
+
+  @override
+  Future<bool> enterBootloader(Duration timeout) async {
+    final reply = await _ask('enter bootloader', coreBootEnterBootloader, timeout: timeout);
+    // The node answers with ack (0x0E) and then enters bootloader mode.
+    return reply.ok;
+  }
 }
 
 /// The core's own USB bootloader: the raw frames go straight to the USB Serial/JTAG port with no
@@ -692,6 +731,31 @@ class DirectUsbTransport implements BootloaderTransport {
       throw const PassthroughFailure(PassthroughReason.nodeSilent, 'CRC');
     }
     return Bootloader.crc(reply);
+  }
+
+  @override
+  Future<bool> jump(Duration timeout) async {
+    final reply = await _requestFrame(
+      Bootloader.encodeJumpRequest(),
+      command: Bootloader.cmdJumpResponse,
+      size: Bootloader.readRequestSize,
+      timeout: timeout,
+      what: 'jump',
+    );
+    return reply != null;
+  }
+
+  @override
+  Future<bool> enterBootloader(Duration timeout) async {
+    final frame = Bootloader.encodeBootloaderEntryRequest();
+    final reply = await _requestFrame(
+      frame,
+      command: Bootloader.cmdBootloaderEntryResponse,
+      size: Bootloader.readRequestSize,
+      timeout: timeout,
+      what: 'enter bootloader',
+    );
+    return reply != null;
   }
 
   /// Writes [request] and waits for its response frame: a valid frame of [command] and [size],
@@ -1157,6 +1221,64 @@ class BootloaderClient {
     }
   }
 
+  /// Flashes a `.fw.zip` package: verifies its manifest, extracts the image, and runs the
+  /// flash sequence. Returns a [FlashResult] that includes the manifest's [version],
+  /// [buildCommit] and [target] for the progress UI.
+  ///
+  /// The package bytes are checked by [verifyFirmwarePackage] against [expectedTarget] (the
+  /// route's target: [routeTarget]). A package that fails any check throws [PackageRefused]
+  /// with every failed check's sentence - nothing is written. A bare image (not a `.fw.zip`)
+  /// is refused by name.
+  ///
+  /// On success the image from the manifest is flashed with the same sequence as [flash]:
+  /// identify, delta write, tail blank, two measures, up to five correction rounds.
+  /// The [expectedCrc] passed to the flash run is the manifest's `crc32_padded` (the value the
+  /// device's CRC command returns for this image), so the final CRC check matches the manifest.
+  Future<FlashResult> flashPackage(
+    Uint8List packageBytes, {
+    required String expectedTarget,
+    String name = '',
+    void Function(FlashProgress progress)? onProgress,
+    Duration deadline = flashDeadline,
+    bool Function()? isCancelled,
+  }) async {
+    // Verify the package and extract the manifest info.
+    final package = verifyFirmwarePackage(
+      bytes: packageBytes,
+      expectedTarget: expectedTarget,
+      name: name,
+    );
+
+    // Flash the image from the package. The manifest's crc32_padded is what the device
+    // answers for this image, so pass it as expectedCrc for the final CRC check.
+    // maxImageSize is omitted - the flash run will check against the device's actual
+    // app space size after identify.
+    final result = await flash(
+      package.image,
+      expectedCrc: package.crc32Padded,
+      deadline: deadline,
+      isCancelled: isCancelled,
+      onProgress: onProgress,
+    );
+
+    // Return a new FlashResult that includes the manifest metadata.
+    return FlashResult(
+      verify: result.verify,
+      pagesCompared: result.pagesCompared,
+      pagesKept: result.pagesKept,
+      pagesWritten: result.pagesWritten,
+      pagesBlanked: result.pagesBlanked,
+      pagesProtected: result.pagesProtected,
+      chunksWritten: result.chunksWritten,
+      chunksSkipped: result.chunksSkipped,
+      correctionRounds: result.correctionRounds,
+      rounds: result.rounds,
+      version: package.version,
+      buildCommit: package.buildCommit,
+      target: package.target,
+    );
+  }
+
   Future<FlashResult> _flash(
     Uint8List image, {
     int? expectedCrc,
@@ -1467,6 +1589,80 @@ class BootloaderClient {
       reads: reads,
       differences: result.differences,
     );
+  }
+
+  /// Jumps the device from bootloader mode back to its application.
+  /// Returns true when the jump ack was received.
+  Future<bool> jump() => _exchange('jump', transport.jump);
+
+  /// Puts the addressed node into bootloader mode by sending Device service CID 4.
+  /// Returns true if the device acknowledged and entered bootloader mode.
+  Future<bool> enterBootloader() => _exchange('enter bootloader', transport.enterBootloader);
+
+  /// Automatically detects the bootloader transport for [deviceId].
+  ///
+  /// Tries transports in priority order:
+  /// 1. [DirectUsbTransport] if USB is connected (core's own USB bootloader)
+  /// 2. [PassthroughTransport] if [deviceId] is known on the bus (node via core)
+  /// 3. [BleBootloaderTransport] if BLE is connected to that device
+  ///
+  /// Returns the first transport that answers [BootloaderTransport.identify] with a
+  /// valid bootloader response, or null if none respond.
+  static Future<BootloaderTransport?> detectTransport(int deviceId) async {
+    final link = ConnectionManager.instance;
+    const timeout = Duration(seconds: 2);
+
+    // 1. USB connected -> try DirectUsbTransport (core's own USB bootloader)
+    if (link.isConnected && link.transport is UsbTransport) {
+      final usb = link.transport as UsbTransport;
+      final transport = DirectUsbTransport(usb);
+      final id = await _tryIdentify(transport, timeout);
+      if (id != null) return transport;
+    }
+
+    // 2. Device known on the bus -> try PassthroughTransport (node via core)
+    final db = DeviceDatabase.instance;
+    final entry = db.byId(deviceId);
+    if (entry != null && !entry.stale && link.isConnected) {
+      final transport = PassthroughTransport(coreId: coreId);
+      final id = await _tryIdentify(transport, timeout);
+      if (id != null) return transport;
+    }
+
+    // 3. BLE connected to that device -> try BleBootloaderTransport
+    if (link.isConnected && link.transport is BleTransport) {
+      final ble = link.transport as BleTransport;
+      if (ble.displayName.contains(idToString(deviceId))) {
+        final transport = BleBootloaderTransport(deviceId: ble.id);
+        try {
+          await transport.connect();
+        } catch (_) {
+          // Connection failed, try next transport
+        }
+        final id = await _tryIdentify(transport, timeout);
+        if (id != null) return transport;
+        await transport.close();
+      }
+    }
+
+    return null;
+  }
+
+  /// Tries [BootloaderTransport.identify] on [transport] with [timeout].
+  /// Returns the identity on success, null on any failure.
+  static Future<BootloaderIdentity?> _tryIdentify(
+    BootloaderTransport transport,
+    Duration timeout,
+  ) async {
+    try {
+      final id = await transport.identify(timeout);
+      if (id != null && Bootloader.pageSizePlausible(id.pageSize)) {
+        return id;
+      }
+    } catch (_) {
+      // Any failure means this transport didn't work
+    }
+    return null;
   }
 
   // --- the two measures ------------------------------------------------------

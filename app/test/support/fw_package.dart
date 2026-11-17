@@ -20,7 +20,7 @@ import 'package:tamuapp/core/firmware_package.dart';
 /// [image], so a case makes exactly one thing wrong by setting it.
 class PackageForTest {
   PackageForTest({this.target = 'Tamu_v2_0A', Uint8List? image})
-    : image = image ?? Uint8List.fromList(List.generate(200, (i) => i & 0xFF));
+    : image = image ?? Uint8List.fromList(List.generate(1024, (i) => i & 0xFF));
 
   final String target;
 

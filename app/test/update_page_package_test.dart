@@ -10,6 +10,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamuapp/core/bootloader.dart';
+import 'package:tamuapp/core/bootloader_client.dart';
 import 'package:tamuapp/ui/update_page.dart';
 
 import 'support/fw_package.dart';
@@ -32,6 +33,30 @@ bool canUpdate(WidgetTester tester) =>
     null;
 
 void main() {
+  testWidgets('update page lays out and gates the Update button', (tester) async {
+    // The page is a tall ListView; give it a surface big enough to build every card.
+    tester.view.physicalSize = const Size(1000, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const MaterialApp(home: UpdatePage()));
+    await tester.pumpAndSettle();
+
+    // The guide, target, package and log sections all render.
+    expect(find.text('How to update'), findsOneWidget);
+    expect(find.text('Target'), findsOneWidget);
+    expect(find.text('Package'), findsOneWidget);
+    expect(find.text('Log'), findsOneWidget);
+    expect(find.text('Choose package'), findsOneWidget);
+
+    // Without a chosen package (and with no link) the Update button is disabled.
+    final button = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Update'),
+    );
+    expect(button.onPressed, isNull);
+  });
+
   testWidgets('a package for the route is reported as checked', (tester) async {
     final fake = PackageForTest(target: 'DAS_v0_1');
     await mount(
@@ -136,10 +161,10 @@ void main() {
     expect(canUpdate(tester), isFalse);
   });
 
-  testWidgets('a package for the core route verifies once it is chosen', (
+  testWidgets('a package for the node route verifies once it is chosen', (
     tester,
   ) async {
-    final fake = PackageForTest();
+    final fake = PackageForTest(target: 'DAS_v0_1');
     await mount(
       tester,
       UpdatePage(
@@ -153,7 +178,82 @@ void main() {
     await tester.tap(find.byType(SwitchListTile));
     await tester.pumpAndSettle();
 
-    expect(find.text('Tamu_v2_0A at 0x00090000'), findsOneWidget);
+    expect(find.text('DAS v0.1 at 0x08000800'), findsOneWidget);
     expect(canUpdate(tester), isTrue);
   });
+
+  testWidgets('flashPackage is called and logs version from manifest', (
+    tester,
+  ) async {
+    final fake = PackageForTest(target: 'DAS_v0_1');
+    var identifyCalled = false;
+
+    await mount(
+      tester,
+      UpdatePage(
+        isConnected: () => true,
+        initialPackage: fake.build(),
+        initialPackageName: fake.name,
+        clientFactory: () => BootloaderClient(
+          transport: _TestFlashPackageTransport(
+            onIdentify: () {
+              identifyCalled = true;
+              return Future.value(
+                BootloaderIdentity(appSize: 2048, pageSize: 64, name: 'Test'),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(canUpdate(tester), isTrue);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Update'));
+    await tester.pumpAndSettle();
+    // Wait for the async flash operations to complete
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(identifyCalled, isTrue, reason: 'identify should be called');
+
+    // The log should show the version from the manifest (added by flashPackage).
+    expect(find.textContaining('Version: ${fake.version}'), findsOneWidget);
+    expect(find.textContaining('abc123def456'), findsOneWidget);
+    expect(find.textContaining('target DAS_v0_1'), findsOneWidget);
+  });
+}
+
+/// A test transport that simulates a successful flash without throwing.
+class _TestFlashPackageTransport implements BootloaderTransport {
+  _TestFlashPackageTransport({required this.onIdentify});
+
+  final Future<BootloaderIdentity> Function() onIdentify;
+
+  @override
+  Future<BootloaderIdentity?> identify(Duration timeout) async =>
+      onIdentify();
+
+  @override
+  Future<bool> enterBootloader(Duration timeout) async => true;
+
+  @override
+  Future<Uint8List> readChunk(int offset, Duration timeout) async =>
+      Uint8List(32);
+
+  @override
+  Future<int> erasePage(int offset, Duration timeout) async => offset;
+
+  @override
+  Future<WriteAck> writeChunk(
+    int offset,
+    List<int> data,
+    Duration timeout,
+  ) async =>
+      WriteAck(true, acked: offset);
+
+  @override
+  Future<int> crc(Duration timeout) async => 0;
+
+  @override
+  Future<bool> jump(Duration timeout) async => true;
 }

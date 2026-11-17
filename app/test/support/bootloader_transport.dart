@@ -253,6 +253,24 @@ class FakeBootloaderTransport implements BootloaderTransport {
     return Bootloader.crc32(space);
   }
 
+  @override
+  Future<bool> jump(Duration timeout) async {
+    _gate('jump');
+    if (silent) return false;
+    // The node answers the jump and then leaves the bootloader (simulated by going silent).
+    silent = true;
+    return true;
+  }
+
+  @override
+  Future<bool> enterBootloader(Duration timeout) async {
+    _gate('enter bootloader');
+    if (silent) return false;
+    // The app answers the CID 4 and then enters bootloader mode (simulated by going silent).
+    silent = true;
+    return true;
+  }
+
   bool _blank(int offset, int length) {
     for (var i = 0; i < length; i++) {
       if (space[offset + i] != 0xFF) return false;

@@ -12,8 +12,9 @@
 // Protocol v2 (Core/Functions/Bootloader.h): a 4-bit command field - bits 1-3 the operation, bit 0
 // the direction. An identify request returns the app size, the name and the flash page size (64,
 // the erase unit); every write (0b0110) is answered by a write response carrying the offset of the
-// last chunk that landed; an ERASE request (0b0100) blanks the 64-byte page its offset names; and a
-// digest request (0b1000) answers with the CRC32 of the requested range of the app region.
+// last chunk that landed; an ERASE request (0b0100) blanks the 64-byte page its offset names; a
+// digest request (0b1000) answers with the CRC32 of the requested range of the app region; and a
+// jump request (0b1010) is answered with its own ack (0b1011) and then leaves for the app.
 //
 // Flash rules: writes are 32-byte aligned (per the doc) and NEVER erase - the erase is its own
 // command, so a delta upload can blank exactly the pages it is about to rewrite, and a write the
@@ -404,6 +405,26 @@ static void JumpToApp()
     for (;;) {} // unreachable
 }
 
+// Answer the jump (0b1011) and then leave for the app. The ack is built IN PLACE in the frame the
+// node just received: both directions are header-only, so bytes 0 and 6 already hold the frame
+// markers and only the control byte changes - a compile-time constant (HeaderControlZeroOffset),
+// since the offset slot is "Ignored" in both directions (Docs/Services/Bootloader.md) and the
+// request the core sends carries zero there. SendRaw returns only after the frame's TC flag, the
+// RS485 direction pin back to RX and the echo drain, so the ack is on the wire before JumpToApp()
+// re-points the core: a queued hand-off would be cut off by the jump. A node that never answers is
+// what the core's 0x03 deadline reports, instead of an expected silence.
+//
+// Known narrow gap, measured: a NON-conforming sender that puts a nonzero value in the ignored
+// offset slot gets an ack whose parity covers a zero offset, so that ack would not decode. The
+// core's EncodeJumpRequest always sends zero, so the product path is exact. Recomputing the parity
+// instead costs 12 B this region does not have - 2044/2048 with this form, 2056/2048 with it.
+static void HandleJump(uint8_t *Frame)
+{
+    Frame[1] = Bootloader::HeaderControlZeroOffset(Bootloader::CMD_JUMP_RESP);
+    SendRaw(Frame, Bootloader::READ_REQ_SIZE);
+    JumpToApp(); // does not return
+}
+
 // The frame loop: serve until reset. Split out so the published entry below runs the same loop the
 // button path does instead of a second copy of it.
 static void Serve()
@@ -424,7 +445,7 @@ static void Serve()
         else if (Cmd == Bootloader::CMD_ERASE_REQ)
             HandleErase(Offset);
         else if (Cmd == Bootloader::CMD_JUMP_REQ)
-            JumpToApp(); // offset ignored, no response: the app answering is the proof
+            HandleJump(Frame);
 #ifndef BL_DIGEST_READ_HOOK
         // The bench build reaches the same AppDigest through the read hook below (its carrier
         // frame), so it leaves this dispatch out to stay inside the 2 KB.

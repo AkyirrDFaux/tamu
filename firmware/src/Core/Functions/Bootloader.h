@@ -67,6 +67,9 @@ namespace Bootloader
     constexpr uint8_t CMD_WRITE_RESP    = 0x7; // 0b0111 - the last written offset
     constexpr uint8_t CMD_DIGEST_REQ    = 0x8; // 0b1000 - CRC32 of a range of the app region
     constexpr uint8_t CMD_DIGEST_RESP   = 0x9; // 0b1001 - the CRC, offset echoed
+    // CRC over whole app space (no range arguments): the new v2 command that replaces digest.
+    constexpr uint8_t CMD_CRC_REQ      = 0xC; // 0b1100 - CRC32 of whole app space
+    constexpr uint8_t CMD_CRC_RESP     = 0xD; // 0b1101 - the CRC32 of whole app space
     // 0b1010 - jump to the app: the offset is ignored. The node ANSWERS (0b1011) and then jumps
     // immediately - the response is a complete send (frame out, TC, direction pin back to RX)
     // before the jump, exactly like the DAS app's CID 4 handler, so a missing answer is a lost
@@ -401,6 +404,13 @@ namespace Bootloader
         return Crc ^ 0xFFFFFFFFu;
     }
 
+    // Incremental CRC32 update: same step function, no init/final xor.
+    inline uint32_t Crc32Update(uint32_t Crc, const uint8_t *Data, uint32_t Len)
+    {
+        while (Len--) Crc = Crc32Step(Crc, *Data++);
+        return Crc;
+    }
+
     // Digest request: the shortest frame - start | control | end. The CRC covers the whole app
     // space, so there is nothing to carry.
     inline void EncodeDigestRequest(uint8_t *Out)
@@ -408,6 +418,14 @@ namespace Bootloader
         Out[0] = START;
         Out[DIGEST_REQ_SIZE - 1] = END;
         WriteControl(Out, CMD_DIGEST_REQ, DIGEST_REQ_SIZE);
+    }
+
+    // CRC request: same 3-byte shape as digest request (no arguments, whole app space).
+    inline void EncodeCrcRequest(uint8_t *Out)
+    {
+        Out[0] = START;
+        Out[DIGEST_REQ_SIZE - 1] = END;
+        WriteControl(Out, CMD_CRC_REQ, DIGEST_REQ_SIZE);
     }
 
     // Erase request: header-only, naming the 64-byte page with its own base offset.
@@ -428,6 +446,15 @@ namespace Bootloader
     inline void EncodeJumpResponse(uint8_t *Out)
     {
         EncodeHeaderFrame(CMD_JUMP_RESP, 0, Out);
+    }
+
+    // CRC response: same 7-byte shape as digest response, carrying the CRC32 of the whole app space.
+    inline void EncodeCrcResponse(uint32_t Crc, uint8_t *Out)
+    {
+        Out[0] = START;
+        memcpy(Out + 2, &Crc, 4);
+        Out[DIGEST_RESP_SIZE - 1] = END;
+        WriteControl(Out, CMD_CRC_RESP, DIGEST_RESP_SIZE);
     }
 
     // The control byte of a header-only frame carrying `Cmd` with the offset slot zeroed. Compile
@@ -467,12 +494,12 @@ namespace Bootloader
         ERASE_RESP_SIZE,    // CMD_ERASE_RESP    (0b0101) - erase response
         DATA_SIZE,          // CMD_WRITE         (0b0110) - write (32-byte chunk)
         READ_REQ_SIZE,      // CMD_WRITE_RESP    (0b0111) - write response
-        DIGEST_REQ_SIZE,    // CMD_DIGEST_REQ    (0b1000) - digest/CRC request
-        DIGEST_RESP_SIZE,   // CMD_DIGEST_RESP   (0b1001) - digest/CRC response
+        DIGEST_REQ_SIZE,    // CMD_DIGEST_REQ    (0b1000) - digest/CRC request (deprecated)
+        DIGEST_RESP_SIZE,   // CMD_DIGEST_RESP   (0b1001) - digest/CRC response (deprecated)
         READ_REQ_SIZE,      // CMD_JUMP_REQ      (0b1010) - jump to app request
         READ_REQ_SIZE,      // CMD_JUMP_RESP     (0b1011) - jump response (ack before jump)
-        0,                  // 0b1100 - unassigned
-        0,                  // 0b1101 - unassigned
+        DIGEST_REQ_SIZE,    // CMD_CRC_REQ       (0b1100) - CRC of whole app space request
+        DIGEST_RESP_SIZE,   // CMD_CRC_RESP      (0b1101) - CRC of whole app space response
         0,                  // 0b1110 - unassigned
         0                   // 0b1111 - unassigned
     };
@@ -550,7 +577,7 @@ namespace Bootloader
             case 0x21: return CMD_READ_RESP;
             case 0x22: return CMD_ERASE_RESP;
             case 0x23: return CMD_WRITE_RESP;
-            case 0x24: return CMD_DIGEST_RESP;
+            case 0x24: return CMD_CRC_RESP;
             // 0x25 is the jump (0b1010). The node ACKS it (0b1011) and then leaves the bootloader,
             // so the core awaits that ack like every other command: a missing one is the ordinary
             // 0x03 deadline, and the node is not mistaken for lost when it did answer.

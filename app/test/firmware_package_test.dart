@@ -57,7 +57,7 @@ void main() {
       expect(package.size, fake.image.length);
       expect(package.image, fake.image);
       expect(package.crc32, Bootloader.crc32(fake.image));
-      expect(package.paddedSize, 224, reason: '200 B pads to seven chunks');
+      expect(package.paddedSize, 1024, reason: '1024 B is already a whole number of chunks');
       expect(
         package.crc32Padded,
         Bootloader.crc32Padded(fake.image),
@@ -205,7 +205,7 @@ void main() {
       expect(
         names(refusal, [
           'Tamu_v2_0A.bin',
-          '200 B in the package',
+          '1024 B in the package',
           'the manifest says 199 B',
         ]),
         isTrue,
@@ -215,7 +215,7 @@ void main() {
     test('a padded size the padded image does not have', () {
       final fake = PackageForTest()..paddedSize = 192;
       final refusal = refuse(fake.build());
-      expect(names(refusal, ['the padded image is 224 B']), isTrue);
+      expect(names(refusal, ['the padded image is 1024 B']), isTrue);
     });
 
     test('an entry smuggled in beside the manifest', () {

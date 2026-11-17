@@ -1,10 +1,13 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:matcher/matcher.dart';
 import 'package:tamuapp/core/bootloader.dart';
 import 'package:tamuapp/core/bootloader_client.dart';
+import 'package:tamuapp/core/firmware_package.dart';
 
 import 'support/bootloader_transport.dart';
+import 'support/fw_package.dart';
 
 /// A client over [t] whose waits are microseconds: the backoff shape is asserted separately, so
 /// the cases here measure what the client DOES, not how long it waits.
@@ -606,6 +609,125 @@ void main() {
         expect((ids[rank] - 0x20), rank);
         expect(Bootloader.cmdIdentifyRequest + (rank << 1), rank << 1);
       }
+    });
+  });
+
+  group('flashPackage()', () {
+    test('a valid package flashes and returns manifest metadata', () async {
+      final fake = PackageForTest();
+      final t = _device();
+      final phases = <FlashPhase>[];
+      final result = await _client(t).flashPackage(
+        fake.build(),
+        expectedTarget: 'Tamu_v2_0A',
+        name: fake.name,
+        onProgress: (p) {
+          if (phases.isEmpty || phases.last != p.phase) phases.add(p.phase);
+        },
+      );
+
+      expect(result.clean, isTrue);
+      expect(result.version, fake.version);
+      expect(result.buildCommit, fake.buildCommit);
+      expect(result.target, 'Tamu_v2_0A');
+      expect(result.outcome, FlashVerifyOutcome.confirmed);
+      expect(t.holds(fake.image), isTrue);
+      expect(
+        phases,
+        containsAllInOrder([
+          FlashPhase.comparing,
+          FlashPhase.writing,
+          FlashPhase.verifying,
+          FlashPhase.done,
+        ]),
+      );
+    });
+
+    test('a tampered package is refused with PackageRefused', () async {
+      final fake = PackageForTest();
+      final damaged = Uint8List.fromList(fake.image);
+      damaged[0x40] ^= 0x5A;
+      fake.payload = damaged;
+
+      final t = _device();
+      await expectLater(
+        _client(t).flashPackage(
+          fake.build(),
+          expectedTarget: 'Tamu_v2_0A',
+          name: fake.name,
+        ),
+        throwsA(
+          isA<PackageRefused>()
+              .having((r) => r.problems, 'problems', isNotEmpty),
+        ),
+      );
+      expect(t.writes, 0, reason: 'nothing was written when package refused');
+    });
+
+    test('a package for the wrong target is refused', () async {
+      final fake = PackageForTest(target: 'DAS_v0_1');
+      final t = _device();
+
+      await expectLater(
+        _client(t).flashPackage(
+          fake.build(),
+          expectedTarget: 'Tamu_v2_0A',
+          name: fake.name,
+        ),
+        throwsA(
+          isA<PackageRefused>()
+              .having(
+                (r) => r.problems,
+                'problems',
+                anyElement(contains('the package is for DAS_v0_1, but this route writes Tamu_v2_0A at 0x00090000')),
+              ),
+        ),
+      );
+      expect(t.writes, 0);
+    });
+
+    test('a bare image (not a .fw.zip) is refused', () async {
+      final t = _device();
+      final bareImage = Uint8List.fromList(List.generate(64, (i) => i));
+
+      await expectLater(
+        _client(t).flashPackage(
+          bareImage,
+          expectedTarget: 'Tamu_v2_0A',
+          name: 'Tamu_v2_0A.bin',
+        ),
+        throwsA(
+          isA<PackageRefused>()
+              .having(
+                (r) => r.problems,
+                'problems',
+                anyElement(contains('is a bare image; choose the package')),
+              ),
+        ),
+      );
+      expect(t.writes, 0);
+    });
+
+    test('a package with wrong format is refused', () async {
+      final fake = PackageForTest()..format = 2;
+      final t = _device();
+
+      await expectLater(
+        _client(t).flashPackage(
+          fake.build(),
+          expectedTarget: 'Tamu_v2_0A',
+          name: fake.name,
+        ),
+        throwsA(
+          isA<PackageRefused>()
+              .having(
+                (r) => r.problems,
+                'problems',
+                anyElement(contains('manifest format is 2, this app verifies 1')),
+              ),
+        ),
+      );
+      expect(t.writes, 0);
     });
   });
 }

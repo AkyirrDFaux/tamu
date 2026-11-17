@@ -7,8 +7,8 @@ import '../core/bootloader_client.dart';
 import '../core/connection.dart';
 import '../core/device_db.dart';
 import '../core/firmware_package.dart';
-import '../core/transport.dart';
 import '../core/notice.dart';
+import 'dialogs.dart';
 import 'formatters.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -37,6 +37,7 @@ class UpdatePage extends StatefulWidget {
     this.pickFile,
     this.initialPackage,
     this.initialPackageName = 'package.fw.zip',
+    this.deviceId,
   });
 
   /// Whether the app has a link, for a test that mounts the page with no manager (the app passes
@@ -54,6 +55,10 @@ class UpdatePage extends StatefulWidget {
 
   /// The name [initialPackage] was picked under.
   final String initialPackageName;
+
+  /// The device ID to target for bootloader operations. When provided, enables better
+  /// transport auto-detection for nodes on the bus.
+  final int? deviceId;
 
   @override
   State<UpdatePage> createState() => _UpdatePageState();
@@ -78,7 +83,6 @@ class _UpdatePageState extends State<UpdatePage> {
   bool _cancelRequested = false;
   bool? _probeOk;
   BootloaderIdentity? _identity;
-  bool _directToCore = false;
   FlashProgress? _progress;
   FlashResult? _result;
   final _log = <String>[];
@@ -86,7 +90,7 @@ class _UpdatePageState extends State<UpdatePage> {
   ConnectionManager get _link => ConnectionManager.instance;
 
   /// The target the chosen route writes; the package's manifest has to name it.
-  String get _target => routeTarget(directToCore: _directToCore);
+  String get _target => routeTarget(directToCore: false);
 
   @override
   void initState() {
@@ -102,19 +106,26 @@ class _UpdatePageState extends State<UpdatePage> {
 
   /// The bootloader channel: the connected core's own USB bootloader when selected, else the
   /// core's Device `0020/0021` passthrough to the node bus.
+  /// Kept for tests that supply a clientFactory.
   BootloaderClient _client() =>
       widget.clientFactory?.call() ?? _defaultClient();
 
   BootloaderClient _defaultClient() {
-    if (_directToCore) {
-      final t = ConnectionManager.instance.transport;
-      if (t is UsbTransport) {
-        // Direct USB: the raw frames go straight to the core's own bootloader, so the core's
-        // passthrough (and its relay) is skipped entirely.
-        return BootloaderClient(transport: DirectUsbTransport(t));
-      }
-    }
+    // Legacy path for tests; the app now uses auto-detection via _buildClient.
     return BootloaderClient(coreId: coreId);
+  }
+
+  /// Builds a BootloaderClient using automatic transport detection.
+  /// Returns null if no bootloader transport could be found.
+  Future<BootloaderClient?> _buildClient() async {
+    if (widget.clientFactory != null) {
+      return widget.clientFactory!();
+    }
+    final transport = await BootloaderClient.detectTransport(
+      widget.deviceId ?? 0,
+    );
+    if (transport == null) return null;
+    return BootloaderClient(transport: transport);
   }
 
   void _addLog(String line) {
@@ -195,14 +206,6 @@ class _UpdatePageState extends State<UpdatePage> {
     return PickedFirmwareFile(file.name, await file.readAsBytes());
   }
 
-  /// Switches the route and re-checks the chosen file against the new target, so a package for
-  /// the other route cannot stay selected and be written by mistake.
-  void _setRoute(bool directToCore) {
-    setState(() => _directToCore = directToCore);
-    final bytes = _packageBytes;
-    if (bytes != null) _adopt(_fileName, bytes);
-  }
-
   /// Probes with an identify request: only a device in bootloader mode answers, and it replies
   /// with its app-space size and name. The running app waits for the standard sync byte and
   /// ignores the raw 0xCA frame.
@@ -213,7 +216,15 @@ class _UpdatePageState extends State<UpdatePage> {
     }
     setState(() => _probing = true);
     try {
-      final id = await _client().identify();
+      final client = await _buildClient();
+      if (client == null) {
+        _addLog(
+          'No bootloader transport found. Put the target in bootloader mode '
+          'and retry.',
+        );
+        return false;
+      }
+      final id = await client.identify();
       final ok = id != null;
       setState(() {
         _probeOk = ok;
@@ -238,7 +249,8 @@ class _UpdatePageState extends State<UpdatePage> {
 
   Future<void> _startUpdate() async {
     final package = _package;
-    if (package == null) {
+    final packageBytes = _packageBytes;
+    if (package == null || packageBytes == null) {
       showNotice(_refusal ?? 'Choose a firmware package first');
       return;
     }
@@ -263,43 +275,34 @@ class _UpdatePageState extends State<UpdatePage> {
     );
     _addLog('Probing for a device in bootloader mode...');
 
-    final client = _client();
-    try {
-      final id = await client.identify();
-      if (id == null) {
-        _addLog(
-          'No bootloader reply - aborting. Enter bootloader mode and retry.',
-        );
-        return;
-      }
-      setState(() => _identity = id);
-      if (image.length > id.appSize) {
-        _addLog(
-          'Image is ${_formatBytes(image.length)}, but ${id.name} has only '
-          '${_formatBytes(id.appSize)} of app space - aborting before writing.',
-        );
-        return;
-      }
+    final client = await _buildClient();
+    if (client == null) {
       _addLog(
-        'Bootloader identified: ${id.name} '
-        '(${_formatBytes(id.appSize)} app space, ${id.pageSize} B erase pages). '
-        'Writing ${_formatBytes(image.length)}: every page is read and compared '
-        'first, only the pages that differ are erased and written, and the pages '
-        'after the image are blanked. The device\'s whole-space CRC is compared '
-        'with the host\'s ${hex32(package.crc32Padded)} only when the image fills '
-        'the app space; the client computes the value for the space it writes.',
+        'No bootloader transport found. Put the target in bootloader mode '
+        'and retry.',
       );
-      final result = await client.flash(
-        image,
-        maxImageSize: id.appSize,
+      if (mounted) setState(() => _busy = false);
+      return;
+    }
+    try {
+      final result = await client.flashPackage(
+        packageBytes,
+        expectedTarget: _target,
+        name: _fileName,
         deadline: BootloaderClient.flashDeadline,
         isCancelled: () => _cancelRequested,
         onProgress: (p) {
           if (mounted) setState(() => _progress = p);
         },
       );
+      // Identify the device to log its details (flashPackage runs identify internally).
+      final id = await client.identify();
+      if (id != null) setState(() => _identity = id);
       setState(() => _result = result);
       _addLog('Verified: ${result.note}.');
+      if (result.version != null) {
+        _addLog('Version: ${result.version}${result.buildCommit != null ? ' · ${result.buildCommit}' : ''} (target ${result.target}).');
+      }
       _addLog(
         'Power-cycle the device to run the new firmware.',
       );
@@ -310,6 +313,10 @@ class _UpdatePageState extends State<UpdatePage> {
       // happened and what the user has to do, and the two sentences differ per fault.
       _addLog('Update stopped (${aborted.fault.label}): ${aborted.message}.');
       _addLog(aborted.remedy);
+    } on PackageRefused catch (refused) {
+      // Should not happen: the package was already verified in _adopt. But if it does,
+      // surface the refusal instead of a generic error.
+      _addLog('Package refused: ${refused.text}');
     } catch (error) {
       _addLog('Update failed: $error');
     } finally {
@@ -319,6 +326,68 @@ class _UpdatePageState extends State<UpdatePage> {
           _cancelRequested = false;
         });
       }
+    }
+  }
+
+  /// Jumps the device from bootloader mode back to its application.
+  Future<void> _resetToApp() async {
+    final package = _package;
+    if (package == null) {
+      showNotice('Choose a firmware package first');
+      return;
+    }
+    if (!_connected) {
+      showNotice('Connect to the core first');
+      return;
+    }
+
+    final confirmed = await showTamuDialog<bool>(
+      context,
+      title: 'Reset to App',
+      body: const Text(
+        'This will jump the device back to its application. Continue?',
+      ),
+      actions: tamuDialogActions(
+        onCancel: () => Navigator.pop(context, false),
+        onConfirm: () => Navigator.pop(context, true),
+        confirmLabel: 'Reset',
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _busy = true);
+    _addLog('Jumping device to application mode...');
+
+    try {
+      // Use auto-detection to find the right transport
+      final transport = await BootloaderClient.detectTransport(
+        widget.deviceId ?? 0,
+      );
+      if (transport == null) {
+        _addLog(
+          'No bootloader found. Put the target in bootloader mode and retry.',
+        );
+        return;
+      }
+
+      final client = BootloaderClient(transport: transport);
+      final ok = await client.jump();
+      if (ok) {
+        _addLog('Device restarted in app mode');
+        showNotice('Device restarted in app mode', tone: NoticeTone.success);
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      } else {
+        _addLog('Jump command failed - no ack from device');
+        showNotice('Jump failed: device did not acknowledge');
+      }
+    } catch (error) {
+      _addLog('Reset to app failed: $error');
+      showNotice('Reset to app failed: $error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -445,17 +514,6 @@ class _UpdatePageState extends State<UpdatePage> {
             ),
           ),
         ),
-        SwitchListTile(
-          dense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-          title: const Text('Update the connected core directly (USB)'),
-          subtitle: const Text(
-            "Off: relay to a node on the core's bus. On: flash the core itself; "
-            "enter its bootloader by holding the button at reset.",
-          ),
-          value: _directToCore,
-          onChanged: _busy ? null : _setRoute,
-        ),
       ],
     );
   }
@@ -561,7 +619,9 @@ class _UpdatePageState extends State<UpdatePage> {
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
           child: Align(
             alignment: Alignment.centerLeft,
-            child: Row(
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 8,
               children: [
                 FilledButton.icon(
                   icon: _busy
@@ -576,11 +636,17 @@ class _UpdatePageState extends State<UpdatePage> {
                       ? null
                       : _startUpdate,
                 ),
+                // Reset to App button - available after package is verified
+                if (_package != null && !_busy)
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.restart_alt),
+                    label: const Text('Reset to App'),
+                    onPressed: _connected ? _resetToApp : null,
+                  ),
                 // A flash writes ~13,500 chunks and reads them all back; without this the only
                 // way out of a run against a node that left bootloader mode was to wait for it.
                 // It stops between chunks, so the chunk in flight is still acknowledged.
                 if (_busy) ...[
-                  const SizedBox(width: 12),
                   OutlinedButton.icon(
                     icon: const Icon(Icons.stop),
                     label: Text(_cancelRequested ? 'Stopping...' : 'Cancel'),

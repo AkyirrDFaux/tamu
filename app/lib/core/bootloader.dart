@@ -47,6 +47,11 @@ class Bootloader {
   static const int start = 0xCA;
   static const int end = 0xBC;
 
+  // Bootloader BLE service UUIDs (Docs/Services/Bootloader.md, CoreBootloader.cpp)
+  static const String svcUuid = '54414d55-0001-4b4c-8000-00805f9b34fb';
+  static const String rxUuid = '54414d55-0002-4b4c-8000-00805f9b34fb';
+  static const String txUuid = '54414d55-0003-4b4c-8000-00805f9b34fb';
+
   // Bit 0 is the direction (0 request, 1 response), bits 1-3 the operation.
   static const int cmdIdentifyRequest = 0x0; // 0b0000
   static const int cmdIdentifyResponse = 0x1; // 0b0001
@@ -63,6 +68,14 @@ class Bootloader {
       0x8; // 0b1000 - no body: the CRC covers the app space
   static const int cmdCrcResponse =
       0x9; // 0b1001 - the CRC32 of the whole app space
+  static const int cmdJumpRequest =
+      0xA; // 0b1010 - jump to app, offset ignored, answered
+  static const int cmdJumpResponse =
+      0xB; // 0b1011 - the ack the node sends just before it jumps
+  static const int cmdBootloaderEntryRequest =
+      0xC; // 0b1100 - enter bootloader from app
+  static const int cmdBootloaderEntryResponse =
+      0xD; // 0b1101 - bootloader's ack to enter bootloader request
 
   /// [decode]'s result for a bad frame. 0 is a valid command (identify-request), so it cannot be
   /// used as the "invalid" sentinel.
@@ -200,6 +213,20 @@ class Bootloader {
     return f;
   }
 
+  /// Jump request: header-only, offset slot zero (ignored).
+  static Uint8List encodeJumpRequest() => _headerFrame(0, cmdJumpRequest);
+
+  /// Jump response: header-only, offset slot zero (ignored).
+  static Uint8List encodeJumpResponse() => _headerFrame(0, cmdJumpResponse);
+
+  /// Bootloader entry request: header-only, offset slot zero (ignored).
+  /// Used by the app to tell the bootloader to take over (CID 4).
+  static Uint8List encodeBootloaderEntryRequest() => _headerFrame(0, cmdBootloaderEntryRequest);
+
+  /// Bootloader entry response: header-only, offset slot zero (ignored).
+  /// The bootloader's answer to the app's "enter bootloader" request.
+  static Uint8List encodeBootloaderEntryResponse() => _headerFrame(0, cmdBootloaderEntryResponse);
+
   /// Left-aligns [payload] in a `payloadSize`-byte buffer, truncating any excess and
   /// zero-padding the tail.
   static Uint8List padPayload(List<int> payload) {
@@ -293,8 +320,8 @@ class Bootloader {
 
   /// The frame length for a command, or 0 when the command is unassigned.
   static int frameSize(int cmd) => switch (cmd) {
-    cmdIdentifyRequest || cmdReadRequest || cmdEraseRequest => readRequestSize,
-    cmdWriteResponse || cmdEraseResponse => readRequestSize,
+    cmdIdentifyRequest || cmdReadRequest || cmdEraseRequest || cmdJumpRequest || cmdBootloaderEntryRequest => readRequestSize,
+    cmdWriteResponse || cmdEraseResponse || cmdJumpResponse || cmdBootloaderEntryResponse => readRequestSize,
     cmdIdentifyResponse || cmdReadResponse || cmdWrite => dataSize,
     cmdCrcRequest => crcRequestSize,
     cmdCrcResponse => crcResponseSize,

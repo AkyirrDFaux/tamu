@@ -7,10 +7,37 @@
 #include "esp_partition.h"
 #include "esp_efuse.h"
 #include "esp_efuse_table.h"
+#include "nvs.h"
 // The factory image's boot budget: the numbers and the decision live there, the storage in
 // BootBudget.h. This app refunds the budget once it has proved it is alive (see the main loop).
 #include "Bootloader/BootBudget.h"
 #include "Bootloader/BootDecision.h"
+
+#ifdef DEVICE_HAS_BOOTLOADER_ENTRY
+extern "C" __attribute__((noreturn)) void DeviceEnterBootloaderJump(void)
+{
+    // The core's bootloader is the factory partition (a separate partition), not a stub at 0x7FC.
+    // Set the "force update mode" NVS flag, then set the boot partition to factory and restart.
+    nvs_handle_t NvsHandle;
+    esp_err_t NvsOpenErr = nvs_open("updater", NVS_READWRITE, &NvsHandle);
+    ESP_LOGI("BOOTENTRY", "nvs_open=%d", (int)NvsOpenErr);
+    if (NvsOpenErr == ESP_OK) {
+        esp_err_t NvsSetErr = nvs_set_u8(NvsHandle, "force_update", 1);
+        ESP_LOGI("BOOTENTRY", "nvs_set_u8=%d", (int)NvsSetErr);
+        esp_err_t NvsCommitErr = nvs_commit(NvsHandle);
+        ESP_LOGI("BOOTENTRY", "nvs_commit=%d", (int)NvsCommitErr);
+        nvs_close(NvsHandle);
+    }
+    const esp_partition_t *Factory = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY, nullptr);
+    if (Factory != nullptr) {
+        esp_ota_set_boot_partition(Factory);
+    }
+    esp_restart();
+    // Noreturn: esp_restart doesn't return, but the compiler doesn't know that.
+    while (1) {}
+}
+#endif
 
 #include "Core/Functions/AppInterface.h"
 #include "Storage.h"
@@ -447,6 +474,16 @@ extern "C"
             esp_err_t ArmErr = esp_ota_set_boot_partition(Factory);
             if (ArmErr != ESP_OK)
                 ESP_LOGE("BOOT", "factory boot re-arm failed: %d", (int)ArmErr);
+            else {
+                // Factory re-armed successfully: clear the "force update mode" flag so the
+                // bootloader boots the app next time (unless the button is physically held).
+                nvs_handle_t NvsHandle;
+                if (nvs_open("updater", NVS_READWRITE, &NvsHandle) == ESP_OK) {
+                    nvs_erase_key(NvsHandle, "force_update");
+                    nvs_commit(NvsHandle);
+                    nvs_close(NvsHandle);
+                }
+            }
         }
 
         // 16 KB: LoadAllBackups places a MEMORY_BACKUP_CAP-sized buffer on this stack and

@@ -2,11 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/bootloader_client.dart';
 import '../core/connection.dart';
+import '../core/diagnostics.dart';
 import '../core/device_db.dart';
+import '../core/enter_bootloader.dart';
+import '../core/notice.dart';
 import '../core/types.dart';
 import 'device_view_page.dart';
+import 'dialogs.dart';
 import 'theme.dart';
+import 'update_page.dart';
 import 'widgets.dart';
 
 /// Declared size of the core star in a device row: a marker rather than text, so
@@ -58,6 +64,57 @@ class _DevicesPageState extends State<DevicesPage>
   @override
   void onAutoRefreshStarted() {
     if (!_db.isRefreshing) _refresh();
+  }
+
+  /// Puts the device into bootloader mode and navigates to the Update page.
+  Future<void> _enterBootloader(BuildContext context, DeviceEntry device) async {
+    if (!_connected) {
+      showNotice('Not connected');
+      return;
+    }
+
+    final confirmed = await showTamuDialog<bool>(
+      context,
+      title: 'Enter Bootloader',
+      body: const Text(
+        'This will restart the device into bootloader mode. Continue?',
+      ),
+      actions: tamuDialogActions(
+        onCancel: () => Navigator.pop(context, false),
+        onConfirm: () => Navigator.pop(context, true),
+        confirmLabel: 'Enter Bootloader',
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    _addLog('Sending enter bootloader command to ${device.displayName}...');
+
+    try {
+      // Use the existing enterNodeBootloader function which handles the full flow
+      final result = await enterNodeBootloader(device.id);
+      if (result.entered) {
+        _addLog('${device.displayName} entered bootloader mode');
+        showNotice('Device entered bootloader mode', tone: NoticeTone.success);
+        if (context.mounted) {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => UpdatePage(deviceId: device.id),
+            ),
+          );
+        }
+      } else {
+        _addLog('Failed to enter bootloader: ${result.message}');
+        showNotice('Failed to enter bootloader: ${result.outcome.word}');
+      }
+    } catch (error) {
+      _addLog('Enter bootloader failed: $error');
+      showNotice('Enter bootloader failed: $error');
+    }
+  }
+
+  void _addLog(String line) {
+    AppDiagnostics.log('devices', line);
   }
 
   // Filters (Docs/App/Devices.md bottom of screen).
@@ -245,6 +302,27 @@ class _DevicesPageState extends State<DevicesPage>
       badge: device.isCore
           ? const Icon(Icons.star, color: kOrange, size: _coreStarSize)
           : null,
+      trailing: PopupMenuButton<String>(
+        icon: const Icon(Icons.more_vert),
+        tooltip: 'Device actions',
+        onSelected: (value) {
+          if (value == 'enter_bootloader') {
+            _enterBootloader(context, device);
+          }
+        },
+        itemBuilder: (_) => const [
+          PopupMenuItem(
+            value: 'enter_bootloader',
+            child: Row(
+              children: [
+                Icon(Icons.usb_off, size: 18),
+                SizedBox(width: 8),
+                Text('Enter Bootloader'),
+              ],
+            ),
+          ),
+        ],
+      ),
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => DeviceViewPage(deviceId: device.id)),
       ),

@@ -32,8 +32,14 @@ void main() {
       expect(Bootloader.cmdIdentifyRequest + (op << 1), op << 1);
       expect(Bootloader.cmdIdentifyResponse + (op << 1), (op << 1) | 1);
     }
-    // 0b1010-0b1111 are unassigned and are not frame sizes.
-    for (var cmd = 0x0A; cmd < 0x10; cmd++) {
+    // 0b1010-0b1011 are the jump request/response (assigned, header-only).
+    // 0b1100-0b1101 are the bootloader entry request/response (assigned).
+    // 0b1110-0b1111 are unassigned and are not frame sizes.
+    expect(Bootloader.frameSize(Bootloader.cmdJumpRequest), Bootloader.readRequestSize);
+    expect(Bootloader.frameSize(Bootloader.cmdJumpResponse), Bootloader.readRequestSize);
+    expect(Bootloader.frameSize(Bootloader.cmdBootloaderEntryRequest), Bootloader.readRequestSize);
+    expect(Bootloader.frameSize(Bootloader.cmdBootloaderEntryResponse), Bootloader.readRequestSize);
+    for (var cmd = 0x0E; cmd < 0x10; cmd++) {
       expect(Bootloader.frameSize(cmd), 0, reason: 'command 0x$cmd');
     }
     expect(Bootloader.readRequestSize, 7);

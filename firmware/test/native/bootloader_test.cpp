@@ -5,9 +5,9 @@
 // is deliberately independent (a plain bit walk) so a broken fold in the codec cannot agree
 // with itself. The KAT hex strings at the end are mirrored verbatim in the app test.
 //
-// Protocol v2: the control byte is padding(3)=0 | parity(1) | command(4), so eleven commands exist
-// (the digest pair plus ERASE and the jump request) and Decode's "invalid" sentinel is 0xFF (0b0000
-// is a valid command: identify-request).
+// Protocol v2: the control byte is padding(3)=0 | parity(1) | command(4), so twelve commands exist
+// (the digest pair plus ERASE, the jump request and the ack it is answered with) and Decode's
+// "invalid" sentinel is 0xFF (0b0000 is a valid command: identify-request).
 
 #include <cstdint>
 #include <cstdio>
@@ -53,6 +53,8 @@ int main()
     CHECK_EQ(CMD_WRITE_RESP, 0x7u);            // 0b0111
     CHECK_EQ(CMD_DIGEST_REQ, 0x8u);            // 0b1000
     CHECK_EQ(CMD_DIGEST_RESP, 0x9u);           // 0b1001
+    CHECK_EQ(CMD_JUMP_REQ, 0xAu);              // 0b1010
+    CHECK_EQ(CMD_JUMP_RESP, 0xBu);             // 0b1011
     CHECK_EQ(CMD_IDENTIFY_REQ & 1u, 0u);       // identify: a request
     CHECK_EQ(CMD_IDENTIFY_RESP & 1u, 1u);      // ... and its response
     CHECK_EQ(CMD_READ_REQ & 1u, 0u);
@@ -63,6 +65,8 @@ int main()
     CHECK_EQ(CMD_WRITE_RESP & 1u, 1u);
     CHECK_EQ(CMD_DIGEST_REQ & 1u, 0u);
     CHECK_EQ(CMD_DIGEST_RESP & 1u, 1u);
+    CHECK_EQ(CMD_JUMP_REQ & 1u, 0u);           // the jump: a request ...
+    CHECK_EQ(CMD_JUMP_RESP & 1u, 1u);          // ... and the ack the node sends before it jumps
     CHECK_EQ(CMD_WRITE & 0x0Fu, 0x6u);
     CHECK_EQ(CMD_ERASE_REQ, 0x4u);
     CHECK_EQ(CMD_ERASE_RESP, 0x5u);
@@ -177,6 +181,55 @@ int main()
         PrintHex("eraseresp", Resp, ERASE_RESP_SIZE);
     }
 
+    // --- jump: request header-only, and an ACK the node sends before it jumps ---------
+    {
+        uint8_t Req[READ_REQ_SIZE];
+        EncodeJumpRequest(Req);
+        CHECK_EQ(sizeof(Req), 7);
+        CHECK_EQ(Req[0], START);
+        CHECK_EQ(Req[6], END);
+        CHECK_EQ(Req[1] & 0x0Fu, CMD_JUMP_REQ);
+        CHECK_EQ(Req[1] & 0xE0u, 0);
+        CHECK_EQ((Req[1] >> 4) & 1u, RefParity(Req, READ_REQ_SIZE));
+        CHECK_EQ(Offset(Req), 0u);                 // the offset slot is ignored, so it is zeroed
+        CHECK_EQ(Decode(Req, READ_REQ_SIZE), CMD_JUMP_REQ);
+
+        // The ack the DAS bootloader sends just before JumpToApp(). It has the same 7-byte shape,
+        // so the frame LENGTH cannot tell the two apart - the control byte does.
+        uint8_t Resp[READ_REQ_SIZE];
+        EncodeJumpResponse(Resp);
+        CHECK_EQ(Resp[0], START);
+        CHECK_EQ(Resp[6], END);
+        CHECK_EQ(Resp[1] & 0x0Fu, CMD_JUMP_RESP);
+        CHECK_EQ(Resp[1] & 0xE0u, 0);
+        CHECK_EQ((Resp[1] >> 4) & 1u, RefParity(Resp, READ_REQ_SIZE));
+        CHECK_EQ(Offset(Resp), 0u);
+        CHECK_EQ(Decode(Resp, READ_REQ_SIZE), CMD_JUMP_RESP);
+        CHECK(Decode(Resp, READ_REQ_SIZE) != CMD_JUMP_REQ);
+
+        // The bootloader sends that ack as a CONSTANT frame, so the compile-time control byte
+        // HeaderControlZeroOffset must equal the one the encoder writes (0b1011 has three set
+        // bits -> even parity 1, so 0x1B). A drift here would send a frame the core drops.
+        CHECK_EQ(HeaderControlZeroOffset(CMD_JUMP_RESP), Resp[1]);
+        CHECK_EQ(Resp[1], 0x1Bu);
+        CHECK_EQ(HeaderControlZeroOffset(CMD_ERASE_RESP),
+                 (uint8_t)((CMD_ERASE_RESP & 0x0Fu) | 0x00u)); // 0b0101: two set bits -> parity 0
+        CHECK_EQ(HeaderControlZeroOffset(CMD_WRITE_RESP), 0x17u); // 0b0111 -> parity 1
+
+        // Every single-bit flip of either frame must be rejected.
+        for (uint16_t i = 0; i < READ_REQ_SIZE; i++)
+            for (int bit = 0; bit < 8; bit++)
+            {
+                uint8_t Bad[READ_REQ_SIZE];
+                std::memcpy(Bad, Resp, READ_REQ_SIZE);
+                Bad[i] ^= (uint8_t)(1u << bit);
+                CHECK_EQ(Decode(Bad, READ_REQ_SIZE), INVALID);
+            }
+
+        PrintHex("jumpreq", Req, READ_REQ_SIZE);
+        PrintHex("jumpresp", Resp, READ_REQ_SIZE);
+    }
+
     // --- identify: request header-only, response carries size + name + page ----
     {
         uint8_t req[READ_REQ_SIZE];
@@ -222,12 +275,12 @@ int main()
 
         // A v1 control byte (parity at bit 3) must not decode. The length cannot tell the two
         // protocols apart - both identify responses are 39 bytes - so the control byte is what
-        // does, and this is the request that pins it. 0b1011 is the value to use: v1 reads it as a
-        // read-response, while v2 has no command there (0b1010 is the jump request and 0b1011 its
-        // never-sent response value).
+        // does, and this is the request that pins it. 0b1100 is the value to use: v1 reads it as an
+        // erase request with parity 1, while v2 has no command there (0b1010 is the jump request and
+        // 0b1011 the ack the node sends before it jumps; 0b1100-0b1111 stay unassigned).
         uint8_t v1[READ_REQ_SIZE];
         EncodeReadRequest(0x00000101u, v1);            // three set bits: v1 parity would be 1
-        v1[1] = (uint8_t)(CMD_READ_REQ | (1u << 3) | 1u);
+        v1[1] = 0b1100u;
         CHECK_EQ(Decode(v1, READ_REQ_SIZE), INVALID);
     }
 
@@ -378,16 +431,18 @@ int main()
 
     // --- every defined command is a frame size; nothing undefined decodes ------
     {
-        for (int Cmd = 0; Cmd <= CMD_JUMP_REQ; Cmd++) CHECK(FrameSize((uint8_t)Cmd) != 0);
+        for (int Cmd = 0; Cmd <= CMD_JUMP_RESP; Cmd++) CHECK(FrameSize((uint8_t)Cmd) != 0);
         CHECK_EQ(FrameSize(CMD_DIGEST_REQ), DIGEST_REQ_SIZE);
         CHECK_EQ(FrameSize(CMD_DIGEST_RESP), DIGEST_RESP_SIZE);
         CHECK_EQ(FrameSize(CMD_IDENTIFY_RESP), IDENTIFY_RESP_SIZE);
         CHECK_EQ(FrameSize(CMD_ERASE_REQ), ERASE_REQ_SIZE);
         CHECK_EQ(FrameSize(CMD_ERASE_RESP), ERASE_RESP_SIZE);
-        CHECK_EQ(FrameSize(CMD_JUMP_REQ), READ_REQ_SIZE); // 0b1010: the 7-byte request shape
+        CHECK_EQ(FrameSize(CMD_JUMP_REQ), READ_REQ_SIZE);  // 0b1010: the 7-byte request shape
+        CHECK_EQ(FrameSize(CMD_JUMP_RESP), READ_REQ_SIZE); // 0b1011: the same shape, sent before the jump
         CHECK_EQ(CMD_JUMP_REQ, 0xAu);                     // the value is the contract with the tool
-        // 0b1011 is the jump's (never sent) response value: still undefined, like 0b1100-0b1111.
-        for (int Cmd = 11; Cmd < 16; Cmd++) CHECK_EQ(FrameSize((uint8_t)Cmd), 0); // undefined
+        CHECK_EQ(CMD_JUMP_RESP, 0xBu);                    // ditto for the ack
+        // 0b1100-0b1111 are unassigned: no frame size, so Decode can never accept one.
+        for (int Cmd = 12; Cmd < 16; Cmd++) CHECK_EQ(FrameSize((uint8_t)Cmd), 0); // undefined
         CHECK_EQ(FrameSize(16), 0);
         CHECK_EQ(FrameSize(0xFF), 0);
     }
@@ -475,7 +530,7 @@ int main()
         auto Put = [&](const char *Name, uint16_t Len) { return Row{Name, Buf[1], Len}; };
 
         EncodeIdentifyRequest(Buf);
-        Row Rows[10];
+        Row Rows[12];
         Rows[0] = Put("identify-req ", READ_REQ_SIZE);
         EncodeIdentifyResponse(0x3600u, 64, "DAS v0.1", Buf);
         Rows[1] = Put("identify-resp", IDENTIFY_RESP_SIZE);
@@ -495,11 +550,15 @@ int main()
         Rows[8] = Put("digest-req   ", DIGEST_REQ_SIZE);
         EncodeDigestResponse(0xDEADBEEFu, Buf);
         Rows[9] = Put("digest-resp  ", DIGEST_RESP_SIZE);
+        EncodeJumpRequest(Buf);
+        Rows[10] = Put("jump-req     ", READ_REQ_SIZE);
+        EncodeJumpResponse(Buf);
+        Rows[11] = Put("jump-resp    ", READ_REQ_SIZE);
 
-        const uint8_t Expect[10] = {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9};
+        const uint8_t Expect[12] = {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xA, 0xB};
         std::printf("command table (control byte of a real frame):\n");
         std::printf("  frame          control  parity  cmd  op(bits1-3)  dir\n");
-        for (int i = 0; i < 10; i++)
+        for (int i = 0; i < 12; i++)
         {
             const uint8_t Ctl = Rows[i].Byte;
             const uint8_t Cmd = (uint8_t)(Ctl & 0x0Fu);
@@ -524,11 +583,12 @@ int main()
         CHECK_EQ(PassthroughResponse(0x22), CMD_ERASE_RESP);
         CHECK_EQ(PassthroughResponse(0x23), CMD_WRITE_RESP);
         CHECK_EQ(PassthroughResponse(0x24), CMD_DIGEST_RESP);
+        CHECK_EQ(PassthroughResponse(0x25), CMD_JUMP_RESP); // the node acks the jump, then jumps
         CHECK_EQ(PassthroughResponse(0x1F), INVALID); // outside the passthrough CID range
-        CHECK_EQ(PassthroughResponse(0x25), INVALID);
+        CHECK_EQ(PassthroughResponse(0x26), INVALID);
         // Every mapping is a RESPONSE (bit 0 set) with a real frame size - a request mapped here
         // would accept the core's own echo, which is the defect itself.
-        for (uint8_t Cid = 0x20; Cid <= 0x24; Cid++)
+        for (uint8_t Cid = 0x20; Cid <= 0x25; Cid++)
         {
             const uint8_t Resp = PassthroughResponse(Cid);
             CHECK((Resp & 1u) == 1u);

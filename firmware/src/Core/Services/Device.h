@@ -894,6 +894,7 @@ bool DeviceService::Handle(const PacketFrame &Frame)
 #ifdef DEVICE_HAS_BOOTLOADER_ENTRY
         case 4:
         {
+            ESP_LOGI("DEVICE", "CID 4 received, sending reply and jumping to bootloader");
             // ADDRESSED like every other Device request, so exactly one node leaves the app and
             // the rest of the bus keeps running.
             //

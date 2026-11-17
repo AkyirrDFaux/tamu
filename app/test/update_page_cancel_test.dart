@@ -71,6 +71,12 @@ class _HeldWriteTransport implements BootloaderTransport {
     flash.forEach((offset, data) => space.setRange(offset, offset + data.length, data));
     return Bootloader.crc32(space);
   }
+
+  @override
+  Future<bool> jump(Duration timeout) async => false;
+
+  @override
+  Future<bool> enterBootloader(Duration timeout) async => false;
 }
 
 void main() {

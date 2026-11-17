@@ -190,7 +190,19 @@ A failure is never reported without saying which failure it was, because the app
 | `0x03` | The node did not answer before the 1 s deadline |
 | `0x04` | The node answered with a failure frame of its own |
 
-`0x01` and `0x02` are decided by the core without touching the bus; `0x03` means the request went out and nothing came back; `0x04` carries the node's own answer semantics (an erase at a misaligned offset, a write into a page that was not erased).
+`0x01` and `0x02` are decided by the core without touching the bus; `0x03` means the request went out and nothing came back; `0x04` carries the node's own answer semantics.
+
+#### Reason 0x04 sub-codes (node bootloader failure details)
+When the node's bootloader refuses an erase or write request, it answers with the page/sector address (bit 0 set as the failure flag). The condition that caused the refusal maps to a sub-code the app can use for recovery:
+
+| Sub-code | Condition | Operation | Recovery path |
+| -------- | --------- | --------- | ------------- |
+| `0x01` | Misaligned offset — the offset is not a multiple of the page/sector size | Erase | Recompute the page-aligned offset and retry the erase. |
+| `0x02` | Offset at or past the code space limit (storage tail protection) | Write | The write targets the app's private storage region; do not retry. Treat as a fatal layout error. |
+| `0x03` | Page-start write into a page that was not erased (E85) — the page's first word reads non-`0xFFFFFFFF` | Write | Issue an erase for that page, then retry the page's first chunk. |
+| `0x04` | Flash erase or program operation failed (hardware error, write protection, or no space) | Erase / Write | Treat as a fatal hardware error; surface to the user, do not retry. |
+
+> **Note** The core's passthrough currently reports all node bootloader failures as reason `0x04` with no sub-code. A future protocol revision may surface the sub-code in the passthrough failure payload; documenting them here ensures the app's recovery logic is ready.
 
 Both packet families share one UART, so while a passthrough is outstanding the core separates them: a bootloader frame accumulates in the passthrough's own buffer and everything else continues through the standard packet assembler. Neither is dropped, and a reply is never mistaken for standard traffic.
 
@@ -205,4 +217,17 @@ The command IDs follow the bootloader command order - identify, read, erase, wri
 | Request CRC            | 4  | -               | CRC             | CRC-32 over the whole app space |
 | Jump to app            | 5  | -               | Offset          | The node answers, then leaves the bootloader |
 ### Returning to the bootloader from the app
-A device running an application hands itself back without a reset by calling the bootloader's published entry: the last word of the bootloader's 2 KB region holds a jump into the bootloader's frame loop, which skips the button test and the settle delay. It is triggered by the device service's own command (CID 4), addressed to that one device, and it is acknowledged before the jump so the requester is not left waiting. A device whose build has no room for the handler does not implement the command and refuses it, rather than latching a request nothing acts on.
+A device running an application hands itself back without a reset by calling the bootloader's published entry: the last word of the bootloader's 2 KB region holds a jump into the bootloader's frame loop, which skips the button test and the settle delay. It is triggered by the device service's own command (CID 4), addressed to that one device, and it is acknowledged before the jump so the requester is not left waiting. **CID 4 is mandatory on all devices that have a bootloader** (core and DAS nodes); the bootloader will refuse the request only on a device that genuinely lacks the bootloader entry stub.
+
+### Bootloader entry stub contract (0x7FC)
+The app-to-bootloader jump uses a fixed published address that is a build-time contract between the bootloader and the app. The contract is enforced by the linker and a post-link check so it cannot drift.
+
+| Element              | Value / Mechanism                                            |
+| -------------------- | ------------------------------------------------------------ |
+| Published entry addr | `Bootloader::BL_ENTRY_ADDR = 0x7FC` ([[Core/Functions/Bootloader.h]]) — the last word of the DAS's 2 KB bootloader region. |
+| Section placement    | `.bootentry` pinned at `0x7FC` by `-Wl,--section-start=.bootentry=0x7FC` in `platformio.ini` (`DAS_bootloader` env). |
+| Stub symbol          | `BootloaderEntryStub` — a 4-byte RVC `jal` to `BootloaderEntry`, kept alive by `-Wl,--undefined=BootloaderEntryStub` (prevents `--gc-sections` from dropping it) and `__attribute__((section(".bootentry"), used, noinline))`. |
+| Post-link check      | `scripts/bootloader_entry_check.py` runs as a post-build action; it fails the build if the stub is missing, not at `0x7FC`, if `.bootentry` is misplaced or runs past `0x800`, or if any other section overlaps the contract word. |
+| App call site        | `DeviceEnterBootloaderJump()` in `Devices/DAS_v0.1/Main.h` (compiled with `DEVICE_HAS_BOOTLOADER_ENTRY`) casts `Bootloader::BL_ENTRY_ADDR` to a function pointer and calls it — no symbols from the bootloader image are referenced. |
+
+The stub lives in the last word so the entry does not consume space from the bootloader's free tail. When the app jumps there, `BootloaderEntry` re-initialises the bootloader's UART, flash controller, and the `LastWritten` sentinel before entering the frame loop — the app's RAM state is not cleaned up because the bootloader's entry resets what it uses.

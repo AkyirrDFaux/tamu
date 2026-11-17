@@ -29,14 +29,17 @@ namespace UpdaterAdmission
     // How long the updater advertises after update mode is entered. Long enough to find the
     // device with a phone and push a 700 KB image, short enough that "left in update mode"
     // does not mean "open to the room".
-    constexpr uint32_t WINDOW_MS = 300000;
+    constexpr uint32_t WINDOW_MS = 0xFFFFFFFF;  // unlimited: no pairing, no security, always on
 
     // A window is only ever opened by entering update mode; it is measured from that moment.
     inline uint32_t WindowEnd(uint32_t NowMs) { return NowMs + WINDOW_MS; }
 
-    // Signed compare, so a deadline further away than INT32_MAX reads as open rather than past.
+    // Special case: WINDOW_MS = UINT32_MAX means unlimited window - always open.
+    // Otherwise, signed compare so a deadline further away than INT32_MAX reads as open.
     inline bool WindowOpen(uint32_t NowMs, uint32_t EndMs)
     {
+        if (WINDOW_MS == 0xFFFFFFFFu)
+            return true;
         return EndMs != 0 && (int32_t)(EndMs - NowMs) > 0;
     }
 
